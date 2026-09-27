@@ -44,7 +44,11 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
         dbStatus = "OFFLINE_FALLBACK";
       }
     } catch (err: any) {
-      console.warn("[Health] Database query check notice:", err?.message || err);
+      console.error(
+        "[DB_HEALTH] Prisma connection failed:",
+        err instanceof Error ? err.message : String(err),
+        err instanceof Error ? err.stack : undefined,
+      );
       dbStatus = "OFFLINE_FALLBACK";
     }
 
