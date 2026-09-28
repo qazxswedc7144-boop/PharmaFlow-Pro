@@ -220,9 +220,8 @@ function MainLayout() {
         }
       } catch (e) {
         console.warn('[App] Error evaluating onboarding status:', e);
-        if (!SubscriptionEntitlementService.hasDismissedInCurrentSession()) {
-          setOnboardingOpen(true);
-        }
+        // Fail-safe: do not block UI if subscription check fails
+        setOnboardingOpen(false);
       }
     };
 
