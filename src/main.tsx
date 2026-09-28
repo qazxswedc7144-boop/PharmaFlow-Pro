@@ -35,7 +35,13 @@ if (typeof window !== "undefined") {
 
   const originalError = console.error;
   console.error = (...args: any[]) => {
-    const str = args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+    const str = args.map(a => {
+      try {
+        return (typeof a === "object" && a !== null) ? JSON.stringify(a) : String(a);
+      } catch (e) {
+        return "[Unserializable]";
+      }
+    }).join(" ");
     if (
       str.includes("analytics/config-fetch-failed") ||
       str.includes("installations/request-failed") ||
