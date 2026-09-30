@@ -81,7 +81,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#F8FAFA] flex items-center justify-center p-4 relative overflow-hidden font-sans select-none" dir="rtl">
+    <div className="min-h-screen w-full bg-[#F8FAFA] flex items-center justify-center p-4 relative overflow-hidden font-sans" dir="rtl">
       {/* Visual background decor */}
       <div className="absolute -top-40 -right-40 w-96 h-96 bg-emerald-50 rounded-full blur-3xl opacity-60 pointer-events-none" />
       <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-teal-50 rounded-full blur-3xl opacity-60 pointer-events-none" />
@@ -113,7 +113,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-2 mr-1">اسم المستخدم</label>
               <div className="relative">
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                   <User size={18} />
                 </span>
                 <input 
@@ -122,7 +122,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={errorStatus === 'LOADING'}
                   placeholder="أدخل اسم المستخدم"
-                  className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-4 py-3.5 rounded-2xl transition-all"
+                  className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-4 py-3.5 rounded-2xl transition-all pointer-events-auto select-text relative"
                 />
               </div>
             </div>
@@ -140,7 +140,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
                 </button>
               </div>
               <div className="relative">
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                   <Lock size={18} />
                 </span>
                 <input 
@@ -149,12 +149,12 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={errorStatus === 'LOADING'}
                   placeholder="أدخل كلمة المرور السرية"
-                  className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-11 py-3.5 rounded-2xl transition-all"
+                  className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-11 py-3.5 rounded-2xl transition-all pointer-events-auto select-text relative"
                 />
                 <button 
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors pointer-events-auto z-10"
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
