@@ -8,6 +8,7 @@ import { ReportProvider } from '@/contexts/ReportContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import AppFaultBoundary from '@/shared/faults/AppFaultBoundary';
 import { SyncWorker } from '../packages/sync-engine/src/workers/sync.worker';
+import { Analytics } from '@vercel/analytics/react';
 
 console.log("[BOOT] Loader script starting module evaluation...");
 
@@ -95,6 +96,7 @@ root.render(
             <ReportProvider>
               <NotificationProvider>
                 <App />
+                <Analytics />
               </NotificationProvider>
             </ReportProvider>
           </ThemeProvider>
