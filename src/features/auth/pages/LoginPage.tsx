@@ -20,6 +20,29 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
   const [errorStatus, setErrorStatus] = useState<'IDLE' | 'LOADING' | 'ERROR_CREDENTIALS' | 'ERROR_DISABLED' | 'ERROR_SERVER'>('IDLE');
   const [errorMessage, setErrorMessage] = useState('');
   const [showForgotModal, setShowForgotModal] = useState(false);
+  const [diagLog, setDiagLog] = useState<string>('Ready. Tap anywhere or tap input...');
+
+  // Temporary mobile touch diagnostic
+  useEffect(() => {
+    const handleTouch = (e: TouchEvent) => {
+      const touch = e.touches[0] || e.changedTouches[0];
+      if (!touch) return;
+      const hit = document.elementFromPoint(touch.clientX, touch.clientY);
+      const target = e.target as HTMLElement;
+      const hitDesc = hit ? `${hit.tagName.toLowerCase()}${hit.id ? '#' + hit.id : ''}${hit.className ? '.' + String(hit.className).split(' ')[0] : ''}` : 'null';
+      const targetDesc = target ? `${target.tagName.toLowerCase()}${target.id ? '#' + target.id : ''}${target.className ? '.' + String(target.className).split(' ')[0] : ''}` : 'null';
+      const status = `[${e.type}] Target: <${targetDesc}> | AtPoint: <${hitDesc}> | PrevDef: ${e.defaultPrevented}`;
+      console.log('[TouchDiagnostic]', status);
+      setDiagLog(status);
+    };
+
+    window.addEventListener('touchstart', handleTouch, { passive: true });
+    window.addEventListener('touchend', handleTouch, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', handleTouch);
+      window.removeEventListener('touchend', handleTouch);
+    };
+  }, []);
   
   // Load remembered username if it exists
   useEffect(() => {
@@ -82,6 +105,14 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
 
   return (
     <div className="min-h-screen w-full bg-[#F8FAFA] flex items-center justify-center p-4 relative overflow-hidden font-sans" dir="rtl">
+      {/* Mobile Touch Diagnostic Overlay */}
+      <div 
+        className="fixed top-0 left-0 right-0 bg-slate-900/95 text-emerald-400 font-mono text-[10px] p-2 z-[99999] text-center border-b border-emerald-500/30 break-all pointer-events-none select-none shadow-md"
+        dir="ltr"
+      >
+        🔍 Touch Diag: {diagLog}
+      </div>
+
       {/* Visual background decor */}
       <div className="absolute -top-40 -right-40 w-96 h-96 bg-emerald-50 rounded-full blur-3xl opacity-60 pointer-events-none" />
       <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-teal-50 rounded-full blur-3xl opacity-60 pointer-events-none" />
@@ -117,9 +148,11 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
                   <User size={18} />
                 </span>
                 <input 
+                  id="login-username"
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  onFocus={() => setDiagLog('SUCCESS: Username input focused!')}
                   disabled={errorStatus === 'LOADING'}
                   placeholder="أدخل اسم المستخدم"
                   className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-4 py-3.5 rounded-2xl transition-all pointer-events-auto select-text relative"
@@ -144,9 +177,11 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
                   <Lock size={18} />
                 </span>
                 <input 
+                  id="login-password"
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onFocus={() => setDiagLog('SUCCESS: Password input focused!')}
                   disabled={errorStatus === 'LOADING'}
                   placeholder="أدخل كلمة المرور السرية"
                   className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-11 py-3.5 rounded-2xl transition-all pointer-events-auto select-text relative"
