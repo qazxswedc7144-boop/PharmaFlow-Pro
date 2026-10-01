@@ -601,7 +601,7 @@ function MainLayout() {
         setViewParams(null);
       }
     });
-  }, [setEditingInvoiceId, user, accessToken, profile, loading]);
+  }, [setEditingInvoiceId, user, accessToken, profile?.role, loading]);
 
   useEffect(() => {
     if (!loading) {
