@@ -96,14 +96,34 @@ async function runGate3TestSuite() {
   // Pre-seed mock database records
   await db.products.put({
     id: 'PRD-GATE3-1',
+    productId: 'PRD-GATE3-1',
     name: 'Amoxicillin 500mg',
     Name: 'Amoxicillin 500mg',
     barcode: '628100099001',
     stock: 500,
+    StockQuantity: 500,
     quantity: 500,
     price: 30,
     cost: 20,
-    is_active: true
+    is_active: true,
+    isActive: true,
+    status: 'ACTIVE'
+  });
+
+  await db.warehouseStock.put({
+    id: 'WHS-WH-MAIN-PRD-GATE3-1',
+    warehouseId: 'WH-MAIN',
+    productId: 'PRD-GATE3-1',
+    quantity: 500,
+    lastUpdated: new Date().toISOString()
+  });
+
+  await db.warehouseStock.put({
+    id: 'WHS-MAIN-PRD-GATE3-1',
+    warehouseId: 'MAIN',
+    productId: 'PRD-GATE3-1',
+    quantity: 500,
+    lastUpdated: new Date().toISOString()
   });
 
   await db.customers.put({
@@ -174,7 +194,7 @@ async function runGate3TestSuite() {
     const registered = workflowRegistry.getAll();
     const requiredWorkflowIds = [
       'purchases.invoice.process',
-      'sales.invoice.process',
+      'SALE',
       'returns.sales.process',
       'returns.purchase.process',
       'inventory.adjustment.process',
