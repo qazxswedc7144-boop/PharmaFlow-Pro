@@ -1,5 +1,5 @@
 
-const CACHE_NAME = 'pharmaflow-v8-cache-fix';
+const CACHE_NAME = 'pharmaflow-v9-login-fix';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

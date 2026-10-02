@@ -275,14 +275,20 @@ function MainLayout() {
           ]);
         }
         
-        // 1. Query configurationService to resolve the status of authenticationEnabled with timeout
-        const item = await Promise.race([
-          configurationService.get<boolean>('authenticationEnabled').catch(() => null),
-          new Promise<null>((res) => setTimeout(() => res(null), 500))
-        ]);
-        const authEnabled = item === true || (typeof item === 'object' && (item as any)?.value === true);
-        
-        // Align auth enabled flag in configurationService so components can pull it synchronously
+        let authEnabled = true; // SAFE DEFAULT
+        try {
+          const item = await Promise.race([
+            configurationService.get<boolean>('authenticationEnabled').catch(() => null),
+            new Promise<null>((res) => setTimeout(() => res(null), 1500))
+          ]);
+          if (item === false) {
+            authEnabled = false;
+          } else if (typeof item === 'object' && item !== null && (item as any)?.value === false) {
+            authEnabled = false;
+          }
+        } catch {
+          authEnabled = true;
+        }
         configurationService.set('pharmaflow_auth_enabled', authEnabled ? 'true' : 'false').catch(() => {});
         
         if (!authEnabled) {
@@ -601,27 +607,15 @@ function MainLayout() {
     }
   }, [loading, user, accessToken, parseRoute]);
 
+  const initDoneRef = useRef(false);
+
   useEffect(() => {
     let stopCurrencyObserver: (() => void) | null = null;
     let syncEngine: DistributedSyncEngine | null = null;
 
     const init = async () => { 
-      // Clear DB to resolve IDBKeyRange error if requested (one-time fix)
-      if (!configurationService.getSync('pharmaflow_db_reset_v4')) {
-        try {
-          console.log("🧹 Clearing IndexedDB to resolve IDBKeyRange error...");
-          const databases = await window.indexedDB.databases();
-          for (const dbInfo of databases) {
-            if (dbInfo.name) {
-              console.log(`Deleting: ${dbInfo.name}`);
-              window.indexedDB.deleteDatabase(dbInfo.name);
-            }
-          }
-        } catch (e) {
-          window.indexedDB.deleteDatabase("pharmaflow");
-        }
-        configurationService.set('pharmaflow_db_reset_v4', 'true').catch(() => {});
-      }
+      if (initDoneRef.current) return;
+      initDoneRef.current = true;
 
       try {
         await Promise.race([

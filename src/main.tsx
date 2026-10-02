@@ -20,9 +20,23 @@ try {
   configurationService.initialize().catch(err => console.error("[CONFIG SERVICE] Initialization error:", err));
   LockService.initialize().catch(err => console.error("[LOCK MANAGER] Initialization error:", err));
   SystemOrchestrator.recoverIdempotencyKeys().catch(err => console.error("[IDEMPOTENCY RECOVERY] Error recovering stuck transactions:", err));
-  if (typeof window !== "undefined") {
-    SyncWorker.getInstance().start(30000); // 30s intervals
-    console.log("[SYNC ENGINE] Background mutation sync engine booted successfully.");
+  if (typeof window !== "undefined" && 'requestIdleCallback' in window) {
+    (window as any).requestIdleCallback(() => {
+      try {
+        SyncWorker.getInstance().start(30000);
+        console.log("[SYNC ENGINE] Background mutation sync engine booted.");
+      } catch (error) {
+        console.error("[SYNC ENGINE] Failed to start:", error);
+      }
+    }, { timeout: 5000 });
+  } else {
+    setTimeout(() => {
+      try {
+        SyncWorker.getInstance().start(30000);
+      } catch (error) {
+        console.error("[SYNC ENGINE] Failed to start:", error);
+      }
+    }, 2000);
   }
 } catch (error) {
   console.error("[SYNC ENGINE] Failed starting local mutation sync scheduler:", error);
@@ -35,14 +49,26 @@ if (typeof window !== "undefined") {
 
   const originalError = console.error;
   console.error = (...args: any[]) => {
-    const str = args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
+    let str: string;
+    try {
+      str = args.map(a => {
+        if (typeof a === "object" && a !== null) {
+          try { return JSON.stringify(a); }
+          catch { return "[Circular/Object]"; }
+        }
+        return String(a);
+      }).join(" ");
+    } catch {
+      originalError.apply(console, args);
+      return;
+    }
     if (
       str.includes("analytics/config-fetch-failed") ||
       str.includes("installations/request-failed") ||
       str.includes("@firebase/analytics") ||
       str.includes("API key not valid")
     ) {
-      console.warn("[TELEMETRY WARNING IGNORED]", ...args);
+      console.warn("[TELEMETRY WARNING IGNORED]");
       return;
     }
     originalError.apply(console, args);
