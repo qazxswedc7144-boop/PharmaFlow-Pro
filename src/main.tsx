@@ -9,6 +9,7 @@ import { NotificationProvider } from '@/context/NotificationContext';
 import AppFaultBoundary from '@/shared/faults/AppFaultBoundary';
 import { SyncWorker } from '../packages/sync-engine/src/workers/sync.worker';
 import { Analytics } from '@vercel/analytics/react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 console.log("[BOOT] Loader script starting module evaluation...");
 
@@ -97,6 +98,7 @@ root.render(
               <NotificationProvider>
                 <App />
                 <Analytics />
+                <SpeedInsights />
               </NotificationProvider>
             </ReportProvider>
           </ThemeProvider>
