@@ -21,6 +21,15 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
   const [errorMessage, setErrorMessage] = useState('');
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [diagLog, setDiagLog] = useState<string>('Ready. Tap anywhere or tap input...');
+  const [heartbeat, setHeartbeat] = useState(0);
+
+  // Heartbeat to detect main-thread blocking
+  useEffect(() => {
+    const id = setInterval(() => {
+      setHeartbeat((h) => h + 1);
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Temporary runtime diagnostic
   useEffect(() => {
@@ -127,7 +136,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
         className="fixed top-0 left-0 right-0 bg-red-600 text-white font-mono text-[10px] sm:text-xs p-2.5 z-[9999] text-center shadow-lg break-all select-none"
         dir="ltr"
       >
-        🚨 DIAG: {diagLog}
+        🚨 DIAG: {diagLog} | HB: {heartbeat}
       </div>
 
       {/* Visual background decor */}
@@ -218,7 +227,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
               <button 
                 type="button"
                 onClick={() => setIsRemembered(!isRemembered)}
-                className={`w-5 h-5 rounded-lg border flex items-center justify-center transition-all ${isRemembered ? 'bg-[#1E4D4D] border-[#1E4D4D] text-white' : 'bg-slate-50 border-slate-200 text-transparent hover:border-slate-300'}`}
+                className={`w-5 h-5 rounded-lg border flex items-center justify-center transition-all ${isRemembered ? 'bg-[#1E4D4D] border-[#1E4D4D] text-white' : 'bg-slate-50 border-slate-200 text-slate-400'}`}
               >
                 <Check size={12} strokeWidth={3} />
               </button>
@@ -259,7 +268,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
             <button 
               type="submit"
               disabled={errorStatus === 'LOADING'}
-              className="w-full bg-[#1E4D4D] hover:bg-teal-900 text-white font-black text-sm py-4 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-lg shadow-teal-900/10 disabled:opacity-75 disabled:cursor-wait"
+              className="w-full bg-[#1E4D4D] hover:bg-teal-900 text-white font-black text-sm py-4 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-lg shadow-teal-900/10 active:scale-95"
             >
               {errorStatus === 'LOADING' ? (
                 <>
@@ -303,7 +312,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
               </div>
               <h3 className="text-lg font-black text-[#1E4D4D] mb-2">استعادة كلمة المرور</h3>
               <p className="text-xs font-medium text-slate-500 leading-relaxed mb-6">
-                لدواعي الأمان السيادي ووفقاً لسياسة نظام الحماية الصارمة للمؤسسات الدوائية، لا يتم تغيير أو تصفير كلمات المرور ذاتياً. 
+                لدواعي الأمان السيادي ووفقاً لسياسة نظام الحماية الصارمة للمؤسسات الدوائية، لا يتم تغيير أو تصفي [...]
                 <br /><br />
                 يرجى التواصل مع <strong>مسؤول نظام التدقيق الأمني</strong> بالمؤسسة لإصدار تذكرة تصفير معتمدة يدوياً.
               </p>
