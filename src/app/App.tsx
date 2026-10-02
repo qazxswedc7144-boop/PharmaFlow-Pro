@@ -171,13 +171,12 @@ function MainLayout() {
     };
 
     window.addEventListener("unhandledrejection", (e) => {
-      e.preventDefault();
       const reason = e.reason;
       const details = reason instanceof Error ? {
         message: reason.message,
         stack: reason.stack
       } : { reason: String(reason) };
-      console.warn("Cleared dynamic rejection:", details);
+      console.warn("Dynamic async rejection:", details);
     });
   }, []);
   const [viewParams, setViewParams] = useState<any>(null); 
@@ -268,11 +267,11 @@ function MainLayout() {
 
     const bootFlow = async () => {
       try {
-        // Ensure local IndexedDB is initialized with 800ms max timeout
+        // Ensure local IndexedDB is initialized with 5000ms max timeout
         if (!db.isOpen()) {
           await Promise.race([
             db.open(),
-            new Promise((res) => setTimeout(res, 800))
+            new Promise((res) => setTimeout(res, 5000))
           ]);
         }
         
@@ -625,7 +624,10 @@ function MainLayout() {
       }
 
       try {
-        await db.open();
+        await Promise.race([
+          db.open(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('IndexedDB open timeout (5000ms)')), 5000))
+        ]);
         // Dynamic Sync engine activation
         syncEngine = DistributedSyncEngine.getInstance(db);
         syncEngine.start();

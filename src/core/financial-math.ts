@@ -52,7 +52,7 @@ const CURRENCY_DECIMALS: Record<string, number> = {
   OMR: 3,
 };
 
-const DEFAULT_CURRENCY: CurrencyCode = 'YER';
+const DEFAULT_CURRENCY: CurrencyCode = 'SAR';
 
 export interface FinancialMathOptions {
   /** إذا true (افتراضي): يرفض المدخلات غير الصالحة بدل إرجاع 0 */
@@ -100,8 +100,9 @@ export class FinancialMath {
     this.defaultCurrency = currency;
   }
 
-  public static decimalsFor(currency: CurrencyCode = this.defaultCurrency): number {
-    return CURRENCY_DECIMALS[currency] ?? 2;
+  public static decimalsFor(currency?: CurrencyCode): number {
+    const code = currency ?? this.defaultCurrency;
+    return CURRENCY_DECIMALS[code] ?? 2;
   }
 
   // ───────────────────────────────────────────────────────────────
@@ -317,9 +318,6 @@ export class FinancialMath {
   public static div(a: unknown, b: unknown, fallback = 0): number {
     const denom = this.safeNum(b);
     if (Math.abs(denom) < this.EPSILON) {
-      if (this.strict) {
-        throw new FinancialError('DIVISION_BY_ZERO', 'قسمة على صفر');
-      }
       return fallback;
     }
     return this.round2(this.safeNum(a) / denom);
@@ -343,12 +341,13 @@ export class FinancialMath {
    *
    * ⚠️ هذه هي الدالة الوحيدة المسموح بها للتحقق من القيود.
    */
-  public static isBalanced(debits: unknown, credits: unknown, tolerance?: number): boolean {
-    if (tolerance !== undefined && tolerance > 0) {
-      const diff = Math.abs(Number(this.toMinorUnits(debits) - this.toMinorUnits(credits)) / 100);
-      return diff <= tolerance;
-    }
-    return this.toMinorUnits(debits) === this.toMinorUnits(credits);
+  public static isBalanced(
+    debits: unknown,
+    credits: unknown,
+    currencyOrTolerance?: CurrencyCode | number,
+  ): boolean {
+    const curr = typeof currencyOrTolerance === 'string' ? currencyOrTolerance : undefined;
+    return this.toMinorUnits(debits, curr) === this.toMinorUnits(credits, curr);
   }
 
   /**
@@ -358,53 +357,53 @@ export class FinancialMath {
   public static discrepancyMinor(
     debits: unknown,
     credits: unknown,
+    currency?: CurrencyCode,
   ): bigint {
-    return this.toMinorUnits(debits) - this.toMinorUnits(credits);
+    return this.toMinorUnits(debits, currency) - this.toMinorUnits(credits, currency);
   }
 
   /**
-   * للتوافق العكسي — يُرجع number بالوحدات الكبرى.
+   * للتوافق العكسي — يُرجع number بالوحدات الكبرى حسب العملة.
    * ⚠️ استخدم discrepancyMinor في الكود الجديد.
    */
-  public static discrepancy(debits: unknown, credits: unknown): number {
-    const minor = this.discrepancyMinor(debits, credits);
+  public static discrepancy(debits: unknown, credits: unknown, currency?: CurrencyCode): number {
+    const minor = this.discrepancyMinor(debits, credits, currency);
     const abs = minor < 0n ? -minor : minor;
-    return Number(abs) / 100;
+    const d = this.decimalsFor(currency);
+    const factor = Math.pow(10, d);
+    return Number(abs) / factor;
   }
 
   /**
    * مقارنة دقيقة بين قيمتين ماليتين.
-   * toleranceMinor: افتراضي 0 (دقيق). مرر قيمة موجبة إذا كنت تعرف ما تفعل.
    */
   public static equals(
     a: unknown,
     b: unknown,
-    toleranceMinor: bigint | number = 0n,
+    toleranceOrCurrency?: number | bigint | CurrencyCode,
   ): boolean {
-    const tol = typeof toleranceMinor === 'number' ? BigInt(Math.round(toleranceMinor * 100)) : toleranceMinor;
-    const diff = this.toMinorUnits(a) - this.toMinorUnits(b);
-    const abs = diff < 0n ? -diff : diff;
-    return abs <= tol;
+    const curr = typeof toleranceOrCurrency === 'string' ? toleranceOrCurrency : undefined;
+    return this.toMinorUnits(a, curr) === this.toMinorUnits(b, curr);
   }
 
   // ───────────────────────────────────────────────────────────────
   // Sign checks
   // ───────────────────────────────────────────────────────────────
 
-  public static isNonNegative(val: unknown): boolean {
-    return this.toMinorUnits(val) >= 0n;
+  public static isNonNegative(val: unknown, currency?: CurrencyCode): boolean {
+    return this.toMinorUnits(val, currency) >= 0n;
   }
 
-  public static isStrictlyPositive(val: unknown): boolean {
-    return this.toMinorUnits(val) > 0n;
+  public static isStrictlyPositive(val: unknown, currency?: CurrencyCode): boolean {
+    return this.toMinorUnits(val, currency) > 0n;
   }
 
-  public static isStrictlyNegative(val: unknown): boolean {
-    return this.toMinorUnits(val) < 0n;
+  public static isStrictlyNegative(val: unknown, currency?: CurrencyCode): boolean {
+    return this.toMinorUnits(val, currency) < 0n;
   }
 
-  public static isZero(val: unknown): boolean {
-    return this.toMinorUnits(val) === 0n;
+  public static isZero(val: unknown, currency?: CurrencyCode): boolean {
+    return this.toMinorUnits(val, currency) === 0n;
   }
 
   // ───────────────────────────────────────────────────────────────
@@ -417,7 +416,7 @@ export class FinancialMath {
    *
    * مثال: allocate(100.00, [1, 1, 1]) → [33.33, 33.33, 33.34]
    */
-  public static allocate(amount: unknown, ratios: number[]): number[] {
+  public static allocate(amount: unknown, ratios: number[], currency?: CurrencyCode): number[] {
     if (ratios.length === 0) {
       throw new FinancialError('INVALID_RATIOS', 'قائمة النسب فارغة');
     }
@@ -432,7 +431,7 @@ export class FinancialMath {
       );
     }
 
-    const totalMinor = this.toMinorUnits(total);
+    const totalMinor = this.toMinorUnits(total, currency);
     const ratioSumMinor = BigInt(Math.round(ratioSum * 1e6));
 
     const result: number[] = [];
@@ -441,14 +440,14 @@ export class FinancialMath {
     for (let i = 0; i < ratios.length; i++) {
       if (i === ratios.length - 1) {
         // آخر عنصر يستلم الباقي — يضمن المجموع = totalMinor بالضبط
-        result.push(this.fromMinorUnits(totalMinor - allocated));
+        result.push(this.fromMinorUnits(totalMinor - allocated, currency));
         break;
       }
       const currRatio = ratios[i] ?? 0;
       const ratioMinor = BigInt(Math.round(currRatio * 1e6));
       const share = (totalMinor * ratioMinor) / ratioSumMinor;
       allocated += share;
-      result.push(this.fromMinorUnits(share));
+      result.push(this.fromMinorUnits(share, currency));
     }
 
     return result;
@@ -460,20 +459,27 @@ export class FinancialMath {
 
   /**
    * تحويل إلى أصغر وحدة نقدية (هللة/سنت) بدقة تامة.
-   * يستخدم string representation لتجنب float artifacts.
+   * يستخدم string representation لتجنب float artifacts ومعتمد على CURRENCY_DECIMALS.
    */
-  private static toMinorUnits(val: unknown): bigint {
-    const rounded = this.round2(val);
+  public static toMinorUnits(val: unknown, currency?: CurrencyCode): bigint {
+    const d = this.decimalsFor(currency);
+    const rounded = this.round(val, d);
     if (rounded === 0) return 0n;
 
     const negative = rounded < 0;
-    const abs = Math.abs(rounded).toFixed(2);
-    const [intPart, fracPart] = abs.split('.');
-    const minor = BigInt(intPart ?? '0') * 100n + BigInt(fracPart || '0');
+    const abs = Math.abs(rounded).toFixed(d);
+    if (d === 0) {
+      const minor = BigInt(abs);
+      return negative ? -minor : minor;
+    }
+    const [intPart, fracPart = ''] = abs.split('.');
+    const factor = 10n ** BigInt(d);
+    const paddedFrac = fracPart.padEnd(d, '0').slice(0, d);
+    const minor = BigInt(intPart ?? '0') * factor + BigInt(paddedFrac || '0');
     return negative ? -minor : minor;
   }
 
-  private static fromMinorUnits(minor: bigint): number {
+  public static fromMinorUnits(minor: bigint, currency?: CurrencyCode): number {
     if (
       minor > BigInt(Number.MAX_SAFE_INTEGER) ||
       minor < BigInt(Number.MIN_SAFE_INTEGER)
@@ -483,6 +489,8 @@ export class FinancialMath {
         `قيمة صغرى خارج نطاق number الآمن: ${minor}`,
       );
     }
-    return Number(minor) / 100;
+    const d = this.decimalsFor(currency);
+    const factor = Math.pow(10, d);
+    return Number(minor) / factor;
   }
 }

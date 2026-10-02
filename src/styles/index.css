@@ -28,6 +28,8 @@
   input, select, textarea {
     font-size: 16px !important; /* Prevents auto-zoom on mobile focus */
     min-width: 0;
+    user-select: text !important;
+    -webkit-user-select: text !important;
   }
   html {
     font-family: "Cairo", sans-serif;

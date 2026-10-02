@@ -67,14 +67,13 @@ if (process.env.NODE_ENV === 'production') {
 */
 
 window.addEventListener("unhandledrejection", (e) => {
-  e.preventDefault();
   const reason = e.reason;
   // Gracefully log as warning without matching the filtered error patterns
   const details = reason instanceof Error ? {
     message: reason.message,
     stack: reason.stack
   } : { reason: String(reason) };
-  console.warn("Cleared async rejection:", details);
+  console.warn("Unhandled async rejection:", details);
 });
 
 const rootElement = document.getElementById('root');

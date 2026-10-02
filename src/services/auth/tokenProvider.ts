@@ -35,6 +35,7 @@ export class TokenProvider {
   public static isAuthEnabled(): boolean {
     if (typeof localStorage === 'undefined') return true;
     const stored = localStorage.getItem('pharmaflow_auth_enabled');
+    if (stored === null) return true;
     return stored === 'true';
   }
 
