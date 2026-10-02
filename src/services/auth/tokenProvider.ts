@@ -5,41 +5,16 @@ import { User, AuthSession, AuthHeaders, TenantAuthContext } from '@/types/auth.
 export class TokenProvider {
   private static refreshPromise: Promise<string> | null = null;
 
-  private static safeStorageGet(key: string): string | null {
-    try {
-      return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null;
-    } catch {
-      return null;
-    }
-  }
-
-  private static safeStorageSet(key: string, value: string): void {
-    try {
-      if (typeof window !== 'undefined') {
-        window.localStorage.setItem(key, value);
-      }
-    } catch {
-      // Silent fail — storage disabled.
-    }
-  }
-
-  private static safeStorageRemove(key: string): void {
-    try {
-      if (typeof window !== 'undefined') {
-        window.localStorage.removeItem(key);
-      }
-    } catch {
-      // Silent fail — storage disabled.
-    }
-  }
-
   /**
    * Retrieves active access token from the canonical authStore (with storage fallback)
    */
   public static getAccessToken(): string | null {
     const storeToken = useAuthStore.getState().token;
     if (storeToken) return storeToken;
-    return this.safeStorageGet('pharmaflow_token');
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('pharmaflow_token');
+    }
+    return null;
   }
 
   /**
@@ -48,15 +23,19 @@ export class TokenProvider {
   public static getRefreshToken(): string | null {
     const storeRefresh = useAuthStore.getState().refreshToken;
     if (storeRefresh) return storeRefresh;
-    return this.safeStorageGet('pharmaflow_refresh_token');
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('pharmaflow_refresh_token');
+    }
+    return null;
   }
 
   /**
    * Checks whether auth is explicitly enabled or in local bypass mode
    */
   public static isAuthEnabled(): boolean {
-    const stored = this.safeStorageGet('pharmaflow_auth_enabled');
-    return stored === null ? true : stored === 'true';
+    if (typeof localStorage === 'undefined') return true;
+    const stored = localStorage.getItem('pharmaflow_auth_enabled');
+    return stored === 'true';
   }
 
   /**
@@ -110,23 +89,25 @@ export class TokenProvider {
    * Synchronizes legacy storage keys for backward compatibility
    */
   public static syncLegacyStorageKeys(user: User | null, token: string | null, refreshToken?: string | null): void {
+    if (typeof localStorage === 'undefined') return;
+
     try {
       if (token) {
-        this.safeStorageSet('pharmaflow_token', token);
+        localStorage.setItem('pharmaflow_token', token);
       } else {
-        this.safeStorageRemove('pharmaflow_token');
+        localStorage.removeItem('pharmaflow_token');
       }
 
       if (refreshToken) {
-        this.safeStorageSet('pharmaflow_refresh_token', refreshToken);
+        localStorage.setItem('pharmaflow_refresh_token', refreshToken);
       } else if (refreshToken === null) {
-        this.safeStorageRemove('pharmaflow_refresh_token');
+        localStorage.removeItem('pharmaflow_refresh_token');
       }
 
       if (user) {
-        this.safeStorageSet('pharmaflow_user', JSON.stringify(user));
+        localStorage.setItem('pharmaflow_user', JSON.stringify(user));
         // Sync pf_enterprise_auth for packages/shared/auth-client compatibility
-        this.safeStorageSet('pf_enterprise_auth', JSON.stringify({
+        localStorage.setItem('pf_enterprise_auth', JSON.stringify({
           accessToken: token,
           refreshToken: refreshToken || null,
           user: {
@@ -136,8 +117,8 @@ export class TokenProvider {
           }
         }));
       } else {
-        this.safeStorageRemove('pharmaflow_user');
-        this.safeStorageRemove('pf_enterprise_auth');
+        localStorage.removeItem('pharmaflow_user');
+        localStorage.removeItem('pf_enterprise_auth');
       }
     } catch (e) {
       console.warn('[TokenProvider] Failed syncing legacy storage keys:', e);

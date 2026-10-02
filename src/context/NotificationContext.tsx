@@ -141,10 +141,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       type,
       timestamp: now,
       isRead: 0
-    })
-      .then(async () => {
-        // 4. الحفاظ على السعة الذكية للحد الأقصى (عبر حذف الأقدم عند تخطي 50)
-        const all = await notificationsDb.notifications.toArray();
+    }).then(() => {
+      // 4. الحفاظ على السعة الذكية للحد الأقصى (عبر حذف الأقدم عند تخطي 50)
+      notificationsDb.notifications.toArray().then(async (all) => {
         if (all.length > 50) {
           const sorted = all.sort((a, b) => a.timestamp - b.timestamp);
           const toDeleteCount = sorted.length - 50;
@@ -154,11 +153,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           }
         }
         await refreshNotifications();
-      })
-      .catch((err) => {
-        console.error('[NotificationContext] retention/logging failed:', err);
-        refreshNotifications();
       });
+    }).catch(e => {
+      console.error("[NotificationContext] Failed to log to IndexedDB:", e);
+      refreshNotifications();
+    });
   }, [refreshNotifications]);
 
   // ربط معالج الإشعارات الخارجي

@@ -517,7 +517,7 @@ export class LedgerBalanceCalculator {
       FinancialMath.add(totalOPEX, taxExpense)
     );
 
-    const isTrialBalanceBalanced = FinancialMath.equals(totalDebit, totalCredit, 1n, 'YER');
+    const isTrialBalanceBalanced = FinancialMath.isBalanced(totalDebit, totalCredit, 0.01);
     const trialBalanceDiscrepancy = FinancialMath.discrepancy(totalDebit, totalCredit);
 
     return {

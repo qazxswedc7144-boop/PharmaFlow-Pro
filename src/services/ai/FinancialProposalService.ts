@@ -214,7 +214,7 @@ export class FinancialProposalService {
     }
 
     // 6. Double-Entry Balance: Debit = Credit
-    const isBalanced = FinancialMath.isBalanced(totalDebit, totalCredit, 'YER');
+    const isBalanced = FinancialMath.isBalanced(totalDebit, totalCredit, 0.001);
     const discrepancy = FinancialMath.discrepancy(totalDebit, totalCredit);
 
     if (!isBalanced) {

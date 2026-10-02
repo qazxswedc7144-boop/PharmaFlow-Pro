@@ -192,7 +192,7 @@ export class FinancialStatementCalculator {
 
     // Verification of standard balance sheet equation: Assets == Liabilities + Equity
     const totalLiabilitiesAndEquity = FinancialMath.add(totalLiabilities, totalEquity);
-    const isBalanced = FinancialMath.equals(totalAssets, totalLiabilitiesAndEquity, 1n, 'YER');
+    const isBalanced = FinancialMath.isBalanced(totalAssets, totalLiabilitiesAndEquity, 0.01);
 
     // Branch breakdown
     const branchBreakdown: ConsolidatedBalanceSheet["branchBreakdown"] = {};

@@ -35,15 +35,6 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
 
   // Health check endpoints with enhanced diagnostic reporting - always return 200 for container orchestrators (Cloud Run)
   app.all(["/api/health", "/health", "/healthz", "/ready", "/live", "/_ah/health", "/_ah/start", "/ping"], async (_req, res) => {
-    console.log("[DB_HEALTH] env check:", {
-      hasDatabaseUrl: typeof process.env.DATABASE_URL === 'string' 
-                      && process.env.DATABASE_URL.length > 0,
-      databaseUrlLength: process.env.DATABASE_URL?.length ?? 0,
-      hasDirectUrl: typeof process.env.DIRECT_URL === 'string' 
-                    && process.env.DIRECT_URL.length > 0,
-      nodeEnv: process.env.NODE_ENV,
-      hasVercel: !!process.env.VERCEL,
-    });
     let dbStatus = "NOT_CONFIGURED";
     try {
       if (process.env.DATABASE_URL) {
@@ -53,11 +44,7 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
         dbStatus = "OFFLINE_FALLBACK";
       }
     } catch (err: any) {
-      console.error(
-        "[DB_HEALTH] Prisma connection failed:",
-        err instanceof Error ? err.message : String(err),
-        err instanceof Error ? err.stack : undefined,
-      );
+      console.warn("[Health] Database query check notice:", err?.message || err);
       dbStatus = "OFFLINE_FALLBACK";
     }
 

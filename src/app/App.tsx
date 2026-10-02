@@ -170,13 +170,14 @@ function MainLayout() {
       return false;
     };
 
-    window.addEventListener("unhandledrejection", (event) => {
-      // ⚠️ DO NOT call event.preventDefault() — that hides the error.
-      const reason = event.reason;
-      console.error(
-        '[UnhandledRejection]',
-        reason?.stack || reason?.message || String(reason),
-      );
+    window.addEventListener("unhandledrejection", (e) => {
+      e.preventDefault();
+      const reason = e.reason;
+      const details = reason instanceof Error ? {
+        message: reason.message,
+        stack: reason.stack
+      } : { reason: String(reason) };
+      console.warn("Cleared dynamic rejection:", details);
     });
   }, []);
   const [viewParams, setViewParams] = useState<any>(null); 
@@ -220,8 +221,9 @@ function MainLayout() {
         }
       } catch (e) {
         console.warn('[App] Error evaluating onboarding status:', e);
-        // Fail-safe: do not block UI if subscription check fails
-        setOnboardingOpen(false);
+        if (!SubscriptionEntitlementService.hasDismissedInCurrentSession()) {
+          setOnboardingOpen(true);
+        }
       }
     };
 
@@ -268,10 +270,9 @@ function MainLayout() {
       try {
         // Ensure local IndexedDB is initialized with 800ms max timeout
         if (!db.isOpen()) {
-          const dbOpenTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('DB_INIT_TIMEOUT')), 5000));
           await Promise.race([
             db.open(),
-            dbOpenTimeout
+            new Promise((res) => setTimeout(res, 800))
           ]);
         }
         
@@ -396,7 +397,6 @@ function MainLayout() {
 
     // 2. Lock Logic (Interval & Visibility)
     useEffect(() => {
-      let isComponentMounted = true;
       const checkLock = async () => {
         try {
           // Check autoLockEnabled from configurationService
@@ -445,25 +445,20 @@ function MainLayout() {
       const interval = setInterval(() => {
         checkLock().catch(e => console.error("[LockInterval] Failed:", e));
       }, 30000); // 30s as requested
-      const handleFocus = () => {
-        if (!isComponentMounted) return;
-        checkLock().catch(e => console.error("[FocusLock] Failed:", e));
-      };
-      const handleBlur = async () => {
-        try {
-          const settings = await appLockService.getSettings();
-          if (!isComponentMounted) return;
-          if (settings?.is_enabled && settings.lock_mode === 'instant') {
-            setIsLocked(true);
-          }
-        } catch (e) {
-          console.error("[BlurLock] Failed:", e);
-        }
-      };
-
       document.addEventListener('visibilitychange', handleVisibilityChange);
-      window.addEventListener('focus', handleFocus);
-      window.addEventListener('blur', handleBlur);
+      window.addEventListener('focus', () => {
+        checkLock().catch(e => console.error("[FocusLock] Failed:", e));
+      });
+      window.addEventListener('blur', async () => {
+          try {
+            const settings = await appLockService.getSettings();
+            if (settings?.is_enabled && settings.lock_mode === 'instant') {
+              setIsLocked(true);
+            }
+          } catch (e) {
+            console.error("[BlurLock] Failed:", e);
+          }
+      });
   
       // Initial check on mount (App Resume)
       const initialCheck = async () => {
@@ -501,11 +496,9 @@ function MainLayout() {
       initialCheck().catch(e => console.error("[InitialLockCheck] Uncaught:", e));
   
       return () => {
-        isComponentMounted = false;
         clearInterval(interval);
         document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('focus', handleFocus);
-        window.removeEventListener('blur', handleBlur);
+        window.removeEventListener('focus', checkLock);
       };
     }, []);
 
@@ -601,7 +594,7 @@ function MainLayout() {
         setViewParams(null);
       }
     });
-  }, [setEditingInvoiceId, user, accessToken, profile?.role, loading]);
+  }, [setEditingInvoiceId, user, accessToken, profile, loading]);
 
   useEffect(() => {
     if (!loading) {
@@ -632,16 +625,12 @@ function MainLayout() {
       }
 
       try {
-        const dbOpenTimeout = new Promise((_, reject) => setTimeout(() => reject(new Error('DB_INIT_TIMEOUT')), 5000));
-        await Promise.race([
-          db.open(),
-          dbOpenTimeout
-        ]);
+        await db.open();
         // Dynamic Sync engine activation
         syncEngine = DistributedSyncEngine.getInstance(db);
         syncEngine.start();
       } catch (e) {
-        console.error("Failed to open DB or DB init timeout:", e);
+        console.error("Failed to open DB:", e);
       }
 
       await AccountingEngine.seedAccounts().catch(e => console.error(e));

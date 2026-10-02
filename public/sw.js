@@ -1,5 +1,5 @@
 
-const CACHE_NAME = 'pharmaflow-v9-login-fix';
+const CACHE_NAME = 'pharmaflow-v8-cache-fix';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -42,7 +42,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   // Network-first for JS bundles & assets to prevent stale dynamic chunk hashes
-  if (event.request.destination === 'script' || event.request.destination === 'style' || event.request.url.includes('/assets/')) {
+  if (event.request.destination === 'script' || event.request.url.includes('/assets/')) {
     event.respondWith(
       fetch(event.request).catch(() => caches.match(event.request))
     );

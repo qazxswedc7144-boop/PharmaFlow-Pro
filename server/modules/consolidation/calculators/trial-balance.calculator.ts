@@ -83,7 +83,7 @@ export class TrialBalanceCalculator {
     }
 
     // Invariant Check: totalDebit MUST equal totalCredit
-    const isBalanced = FinancialMath.equals(totalDebit, totalCredit, 5n, 'YER');
+    const isBalanced = FinancialMath.isBalanced(totalDebit, totalCredit, 0.05);
 
     return {
       timestamp: new Date().toISOString(),

@@ -20,55 +20,6 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
   const [errorStatus, setErrorStatus] = useState<'IDLE' | 'LOADING' | 'ERROR_CREDENTIALS' | 'ERROR_DISABLED' | 'ERROR_SERVER'>('IDLE');
   const [errorMessage, setErrorMessage] = useState('');
   const [showForgotModal, setShowForgotModal] = useState(false);
-  const [diagLog, setDiagLog] = useState<string>('Ready. Tap anywhere or tap input...');
-  const [heartbeat, setHeartbeat] = useState(0);
-
-  // Heartbeat to detect main-thread blocking
-  useEffect(() => {
-    const id = setInterval(() => {
-      setHeartbeat((h) => h + 1);
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Temporary runtime diagnostic
-  useEffect(() => {
-    const handleEvent = (e: Event) => {
-      const target = e.target as HTMLElement;
-      let clientX: number | undefined;
-      let clientY: number | undefined;
-
-      if ('touches' in e) {
-        const touchEvent = e as TouchEvent;
-        if (touchEvent.touches && touchEvent.touches[0]) {
-          clientX = touchEvent.touches[0].clientX;
-          clientY = touchEvent.touches[0].clientY;
-        }
-      } else if ('clientX' in e) {
-        clientX = (e as MouseEvent).clientX;
-        clientY = (e as MouseEvent).clientY;
-      }
-
-      const hit = (clientX !== undefined && clientY !== undefined) ? document.elementFromPoint(clientX, clientY) : null;
-
-      const targetTag = target?.tagName || 'UNKNOWN';
-      const targetClass = target?.className ? String(target.className).split(' ')[0] : '';
-      const hitTag = hit?.tagName || 'NONE';
-      const hitId = hit?.id ? '#' + hit.id : '';
-      const hitClass = hit?.className ? '.' + String(hit.className).split(' ')[0] : '';
-
-      const summary = `Type:${e.type} | Target:<${targetTag}.${targetClass}> | Point:<${hitTag}${hitId}${hitClass}> | Prevented:${e.defaultPrevented}`;
-      console.log('[RuntimeDiag]', summary);
-      setDiagLog(summary);
-    };
-
-    document.addEventListener('touchstart', handleEvent, { passive: true });
-    document.addEventListener('click', handleEvent, { passive: true });
-    return () => {
-      document.removeEventListener('touchstart', handleEvent);
-      document.removeEventListener('click', handleEvent);
-    };
-  }, []);
   
   // Load remembered username if it exists
   useEffect(() => {
@@ -130,15 +81,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#F8FAFA] flex items-center justify-center p-4 relative overflow-hidden font-sans" dir="rtl">
-      {/* Mobile Touch Diagnostic Overlay */}
-      <div 
-        className="fixed top-0 left-0 right-0 bg-red-600 text-white font-mono text-[10px] sm:text-xs p-2.5 z-[9999] text-center shadow-lg break-all select-none"
-        dir="ltr"
-      >
-        🚨 DIAG: {diagLog} | HB: {heartbeat}
-      </div>
-
+    <div className="min-h-screen w-full bg-[#F8FAFA] flex items-center justify-center p-4 relative overflow-hidden font-sans select-none" dir="rtl">
       {/* Visual background decor */}
       <div className="absolute -top-40 -right-40 w-96 h-96 bg-emerald-50 rounded-full blur-3xl opacity-60 pointer-events-none" />
       <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-teal-50 rounded-full blur-3xl opacity-60 pointer-events-none" />
@@ -170,18 +113,16 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-2 mr-1">اسم المستخدم</label>
               <div className="relative">
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
                   <User size={18} />
                 </span>
                 <input 
-                  id="login-username"
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  onFocus={() => setDiagLog('FOCUS RECEIVED: Username')}
                   disabled={errorStatus === 'LOADING'}
                   placeholder="أدخل اسم المستخدم"
-                  className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-4 py-3.5 rounded-2xl transition-all pointer-events-auto select-text relative"
+                  className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-4 py-3.5 rounded-2xl transition-all"
                 />
               </div>
             </div>
@@ -199,23 +140,21 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
                 </button>
               </div>
               <div className="relative">
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
                   <Lock size={18} />
                 </span>
                 <input 
-                  id="login-password"
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  onFocus={() => setDiagLog('FOCUS RECEIVED: Password')}
                   disabled={errorStatus === 'LOADING'}
                   placeholder="أدخل كلمة المرور السرية"
-                  className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-11 py-3.5 rounded-2xl transition-all pointer-events-auto select-text relative"
+                  className="w-full bg-slate-50/50 hover:bg-slate-50 focus:bg-white border border-slate-100 focus:border-[#1E4D4D]/20 outline-none text-slate-700 text-sm font-semibold pr-11 pl-11 py-3.5 rounded-2xl transition-all"
                 />
                 <button 
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors pointer-events-auto z-10"
+                  className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -227,7 +166,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
               <button 
                 type="button"
                 onClick={() => setIsRemembered(!isRemembered)}
-                className={`w-5 h-5 rounded-lg border flex items-center justify-center transition-all ${isRemembered ? 'bg-[#1E4D4D] border-[#1E4D4D] text-white' : 'bg-slate-50 border-slate-200 text-slate-400'}`}
+                className={`w-5 h-5 rounded-lg border flex items-center justify-center transition-all ${isRemembered ? 'bg-[#1E4D4D] border-[#1E4D4D] text-white' : 'bg-slate-50 border-slate-200 text-transparent hover:border-slate-300'}`}
               >
                 <Check size={12} strokeWidth={3} />
               </button>
@@ -268,7 +207,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
             <button 
               type="submit"
               disabled={errorStatus === 'LOADING'}
-              className="w-full bg-[#1E4D4D] hover:bg-teal-900 text-white font-black text-sm py-4 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-lg shadow-teal-900/10 active:scale-95"
+              className="w-full bg-[#1E4D4D] hover:bg-teal-900 text-white font-black text-sm py-4 rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-lg shadow-teal-900/10 disabled:opacity-75 disabled:cursor-wait"
             >
               {errorStatus === 'LOADING' ? (
                 <>
@@ -312,7 +251,7 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
               </div>
               <h3 className="text-lg font-black text-[#1E4D4D] mb-2">استعادة كلمة المرور</h3>
               <p className="text-xs font-medium text-slate-500 leading-relaxed mb-6">
-                لدواعي الأمان السيادي ووفقاً لسياسة نظام الحماية الصارمة للمؤسسات الدوائية، لا يتم تغيير أو تصفي [...]
+                لدواعي الأمان السيادي ووفقاً لسياسة نظام الحماية الصارمة للمؤسسات الدوائية، لا يتم تغيير أو تصفير كلمات المرور ذاتياً. 
                 <br /><br />
                 يرجى التواصل مع <strong>مسؤول نظام التدقيق الأمني</strong> بالمؤسسة لإصدار تذكرة تصفير معتمدة يدوياً.
               </p>

@@ -286,7 +286,7 @@ export function shouldShowSubscriptionOnboarding(
   entitlement: SubscriptionEntitlement | null | undefined
 ): boolean {
   if (!entitlement) {
-    return false; // Unknown status -> DO NOT SHOW (Avoid blocking UI)
+    return true; // No status -> SHOW
   }
 
   const isPaidPlan = entitlement.plan === 'BASIC' || entitlement.plan === 'BUSINESS' || entitlement.plan === 'ENTERPRISE';

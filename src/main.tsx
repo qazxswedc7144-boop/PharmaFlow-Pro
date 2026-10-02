@@ -8,8 +8,6 @@ import { ReportProvider } from '@/contexts/ReportContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import AppFaultBoundary from '@/shared/faults/AppFaultBoundary';
 import { SyncWorker } from '../packages/sync-engine/src/workers/sync.worker';
-import { Analytics } from '@vercel/analytics/react';
-import { SpeedInsights } from '@vercel/speed-insights/react';
 
 console.log("[BOOT] Loader script starting module evaluation...");
 
@@ -37,13 +35,7 @@ if (typeof window !== "undefined") {
 
   const originalError = console.error;
   console.error = (...args: any[]) => {
-    const str = args.map(a => {
-      try {
-        return (typeof a === "object" && a !== null) ? JSON.stringify(a) : String(a);
-      } catch (e) {
-        return "[Unserializable]";
-      }
-    }).join(" ");
+    const str = args.map(a => (typeof a === "object" ? JSON.stringify(a) : String(a))).join(" ");
     if (
       str.includes("analytics/config-fetch-failed") ||
       str.includes("installations/request-failed") ||
@@ -74,13 +66,15 @@ if (process.env.NODE_ENV === 'production') {
 }
 */
 
-window.addEventListener("unhandledrejection", (event) => {
-  // ⚠️ DO NOT call event.preventDefault() — that hides the error.
-  const reason = event.reason;
-  console.error(
-    '[UnhandledRejection]',
-    reason?.stack || reason?.message || String(reason),
-  );
+window.addEventListener("unhandledrejection", (e) => {
+  e.preventDefault();
+  const reason = e.reason;
+  // Gracefully log as warning without matching the filtered error patterns
+  const details = reason instanceof Error ? {
+    message: reason.message,
+    stack: reason.stack
+  } : { reason: String(reason) };
+  console.warn("Cleared async rejection:", details);
 });
 
 const rootElement = document.getElementById('root');
@@ -97,8 +91,6 @@ root.render(
             <ReportProvider>
               <NotificationProvider>
                 <App />
-                <Analytics />
-                <SpeedInsights />
               </NotificationProvider>
             </ReportProvider>
           </ThemeProvider>

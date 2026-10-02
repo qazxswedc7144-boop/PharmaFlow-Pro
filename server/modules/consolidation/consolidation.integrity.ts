@@ -32,7 +32,7 @@ export class ConsolidationIntegrityMonitor {
       balanceSheet.equity.totalEquity
     );
     const discrepancy = FinancialMath.sub(assets, liabilitiesAndEquity);
-    const isBalanced = FinancialMath.equals(assets, liabilitiesAndEquity, 1n, 'YER');
+    const isBalanced = FinancialMath.equals(assets, liabilitiesAndEquity, 0.01);
 
     const result: IntegrityCheckResult = {
       isBalanced,
@@ -82,7 +82,7 @@ export class ConsolidationIntegrityMonitor {
     const debits = trialBalance.totalDebit;
     const credits = trialBalance.totalCredit;
     const discrepancy = FinancialMath.sub(debits, credits);
-    const isBalanced = FinancialMath.equals(debits, credits, 1n, 'YER');
+    const isBalanced = FinancialMath.equals(debits, credits, 0.01);
 
     const result: IntegrityCheckResult = {
       isBalanced,
@@ -126,8 +126,8 @@ export class ConsolidationIntegrityMonitor {
     correlationId?: string
   ): IntegrityCheckResult {
     const calculatedEnding = FinancialMath.add(cashFlow.beginningCashBalance, cashFlow.netChangeInCash);
-    const cashReconcilesWithBS = FinancialMath.equals(cashFlow.endingCashBalance, balanceSheetCash, 1n, 'YER');
-    const internalReconciliation = FinancialMath.equals(cashFlow.endingCashBalance, calculatedEnding, 1n, 'YER');
+    const cashReconcilesWithBS = FinancialMath.equals(cashFlow.endingCashBalance, balanceSheetCash, 0.01);
+    const internalReconciliation = FinancialMath.equals(cashFlow.endingCashBalance, calculatedEnding, 0.01);
 
     const isBalanced = cashReconcilesWithBS && internalReconciliation;
     const discrepancy = FinancialMath.sub(cashFlow.endingCashBalance, balanceSheetCash);

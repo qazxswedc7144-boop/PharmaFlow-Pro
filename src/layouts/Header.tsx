@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-
+import { useLocation } from 'react-router-dom';
 import { db } from '@/core/db';
 import defaultLogoImg from '@/assets/brand/logo.png'; 
 import { HeartPulse, Menu } from 'lucide-react';
@@ -87,7 +87,14 @@ interface HeaderProps {
 const Header = ({ pageTitle, showBackButton, onBackClick, onMenuClick, onNavigate, currentView, isHome }: HeaderProps) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Use window.location state exclusively as the app manages its own hash-based navigation without a Router provider.
+  // Safely check location using react-router-dom useLocation if available in router context
+  let routerLocation: { pathname: string; hash: string } | null = null;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    routerLocation = useLocation();
+  } catch (e) {
+    // Graceful fallback if not inside Router context
+  }
 
   const [windowLocation, setWindowLocation] = useState(() => ({
     pathname: typeof window !== 'undefined' ? window.location.pathname : '/',
@@ -109,8 +116,8 @@ const Header = ({ pageTitle, showBackButton, onBackClick, onMenuClick, onNavigat
     };
   }, []);
 
-  const activePathname = windowLocation.pathname;
-  const activeHash = windowLocation.hash;
+  const activePathname = routerLocation?.pathname || windowLocation.pathname;
+  const activeHash = routerLocation?.hash || windowLocation.hash;
 
   // Show logo and brand identity exclusively on the home/dashboard page
   const isHomePage = Boolean(
