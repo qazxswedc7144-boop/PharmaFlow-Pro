@@ -699,3 +699,43 @@ authRouter.post("/logout", async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * TEMPORARY ENDPOINT: POST /api/auth/admin-reset
+ * Reset stale admin user for Phase 13 migration.
+ * Will be removed in a follow-up commit.
+ */
+authRouter.post("/admin-reset", async (req: Request, res: Response) => {
+  try {
+    const resetKey = req.headers["x-reset-key"];
+    const expectedKey = process.env.ADMIN_RESET_KEY || "pharmaflow-admin-reset-2026";
+
+    if (!resetKey || resetKey !== expectedKey) {
+      return res.status(403).json({ error: "FORBIDDEN", message: "Invalid or missing reset key." });
+    }
+
+    const targetUsername = req.body?.username || "admin";
+
+    // Find users with username
+    const users = await prisma.user.findMany({
+      where: { username: targetUsername }
+    });
+
+    for (const u of users) {
+      // Delete refresh tokens associated with user
+      await prisma.refreshToken.deleteMany({
+        where: { userId: u.id }
+      }).catch(() => {});
+
+      // Delete user
+      await prisma.user.delete({
+        where: { id: u.id }
+      }).catch(() => {});
+    }
+
+    return res.json({ success: true, message: `Successfully reset user ${targetUsername}.` });
+  } catch (err: any) {
+    return res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+  }
+});
+
+
