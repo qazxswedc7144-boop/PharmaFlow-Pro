@@ -8,6 +8,8 @@ import { Role } from "@prisma/client";
 import { LoginSchema } from "../../src/shared/validation/auth.schema.js";
 import { validateRequestBody } from "../middleware/validate.js";
 import { authenticateToken, requireRoles, AuthenticatedRequest } from "../middleware/auth.middleware.js";
+import { AuthorizationService } from "../services/rbac/authorization.service.js";
+import { PermissionService } from "../services/rbac/permission.service.js";
 
 export const authRouter = Router();
 
@@ -552,12 +554,15 @@ authRouter.post("/login", validateRequestBody(LoginSchema), async (req: Request,
       }
     });
 
-    // Fetch user permissions
-    const permissions = await prisma.permission.findMany({
-      where: { role: user.role }
-    }).catch(() => []);
-
-    const permissionCodes = permissions.map((p: any) => p.code || p.name || p);
+    // Fetch user permissions using AuthorizationService and PermissionService
+    const permissionCodesSet = await AuthorizationService.getUserEffectivePermissions(tenantId, user.id, user.role).catch(() => new Set<string>());
+    let permissionCodes = Array.from(permissionCodesSet);
+    if (permissionCodes.length === 0) {
+      const fallbackPerms = PermissionService.getSystemRolePermissions(user.role);
+      for (const p of fallbackPerms) permissionCodes.push(p);
+    }
+    const allPerms = PermissionService.getAllPermissions();
+    const permissions = allPerms.filter(p => permissionCodes.includes(p.key) || permissionCodes.includes('*'));
 
     // Response structure
     return res.json({
