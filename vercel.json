@@ -17,7 +17,7 @@
     "api/[...slug].ts": {
       "maxDuration": 60,
       "memory": 1024,
-      "includeFiles": "dist/server.cjs,node_modules/.prisma/**"
+      "includeFiles": "dist/server.cjs,node_modules/.prisma/client/**,node_modules/@prisma/client/**"
     }
   }
 }
