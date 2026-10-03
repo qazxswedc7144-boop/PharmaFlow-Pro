@@ -33,6 +33,32 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   app.set("trust proxy", 1);
   app.disable('x-powered-by');
 
+  // ===== BEGIN TEMPORARY ADMIN RESET =====
+  async function executeTemporaryAdminReset() {
+    if (process.env.RESET_ADMIN !== 'true') return;
+    try {
+      const { prisma } = await import('./database/prisma.js');
+      console.warn('[TEMP-RESET] RESET_ADMIN=true detected. Deleting admin user...');
+      
+      // Delete sessions first (foreign key safety)
+      await prisma.session.deleteMany({
+        where: { user: { username: 'admin' } }
+      }).catch(() => {});
+      
+      // Delete the admin user
+      const deleted = await prisma.user.deleteMany({
+        where: { username: 'admin' }
+      });
+      
+      console.warn(`[TEMP-RESET] Deleted ${deleted.count} admin user(s).`);
+      console.warn('[TEMP-RESET] REMINDER: Remove RESET_ADMIN from Vercel env vars now.');
+    } catch (err) {
+      console.error('[TEMP-RESET] Failed (non-fatal):', err);
+    }
+  }
+  executeTemporaryAdminReset().catch(() => {});
+  // ===== END TEMPORARY ADMIN RESET =====
+
   // Health check endpoints with enhanced diagnostic reporting - always return 200 for container orchestrators (Cloud Run)
   app.all(["/api/health", "/health", "/healthz", "/ready", "/live", "/_ah/health", "/_ah/start", "/ping"], async (_req, res) => {
     let dbStatus = "NOT_CONFIGURED";
