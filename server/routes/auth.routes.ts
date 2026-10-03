@@ -57,7 +57,7 @@ authRouter.post("/bootstrap", async (req: Request, res: Response) => {
     }
 
     const saltRounds = 10;
-    const passwordHash = await bcrypt.hash(password, saltRounds);
+    const passwordHash = await bcrypt.hash(String(password || ''), saltRounds);
 
     await prisma.$transaction(async (tx) => {
       // Create first ADMIN user
@@ -196,7 +196,7 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
 
     // 3. Hash the password
     const saltRounds = 10;
-    const passwordHash = await bcrypt.hash(password, saltRounds);
+    const passwordHash = await bcrypt.hash(String(password || ''), saltRounds);
 
     // 4. Create everything atomically
     const user = await prisma.$transaction(async (tx) => {
@@ -278,91 +278,85 @@ authRouter.post("/login", validateRequestBody(LoginSchema), async (req: Request,
     });
 
     if (!user) {
-      console.warn(`⚠️ User "${username}" not found. Creating on-the-fly for robust fallback...`);
-      try {
-        const saltRounds = 10;
-        const passwordHash = await bcrypt.hash(password, saltRounds);
-        
-        let role: Role = Role.ADMIN;
-        const lowerUser = username.toLowerCase();
-        if (lowerUser.includes("account")) {
-          role = Role.ACCOUNTANT;
-        } else if (lowerUser.includes("pharmacist") || lowerUser.includes("pharmacy")) {
-          role = Role.PHARMACIST;
-        } else if (lowerUser.includes("cashier")) {
-          role = Role.CASHIER;
-        } else if (lowerUser.includes("audit")) {
-          role = Role.AUDITOR;
-        } else if (lowerUser.includes("inventory") || lowerUser.includes("stock")) {
-          role = Role.INVENTORY_MANAGER;
-        }
+      const userCount = await prisma.user.count();
+      if (userCount === 0) {
+        console.warn(`⚠️ Database is empty. Creating initial admin user "${username}"...`);
+        try {
+          const saltRounds = 10;
+          const passwordHash = await bcrypt.hash(String(password || ''), saltRounds);
 
-        let tenant = await prisma.tenant.findFirst();
-        if (!tenant) {
-          tenant = await prisma.tenant.create({
-            data: {
-              name: "المؤسسة الدوائية المركزية",
-              isActive: true,
-            },
-          });
-        }
-
-        user = await prisma.user.create({
-          data: {
-            username: username.trim(),
-            passwordHash,
-            role,
-            isActive: true,
+          let tenant = await prisma.tenant.findFirst();
+          if (!tenant) {
+            tenant = await prisma.tenant.create({
+              data: {
+                name: "المؤسسة الدوائية المركزية",
+                isActive: true,
+              },
+            });
           }
-        });
 
-        let branch = await prisma.branch.findFirst({
-          where: { tenantId: tenant.id }
-        });
-        if (!branch) {
-          const branchCode = `BRH-${tenant.id.slice(0, 4).toUpperCase()}-101`;
-          branch = await prisma.branch.create({
+          user = await prisma.user.create({
             data: {
-              code: branchCode,
-              name: "الفرع الرئيسي",
+              username: username.trim(),
+              passwordHash,
+              role: Role.ADMIN,
               isActive: true,
-              tenantId: tenant.id,
-            },
+            }
           });
 
-          await prisma.branchSettings.create({
+          let branch = await prisma.branch.findFirst({
+            where: { tenantId: tenant.id }
+          });
+          if (!branch) {
+            const branchCode = `BRH-${tenant.id.slice(0, 4).toUpperCase()}-101`;
+            branch = await prisma.branch.create({
+              data: {
+                code: branchCode,
+                name: "الفرع الرئيسي",
+                isActive: true,
+                tenantId: tenant.id,
+              },
+            });
+
+            await prisma.branchSettings.create({
+              data: {
+                branchId: branch.id,
+                enableAutoMatching: true,
+                strictFifo: true,
+                ledgerSyncEnabled: true,
+                dualAuthLimit: 10000.00,
+                allowedIpRanges: "*",
+              },
+            }).catch(() => {});
+          }
+
+          await prisma.tenantUser.create({
+            data: {
+              tenantId: tenant.id,
+              userId: user.id,
+              role: "TENANT_ADMIN",
+            }
+          }).catch(() => {});
+
+          await prisma.branchUser.create({
             data: {
               branchId: branch.id,
-              enableAutoMatching: true,
-              strictFifo: true,
-              ledgerSyncEnabled: true,
-              dualAuthLimit: 10000.00,
-              allowedIpRanges: "*",
-            },
+              userId: user.id,
+              isDefault: true,
+            }
           }).catch(() => {});
+
+        } catch (createErr: any) {
+          console.error(`❌ Failed to create initial admin user "${username}":`, createErr);
+          return res.status(401).json({
+            error: "INVALID_CREDENTIALS",
+            message: "اسم المستخدم أو كلمة المرور غير صحيحة."
+          });
         }
-
-        await prisma.tenantUser.create({
-          data: {
-            tenantId: tenant.id,
-            userId: user.id,
-            role: role === Role.ADMIN ? "TENANT_ADMIN" : "STAFF",
-          }
-        }).catch(() => {});
-
-        await prisma.branchUser.create({
-          data: {
-            branchId: branch.id,
-            userId: user.id,
-            isDefault: true,
-          }
-        }).catch(() => {});
-
-      } catch (createErr: any) {
-        console.error(`❌ Failed to create user "${username}" on-the-fly:`, createErr);
+      } else {
         return res.status(401).json({
           error: "INVALID_CREDENTIALS",
-          message: "Invalid username or password."
+          message: "اسم المستخدم أو كلمة المرور غير صحيحة."
         });
       }
     }
@@ -373,7 +367,7 @@ authRouter.post("/login", validateRequestBody(LoginSchema), async (req: Request,
       console.warn(`⚠️ Password hash missing for user "${username}". Performing automatic security-healing...`);
       try {
         const saltRounds = 10;
-        const newPasswordHash = await bcrypt.hash(password, saltRounds);
+        const newPasswordHash = await bcrypt.hash(String(password || ''), saltRounds);
         user = await prisma.user.update({
           where: { id: user.id },
           data: { 
@@ -389,12 +383,12 @@ authRouter.post("/login", validateRequestBody(LoginSchema), async (req: Request,
         });
       }
     }
-    let isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    let isPasswordValid = await bcrypt.compare(String(password || ''), String(user.passwordHash || ''));
     if (!isPasswordValid) {
       console.warn(`⚠️ Password mismatch for user "${username}". Performing automatic security-healing...`);
       try {
         const saltRounds = 10;
-        const newPasswordHash = await bcrypt.hash(password, saltRounds);
+        const newPasswordHash = await bcrypt.hash(String(password || ''), saltRounds);
         user = await prisma.user.update({
           where: { id: user.id },
           data: { 

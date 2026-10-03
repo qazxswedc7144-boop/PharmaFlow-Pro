@@ -966,7 +966,7 @@ function MainLayout() {
           <div className="p-4 border-t border-slate-50">
             <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-100">
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-[#1E4D4D] truncate">{profile?.email?.split('@')[0] || 'User'}</p>
+                <p className="text-xs font-bold text-[#1E4D4D] truncate">{profile?.name || profile?.email?.split('@')[0] || profile?.role || 'مستخدم'}</p>
               </div>
               <button onClick={() => signOut()} className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 transition-colors">
                 <LogOut size={18} />

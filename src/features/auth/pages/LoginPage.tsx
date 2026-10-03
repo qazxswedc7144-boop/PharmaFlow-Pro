@@ -52,7 +52,9 @@ export default function LoginPage({ onSuccess }: LoginPageProps) {
       }
 
       // Check if user is active
-      if (result?.user && !result.user.Is_Active) {
+      const u = result?.user as any;
+      const isUserActive = u?.Is_Active ?? u?.isActive ?? u?.active;
+      if (result?.user && isUserActive === false) {
         setErrorStatus('ERROR_DISABLED');
         setErrorMessage('هذا الحساب معطل حالياً من قبل إدارة النظام لدواعي أمنية ورقابية.');
         return;

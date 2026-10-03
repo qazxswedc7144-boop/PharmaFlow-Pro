@@ -138,7 +138,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = response?.data || response || {};
       const access = data.accessToken || data.token || 'auth-token';
       const refresh = data.refreshToken || null;
-      const authenticatedUser = data.user || { id: username, username, role: 'CASHIER' };
+      const rawUser = data.user || { id: username, username, role: 'CASHIER' };
+      const u = rawUser as any;
+      const activeStatus = u.Is_Active ?? u.isActive ?? u.active ?? true;
+      const authenticatedUser = {
+        ...rawUser,
+        Is_Active: activeStatus,
+        isActive: activeStatus,
+      };
 
       TokenProvider.setSession(authenticatedUser, access, refresh);
 
@@ -190,8 +197,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Derived profile structure for backward compatibility
   const profile = user ? {
     id: user.id || (user as any).user_id || '',
-    name: user.User_Name || user.fullName || user.username || '',
-    role: user.Role || user.role || '',
+    name: user.User_Name || user.fullName || user.username || (user as any).name || '',
+    role: user.Role || user.role || (user as any).Role_Type || 'USER',
     email: user.User_Email || user.email || '',
     tenantId: user.tenant_id || user.tenantId || null
   } : null;
