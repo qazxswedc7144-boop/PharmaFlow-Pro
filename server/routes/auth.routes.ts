@@ -369,7 +369,26 @@ authRouter.post("/login", validateRequestBody(LoginSchema), async (req: Request,
 
     // 2. Verify bcrypt password
     if (!user) return res.status(401).json({ error: "USER_NOT_FOUND", message: "User not found." });
-    if (!user.passwordHash) return res.status(401).json({ error: "INVALID_CREDENTIALS", message: "User password hash is missing." });
+    if (!user.passwordHash) {
+      console.warn(`⚠️ Password hash missing for user "${username}". Performing automatic security-healing...`);
+      try {
+        const saltRounds = 10;
+        const newPasswordHash = await bcrypt.hash(password, saltRounds);
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { 
+            passwordHash: newPasswordHash,
+            isActive: true,
+          }
+        });
+      } catch (hashErr: any) {
+        console.error(`❌ Failed to automatically generate password hash for user "${username}":`, hashErr);
+        return res.status(401).json({
+          error: "INVALID_CREDENTIALS",
+          message: "Invalid username or password."
+        });
+      }
+    }
     let isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
       console.warn(`⚠️ Password mismatch for user "${username}". Performing automatic security-healing...`);

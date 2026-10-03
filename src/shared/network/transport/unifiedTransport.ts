@@ -198,7 +198,7 @@ export class UnifiedTransport implements Transport {
         clearTimeout(timer);
 
         // Handle 401 Single-Flight Token Refresh
-        if (response.status === 401 && !config.skipAuth && !config.url.includes('/api/auth/refresh') && !config.url.includes('/api/v1/auth/refresh')) {
+        if (response.status === 401 && !config.skipAuth && !config.url.includes('/api/auth/') && !config.url.includes('/api/v1/auth/')) {
           if (typeof navigator !== 'undefined' && navigator.onLine && !refreshedToken) {
             refreshedToken = true;
             try {
