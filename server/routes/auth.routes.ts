@@ -11,10 +11,43 @@ import { authenticateToken, requireRoles, AuthenticatedRequest } from "../middle
 import { AuthorizationService } from "../services/rbac/authorization.service.js";
 import { PermissionService } from "../services/rbac/permission.service.js";
 
+import rateLimit from "express-rate-limit";
+
 export const authRouter = Router();
 
-const getJwtSecret = () => process.env.JWT_SECRET || 'pharmaflow-local-development-jwt-secure-secret-2026';
-const getJwtRefreshSecret = () => process.env.JWT_REFRESH_SECRET || 'pharmaflow-local-development-jwt-refresh-secure-secret-2026';
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
+    }
+    return 'pharmaflow-local-development-jwt-secure-secret-2026';
+  }
+  return secret;
+};
+
+const getJwtRefreshSecret = () => {
+  const secret = process.env.JWT_REFRESH_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: JWT_REFRESH_SECRET environment variable is missing in production.');
+    }
+    return 'pharmaflow-local-development-jwt-refresh-secure-secret-2026';
+  }
+  return secret;
+};
+
+const loginRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: {
+    error: "RATE_LIMIT_EXCEEDED",
+    message: "تم تقييد محاولات تسجيل الدخول حماية للحسابات من هجمات القوة الغاشمة. يرجى الانتظار 15 دقيقة."
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { default: false }
+});
 
 /**
  * GET /api/auth/bootstrap-status
@@ -270,157 +303,43 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
  * POST /api/auth/login
  * Standard user authenticate credentials with audit tracking
  */
-authRouter.post("/login", validateRequestBody(LoginSchema), async (req: Request, res: Response) => {
+authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 
     // 1. Find user by username
-    let user = await prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { username }
     });
 
     if (!user) {
-      const userCount = await prisma.user.count();
-      if (userCount === 0) {
-        console.warn(`⚠️ Database is empty. Creating initial admin user "${username}"...`);
-        try {
-          const saltRounds = 10;
-          const passwordHash = await bcrypt.hash(String(password || ''), saltRounds);
-
-          let tenant = await prisma.tenant.findFirst();
-          if (!tenant) {
-            tenant = await prisma.tenant.create({
-              data: {
-                name: "المؤسسة الدوائية المركزية",
-                isActive: true,
-              },
-            });
-          }
-
-          user = await prisma.user.create({
-            data: {
-              username: username.trim(),
-              passwordHash,
-              role: Role.ADMIN,
-              isActive: true,
-            }
-          });
-
-          let branch = await prisma.branch.findFirst({
-            where: { tenantId: tenant.id }
-          });
-          if (!branch) {
-            const branchCode = `BRH-${tenant.id.slice(0, 4).toUpperCase()}-101`;
-            branch = await prisma.branch.create({
-              data: {
-                code: branchCode,
-                name: "الفرع الرئيسي",
-                isActive: true,
-                tenantId: tenant.id,
-              },
-            });
-
-            await prisma.branchSettings.create({
-              data: {
-                branchId: branch.id,
-                enableAutoMatching: true,
-                strictFifo: true,
-                ledgerSyncEnabled: true,
-                dualAuthLimit: 10000.00,
-                allowedIpRanges: "*",
-              },
-            }).catch(() => {});
-          }
-
-          await prisma.tenantUser.create({
-            data: {
-              tenantId: tenant.id,
-              userId: user.id,
-              role: "TENANT_ADMIN",
-            }
-          }).catch(() => {});
-
-          await prisma.branchUser.create({
-            data: {
-              branchId: branch.id,
-              userId: user.id,
-              isDefault: true,
-            }
-          }).catch(() => {});
-
-        } catch (createErr: any) {
-          console.error(`❌ Failed to create initial admin user "${username}":`, createErr);
-          return res.status(401).json({
-            error: "INVALID_CREDENTIALS",
-            message: "اسم المستخدم أو كلمة المرور غير صحيحة."
-          });
-        }
-      } else {
-        return res.status(401).json({
-          error: "INVALID_CREDENTIALS",
-          message: "اسم المستخدم أو كلمة المرور غير صحيحة."
-        });
-      }
+      return res.status(401).json({
+        error: "INVALID_CREDENTIALS",
+        message: "اسم المستخدم أو كلمة المرور غير صحيحة."
+      });
     }
 
     // 2. Verify bcrypt password
-    if (!user) return res.status(401).json({ error: "USER_NOT_FOUND", message: "User not found." });
     if (!user.passwordHash) {
-      console.warn(`⚠️ Password hash missing for user "${username}". Performing automatic security-healing...`);
-      try {
-        const saltRounds = 10;
-        const newPasswordHash = await bcrypt.hash(String(password || ''), saltRounds);
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: { 
-            passwordHash: newPasswordHash,
-            isActive: true,
-          }
-        });
-      } catch (hashErr: any) {
-        console.error(`❌ Failed to automatically generate password hash for user "${username}":`, hashErr);
-        return res.status(401).json({
-          error: "INVALID_CREDENTIALS",
-          message: "Invalid username or password."
-        });
-      }
+      return res.status(401).json({
+        error: "INVALID_CREDENTIALS",
+        message: "اسم المستخدم أو كلمة المرور غير صحيحة."
+      });
     }
-    let isPasswordValid = await bcrypt.compare(String(password || ''), String(user.passwordHash || ''));
+    const isPasswordValid = await bcrypt.compare(String(password || ''), String(user.passwordHash));
     if (!isPasswordValid) {
-      console.warn(`⚠️ Password mismatch for user "${username}". Performing automatic security-healing...`);
-      try {
-        const saltRounds = 10;
-        const newPasswordHash = await bcrypt.hash(String(password || ''), saltRounds);
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: { 
-            passwordHash: newPasswordHash,
-            isActive: true, // Auto-activate on successful self-heal
-          }
-        });
-        isPasswordValid = true;
-      } catch (selfHealErr: any) {
-        console.error(`❌ Failed to automatically heal password for user "${username}":`, selfHealErr);
-        return res.status(401).json({
-          error: "INVALID_CREDENTIALS",
-          message: "Invalid username or password."
-        });
-      }
+      return res.status(401).json({
+        error: "INVALID_CREDENTIALS",
+        message: "اسم المستخدم أو كلمة المرور غير صحيحة."
+      });
     }
 
     // 3. Reject inactive users
     if (!user.isActive) {
-      try {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: { isActive: true }
-        });
-      } catch (activateErr) {
-        return res.status(403).json({
-          error: "ACCOUNT_SUSPENDED",
-          message: "Account suspended."
-        });
-      }
+      return res.status(403).json({
+        error: "ACCOUNT_DISABLED",
+        message: "Account is disabled."
+      });
     }
 
     // Look up tenant registration link for isolation support (with dynamic self-healing)

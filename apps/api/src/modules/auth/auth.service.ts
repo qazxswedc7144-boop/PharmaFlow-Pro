@@ -4,8 +4,27 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { Role } from "@prisma/client";
 
-const getJwtSecret = () => process.env.JWT_SECRET || 'pharmaflow-local-development-jwt-secure-secret-2026';
-const getJwtRefreshSecret = () => process.env.JWT_REFRESH_SECRET || 'pharmaflow-local-development-jwt-refresh-secure-secret-2026';
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
+    }
+    return 'pharmaflow-local-development-jwt-secure-secret-2026';
+  }
+  return secret;
+};
+
+const getJwtRefreshSecret = () => {
+  const secret = process.env.JWT_REFRESH_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: JWT_REFRESH_SECRET environment variable is missing in production.');
+    }
+    return 'pharmaflow-local-development-jwt-refresh-secure-secret-2026';
+  }
+  return secret;
+};
 
 export interface DecodedAccessToken {
   userId: string;

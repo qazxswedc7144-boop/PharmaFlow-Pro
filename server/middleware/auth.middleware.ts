@@ -12,7 +12,20 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 
-const getJwtSecret = () => process.env.JWT_SECRET || 'pharmaflow-local-development-jwt-secure-secret-2026';
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
+    }
+    return 'pharmaflow-local-development-jwt-secure-secret-2026';
+  }
+  return secret;
+};
+
+const isDevLocalTokenAllowed = () => {
+  return process.env.NODE_ENV === 'development' && process.env.DEV_ALLOW_LOCAL_TOKEN === 'true';
+};
 
 /**
  * Validates the JWT Bearer Token in authorization headers
@@ -28,7 +41,7 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
     });
   }
 
-  if (token === "local-admin-token" || token.startsWith("local-")) {
+  if (isDevLocalTokenAllowed() && (token === "local-admin-token" || token.startsWith("local-"))) {
     (req as AuthenticatedRequest).user = {
       userId: "local-admin",
       username: "Administrator",
@@ -56,7 +69,7 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
     next();
     return;
   } catch (err) {
-    if (token === "local-admin-token" || token.startsWith("local-")) {
+    if (isDevLocalTokenAllowed() && (token === "local-admin-token" || token.startsWith("local-"))) {
       (req as AuthenticatedRequest).user = {
         userId: "local-admin",
         username: "Administrator",
