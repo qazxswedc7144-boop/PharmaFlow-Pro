@@ -20,39 +20,26 @@ function isConnectionError(err: any): boolean {
   const msg = String(err?.message || err?.cause || err?.kind || err || "");
   const code = String(err?.code || "");
   const name = String(err?.name || "");
+  if (name) {}
 
-  return (
-    code.startsWith("P") ||
-    name.includes("Prisma") ||
-    err instanceof OfflineDatabaseError ||
-    msg.includes("Closed") ||
-    msg.includes("closed") ||
-    msg.includes("connection") ||
-    msg.includes("Connection") ||
-    msg.includes("EngineState") ||
-    msg.includes("p1001") ||
-    msg.includes("P1001") ||
-    msg.includes("p1002") ||
-    msg.includes("P1002") ||
-    msg.includes("p1008") ||
-    msg.includes("P1008") ||
-    msg.includes("p1017") ||
-    msg.includes("P1017") ||
-    msg.includes("p2021") ||
-    msg.includes("P2021") ||
-    msg.includes("kind: Closed") ||
-    msg.includes("Kind: Closed") ||
-    msg.includes("ECONNREFUSED") ||
-    msg.includes("ECONNRESET") ||
-    msg.includes("ETIMEDOUT") ||
-    msg.includes("socket") ||
-    msg.includes("terminated") ||
+  // ONLY real connection/network error codes from Prisma
+  if (['P1001', 'P1002', 'P1008', 'P1010', 'P1017', 'P2024'].includes(code)) return true;
+
+  // Network errors
+  if (
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('ENOTFOUND') ||
     msg.includes("Can't reach database") ||
-    msg.includes("reach database") ||
-    msg.includes("Closed, cause: None") ||
-    msg.includes("does not exist") ||
-    msg.includes("table")
-  );
+    msg.includes('Connection pool timeout') ||
+    msg.includes('Kind: Closed')
+  ) return true;
+
+  // Offline error class
+  if (err instanceof OfflineDatabaseError) return true;
+
+  return false;
 }
 
 const isProduction = process.env.NODE_ENV === "production" || process.cwd().includes("dist") || (typeof __filename !== "undefined" && __filename.includes("dist"));
