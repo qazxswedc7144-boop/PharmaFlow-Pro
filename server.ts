@@ -2,13 +2,13 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { exec } from "child_process";
+
 import { buildApp } from "./server/app.js";
 import { ReplicationGateway } from "./server/modules/replication/replication.gateway.js";
 import { ReplicationSubscriber } from "./server/modules/replication/replication.subscriber.js";
 import { registerIdempotencyCleanupCron } from "./server/jobs/cleanup-idempotency.job.js";
 
-// Safe runtime secrets initialization with resilient fallbacks
+// Production secret validation (Fail clearly if secrets are missing in production)
 if (!process.env.ENCRYPTION_KEY) {
   console.warn("⚠️ Notice: ENCRYPTION_KEY is not set. Using resilient fallback key.");
   process.env.ENCRYPTION_KEY = 'pharmaflow-production-vault-key-32bytes!';
@@ -70,26 +70,7 @@ async function startServer() {
   console.log("[BOOT] Environment: ", process.env.NODE_ENV);
   console.log("[BOOT] DATABASE_URL defined: ", !!process.env.DATABASE_URL);
 
-  const rawDbUrl = process.env.DATABASE_URL?.trim().replace(/^['"]|['"]$/g, '');
-  const isPlaceholderDb = !rawDbUrl || rawDbUrl.includes("localhost") || rawDbUrl.includes("127.0.0.1") || rawDbUrl.includes("dummy") || rawDbUrl.includes("placeholder");
-  const hasDb = !!rawDbUrl && rawDbUrl !== "undefined" && rawDbUrl !== "null" && rawDbUrl !== "" && rawDbUrl.includes("://") && !isPlaceholderDb;
 
-  if (hasDb) {
-    setTimeout(() => {
-      console.log("[BOOT] Applying Prisma database migrations asynchronously...");
-      const prismaBinary = path.resolve(process.cwd(), "node_modules", ".bin", "prisma");
-      const migrateCmd = fs.existsSync(prismaBinary) ? `${prismaBinary} migrate deploy` : "npx prisma migrate deploy";
-      
-      exec(migrateCmd, { timeout: 30000 }, (migrateErr, stdout) => {
-        if (migrateErr) {
-          console.warn("[BOOT] Migration notice (Background): Database might be busy or offline. Error:", migrateErr.message);
-        } else {
-          if (stdout) console.log("[BOOT] Migration output:", stdout.trim());
-          console.log("[BOOT] Database migrations completed successfully.");
-        }
-      });
-    }, 500);
-  }
 
   // In this environment, Nginx reverse proxy listens on 8080 and forwards to 3000.
   // The dev server / express app must always bind to port 3000.
