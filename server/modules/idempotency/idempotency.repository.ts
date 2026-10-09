@@ -32,33 +32,32 @@ export class IdempotencyRepository {
    * Retrieves an idempotency key record from the database, falling back to cache if DB is offline.
    */
   static async findByKey(key: string, tenantId?: string | null): Promise<IdempotencyKey | null> {
-    const cached = inMemoryFallbackStore.get(key);
+    const effectiveTenantId = tenantId || getTenantContext()?.tenantId || null;
+    if (!effectiveTenantId) {
+      throw new Error("TENANT_ID_REQUIRED_FOR_IDEMPOTENCY: findByKey requires a tenantId.");
+    }
+    const cacheKey = `${effectiveTenantId}:${key}`;
+    const cached = inMemoryFallbackStore.get(cacheKey);
     if (cached) {
       if (new Date() > cached.expiresAt) {
-        inMemoryFallbackStore.delete(key);
+        inMemoryFallbackStore.delete(cacheKey);
       } else {
         return cached;
       }
     }
 
-    const effectiveTenantId = tenantId || getTenantContext()?.tenantId || null;
     try {
-      if (effectiveTenantId) {
-        return await prisma.idempotencyKey.findUnique({
-          where: {
-            tenantId_key: {
-              tenantId: effectiveTenantId,
-              key
-            }
+      return await prisma.idempotencyKey.findUnique({
+        where: {
+          tenantId_key: {
+            tenantId: effectiveTenantId,
+            key
           }
-        });
-      }
-      return await prisma.idempotencyKey.findFirst({
-        where: { key }
+        }
       });
     } catch (error) {
       if (isDbConnectionError(error)) {
-        return inMemoryFallbackStore.get(key) || null;
+        return inMemoryFallbackStore.get(cacheKey) || null;
       }
       throw error;
     }
@@ -79,26 +78,22 @@ export class IdempotencyRepository {
     const expiresAt = new Date(Date.now() + expiresInMs);
     const effectiveTenantId = tenantId || getTenantContext()?.tenantId || null;
 
-    if (!effectiveTenantId && process.env.NODE_ENV === "production") {
-      throw new Error("FATAL: Idempotency operation requires a valid tenantId in production.");
+    if (!effectiveTenantId) {
+      throw new Error("TENANT_ID_REQUIRED_FOR_IDEMPOTENCY: acquireLock requires a valid tenantId.");
     }
-    const resolvedTenantId = effectiveTenantId || "default-tenant";
+    const cacheKey = `${effectiveTenantId}:${key}`;
 
     try {
       // Try DB-level transaction
       return await prisma.$transaction(async (tx) => {
-        const existing = effectiveTenantId
-          ? await tx.idempotencyKey.findUnique({
-              where: {
-                tenantId_key: {
-                  tenantId: effectiveTenantId,
-                  key
-                }
-              }
-            })
-          : await tx.idempotencyKey.findFirst({
-              where: { key }
-            });
+        const existing = await tx.idempotencyKey.findUnique({
+          where: {
+            tenantId_key: {
+              tenantId: effectiveTenantId,
+              key
+            }
+          }
+        });
 
         if (existing) {
           return { record: existing, isNew: false };
@@ -107,7 +102,7 @@ export class IdempotencyRepository {
         const created = await tx.idempotencyKey.create({
           data: {
             key,
-            tenantId: resolvedTenantId,
+            tenantId: effectiveTenantId,
             requestHash,
             endpoint,
             requestMethod,
@@ -122,10 +117,10 @@ export class IdempotencyRepository {
       });
     } catch (error) {
       if (isDbConnectionError(error)) {
-        const existing = inMemoryFallbackStore.get(key);
+        const existing = inMemoryFallbackStore.get(cacheKey);
         if (existing) {
           if (new Date() > existing.expiresAt) {
-            inMemoryFallbackStore.delete(key);
+            inMemoryFallbackStore.delete(cacheKey);
           } else {
             return { record: existing, isNew: false };
           }
@@ -133,7 +128,7 @@ export class IdempotencyRepository {
 
         const mockRecord: IdempotencyKey = {
           id: Math.random().toString(36).substring(3, 11),
-          tenantId: resolvedTenantId,
+          tenantId: effectiveTenantId,
           key,
           requestHash,
           endpoint,
@@ -147,23 +142,19 @@ export class IdempotencyRepository {
           createdAt: new Date()
         };
 
-        inMemoryFallbackStore.set(key, mockRecord);
+        inMemoryFallbackStore.set(cacheKey, mockRecord);
         return { record: mockRecord, isNew: true };
       }
 
       // Concurrency retry
-      const checkAgain = effectiveTenantId
-        ? await prisma.idempotencyKey.findUnique({
-            where: {
-              tenantId_key: {
-                tenantId: effectiveTenantId,
-                key
-              }
-            }
-          })
-        : await prisma.idempotencyKey.findFirst({
-            where: { key }
-          });
+      const checkAgain = await prisma.idempotencyKey.findUnique({
+        where: {
+          tenantId_key: {
+            tenantId: effectiveTenantId,
+            key
+          }
+        }
+      });
       if (checkAgain) {
         return { record: checkAgain, isNew: false };
       }
@@ -181,7 +172,11 @@ export class IdempotencyRepository {
     tenantId?: string | null
   ): Promise<IdempotencyKey> {
     const effectiveTenantId = tenantId || getTenantContext()?.tenantId || null;
-    const cached = inMemoryFallbackStore.get(key);
+    if (!effectiveTenantId) {
+      throw new Error("TENANT_ID_REQUIRED_FOR_IDEMPOTENCY: resolveKey requires a tenantId.");
+    }
+    const cacheKey = `${effectiveTenantId}:${key}`;
+    const cached = inMemoryFallbackStore.get(cacheKey);
     if (cached) {
       cached.processing = false;
       cached.responseBody = responseBody ?? null;
@@ -190,44 +185,27 @@ export class IdempotencyRepository {
     }
 
     try {
-      if (effectiveTenantId) {
-        return await prisma.idempotencyKey.update({
-          where: {
-            tenantId_key: {
-              tenantId: effectiveTenantId,
-              key
-            }
-          },
-          data: {
-            processing: false,
-            responseBody: responseBody ?? null,
-            responseStatus,
-            lockedAt: null
+      return await prisma.idempotencyKey.update({
+        where: {
+          tenantId_key: {
+            tenantId: effectiveTenantId,
+            key
           }
-        });
-      }
-
-      const existing = await prisma.idempotencyKey.findFirst({ where: { key } });
-      if (existing) {
-        return await prisma.idempotencyKey.update({
-          where: { id: existing.id },
-          data: {
-            processing: false,
-            responseBody: responseBody ?? null,
-            responseStatus,
-            lockedAt: null
-          }
-        });
-      }
-      if (cached) return cached;
-      throw new Error(`Idempotency key ${key} not found to resolve.`);
+        },
+        data: {
+          processing: false,
+          responseBody: responseBody ?? null,
+          responseStatus,
+          lockedAt: null
+        }
+      });
     } catch (error) {
       if (cached) return cached;
       if (isDbConnectionError(error)) {
         // Fallback create if not there
         const mockRecord: IdempotencyKey = {
           id: Math.random().toString(36).substring(3, 11),
-          tenantId: effectiveTenantId || "default-tenant",
+          tenantId: effectiveTenantId,
           key,
           requestHash: "",
           endpoint: "",
@@ -240,7 +218,7 @@ export class IdempotencyRepository {
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
           createdAt: new Date()
         };
-        inMemoryFallbackStore.set(key, mockRecord);
+        inMemoryFallbackStore.set(cacheKey, mockRecord);
         return mockRecord;
       }
       throw error;
@@ -252,39 +230,29 @@ export class IdempotencyRepository {
    */
   static async releaseLock(key: string, tenantId?: string | null): Promise<IdempotencyKey | null> {
     const effectiveTenantId = tenantId || getTenantContext()?.tenantId || null;
-    const cached = inMemoryFallbackStore.get(key);
+    if (!effectiveTenantId) {
+      throw new Error("TENANT_ID_REQUIRED_FOR_IDEMPOTENCY: releaseLock requires a tenantId.");
+    }
+    const cacheKey = `${effectiveTenantId}:${key}`;
+    const cached = inMemoryFallbackStore.get(cacheKey);
     if (cached) {
       cached.processing = false;
       cached.lockedAt = null;
     }
 
     try {
-      if (effectiveTenantId) {
-        return await prisma.idempotencyKey.update({
-          where: {
-            tenantId_key: {
-              tenantId: effectiveTenantId,
-              key
-            }
-          },
-          data: {
-            processing: false,
-            lockedAt: null
+      return await prisma.idempotencyKey.update({
+        where: {
+          tenantId_key: {
+            tenantId: effectiveTenantId,
+            key
           }
-        });
-      }
-
-      const existing = await prisma.idempotencyKey.findFirst({ where: { key } });
-      if (existing) {
-        return await prisma.idempotencyKey.update({
-          where: { id: existing.id },
-          data: {
-            processing: false,
-            lockedAt: null
-          }
-        });
-      }
-      return cached || null;
+        },
+        data: {
+          processing: false,
+          lockedAt: null
+        }
+      });
     } catch (error) {
       return cached || null;
     }

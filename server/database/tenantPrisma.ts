@@ -16,6 +16,7 @@ export const TENANT_OWNED_MODELS = [
   "branch",
   "branchInventory",
   "branchTransfer",
+  "branchTransferItem",
   "branchUser",
   "payment",
   "expense",
@@ -163,8 +164,11 @@ export const tenantPrisma = getTenantScopedPrisma();
  */
 export function validateTenantAccess(recordTenantId?: string | null, targetTenantId?: string): boolean {
   const current = targetTenantId || getCurrentTenantId();
-  if (!recordTenantId || recordTenantId === current || current === "default-tenant") {
-    return true;
+  if (!current || current === "default-tenant") {
+    return false;
   }
-  return false;
+  if (!recordTenantId) {
+    return false;
+  }
+  return recordTenantId === current;
 }

@@ -304,6 +304,9 @@ export class RoleService {
     permissionKey: string,
     effect: 'ALLOW' | 'DENY'
   ): Promise<void> {
+    if (!tenantId) {
+      throw new Error("FATAL: tenantId is mandatory for UserPermissionOverride operations.");
+    }
     const isDbReady = prisma.isConnected && prisma.isConnected();
     if (isDbReady && (prisma as any).userPermissionOverride && (prisma as any).permission) {
       try {
@@ -314,8 +317,8 @@ export class RoleService {
           });
         }
         await (prisma as any).userPermissionOverride.upsert({
-          where: { userId_permissionId: { userId, permissionId: perm.id } },
-          create: { userId, permissionId: perm.id, effect },
+          where: { userId_permissionId_tenantId: { userId, permissionId: perm.id, tenantId } },
+          create: { userId, permissionId: perm.id, tenantId, effect },
           update: { effect }
         });
       } catch (err) {
@@ -336,13 +339,16 @@ export class RoleService {
     userId: string,
     permissionKey: string
   ): Promise<void> {
+    if (!tenantId) {
+      throw new Error("FATAL: tenantId is mandatory for UserPermissionOverride operations.");
+    }
     const isDbReady = prisma.isConnected && prisma.isConnected();
     if (isDbReady && (prisma as any).userPermissionOverride && (prisma as any).permission) {
       try {
         const perm = await (prisma as any).permission.findUnique({ where: { key: permissionKey } });
         if (perm) {
           await (prisma as any).userPermissionOverride.deleteMany({
-            where: { userId, permissionId: perm.id }
+            where: { userId, permissionId: perm.id, tenantId }
           });
         }
       } catch (err) {
@@ -357,11 +363,14 @@ export class RoleService {
   }
 
   static async getUserPermissionOverrides(tenantId: string, userId: string): Promise<UserPermissionOverrideItem[]> {
+    if (!tenantId) {
+      throw new Error("FATAL: tenantId is mandatory for UserPermissionOverride operations.");
+    }
     const isDbReady = prisma.isConnected && prisma.isConnected();
     if (isDbReady && (prisma as any).userPermissionOverride) {
       try {
         const records = await (prisma as any).userPermissionOverride.findMany({
-          where: { userId },
+          where: { userId, tenantId },
           include: { permission: true }
         });
         if (records && records.length > 0) {

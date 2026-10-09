@@ -154,6 +154,7 @@ model CustomRole {
   userRoles    UserRole[]
 
   @@unique([tenantId, name])
+  @@unique([id, tenantId])
   @@index([tenantId])
   @@map("roles")
 }
@@ -195,7 +196,7 @@ model UserRole {
   roleId    String
   branchId  String?
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      CustomRole @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  role      CustomRole @relation(fields: [roleId, tenantId], references: [id, tenantId], onDelete: Cascade)
   tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   branch    Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
   createdAt DateTime   @default(now())
@@ -297,27 +298,28 @@ model JournalLine {
 }
 
 model Product {
-  id                 String              @id @default(uuid())
-  name               String
-  barcode            String?
-  sku                String?
-  description        String?
-  price              Decimal             @default(0.00) @db.Decimal(18, 4)
-  cost               Decimal             @default(0.00) @db.Decimal(18, 4)
-  stockQuantity      Int                 @default(0)
-  version            Int                 @default(0)
-  isSystem           Boolean             @default(false)
-  isActive           Boolean             @default(true)
-  deletedAt          DateTime?
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  inventoryBatches   InventoryBatch[]
-  inventoryMovements InventoryMovement[]
-  reservations       Reservation[]
-  invoiceItems       InvoiceItem[]       @relation("ProductInvoiceItems")
-  branchInventories  BranchInventory[]   @relation("ProductBranchInventories")
-  tenantId           String
-  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id                  String               @id @default(uuid())
+  name                String
+  barcode             String?
+  sku                 String?
+  description         String?
+  price               Decimal              @default(0.00) @db.Decimal(18, 4)
+  cost                Decimal              @default(0.00) @db.Decimal(18, 4)
+  stockQuantity       Int                  @default(0)
+  version             Int                  @default(0)
+  isSystem            Boolean              @default(false)
+  isActive            Boolean              @default(true)
+  deletedAt           DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  inventoryBatches    InventoryBatch[]
+  inventoryMovements  InventoryMovement[]
+  reservations        Reservation[]
+  invoiceItems        InvoiceItem[]        @relation("ProductInvoiceItems")
+  branchInventories   BranchInventory[]    @relation("ProductBranchInventories")
+  tenantId            String
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchTransferItems BranchTransferItem[]
 
   @@unique([id, tenantId])
   @@unique([tenantId, barcode])
@@ -587,22 +589,23 @@ model Reservation {
 }
 
 model Branch {
-  id              String            @id @default(uuid())
-  code            String
-  name            String
-  location        String?
-  phone           String?
-  isActive        Boolean           @default(true)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  settings        BranchSettings?
-  branchInventory BranchInventory[]
-  branchUsers     BranchUser[]
-  userRoles       UserRole[]
-  transfersSource BranchTransfer[]  @relation("SourceBranch")
-  transfersTarget BranchTransfer[]  @relation("TargetBranch")
-  tenantId        String
-  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id                  String               @id @default(uuid())
+  code                String
+  name                String
+  location            String?
+  phone               String?
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  settings            BranchSettings?
+  branchInventory     BranchInventory[]
+  branchUsers         BranchUser[]
+  userRoles           UserRole[]
+  transfersSource     BranchTransfer[]     @relation("SourceBranch")
+  transfersTarget     BranchTransfer[]     @relation("TargetBranch")
+  tenantId            String
+  tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deviceRegistrations DeviceRegistration[]
 
   @@unique([id, tenantId])
   @@unique([tenantId, code])
@@ -664,6 +667,7 @@ model BranchTransfer {
   tenantId       String
   tenant         Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@unique([id, tenantId])
   @@unique([tenantId, transferNumber])
   @@index([sourceBranchId])
   @@index([targetBranchId])
@@ -674,9 +678,12 @@ model BranchTransfer {
 
 model BranchTransferItem {
   id          String         @id @default(uuid())
+  tenantId    String
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   transferId  String
-  transfer    BranchTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  transfer    BranchTransfer @relation(fields: [transferId, tenantId], references: [id, tenantId], onDelete: Cascade)
   productId   String
+  product     Product        @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
   qty         Int
   receivedQty Int?           @default(0)
   batchNumber String?
@@ -685,19 +692,22 @@ model BranchTransferItem {
 
   @@index([transferId])
   @@index([productId])
+  @@index([tenantId])
   @@map("branch_transfer_items")
 }
 
 model BranchUser {
-  id        String   @id @default(uuid())
-  branchId  String
-  branch    Branch   @relation(fields: [branchId, tenantId], references: [id, tenantId], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tenantId  String
-  isDefault Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String     @id @default(uuid())
+  tenantId   String
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId   String
+  branch     Branch     @relation(fields: [branchId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantUser TenantUser @relation(fields: [userId, tenantId], references: [userId, tenantId], onDelete: Cascade)
+  isDefault  Boolean    @default(false)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 
   @@unique([branchId, userId])
   @@index([branchId])
@@ -780,21 +790,25 @@ model Tenant {
   branchInventories   BranchInventory[]
   deviceRegistrations DeviceRegistration[]     @relation("TenantDeviceRegistrations")
   userOverrides       UserPermissionOverride[]
+  branchTransferItems BranchTransferItem[]
+  branchUsers         BranchUser[]
 
   @@map("tenants")
 }
 
 model TenantUser {
-  id        String   @id @default(uuid())
-  tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      String   @default("TENANT_ADMIN")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String       @id @default(uuid())
+  tenantId    String
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String       @default("TENANT_ADMIN")
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  branchUsers BranchUser[]
 
   @@unique([tenantId, userId])
+  @@unique([userId, tenantId])
   @@map("tenant_users")
 }
 
@@ -874,6 +888,7 @@ model DeviceRegistration {
   tenantId       String
   tenant         Tenant   @relation("TenantDeviceRegistrations", fields: [tenantId], references: [id], onDelete: Cascade)
   branchId       String
+  branch         Branch   @relation(fields: [branchId, tenantId], references: [id, tenantId], onDelete: Cascade)
   deviceName     String
   androidVersion String?
   appVersion     String?
