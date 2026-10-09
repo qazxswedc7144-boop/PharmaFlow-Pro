@@ -229,20 +229,20 @@ model UserPermissionOverride {
 }
 
 model Account {
-  id           String        @id @default(uuid())
-  code         String
-  name         String
-  type         AccountType
-  parentId     String?
-  parent       Account?      @relation("AccountHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
-  children     Account[]     @relation("AccountHierarchy")
-  isSystem     Boolean       @default(false)
-  balance      Decimal       @default(0.00) @db.Decimal(18, 4)
-  version      Int           @default(0)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  tenantId     String
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id        String      @id @default(uuid())
+  code      String
+  name      String
+  type      AccountType
+  parentId  String?
+  parent    Account?    @relation("AccountHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Account[]   @relation("AccountHierarchy")
+  isSystem  Boolean     @default(false)
+  balance   Decimal     @default(0.00) @db.Decimal(18, 4)
+  version   Int         @default(0)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  tenantId  String
+  tenant    Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   journalLines JournalLine[] @relation("AccountJournalLines")
 
@@ -390,20 +390,20 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   tenantId   String
   invoiceId  String
-  invoice    Invoice  @relation(fields: [invoiceId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  invoice    Invoice   @relation(fields: [invoiceId, tenantId], references: [id, tenantId], onDelete: Cascade)
   productId  String
-  product    Product  @relation("ProductInvoiceItems", fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  product    Product   @relation("ProductInvoiceItems", fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
   qty        Int
-  price      Decimal  @db.Decimal(18, 4)
-  cost       Decimal  @db.Decimal(18, 4)
-  total      Decimal  @db.Decimal(18, 4)
+  price      Decimal   @db.Decimal(18, 4)
+  cost       Decimal   @db.Decimal(18, 4)
+  total      Decimal   @db.Decimal(18, 4)
   expiryDate DateTime?
   note       String?
   category   String?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   @@index([tenantId])
   @@index([invoiceId])
@@ -464,20 +464,20 @@ model InventoryMovement {
 }
 
 model AuditLog {
-  id         String          @id @default(uuid())
-  timestamp  DateTime        @default(now())
-  userId     String?
-  user       User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
-  action     AuditActionType
-  entity     String          // "Account", "Invoice", "Product", "Role", "Permission", "UserRole"
-  entityId   String
-  before     String?         @db.Text // JSON string state
-  after      String?         @db.Text // JSON string state
-  ipAddress  String?
-  requestId  String?
-  createdAt  DateTime        @default(now())
-  branchId   String?
-  tenantId   String?
+  id        String          @id @default(uuid())
+  timestamp DateTime        @default(now())
+  userId    String?
+  user      User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    AuditActionType
+  entity    String // "Account", "Invoice", "Product", "Role", "Permission", "UserRole"
+  entityId  String
+  before    String?         @db.Text // JSON string state
+  after     String?         @db.Text // JSON string state
+  ipAddress String?
+  requestId String?
+  createdAt DateTime        @default(now())
+  branchId  String?
+  tenantId  String?
 
   @@index([timestamp])
   @@index([userId])
@@ -749,37 +749,37 @@ model Expense {
 }
 
 model Tenant {
-  id                 String               @id @default(uuid())
-  name               String
-  domain             String?              @unique
-  isActive           Boolean              @default(true)
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
-  users              TenantUser[]
-  subscriptions      TenantSubscription[]
-  licenses           License[]
-  usageCounters      UsageCounter[]
-  branches           Branch[]
-  products           Product[]
-  customers          Customer[]
-  suppliers          Supplier[]
-  invoices           Invoice[]
-  accounts           Account[]
-  journalEntries     JournalEntry[]
-  branchTransfers    BranchTransfer[]
-  inventoryMovements InventoryMovement[]
-  inventoryBatches   InventoryBatch[]
-  payments           Payment[]
-  expenses           Expense[]
-  roles              CustomRole[]
-  userRoles          UserRole[]
-  idempotencyKeys    IdempotencyKey[]
-  syncQueues         SyncQueue[]
-  syncEvents         SyncEvent[]
-  reservations       Reservation[]
-  branchInventories  BranchInventory[]
-  deviceRegistrations DeviceRegistration[] @relation("TenantDeviceRegistrations")
-  userOverrides      UserPermissionOverride[]
+  id                  String                   @id @default(uuid())
+  name                String
+  domain              String?                  @unique
+  isActive            Boolean                  @default(true)
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  users               TenantUser[]
+  subscriptions       TenantSubscription[]
+  licenses            License[]
+  usageCounters       UsageCounter[]
+  branches            Branch[]
+  products            Product[]
+  customers           Customer[]
+  suppliers           Supplier[]
+  invoices            Invoice[]
+  accounts            Account[]
+  journalEntries      JournalEntry[]
+  branchTransfers     BranchTransfer[]
+  inventoryMovements  InventoryMovement[]
+  inventoryBatches    InventoryBatch[]
+  payments            Payment[]
+  expenses            Expense[]
+  roles               CustomRole[]
+  userRoles           UserRole[]
+  idempotencyKeys     IdempotencyKey[]
+  syncQueues          SyncQueue[]
+  syncEvents          SyncEvent[]
+  reservations        Reservation[]
+  branchInventories   BranchInventory[]
+  deviceRegistrations DeviceRegistration[]     @relation("TenantDeviceRegistrations")
+  userOverrides       UserPermissionOverride[]
 
   @@map("tenants")
 }
