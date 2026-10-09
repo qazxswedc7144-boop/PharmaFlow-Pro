@@ -27,9 +27,15 @@ export function getTenantContext(): TenantContext | undefined {
 /**
  * Returns the current tenantId or a fallback for offline/development mode.
  */
-export function getCurrentTenantId(fallback = "default-tenant"): string {
+export function getCurrentTenantId(fallback?: string): string {
   const store = tenantStorage.getStore();
-  return store?.tenantId || fallback;
+  if (store?.tenantId) {
+    return store.tenantId;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("TENANT_REQUIRED: tenantId is mandatory in production context.");
+  }
+  return fallback || process.env.DEFAULT_TENANT_ID || "dev-tenant";
 }
 
 /**

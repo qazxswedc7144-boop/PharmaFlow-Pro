@@ -110,17 +110,16 @@ export class AuthorizationService {
       return { allowed: false, reason: "Access Denied: Platform control plane operations are reserved exclusively for Platform Owners" };
     }
 
-    // 3. Tenant Admin Full Authority within their own tenant
-    if (roleUpper === 'TENANT_ADMIN' || roleUpper === 'OWNER') {
-      if (context?.tenantId && user.tenantId && context.tenantId !== user.tenantId) {
-        return { allowed: false, reason: "Cross-tenant access forbidden" };
-      }
-      return { allowed: true, reason: "Tenant Admin Full Authority" };
+    // 3. Tenant Boundary & Membership Verification
+    const tenantId = context?.tenantId || user.tenantId || 'default-tenant';
+    if (!context?.tenantId && !user.tenantId) {
+      return { allowed: false, reason: "TENANT_REQUIRED: Tenant context is required for tenant operations" };
     }
-
-    // 3. Tenant Boundary Verification
-    if (context?.tenantId && !PolicyEngine.isTenantMatching(user, context.tenantId)) {
-      return { allowed: false, reason: "Tenant context mismatch" };
+    if (context?.tenantId && user.tenantId && context.tenantId !== user.tenantId) {
+      return { allowed: false, reason: "Cross-tenant access forbidden" };
+    }
+    if (!user.tenantId && roleUpper !== 'PLATFORM_OWNER' && roleUpper !== 'SUPER_ADMIN') {
+      return { allowed: false, reason: "User has no verified tenant membership" };
     }
 
     // 4. Branch Level Security Check
@@ -129,7 +128,6 @@ export class AuthorizationService {
     }
 
     // 5. Check user-level overrides first
-    const tenantId = user.tenantId || context?.tenantId || 'default-tenant';
     const overrides = await RoleService.getUserPermissionOverrides(tenantId, user.userId);
     const specificOverride = overrides.find(o => o.permissionKey === permissionKey);
     if (specificOverride) {

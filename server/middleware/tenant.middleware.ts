@@ -31,7 +31,7 @@ const isDevLocalTokenAllowed = () => {
  */
 export async function tenantContextMiddleware(
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> {
   const scopedReq = req as TenantScopedRequest;

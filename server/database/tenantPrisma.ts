@@ -75,24 +75,55 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
               const currentTenantId = explicitTenantId || getCurrentTenantId();
               const [params = {}, ...rest] = args;
 
-              // Read operations: inject tenantId into where filter
+              // Read operations: inject tenantId into where filter with semantic awareness
               if (["findMany", "findFirst", "count", "aggregate", "groupBy"].includes(operation)) {
+                let scopedWhere = { ...(params.where || {}) };
+                if (modelNameLower === "customrole") {
+                  scopedWhere = {
+                    AND: [
+                      scopedWhere,
+                      {
+                        OR: [
+                          { tenantId: currentTenantId },
+                          { isSystemRole: true }
+                        ]
+                      }
+                    ]
+                  };
+                } else {
+                  scopedWhere = {
+                    ...scopedWhere,
+                    tenantId: currentTenantId
+                  };
+                }
                 const scopedParams = {
                   ...params,
-                  where: {
-                    ...(params.where || {}),
-                    tenantId: currentTenantId
-                  }
+                  where: scopedWhere
                 };
                 return originalMethod.apply(modelTarget, [scopedParams, ...rest]);
               }
 
               // findUnique: translate to findFirst with tenant isolation to prevent cross-tenant ID discovery
               if (operation === "findUnique" || operation === "findUniqueOrThrow") {
-                const scopedWhere = {
-                  ...(params.where || {}),
-                  tenantId: currentTenantId
-                };
+                let scopedWhere = { ...(params.where || {}) };
+                if (modelNameLower === "customrole") {
+                  scopedWhere = {
+                    AND: [
+                      scopedWhere,
+                      {
+                        OR: [
+                          { tenantId: currentTenantId },
+                          { isSystemRole: true }
+                        ]
+                      }
+                    ]
+                  };
+                } else {
+                  scopedWhere = {
+                    ...scopedWhere,
+                    tenantId: currentTenantId
+                  };
+                }
                 return (modelTarget.findFirst || originalMethod).apply(modelTarget, [{
                   ...params,
                   where: scopedWhere
@@ -104,7 +135,7 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
                 const data = params.data || {};
                 const scopedData = {
                   ...data,
-                  tenantId: data.tenantId || currentTenantId
+                  tenantId: modelNameLower === "customrole" && data.isSystemRole ? null : (data.tenantId || currentTenantId)
                 };
                 return originalMethod.apply(modelTarget, [{ ...params, data: scopedData }, ...rest]);
               }
@@ -112,17 +143,32 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
               if (operation === "createMany") {
                 const data = params.data;
                 const scopedData = Array.isArray(data)
-                  ? data.map((d: any) => ({ ...d, tenantId: d.tenantId || currentTenantId }))
+                  ? data.map((d: any) => ({ ...d, tenantId: d.isSystemRole ? null : (d.tenantId || currentTenantId) }))
                   : data;
                 return originalMethod.apply(modelTarget, [{ ...params, data: scopedData }, ...rest]);
               }
 
               // Upsert operations: inject tenantId into where, update, and create
               if (operation === "upsert") {
-                const scopedWhere = {
-                  ...(params.where || {}),
-                  tenantId: currentTenantId
-                };
+                let scopedWhere = { ...(params.where || {}) };
+                if (modelNameLower === "customrole") {
+                  scopedWhere = {
+                    AND: [
+                      scopedWhere,
+                      {
+                        OR: [
+                          { tenantId: currentTenantId },
+                          { isSystemRole: true }
+                        ]
+                      }
+                    ]
+                  };
+                } else {
+                  scopedWhere = {
+                    ...scopedWhere,
+                    tenantId: currentTenantId
+                  };
+                }
                 const scopedCreate = {
                   ...(params.create || {}),
                   tenantId: params.create?.tenantId || currentTenantId
@@ -134,16 +180,26 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
                 }, ...rest]);
               }
 
-              // Update / Delete operations: enforce tenantId in where clause
+              // Update / Delete operations: enforce tenantId in where clause and prevent modifying system roles
               if (["update", "updateMany", "delete", "deleteMany"].includes(operation)) {
-                const scopedWhere = {
-                  ...(params.where || {}),
-                  tenantId: currentTenantId
-                };
-                return originalMethod.apply(modelTarget, [{
+                let scopedWhere = { ...(params.where || {}) };
+                if (modelNameLower === "customrole") {
+                  scopedWhere = {
+                    ...scopedWhere,
+                    tenantId: currentTenantId,
+                    isSystemRole: false
+                  };
+                } else {
+                  scopedWhere = {
+                    ...scopedWhere,
+                    tenantId: currentTenantId
+                  };
+                }
+                const scopedParams = {
                   ...params,
                   where: scopedWhere
-                }, ...rest]);
+                };
+                return originalMethod.apply(modelTarget, [scopedParams, ...rest]);
               }
 
               return originalMethod.apply(modelTarget, args);

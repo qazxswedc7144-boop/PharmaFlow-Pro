@@ -30,9 +30,9 @@ export class RoleService {
   static async getRoles(tenantId?: string | null): Promise<RoleDefinition[]> {
     const isDbReady = prisma.isConnected && prisma.isConnected();
 
-    if (isDbReady && (prisma as any).role) {
+    if (isDbReady && prisma.customRole) {
       try {
-        const dbRoles = await (prisma as any).role.findMany({
+        const dbRoles = await prisma.customRole.findMany({
           where: {
             OR: [
               { isSystemRole: true },
@@ -81,9 +81,9 @@ export class RoleService {
     const isDbReady = prisma.isConnected && prisma.isConnected();
     const cleanName = data.name.trim();
 
-    if (isDbReady && (prisma as any).role) {
+    if (isDbReady && prisma.customRole) {
       try {
-        const created = await (prisma as any).role.create({
+        const created = await prisma.customRole.create({
           data: {
             name: cleanName,
             description: data.description || null,
@@ -93,15 +93,15 @@ export class RoleService {
         });
 
         // Link permissions if any
-        if (data.permissions && data.permissions.length > 0 && (prisma as any).permission && (prisma as any).rolePermission) {
+        if (data.permissions && data.permissions.length > 0 && prisma.permission && prisma.rolePermission) {
           for (const key of data.permissions) {
-            let perm = await (prisma as any).permission.findUnique({ where: { key } });
+            let perm = await prisma.permission.findUnique({ where: { key } });
             if (!perm) {
-              perm = await (prisma as any).permission.create({
+              perm = await prisma.permission.create({
                 data: { key, module: key.split('.')[0] || 'general', action: key.split('.')[2] || 'manage' }
               });
             }
-            await (prisma as any).rolePermission.create({
+            await prisma.rolePermission.create({
               data: { roleId: created.id, permissionId: perm.id }
             });
           }
@@ -154,9 +154,9 @@ export class RoleService {
     }
 
     const isDbReady = prisma.isConnected && prisma.isConnected();
-    if (isDbReady && (prisma as any).role) {
+    if (isDbReady && prisma.customRole) {
       try {
-        await (prisma as any).role.update({
+        await prisma.customRole.update({
           where: { id: roleId },
           data: {
             name: data.name ?? existing.name,
@@ -164,18 +164,18 @@ export class RoleService {
           }
         });
 
-        if (data.permissions && (prisma as any).rolePermission) {
+        if (data.permissions && prisma.rolePermission) {
           // Delete old
-          await (prisma as any).rolePermission.deleteMany({ where: { roleId } });
+          await prisma.rolePermission.deleteMany({ where: { roleId } });
           // Insert new
           for (const key of data.permissions) {
-            let perm = await (prisma as any).permission.findUnique({ where: { key } });
+            let perm = await prisma.permission.findUnique({ where: { key } });
             if (!perm) {
-              perm = await (prisma as any).permission.create({
+              perm = await prisma.permission.create({
                 data: { key, module: key.split('.')[0] || 'general', action: key.split('.')[2] || 'manage' }
               });
             }
-            await (prisma as any).rolePermission.create({
+            await prisma.rolePermission.create({
               data: { roleId, permissionId: perm.id }
             });
           }
@@ -217,9 +217,9 @@ export class RoleService {
     }
 
     const isDbReady = prisma.isConnected && prisma.isConnected();
-    if (isDbReady && (prisma as any).role) {
+    if (isDbReady && prisma.customRole) {
       try {
-        await (prisma as any).role.delete({ where: { id: roleId } });
+        await prisma.customRole.delete({ where: { id: roleId } });
       } catch (err) {
         console.warn('[RoleService] DB delete error:', (err as Error).message);
       }
@@ -248,13 +248,13 @@ export class RoleService {
     });
 
     const isDbReady = prisma.isConnected && prisma.isConnected();
-    if (isDbReady && (prisma as any).userRole) {
+    if (isDbReady && prisma.userRole) {
       try {
-        await (prisma as any).userRole.deleteMany({
+        await prisma.userRole.deleteMany({
           where: { userId, tenantId }
         });
         for (const b of bindings) {
-          await (prisma as any).userRole.create({
+          await prisma.userRole.create({
             data: {
               userId: b.userId,
               tenantId: b.tenantId,
@@ -274,9 +274,9 @@ export class RoleService {
 
   static async getUserRoles(tenantId: string, userId: string): Promise<UserRoleBinding[]> {
     const isDbReady = prisma.isConnected && prisma.isConnected();
-    if (isDbReady && (prisma as any).userRole) {
+    if (isDbReady && prisma.userRole) {
       try {
-        const records = await (prisma as any).userRole.findMany({
+        const records = await prisma.userRole.findMany({
           where: { userId, tenantId },
           include: { role: true }
         });
@@ -308,15 +308,15 @@ export class RoleService {
       throw new Error("FATAL: tenantId is mandatory for UserPermissionOverride operations.");
     }
     const isDbReady = prisma.isConnected && prisma.isConnected();
-    if (isDbReady && (prisma as any).userPermissionOverride && (prisma as any).permission) {
+    if (isDbReady && prisma.userPermissionOverride && prisma.permission) {
       try {
-        let perm = await (prisma as any).permission.findUnique({ where: { key: permissionKey } });
+        let perm = await prisma.permission.findUnique({ where: { key: permissionKey } });
         if (!perm) {
-          perm = await (prisma as any).permission.create({
+          perm = await prisma.permission.create({
             data: { key: permissionKey, module: permissionKey.split('.')[0] || 'general', action: permissionKey.split('.')[2] || 'custom' }
           });
         }
-        await (prisma as any).userPermissionOverride.upsert({
+        await prisma.userPermissionOverride.upsert({
           where: { userId_permissionId_tenantId: { userId, permissionId: perm.id, tenantId } },
           create: { userId, permissionId: perm.id, tenantId, effect },
           update: { effect }
@@ -343,11 +343,11 @@ export class RoleService {
       throw new Error("FATAL: tenantId is mandatory for UserPermissionOverride operations.");
     }
     const isDbReady = prisma.isConnected && prisma.isConnected();
-    if (isDbReady && (prisma as any).userPermissionOverride && (prisma as any).permission) {
+    if (isDbReady && prisma.userPermissionOverride && prisma.permission) {
       try {
-        const perm = await (prisma as any).permission.findUnique({ where: { key: permissionKey } });
+        const perm = await prisma.permission.findUnique({ where: { key: permissionKey } });
         if (perm) {
-          await (prisma as any).userPermissionOverride.deleteMany({
+          await prisma.userPermissionOverride.deleteMany({
             where: { userId, permissionId: perm.id, tenantId }
           });
         }
@@ -367,9 +367,9 @@ export class RoleService {
       throw new Error("FATAL: tenantId is mandatory for UserPermissionOverride operations.");
     }
     const isDbReady = prisma.isConnected && prisma.isConnected();
-    if (isDbReady && (prisma as any).userPermissionOverride) {
+    if (isDbReady && prisma.userPermissionOverride) {
       try {
-        const records = await (prisma as any).userPermissionOverride.findMany({
+        const records = await prisma.userPermissionOverride.findMany({
           where: { userId, tenantId },
           include: { permission: true }
         });
