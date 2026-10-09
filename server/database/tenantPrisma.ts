@@ -7,25 +7,43 @@ export const TENANT_OWNED_MODELS = [
   "customer",
   "supplier",
   "invoice",
+  "invoiceItem",
   "journalEntry",
+  "journalLine",
   "account",
   "inventoryBatch",
   "inventoryMovement",
   "branch",
+  "branchInventory",
   "branchTransfer",
+  "branchUser",
   "payment",
   "expense",
   "reservation",
-  "branchInventory",
-  "role",
+  "customRole",
   "userRole",
-  "auditLog"
+  "userPermissionOverride",
+  "auditLog",
+  "idempotencyKey",
+  "syncQueue",
+  "syncEvent",
+  "tenantUser",
+  "tenantSubscription",
+  "license",
+  "usageCounter",
+  "crashLog",
+  "deviceRegistration",
+  "aiUsageLog"
 ] as const;
 
 export type TenantOwnedModel = typeof TENANT_OWNED_MODELS[number];
 
+const TENANT_OWNED_MODELS_SET = new Set<string>(
+  TENANT_OWNED_MODELS.map((m) => m.toLowerCase())
+);
+
 export function isTenantOwnedModel(modelName: string): boolean {
-  return TENANT_OWNED_MODELS.includes(modelName.toLowerCase() as TenantOwnedModel);
+  return TENANT_OWNED_MODELS_SET.has(modelName.toLowerCase());
 }
 
 /**

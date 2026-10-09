@@ -2,7 +2,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { IdempotencyService } from "./idempotency.service.js";
-import { getTenantContext } from "../../context/tenantContext.js";
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -16,31 +15,22 @@ export interface AuthenticatedRequest extends Request {
 
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("FATAL: JWT_SECRET environment variable is missing in production.");
-    }
-    return "pharmaflow-local-development-jwt-secure-secret-2026";
+  if (!secret && process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
   }
-  return secret;
+  return secret || 'pharmaflow-local-development-jwt-secure-secret-2026';
 };
 
-/**
- * Enterprise Idempotency Middleware.
- * Enforces transaction uniqueness based on 'Idempotency-Key' and SHA-256 integrity signature of the request payload.
- */
 export async function idempotencyMiddleware(req: Request, res: Response, next: NextFunction) {
   const keyHeader = req.headers["idempotency-key"];
-  
+    
   if (!keyHeader) {
-    // No idempotency key supplied; bypass validation
     return next();
   }
 
   const rawKey = Array.isArray(keyHeader) ? keyHeader[0] : keyHeader;
   const key = rawKey || "";
 
-  // Enforce basic spacing/length rules
   if (!key.trim()) {
     return res.status(400).json({
       error: "BAD_REQUEST",
@@ -50,33 +40,19 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
 
   const authReq = req as AuthenticatedRequest;
   let userId = authReq.user?.userId || null;
-  let tenantId = getTenantContext()?.tenantId || authReq.tenantId || authReq.user?.tenantId || null;
+  let tenantId = authReq.tenantId || authReq.user?.tenantId || (req.headers["x-tenant-id"] as string) || "default-tenant";
 
-  // Resilient JWT decode fallback if loaded globally before main authenticateToken
-  if ((!userId || !tenantId) && req.headers["authorization"]) {
+  if (!userId && req.headers["authorization"]) {
     try {
       const authHeader = req.headers["authorization"];
       const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
       if (token) {
         const decoded = jwt.verify(token, getJwtSecret()) as any;
-        if (!userId) userId = decoded?.userId || null;
-        if (!tenantId) tenantId = decoded?.tenantId || null;
+        userId = decoded?.userId || null;
+        tenantId = decoded?.tenantId || tenantId;
       }
     } catch {
       // safe fallback
-    }
-  }
-
-  if (!tenantId) {
-    const headerTenant = req.headers["x-tenant-id"] || req.headers["tenant-id"];
-    if (typeof headerTenant === "string" && headerTenant.trim()) {
-      tenantId = headerTenant.trim();
-    }
-  }
-
-  if (!tenantId && req.body && typeof req.body === "object") {
-    if (typeof req.body.tenantId === "string" && req.body.tenantId.trim()) {
-      tenantId = req.body.tenantId.trim();
     }
   }
 
@@ -85,21 +61,19 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
 
   try {
     const result = await IdempotencyService.handlePreRequest(
+      tenantId,
       key,
       endpoint,
       method,
       req.body,
-      userId,
-      tenantId
+      userId
     );
 
     if (result.status === "REPLAY") {
-      // Replay original response payload
       res.setHeader("X-Cache-Lookup", "HIT - Idempotent Replay");
       return res.status(result.code).json(result.body);
     }
 
-    // Capture response to persist upon completion
     const originalSend = res.send;
     let answered = false;
 
@@ -111,7 +85,6 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
 
       const responseStatus = res.statusCode;
       let parsedBody = chunk;
-
       if (typeof chunk === "string") {
         try {
           parsedBody = JSON.parse(chunk);
@@ -120,14 +93,12 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
         }
       }
 
-      // Persist to DB if successful (status < 500)
       if (responseStatus < 500) {
-        IdempotencyService.resolveRequest(key, responseStatus, parsedBody, tenantId).catch((err) => {
+        IdempotencyService.resolveRequest(tenantId, key, responseStatus, parsedBody).catch((err) => {
           console.error(`[Idempotency] Failed to resolve key cache for: ${key}`, err);
         });
       } else {
-        // Release lock on server errors for retries
-        IdempotencyService.releaseLock(key, tenantId).catch((err) => {
+        IdempotencyService.releaseLock(tenantId, key).catch((err) => {
           console.error(`[Idempotency] Failed to release lock on server error for: ${key}`, err);
         });
       }
@@ -135,10 +106,9 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
       return originalSend.apply(this, arguments as any);
     };
 
-    // Connection closed prematurely safety
     res.on("close", () => {
       if (!answered) {
-        IdempotencyService.releaseLock(key, tenantId).catch(() => {});
+        IdempotencyService.releaseLock(tenantId, key).catch(() => {});
       }
     });
 
@@ -150,14 +120,12 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
         message: "A parallel request with this Idempotency-Key is already in progress, or locked in transaction."
       });
     }
-
     if (error.message === "HASH_MISMATCH") {
       return res.status(409).json({
         error: "CONFLICT",
         message: "Idempotency key reuse detected with different payload"
       });
     }
-
     console.error(`[Idempotency] Middleware fatal error for key ${key}:`, error);
     return res.status(500).json({
       error: "INTERNAL_SERVER_ERROR",

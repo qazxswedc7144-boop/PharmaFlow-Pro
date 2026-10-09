@@ -8,7 +8,16 @@ import { Role } from "@prisma/client";
 import { ReplicationSubscriber } from "./replication.subscriber.js";
 import { ReplicationEvent, ClientConnectionInfo } from "./replication.types.js";
 
-const getJwtSecret = () => process.env.JWT_SECRET || 'pharmaflow-local-development-jwt-secure-secret-2026';
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("FATAL: JWT_SECRET environment variable is missing in production.");
+    }
+    return "pharmaflow-local-development-jwt-secure-secret-2026";
+  }
+  return secret;
+};
 const AUTHORIZED_ROLES: string[] = [Role.ADMIN, Role.ACCOUNTANT, Role.PHARMACIST, Role.INVENTORY_MANAGER, Role.TENANT_ADMIN, Role.PLATFORM_OWNER];
 
 interface CustomWebSocket extends WebSocket {

@@ -62,7 +62,8 @@ export class IdempotencyService {
     endpoint: string,
     method: string,
     body: any,
-    userId: string | null
+    userId: string | null,
+    tenantId?: string | null
   ): Promise<{ status: "PROCESS"; hash: string } | { status: "REPLAY"; code: number; body: any }> {
     // 1. Immediately block if already in-flight in this process thread
     if (this.inFlightKeys.has(key)) {
@@ -76,7 +77,7 @@ export class IdempotencyService {
 
     try {
       const hash = this.generateRequestHash(endpoint, method, body, userId);
-      const existing = await IdempotencyRepository.findByKey(key);
+      const existing = await IdempotencyRepository.findByKey(key, tenantId);
 
       if (existing) {
         // If already marked as processing (meaning another container/thread, or previous crash lock)
@@ -120,7 +121,8 @@ export class IdempotencyService {
         hash,
         endpoint,
         method,
-        userId
+        userId,
+        tenantId
       );
 
       if (!isNew && record.processing) {
@@ -141,18 +143,18 @@ export class IdempotencyService {
   /**
    * Finalizes an idempotent operations stack with its response payload
    */
-  static async resolveRequest(key: string, responseStatus: number, responseBody: any): Promise<void> {
+  static async resolveRequest(key: string, responseStatus: number, responseBody: any, tenantId?: string | null): Promise<void> {
     this.inFlightKeys.delete(key);
-    await IdempotencyRepository.resolveKey(key, responseBody, responseStatus);
+    await IdempotencyRepository.resolveKey(key, responseBody, responseStatus, tenantId);
     logger.debug({ key, responseStatus }, "Idempotent response result cached successfully.");
   }
 
   /**
    * Cleans/undoes locks in case of errors on non-idempotent exceptions
    */
-  static async releaseLock(key: string): Promise<void> {
+  static async releaseLock(key: string, tenantId?: string | null): Promise<void> {
     this.inFlightKeys.delete(key);
-    await IdempotencyRepository.releaseLock(key);
+    await IdempotencyRepository.releaseLock(key, tenantId);
     logger.warn({ key }, "Processing lock released due to system recovery intervention.");
   }
 }

@@ -241,9 +241,10 @@ model Account {
   version      Int           @default(0)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
-  journalLines JournalLine[]
   tenantId     String
   tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  journalLines JournalLine[] @relation("AccountJournalLines")
 
   @@unique([id, tenantId])
   @@unique([code, tenantId])
@@ -283,7 +284,7 @@ model JournalLine {
   entryId     String
   entry       JournalEntry @relation(fields: [entryId, tenantId], references: [id, tenantId], onDelete: Cascade)
   accountId   String
-  account     Account      @relation(fields: [accountId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  account     Account      @relation("AccountJournalLines", fields: [accountId, tenantId], references: [id, tenantId], onDelete: Restrict)
   debit       Decimal      @default(0.00) @db.Decimal(18, 4)
   credit      Decimal      @default(0.00) @db.Decimal(18, 4)
   description String?
@@ -310,10 +311,11 @@ model Product {
   deletedAt          DateTime?
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
-  invoiceItems       InvoiceItem[]
   inventoryBatches   InventoryBatch[]
   inventoryMovements InventoryMovement[]
   reservations       Reservation[]
+  invoiceItems       InvoiceItem[]       @relation("ProductInvoiceItems")
+  branchInventories  BranchInventory[]   @relation("ProductBranchInventories")
   tenantId           String
   tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -393,7 +395,7 @@ model InvoiceItem {
   invoiceId  String
   invoice    Invoice  @relation(fields: [invoiceId, tenantId], references: [id, tenantId], onDelete: Cascade)
   productId  String
-  product    Product  @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  product    Product  @relation("ProductInvoiceItems", fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
   qty        Int
   price      Decimal  @db.Decimal(18, 4)
   cost       Decimal  @db.Decimal(18, 4)
@@ -625,9 +627,9 @@ model BranchInventory {
   tenantId        String
   tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   branchId        String
-  branch          Branch   @relation(fields: [branchId, tenantId], references: [id], onDelete: Cascade)
+  branch          Branch   @relation(fields: [branchId, tenantId], references: [id, tenantId], onDelete: Cascade)
   productId       String
-  product         Product  @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  product         Product  @relation("ProductBranchInventories", fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
   stockQuantity   Int      @default(0)
   reorderPoint    Int      @default(10)
   reorderQuantity Int      @default(50)
@@ -689,7 +691,7 @@ model BranchTransferItem {
 model BranchUser {
   id        String   @id @default(uuid())
   branchId  String
-  branch    Branch   @relation(fields: [branchId, tenantId], references: [id], onDelete: Cascade)
+  branch    Branch   @relation(fields: [branchId, tenantId], references: [id, tenantId], onDelete: Cascade)
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   tenantId  String
@@ -747,12 +749,12 @@ model Expense {
 }
 
 model Tenant {
-  id                 String                   @id @default(uuid())
+  id                 String               @id @default(uuid())
   name               String
-  domain             String?                  @unique
-  isActive           Boolean                  @default(true)
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
+  domain             String?              @unique
+  isActive           Boolean              @default(true)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
   users              TenantUser[]
   subscriptions      TenantSubscription[]
   licenses           License[]
@@ -776,10 +778,7 @@ model Tenant {
   syncEvents         SyncEvent[]
   reservations       Reservation[]
   branchInventories  BranchInventory[]
-  customersSet       Customer[]               @relation()
-  suppliersSet       Supplier[]               @relation()
-  invoiceItems       InvoiceItem[]
-  journalLines       JournalLine[]
+  deviceRegistrations DeviceRegistration[] @relation("TenantDeviceRegistrations")
   userOverrides      UserPermissionOverride[]
 
   @@map("tenants")
@@ -873,7 +872,7 @@ model CrashLog {
 model DeviceRegistration {
   deviceId       String   @id
   tenantId       String
-  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         Tenant   @relation("TenantDeviceRegistrations", fields: [tenantId], references: [id], onDelete: Cascade)
   branchId       String
   deviceName     String
   androidVersion String?

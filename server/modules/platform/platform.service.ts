@@ -55,9 +55,15 @@ export class PlatformService {
    * Generates a cryptographic digital license signature
    */
   static generateLicenseSignature(tenantId: string, planCode: string, expiresAt: string): string {
-    const masterKey = process.env.ENCRYPTION_KEY || 'pharmaflow-fallback-secure-master-key-gcm-sha256-2026';
+    const masterKey = process.env.ENCRYPTION_KEY;
+    if (!masterKey) {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("FATAL: ENCRYPTION_KEY environment variable is required to generate license signatures in production.");
+      }
+      return crypto.createHmac("sha256", "pharmaflow-fallback-secure-master-key-gcm-sha256-2026").update(`${tenantId}:${planCode}:${expiresAt}`).digest("hex").substring(0, 32).toUpperCase();
+    }
     const payload = `${tenantId}:${planCode}:${expiresAt}`;
-    return crypto.createHmac('sha256', masterKey).update(payload).digest('hex').substring(0, 32).toUpperCase();
+    return crypto.createHmac("sha256", masterKey).update(payload).digest("hex").substring(0, 32).toUpperCase();
   }
 
   /**

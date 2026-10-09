@@ -9,16 +9,28 @@ import { ReplicationSubscriber } from "./server/modules/replication/replication.
 import { registerIdempotencyCleanupCron } from "./server/jobs/cleanup-idempotency.job.js";
 
 // Production secret validation (Fail clearly if secrets are missing in production)
-if (!process.env.ENCRYPTION_KEY) {
-  console.warn("⚠️ Notice: ENCRYPTION_KEY is not set. Using resilient fallback key.");
-  process.env.ENCRYPTION_KEY = 'pharmaflow-production-vault-key-32bytes!';
-}
-if (!process.env.JWT_SECRET) {
-  console.warn("⚠️ Notice: JWT_SECRET is not set. Using resilient fallback secret.");
-  process.env.JWT_SECRET = 'pharmaflow-production-jwt-secret-key-2026';
-}
-if (!process.env.JWT_REFRESH_SECRET) {
-  process.env.JWT_REFRESH_SECRET = 'pharmaflow-production-jwt-refresh-secret-2026';
+if (process.env.NODE_ENV === "production") {
+  if (!process.env.ENCRYPTION_KEY) {
+    console.error("🚨 CRITICAL SECURITY ERROR: ENCRYPTION_KEY is not set in production! Silent fallback is strictly prohibited.");
+  }
+  if (!process.env.JWT_SECRET) {
+    console.error("🚨 CRITICAL SECURITY ERROR: JWT_SECRET is not set in production! Silent fallback is strictly prohibited.");
+  }
+  if (!process.env.JWT_REFRESH_SECRET) {
+    console.error("🚨 CRITICAL SECURITY ERROR: JWT_REFRESH_SECRET is not set in production! Silent fallback is strictly prohibited.");
+  }
+} else {
+  if (!process.env.ENCRYPTION_KEY) {
+    console.warn("⚠️ Notice: ENCRYPTION_KEY is not set. Using resilient fallback key for development.");
+    process.env.ENCRYPTION_KEY = 'pharmaflow-development-vault-key-32bytes!';
+  }
+  if (!process.env.JWT_SECRET) {
+    console.warn("⚠️ Notice: JWT_SECRET is not set. Using resilient fallback secret for development.");
+    process.env.JWT_SECRET = 'pharmaflow-development-jwt-secret-key-2026';
+  }
+  if (!process.env.JWT_REFRESH_SECRET) {
+    process.env.JWT_REFRESH_SECRET = 'pharmaflow-development-jwt-refresh-secret-2026';
+  }
 }
 if (!process.env.DIRECT_URL && process.env.DATABASE_URL) {
   process.env.DIRECT_URL = process.env.DATABASE_URL;

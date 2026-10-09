@@ -70,8 +70,9 @@ inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWN
       // Record audit details
       await tx.auditLog.create({
         data: {
+          tenantId: (req as any).tenantId || req.user?.tenantId || null,
           userId: req.user?.userId || null,
-          action: "INVENTORY_ADJUST",
+          action: "UPDATE",
           entity: "Product",
           entityId: data.productId,
           before: null,

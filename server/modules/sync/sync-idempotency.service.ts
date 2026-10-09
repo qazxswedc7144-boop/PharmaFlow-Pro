@@ -64,7 +64,12 @@ export class SyncIdempotencyService {
     if (!existing) {
       try {
         const dbKey = await prisma.idempotencyKey.findUnique({
-          where: { key: scopedKey }
+          where: {
+            tenantId_key: {
+              tenantId,
+              key: scopedKey
+            }
+          }
         });
         
         if (dbKey && dbKey.expiresAt > new Date()) {
@@ -245,7 +250,12 @@ export class SyncIdempotencyService {
     const client = tx || prisma;
     try {
       await client.idempotencyKey.upsert({
-        where: { key: scopedKey },
+        where: {
+          tenantId_key: {
+            tenantId,
+            key: scopedKey
+          }
+        },
         create: {
           key: scopedKey,
           tenantId,

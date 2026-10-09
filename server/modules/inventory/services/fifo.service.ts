@@ -30,7 +30,7 @@ export class FifoService {
 
     // 1. Lock the Product row to prevent simultaneous writes to the global stock quantity
     const lockedProducts = await tx.$queryRaw<any[]>(
-      Prisma.sql`SELECT id, "stockQuantity", version FROM products WHERE id = ${productId} FOR UPDATE`
+      Prisma.sql`SELECT id, "stockQuantity", version, "tenantId" FROM products WHERE id = ${productId} FOR UPDATE`
     );
 
     if (!lockedProducts || lockedProducts.length === 0) {
@@ -38,6 +38,8 @@ export class FifoService {
     }
 
     const mainProduct = lockedProducts[0];
+    const tenantId = mainProduct.tenantId || "default-tenant";
+
     if (mainProduct.stockQuantity < quantityToDeplete) {
       throw new Error(
         `INSUFFICIENT_STOCK: Required ${quantityToDeplete} units of product "${productId}", but only ${mainProduct.stockQuantity} is available.`
@@ -81,6 +83,7 @@ export class FifoService {
       // Record inventory movement for each depleted batch layer
       await tx.inventoryMovement.create({
         data: {
+          tenantId,
           productId,
           batchId: batch.id,
           qty: -toTake,
@@ -143,13 +146,20 @@ export class FifoService {
     if (qty <= 0) return;
 
     // 1. Pessimistic lock on product main row
-    await tx.$executeRaw(
-      Prisma.sql`SELECT id FROM products WHERE id = ${productId} FOR UPDATE`
+    const lockedProducts = await tx.$queryRaw<any[]>(
+      Prisma.sql`SELECT id, "tenantId" FROM products WHERE id = ${productId} FOR UPDATE`
     );
+    const tenantId = lockedProducts[0]?.tenantId || "default-tenant";
 
     // 2. Add or upsert inventory batch layer
     const existingBatch = await tx.inventoryBatch.findUnique({
-      where: { productId_batchNumber: { productId, batchNumber } }
+      where: {
+        productId_batchNumber_tenantId: {
+          productId,
+          batchNumber,
+          tenantId
+        }
+      }
     });
 
     let targetBatchId: string;
@@ -168,6 +178,7 @@ export class FifoService {
     } else {
       const newBatch = await tx.inventoryBatch.create({
         data: {
+          tenantId,
           productId,
           batchNumber,
           initialQty: qty,
@@ -188,6 +199,7 @@ export class FifoService {
 
     await tx.inventoryMovement.create({
       data: {
+        tenantId,
         productId,
         batchId: targetBatchId,
         qty,

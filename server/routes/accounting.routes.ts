@@ -54,9 +54,12 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
         Prisma.sql`SELECT id FROM accounts WHERE id IN (${Prisma.join(accountIds)}) FOR UPDATE`
       );
 
+      const tenantId = (req as any).tenantId || req.user?.tenantId || "default-tenant";
+
       // Create main entry
       const entry = await tx.journalEntry.create({
         data: {
+          tenantId,
           date: new Date(),
           sourceType: "MANUAL",
           status: "POSTED",
@@ -65,6 +68,7 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
           creditTotal: sumCredits,
           lines: {
             create: data.lines.map((line: any) => ({
+              tenantId,
               accountId: line.accountId,
               debit: line.debit,
               credit: line.credit,
@@ -95,8 +99,9 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
       // Record detailed Audit trail
       await tx.auditLog.create({
         data: {
+          tenantId,
           userId: req.user?.userId || null,
-          action: "POST_MANUAL_JOURNAL",
+          action: "POST_JOURNAL",
           entity: "JournalEntry",
           entityId: entry.id,
           before: null,
