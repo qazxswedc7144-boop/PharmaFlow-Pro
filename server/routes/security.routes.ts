@@ -218,6 +218,18 @@ router.post('/device/register', async (req: Request, res: Response) => {
       });
     }
 
+    // Verify branch belongs to the registering tenant
+    const branch = await prisma.branch.findFirst({
+      where: { id: branchId, tenantId }
+    });
+    if (!branch) {
+      return res.status(400).json({
+        status: 'error',
+        code: 'BRANCH_TENANT_MISMATCH',
+        message: 'الفرع المحدد لا ينتمي إلى هذه المؤسسة أو غير موجود.'
+      });
+    }
+
     // Determine current registrations count for tenant
     const count = await prisma.deviceRegistration.count({
       where: { tenantId }
@@ -227,6 +239,14 @@ router.post('/device/register', async (req: Request, res: Response) => {
     const existingDevice = await prisma.deviceRegistration.findUnique({
       where: { deviceId }
     });
+
+    if (existingDevice && existingDevice.tenantId !== tenantId) {
+      return res.status(403).json({
+        status: 'error',
+        code: 'CROSS_TENANT_DEVICE_FORBIDDEN',
+        message: 'هذا الجهاز مسجل بالفعل لمؤسسة أخرى.'
+      });
+    }
 
     // Determine limit
     const subscription = await prisma.tenantSubscription.findFirst({
@@ -301,6 +321,16 @@ router.get('/device/status/:deviceId', async (req: Request, res: Response) => {
         status: 'error',
         code: 'DEVICE_NOT_FOUND',
         message: 'Device registration details not found.'
+      });
+    }
+
+    const authReq = req as any;
+    const requestedTenantId = authReq.user?.tenantId || (req.headers['x-tenant-id'] as string) || (req.query.tenantId as string);
+    if (requestedTenantId && device.tenantId !== requestedTenantId) {
+      return res.status(403).json({
+        status: 'error',
+        code: 'CROSS_TENANT_ACCESS_DENIED',
+        message: 'Device registration details belong to another tenant.'
       });
     }
 

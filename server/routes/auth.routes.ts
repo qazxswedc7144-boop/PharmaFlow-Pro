@@ -261,6 +261,7 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
       // Link User with the default Branch
       await tx.branchUser.create({
         data: {
+          tenantId,
           branchId,
           userId: newUser.id,
           isDefault: true
@@ -371,7 +372,7 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), as
 
     // Look up branch registration link for isolation support (with dynamic self-healing)
     let bUser = await prisma.branchUser.findFirst({
-      where: { userId: user.id }
+      where: { userId: user.id, tenantId }
     });
     if (!bUser) {
       console.warn(`⚠️ User "${username}" lacks branch association. Securing default branch...`);
@@ -401,6 +402,7 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), as
       }
       await prisma.branchUser.create({
         data: {
+          tenantId,
           branchId: branch.id,
           userId: user.id,
           isDefault: true,

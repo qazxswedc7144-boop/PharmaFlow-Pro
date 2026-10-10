@@ -104,6 +104,7 @@ export class SaasService {
 
     await prisma.branchUser.create({
       data: {
+        tenantId: tenant.id,
         branchId: branch.id,
         userId: user.id,
         isDefault: true,

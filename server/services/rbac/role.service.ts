@@ -70,8 +70,36 @@ export class RoleService {
   }
 
   static async getRoleById(roleId: string, tenantId?: string | null): Promise<RoleDefinition | null> {
-    const all = await this.getRoles(tenantId);
-    return all.find(r => r.id === roleId) || null;
+    if (tenantId !== undefined) {
+      const all = await this.getRoles(tenantId);
+      return all.find(r => r.id === roleId) || null;
+    }
+    const cached = this.inMemoryRoles.get(roleId);
+    if (cached) return cached;
+    const isDbReady = prisma.isConnected && prisma.isConnected();
+    if (isDbReady && prisma.customRole) {
+      try {
+        const r = await prisma.customRole.findUnique({
+          where: { id: roleId },
+          include: { permissions: { include: { permission: true } } }
+        });
+        if (r) {
+          return {
+            id: r.id,
+            tenantId: r.tenantId,
+            name: r.name,
+            description: r.description,
+            isSystemRole: r.isSystemRole,
+            permissions: r.permissions?.map((rp: any) => rp.permission?.key).filter(Boolean) || [],
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt
+          };
+        }
+      } catch (err) {
+        console.warn('[RoleService] DB getRoleById error:', (err as Error).message);
+      }
+    }
+    return null;
   }
 
   static async createRole(
@@ -145,6 +173,9 @@ export class RoleService {
     roleId: string,
     data: { name?: string; description?: string; permissions?: string[] }
   ): Promise<RoleDefinition> {
+    if (!tenantId) {
+      throw new Error("FATAL: tenantId is mandatory for updateRole");
+    }
     const existing = await this.getRoleById(roleId, tenantId);
     if (!existing) {
       throw new Error(`الدور برقم ${roleId} غير موجود.`);
@@ -152,12 +183,15 @@ export class RoleService {
     if (existing.isSystemRole) {
       throw new Error('لا يمكن تعديل أو إعادة كتابة أدوار النظام المحمية.');
     }
+    if (existing.tenantId && existing.tenantId !== tenantId) {
+      throw new Error(`CROSS_TENANT_ROLE_FORBIDDEN: Role belongs to another tenant.`);
+    }
 
     const isDbReady = prisma.isConnected && prisma.isConnected();
     if (isDbReady && prisma.customRole) {
       try {
         await prisma.customRole.update({
-          where: { id: roleId },
+          where: { id_tenantId: { id: roleId, tenantId } },
           data: {
             name: data.name ?? existing.name,
             description: data.description !== undefined ? data.description : existing.description
@@ -210,16 +244,24 @@ export class RoleService {
   }
 
   static async deleteRole(tenantId: string, roleId: string): Promise<boolean> {
+    if (!tenantId) {
+      throw new Error("FATAL: tenantId is mandatory for deleteRole");
+    }
     const existing = await this.getRoleById(roleId, tenantId);
     if (!existing) return false;
     if (existing.isSystemRole) {
       throw new Error('أدوار النظام القياسية محمية ولا يمكن حذفها نهائياً.');
     }
+    if (existing.tenantId && existing.tenantId !== tenantId) {
+      throw new Error(`CROSS_TENANT_ROLE_FORBIDDEN: Role belongs to another tenant.`);
+    }
 
     const isDbReady = prisma.isConnected && prisma.isConnected();
     if (isDbReady && prisma.customRole) {
       try {
-        await prisma.customRole.delete({ where: { id: roleId } });
+        await prisma.customRole.delete({
+          where: { id_tenantId: { id: roleId, tenantId } }
+        });
       } catch (err) {
         console.warn('[RoleService] DB delete error:', (err as Error).message);
       }
@@ -236,6 +278,21 @@ export class RoleService {
     roleIds: string[],
     branchId?: string | null
   ): Promise<void> {
+    if (!tenantId) {
+      throw new Error("FATAL: tenantId is mandatory for assignUserRoles");
+    }
+
+    // Verify role ownership to prevent cross-tenant role assignment
+    for (const roleId of roleIds) {
+      const role = await this.getRoleById(roleId);
+      if (!role) {
+        throw new Error(`Role ${roleId} does not exist`);
+      }
+      if (role.tenantId && role.tenantId !== tenantId) {
+        throw new Error(`CROSS_TENANT_ROLE_FORBIDDEN: Role ${roleId} belongs to tenant ${role.tenantId}, not ${tenantId}`);
+      }
+    }
+
     const bindings: UserRoleBinding[] = roleIds.map(roleId => {
       const role = this.inMemoryRoles.get(roleId);
       return {
@@ -273,6 +330,9 @@ export class RoleService {
   }
 
   static async getUserRoles(tenantId: string, userId: string): Promise<UserRoleBinding[]> {
+    if (!tenantId) {
+      throw new Error("FATAL: tenantId is mandatory for getUserRoles");
+    }
     const isDbReady = prisma.isConnected && prisma.isConnected();
     if (isDbReady && prisma.userRole) {
       try {

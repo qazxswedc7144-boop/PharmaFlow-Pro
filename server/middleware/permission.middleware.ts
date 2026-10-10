@@ -15,8 +15,28 @@ export function requirePermission(permission: string) {
       return;
     }
 
+    const userRoleStr = String(authReq.user.role);
+    const isPlatformOwner = userRoleStr === 'PLATFORM_OWNER' || userRoleStr === 'SUPER_ADMIN';
+    const headerTenant = typeof req.headers["x-tenant-id"] === "string" ? req.headers["x-tenant-id"].trim() : undefined;
+    const tenantId = authReq.user.tenantId || (isPlatformOwner ? headerTenant : undefined);
+
+    if (!tenantId && !isPlatformOwner) {
+      res.status(401).json({
+        error: "TENANT_REQUIRED",
+        message: "يتطلب هذا الإجراء تحديد مؤسسة صالحة وموثوقة."
+      });
+      return;
+    }
+
+    if (tenantId === "default-tenant" && process.env.NODE_ENV === "production") {
+      res.status(401).json({
+        error: "INVALID_TENANT",
+        message: "default-tenant غير مسموح به في بيئة التشغيل الفعلية."
+      });
+      return;
+    }
+
     const branchId = (req.headers["x-branch-id"] as string) || (req.body && req.body.branchId) || undefined;
-    const tenantId = (req.headers["x-tenant-id"] as string) || authReq.user.tenantId || "default-tenant";
 
     const userContext: UserIdentityContext = {
       userId: authReq.user.userId,
@@ -27,7 +47,7 @@ export function requirePermission(permission: string) {
     };
 
     const hasAccess = await AuthorizationService.can(userContext, permission, {
-      tenantId,
+      tenantId: tenantId || authReq.user.tenantId || undefined,
       branchId
     });
 
@@ -55,8 +75,28 @@ export function requireAnyPermission(permissions: string[]) {
       return;
     }
 
+    const userRoleStr = String(authReq.user.role);
+    const isPlatformOwner = userRoleStr === 'PLATFORM_OWNER' || userRoleStr === 'SUPER_ADMIN';
+    const headerTenant = typeof req.headers["x-tenant-id"] === "string" ? req.headers["x-tenant-id"].trim() : undefined;
+    const tenantId = authReq.user.tenantId || (isPlatformOwner ? headerTenant : undefined);
+
+    if (!tenantId && !isPlatformOwner) {
+      res.status(401).json({
+        error: "TENANT_REQUIRED",
+        message: "يتطلب هذا الإجراء تحديد مؤسسة صالحة وموثوقة."
+      });
+      return;
+    }
+
+    if (tenantId === "default-tenant" && process.env.NODE_ENV === "production") {
+      res.status(401).json({
+        error: "INVALID_TENANT",
+        message: "default-tenant غير مسموح به في بيئة التشغيل الفعلية."
+      });
+      return;
+    }
+
     const branchId = (req.headers["x-branch-id"] as string) || (req.body && req.body.branchId) || undefined;
-    const tenantId = (req.headers["x-tenant-id"] as string) || authReq.user.tenantId || "default-tenant";
 
     const userContext: UserIdentityContext = {
       userId: authReq.user.userId,
