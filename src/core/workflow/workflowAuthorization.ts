@@ -35,7 +35,13 @@ export class WorkflowAuthorization {
     // 2. Tenant Isolation Check
     if (user) {
       const userTenant = user.tenantId || (user as any).tenant_id || authState.tenantId;
-      if (ctx.tenantId && userTenant && ctx.tenantId !== userTenant && ctx.tenantId !== 'default' && userTenant !== 'tenant-default') {
+      if (!userTenant || userTenant === 'default' || userTenant === 'default-tenant') {
+        throw new WorkflowExecutionError(
+          'FAIL_CLOSED: جلسة المستخدم لا تحتوي على معرف مؤسسة موثوق.',
+          'AUTHORIZATION_DENIED'
+        );
+      }
+      if (ctx.tenantId && ctx.tenantId !== userTenant) {
         throw new WorkflowExecutionError(
           `تم رفض التنفيذ بسبب محاولة الوصول لمستأجر آخر [${ctx.tenantId}]`,
           'AUTHORIZATION_DENIED'

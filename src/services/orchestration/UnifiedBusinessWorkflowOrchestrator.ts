@@ -7,6 +7,7 @@ import { AccountingRepository } from '@/database/repositories/AccountingReposito
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { SupplierRepository } from '@/database/repositories/SupplierRepository';
 import { authService } from '@features/auth/services/authService';
+import { useAuthStore } from '@/store/authStore';
 import { GlobalGuard } from '@/services/security/GlobalGuard';
 import { BackupService } from '@/services/backupService';
 import { SubscriptionEntitlementService } from '@/services/saas/subscriptionEntitlementService';
@@ -148,6 +149,19 @@ export class UnifiedBusinessWorkflowOrchestrator {
    */
   public static async acquireIdempotencyKey(key: string): Promise<void> {
     if (!key) return;
+
+    // Retrieve and enforce trusted tenant context (Fail closed)
+    const user = authService.getCurrentUser?.() || useAuthStore.getState().user;
+    const authState = useAuthStore.getState();
+    const tenantId = (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
+    const branchId = (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
+
+    if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant') {
+      throw new Error("FAIL_CLOSED: لا يمكن حجز مفتاح Idempotency بدون سياق مؤسسة موثوق (Trusted Tenant Context Required).");
+    }
+
+    const effectiveBranchId = branchId && branchId !== 'main' ? branchId : 'BRH-DEFAULT';
+
     const existing = await IdempotencyRegistry.get(key);
     if (existing) {
       if (existing.status === 'COMMITTED') {
@@ -160,8 +174,8 @@ export class UnifiedBusinessWorkflowOrchestrator {
       await IdempotencyRegistry.save({
         key,
         status: 'PROCESSING',
-        tenantId: 'default',
-        branchId: 'main',
+        tenantId,
+        branchId: effectiveBranchId,
         operationType: 'WORKFLOW',
         entityType: 'INVOICE',
         fingerprint: key,
@@ -317,7 +331,16 @@ export class UnifiedBusinessWorkflowOrchestrator {
   public static async processSupplierPayment(
     params: WorkflowVoucherParams
   ): Promise<{ success: boolean; payment: Payment }> {
-    const transactionUuid = params.transactionUuid || generateTransactionUuid('PAYMENT');
+    const user = authService.getCurrentUser?.() || useAuthStore.getState().user;
+    const authState = useAuthStore.getState();
+    const tenantId = (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
+    const branchId = (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
+
+    if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant') {
+      throw new Error("FAIL_CLOSED: عملية سداد المورد تتطلب سياق مؤسسة موثوق (Trusted Tenant Context Required).");
+    }
+
+    const transactionUuid = params.idempotencyKey || params.transactionUuid || generateTransactionUuid('PAYMENT');
 
     const result = await WorkflowOrchestrator.execute(
       voucherWorkflow,
@@ -330,7 +353,11 @@ export class UnifiedBusinessWorkflowOrchestrator {
         paymentMethod: params.paymentMethod,
         allocations: params.allocations
       },
-      { idempotencyKey: transactionUuid }
+      {
+        tenantId,
+        branchId: branchId || 'BRH-DEFAULT',
+        idempotencyKey: transactionUuid
+      }
     );
 
     if (!result.success) {

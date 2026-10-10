@@ -97,12 +97,30 @@ export const PurchaseRepository = {
     }) as unknown as Purchase[];
   },
 
-  updatePaidAmount: async (id: string, amount: number): Promise<void> => {
+  updatePaidAmount: async (id: string, amount: number, tenantId?: string): Promise<void> => {
+    if (typeof amount !== 'number' || isNaN(amount) || amount <= 0) {
+      throw new Error('ALLOCATION_AMOUNT_INVALID: مبلغ السداد يجب أن يكون رقماً موجباً أكبر من الصفر.');
+    }
     await db.safeTransaction('rw', ['invoices'], async () => {
       const purchase = await db.invoices.get(id);
-      if (!purchase) return;
+      if (!purchase) {
+        throw new Error(`INVOICE_NOT_FOUND: الفاتورة [${id}] غير موجودة.`);
+      }
+      if (tenantId && purchase.tenantId && purchase.tenantId !== tenantId) {
+        throw new Error(`CROSS_TENANT_INVOICE_FORBIDDEN: الفاتورة [${id}] تابعة لمؤسسة أخرى.`);
+      }
+      const total = Number(purchase.totalAmount ?? purchase.finalTotal ?? 0);
+      const currentPaid = Number(purchase.paidAmount ?? 0);
+      const remaining = Math.max(0, total - currentPaid);
+
+      if (amount > remaining + 0.001) {
+        throw new Error(`OVER_ALLOCATION: مبلغ السداد (${amount}) يتجاوز المتبقي على الفاتورة (${remaining}).`);
+      }
+
+      const newPaid = currentPaid + amount;
       await db.invoices.update(id, {
-        paidAmount: (purchase.paidAmount || 0) + amount,
+        paidAmount: newPaid,
+        paymentStatus: newPaid >= total ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : purchase.paymentStatus),
         updatedAt: new Date().toISOString()
       });
     });

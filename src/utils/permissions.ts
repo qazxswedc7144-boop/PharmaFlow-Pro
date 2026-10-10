@@ -101,7 +101,9 @@ export const LEGACY_PERMISSION_ALIASES: Record<string, string> = {
   'branch.edit': 'branches.update',
   'branch.transfer': 'branches.transfer',
   'branch.report': 'branches.report',
-  'inventory.adjust': 'inventory.stock.adjust'
+  'inventory.adjust': 'inventory.stock.adjust',
+  'vouchers.create': 'accounting.voucher.create',
+  'vouchers.manage': 'accounting.voucher.create'
 };
 
 /**

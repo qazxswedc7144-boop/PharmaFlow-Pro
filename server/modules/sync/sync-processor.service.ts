@@ -381,6 +381,38 @@ export class SyncProcessorService {
       return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
     }
 
+    if (entity === "PAYMENT" || entity === "VOUCHER") {
+      const paymentNumber = data.paymentNumber || data.payment_number || `PMT-${Date.now()}`;
+      await tx.payment.upsert({
+        where: { id: entityId },
+        update: {
+          paymentNumber,
+          date: new Date(data.date || Date.now()),
+          amount: data.amount || 0,
+          partnerId: data.partnerId || data.supplier_id || data.customer_id || "",
+          partnerType: data.partnerType || (data.supplier_id ? "SUPPLIER" : "CUSTOMER"),
+          paymentMethod: data.paymentMethod || "CASH",
+          notes: data.notes || null,
+          branchId: data.branchId || branchId,
+          updatedAt: new Date()
+        },
+        create: {
+          id: entityId,
+          paymentNumber,
+          date: new Date(data.date || Date.now()),
+          amount: data.amount || 0,
+          partnerId: data.partnerId || data.supplier_id || data.customer_id || "",
+          partnerType: data.partnerType || (data.supplier_id ? "SUPPLIER" : "CUSTOMER"),
+          paymentMethod: data.paymentMethod || "CASH",
+          notes: data.notes || null,
+          tenantId,
+          branchId: data.branchId || branchId
+        }
+      });
+
+      return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
+    }
+
     return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
   }
 

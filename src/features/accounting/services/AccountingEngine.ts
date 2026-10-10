@@ -242,6 +242,8 @@ export class AccountingEngine {
     refId: string;
     notes?: string;
     paymentMethod?: 'CASH' | 'TRANSFER';
+    tenantId?: string;
+    branchId?: string;
   }): Promise<AccountingEntry> {
     const cashAcc = await this.getCoreAccount('CASH');
     const bankAcc = await this.getCoreAccount('BANK');
@@ -249,7 +251,7 @@ export class AccountingEngine {
     const apAcc = await this.getCoreAccount('PAYABLE');
 
     const lines: JournalLine[] = [];
-    const entryId = `JE-${Date.now()}`;
+    const entryId = `JE-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
     const fundAcc = params.paymentMethod === 'TRANSFER' ? bankAcc : cashAcc;
 
@@ -273,6 +275,9 @@ export class AccountingEngine {
       status: 'Posted',
       sourceId: params.refId,
       sourceType: 'VOUCHER',
+      partnerId: params.partnerId,
+      tenantId: params.tenantId,
+      branchId: params.branchId,
       lines,
       created_at: new Date().toISOString(),
       lastModified: new Date().toISOString()

@@ -48,11 +48,27 @@ export class WorkflowExecutionPipeline {
 
       // Step 9: Idempotency Check & Acquisition
       if (ctx.idempotencyKey) {
+        const payloadFingerprint = JSON.stringify(input ?? {});
         const existing = await IdempotencyRegistry.get(ctx.idempotencyKey);
         if (existing) {
+          // Detect payload mismatch on duplicate key
+          if (
+            existing.fingerprint &&
+            existing.fingerprint !== payloadFingerprint &&
+            existing.fingerprint !== ctx.idempotencyKey &&
+            existing.fingerprint !== 'auto' &&
+            existing.fingerprint !== 'legacy'
+          ) {
+            throw new WorkflowExecutionError(
+              'IDEMPOTENCY_PAYLOAD_MISMATCH: تم استخدام مفتاح التكرار هذا سابقاً مع حمولة طلب مختلفة.',
+              'IDEMPOTENCY_CONFLICT'
+            );
+          }
+
           if (existing.status === 'COMMITTED') {
-            if (existing.responseData) {
-              return WorkflowResultBuilder.success(existing.responseData as TResult, ctx, {
+            const replayData = (existing.responseData || existing.result) as TResult;
+            if (replayData) {
+              return WorkflowResultBuilder.success(replayData, ctx, {
                 warnings: ['تم استرجاع النتيجة من السجل المصادق عليه سابقاً (Idempotent replay)']
               });
             }
@@ -70,7 +86,7 @@ export class WorkflowExecutionPipeline {
             branchId: ctx.branchId,
             operationType: ctx.operationType,
             entityType: workflow.id.toUpperCase(),
-            fingerprint: ctx.idempotencyKey,
+            fingerprint: payloadFingerprint,
             createdAt: new Date().toISOString()
           });
         }
