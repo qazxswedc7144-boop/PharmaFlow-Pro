@@ -5,6 +5,7 @@ import { AccountingEntry, JournalLine, Sale, Purchase, InvoiceItem, UnifiedInvoi
 import { CurrencyService } from '@/services/localization/CurrencyService';
 import { AccountingError } from '@/core/errors';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+import { generateTransactionUuid } from '@/utils/uuid';
 
 export interface SaleAdjustment {
   Type: 'Discount' | 'Tax Adjustment' | string;
@@ -251,16 +252,16 @@ export class AccountingEngine {
     const apAcc = await this.getCoreAccount('PAYABLE');
 
     const lines: JournalLine[] = [];
-    const entryId = `JE-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const entryId = generateTransactionUuid('JE');
 
     const fundAcc = params.paymentMethod === 'TRANSFER' ? bankAcc : cashAcc;
 
     if (params.type === 'RECEIPT') {
-      lines.push(await this.createLine(entryId, fundAcc, params.amount, 0));
-      lines.push(await this.createLine(entryId, arAcc, 0, params.amount));
+      lines.push(await this.createLine(entryId, fundAcc, params.amount, 0, params.tenantId, params.branchId));
+      lines.push(await this.createLine(entryId, arAcc, 0, params.amount, params.tenantId, params.branchId));
     } else {
-      lines.push(await this.createLine(entryId, apAcc, params.amount, 0));
-      lines.push(await this.createLine(entryId, fundAcc, 0, params.amount));
+      lines.push(await this.createLine(entryId, apAcc, params.amount, 0, params.tenantId, params.branchId));
+      lines.push(await this.createLine(entryId, fundAcc, 0, params.amount, params.tenantId, params.branchId));
     }
 
     this.validateEntryBalance(lines);
@@ -373,8 +374,15 @@ export class AccountingEngine {
     }
   }
 
-  private static async createLine(entryId: string, accountId: string, debit: number, credit: number): Promise<JournalLine> {
-    const id = `JL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+  private static async createLine(
+    entryId: string,
+    accountId: string,
+    debit: number,
+    credit: number,
+    tenantId?: string,
+    branchId?: string
+  ): Promise<JournalLine> {
+    const id = generateTransactionUuid('JL');
     const safeAccId = accountId || 'ACC-GENERIC';
     
     return {
@@ -388,7 +396,9 @@ export class AccountingEngine {
       debit,
       credit,
       type: debit > 0 ? 'DEBIT' : 'CREDIT',
-      amount: debit > 0 ? debit : credit
+      amount: debit > 0 ? debit : credit,
+      tenantId,
+      branchId
     };
   }
 }

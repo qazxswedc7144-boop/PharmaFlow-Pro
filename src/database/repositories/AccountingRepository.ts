@@ -1,6 +1,8 @@
 
 import { db } from '@/core/db';
 import { Account, AccountingEntry, CashFlow, Transaction } from '@/types';
+import { useAuthStore } from '@/store/authStore';
+import { generateTransactionUuid } from '@/utils/uuid';
 
 const MAX_ACCOUNTING_SLICE = 200;
 
@@ -45,15 +47,37 @@ export const AccountingRepository = {
     }
 
     await db.safeTransaction('rw', ['journalEntries', 'accounts', 'journalLines'], async () => {
-      const entryId = entry.id || db.generateId('ENT');
+      const entryId = entry.id || generateTransactionUuid('JE');
       
+      let tenantId = (entry as any).tenantId;
+      let branchId = (entry as any).branchId;
+
+      if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'tenant-default' || tenantId === 'main') {
+        const authState = useAuthStore.getState();
+        const user = authState.user;
+        tenantId = (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
+      }
+
+      if (!branchId || branchId === 'main' || branchId === 'default' || branchId === 'default-branch' || branchId === 'BRH-DEFAULT') {
+        const authState = useAuthStore.getState();
+        const user = authState.user;
+        branchId = (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
+      }
+
+      if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'tenant-default' || tenantId === 'main') {
+        throw new Error('FAIL_CLOSED: قيد اليومية يتطلب سياق مؤسسة موثوق (Trusted Tenant Context Required).');
+      }
+      if (!branchId || branchId === 'main' || branchId === 'default' || branchId === 'default-branch' || branchId === 'BRH-DEFAULT') {
+        throw new Error('FAIL_CLOSED: قيد اليومية يتطلب فرع موثوق للمؤسسة (Trusted Branch Context Required).');
+      }
+
       await db.journalEntries.add({
         ...entry,
         id: entryId,
         createdAt: (entry as any).createdAt || entry.created_at || new Date().toISOString(),
         created_at: entry.created_at || (entry as any).createdAt || new Date().toISOString(),
-        tenantId: (entry as any).tenantId || 'tenant-default',
-        branchId: (entry as any).branchId || 'main',
+        tenantId,
+        branchId,
         status: entry.status || 'Posted'
       });
       
@@ -75,11 +99,13 @@ export const AccountingRepository = {
         // Also save journal lines separately if needed for indexing
         await db.journalLines.add({
           ...line,
-          id: line.id || line.lineId || `JL-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+          id: line.id || line.lineId || generateTransactionUuid('JL'),
           entryId: lineEntryId,
           entry_id: lineEntryId,
           accountId: lineAccId,
-          account_id: lineAccId
+          account_id: lineAccId,
+          tenantId,
+          branchId
         });
       }
     });

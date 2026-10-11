@@ -622,12 +622,18 @@ export class PharmaFlowDB extends Dexie {
   
   async updateCustomerBalance(id: string, delta: number) {
     const cust = await this.customers.get(id);
-    if (cust) await this.customers.update(id, { balance: (cust.balance || 0) + delta });
+    if (!cust) throw new Error(`CUSTOMER_NOT_FOUND: العميل [${id}] غير موجود لتحديث الرصيد.`);
+    const newBalance = Math.round(((Number(cust.balance) || 0) + delta) * 100) / 100;
+    await this.customers.update(id, { balance: newBalance });
+    return newBalance;
   }
 
   async updateSupplierBalance(id: string, delta: number) {
     const supp = await this.suppliers.get(id);
-    if (supp) await this.suppliers.update(id, { balance: (supp.balance || 0) + delta });
+    if (!supp) throw new Error(`SUPPLIER_NOT_FOUND: المورد [${id}] غير موجود لتحديث الرصيد.`);
+    const newBalance = Math.round(((Number(supp.balance) || 0) + delta) * 100) / 100;
+    await this.suppliers.update(id, { balance: newBalance });
+    return newBalance;
   }
 
   async recordCashFlow(data: Record<string, unknown>) {
@@ -1437,6 +1443,18 @@ function wrapQueryChain(obj: any, tableName: string): any {
             const res = val.apply(targetObj, args);
             if (res && typeof res.then === 'function') {
               return res.catch((err: any) => {
+                if (err && (
+                  err.name === 'ConstraintError' || 
+                  err.name === 'BulkError' || 
+                  err.name === 'AbortError' || 
+                  err.name === 'TransactionAbortedError' ||
+                  err.name === 'TransactionCommittedTooEarlyError' ||
+                  err.inner?.name === 'ConstraintError' ||
+                  err.inner?.name === 'AbortError' ||
+                  err.inner?.name === 'TransactionAbortedError'
+                )) {
+                  throw err;
+                }
                 console.warn(`[DB RESILIENT] Query operation promised rejection in table "${tableName}":`, err);
                 isDbBlocked = true;
                 const mockTable = getMockTable(tableName);
@@ -1450,7 +1468,19 @@ function wrapQueryChain(obj: any, tableName: string): any {
               return wrapQueryChain(res, tableName);
             }
             return res;
-          } catch (err) {
+          } catch (err: any) {
+            if (err && (
+              err.name === 'ConstraintError' || 
+              err.name === 'BulkError' || 
+              err.name === 'AbortError' || 
+              err.name === 'TransactionAbortedError' ||
+              err.name === 'TransactionCommittedTooEarlyError' ||
+              err.inner?.name === 'ConstraintError' ||
+              err.inner?.name === 'AbortError' ||
+              err.inner?.name === 'TransactionAbortedError'
+            )) {
+              throw err;
+            }
             console.warn(`[DB RESILIENT] Query method "${String(targetProp)}" execution failed on table "${tableName}":`, err);
             isDbBlocked = true;
             const mockTable = getMockTable(tableName);
@@ -1501,7 +1531,16 @@ function wrapTable(realTable: any, tableName: string): any {
             const res = boundFn(...args);
             if (res && typeof res.then === 'function') {
               return res.catch((err: any) => {
-                if (err && (err.name === 'ConstraintError' || err.name === 'BulkError' || err.inner?.name === 'ConstraintError')) {
+                if (err && (
+                  err.name === 'ConstraintError' || 
+                  err.name === 'BulkError' || 
+                  err.name === 'AbortError' || 
+                  err.name === 'TransactionAbortedError' ||
+                  err.name === 'TransactionCommittedTooEarlyError' ||
+                  err.inner?.name === 'ConstraintError' ||
+                  err.inner?.name === 'AbortError' ||
+                  err.inner?.name === 'TransactionAbortedError'
+                )) {
                   throw err;
                 }
                 console.warn(`[DB RESILIENT] Promised operation failure on table "${tableName}":`, err);
@@ -1516,7 +1555,16 @@ function wrapTable(realTable: any, tableName: string): any {
             }
             return res;
           } catch (err: any) {
-            if (err && (err.name === 'ConstraintError' || err.name === 'BulkError' || err.inner?.name === 'ConstraintError')) {
+            if (err && (
+              err.name === 'ConstraintError' || 
+              err.name === 'BulkError' || 
+              err.name === 'AbortError' || 
+              err.name === 'TransactionAbortedError' ||
+              err.name === 'TransactionCommittedTooEarlyError' ||
+              err.inner?.name === 'ConstraintError' ||
+              err.inner?.name === 'AbortError' ||
+              err.inner?.name === 'TransactionAbortedError'
+            )) {
               throw err;
             }
             console.warn(`[DB RESILIENT] Table operation "${String(tProp)}" failed on table "${tableName}":`, err);
@@ -1664,17 +1712,20 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'getInvoiceHistory') return async (invoiceId: string) => dbProxy.auditLogs.where('targetId').equals(invoiceId).toArray();
     if (prop === 'addInvoiceHistory') return async (log: any) => dbProxy.auditLogs.add({ id: dbProxy.generateId('HIST'), ...log });
     if (prop === 'persist') return async () => true;
+    if (prop === 'resetResilientMode') return () => { isDbBlocked = false; };
     if (prop === 'updateCustomerBalance') return async (id: string, delta: number) => {
-      try {
-        const c = await dbProxy.customers.get(id);
-        if (c) await dbProxy.customers.update(id, { balance: (Number(c.balance) || 0) + delta });
-      } catch {}
+      const c = await dbProxy.customers.get(id);
+      if (!c) throw new Error(`CUSTOMER_NOT_FOUND: العميل [${id}] غير موجود لتحديث الرصيد.`);
+      const newBalance = Math.round(((Number(c.balance) || 0) + delta) * 100) / 100;
+      await dbProxy.customers.update(id, { balance: newBalance });
+      return newBalance;
     };
     if (prop === 'updateSupplierBalance') return async (id: string, delta: number) => {
-      try {
-        const s = await dbProxy.suppliers.get(id);
-        if (s) await dbProxy.suppliers.update(id, { balance: (Number(s.balance) || 0) + delta });
-      } catch {}
+      const s = await dbProxy.suppliers.get(id);
+      if (!s) throw new Error(`SUPPLIER_NOT_FOUND: المورد [${id}] غير موجود لتحديث الرصيد.`);
+      const newBalance = Math.round(((Number(s.balance) || 0) + delta) * 100) / 100;
+      await dbProxy.suppliers.update(id, { balance: newBalance });
+      return newBalance;
     };
     if (prop === 'updateAccountBalance') return async (id: string, delta: number) => {
       try {
@@ -1746,12 +1797,7 @@ export const dbProxy = new Proxy({} as any, {
             }
           });
         } catch (txErr) {
-          if (opThrew) {
-            throw thrownError;
-          }
-          console.warn("[DB Proxy] Transaction error, falling back to direct execution:", txErr);
-          isDbBlocked = true;
-          return operation ? await operation({} as any) : undefined;
+          throw thrownError || txErr;
         }
       };
     }

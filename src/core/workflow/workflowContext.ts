@@ -23,15 +23,22 @@ export class WorkflowContextFactory {
     const rawTenantId = options?.tenantId || (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
     const rawBranchId = options?.branchId || (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
 
-    if (!rawTenantId || rawTenantId === 'default' || rawTenantId === 'default-tenant') {
+    if (!rawTenantId || rawTenantId === 'default' || rawTenantId === 'default-tenant' || rawTenantId === 'main') {
       throw new WorkflowExecutionError(
         'FAIL_CLOSED: لا يمكن تنفيذ العملية المالية بدون سياق مؤسسة موثوق (Trusted Tenant Context Required).',
-        'TENANT_REQUIRED'
+        'AUTHORIZATION_DENIED'
+      );
+    }
+
+    if (!rawBranchId || rawBranchId === 'main' || rawBranchId === 'default' || rawBranchId === 'default-branch' || rawBranchId === 'BRH-DEFAULT') {
+      throw new WorkflowExecutionError(
+        'FAIL_CLOSED: لا يمكن تنفيذ العملية المالية بدون فرع موثوق للمؤسسة (Trusted Branch Context Required).',
+        'AUTHORIZATION_DENIED'
       );
     }
 
     const tenantId = rawTenantId;
-    const branchId = rawBranchId || 'BRH-DEFAULT';
+    const branchId = rawBranchId;
     const userId = options?.userId || user?.id || (user as any)?.userId || 'system';
     const deviceId = options?.deviceId || 'browser-client';
     const idempotencyKey =

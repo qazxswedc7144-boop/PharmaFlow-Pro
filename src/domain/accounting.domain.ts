@@ -43,6 +43,7 @@ export interface JournalLine extends DomainEntity {
   type: 'DEBIT' | 'CREDIT';
   amount: number;
   description?: string;
+  branchId?: string;
 
   // Compatibility fields
   entry_id?: string;
@@ -63,7 +64,9 @@ export interface JournalEntry extends DomainEntity {
   sourceId: string;
   sourceType: string;
   journalType?: JournalType;
+  tenantId?: string;
   branchId?: string;
+  partnerId?: string;
   lines: JournalLine[];
   hash?: string;
 

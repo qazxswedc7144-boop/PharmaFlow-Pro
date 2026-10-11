@@ -612,6 +612,8 @@ export interface Receipt extends SyncableEntity {
   notes?: string;
   paymentMethod?: 'CASH' | 'TRANSFER';
   created_at: string;
+  tenantId?: string;
+  branchId?: string;
 }
 
 export interface Payment extends SyncableEntity {
@@ -622,6 +624,8 @@ export interface Payment extends SyncableEntity {
   notes?: string;
   paymentMethod?: 'CASH' | 'TRANSFER';
   created_at: string;
+  tenantId?: string;
+  branchId?: string;
 }
 
 export interface InvoiceSettlement extends SyncableEntity {

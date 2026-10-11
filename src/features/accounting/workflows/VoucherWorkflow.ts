@@ -6,6 +6,9 @@ import { SalesRepository } from '@/database/repositories/SalesRepository';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { AccountingEngine as accountingEngine } from '@features/accounting/services/AccountingEngine';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
+import { generateTransactionUuid } from '@/utils/uuid';
+import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+import { VoucherInvoiceLinkRepository } from '@/database/repositories/VoucherInvoiceLinkRepository';
 
 export interface VoucherWorkflowInput {
   type: 'RECEIPT' | 'PAYMENT';
@@ -31,11 +34,11 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
   public tables = [
     'vouchers', 'invoices', 'suppliers', 'customers', 'financialTransactions',
     'journalEntries', 'journalLines', 'accounts', 'auditLogs',
-    'idempotencyKeys', 'projectionEvents'
+    'idempotencyKeys', 'projectionEvents', 'voucherInvoiceLinks'
   ];
 
   public async validateInput(input: VoucherWorkflowInput): Promise<void> {
-    if (typeof input.amount !== 'number' || isNaN(input.amount) || input.amount <= 0) {
+    if (typeof input.amount !== 'number' || !isFinite(input.amount) || isNaN(input.amount) || input.amount <= 0) {
       throw new Error('مبلغ السند يجب أن يكون أكبر من الصفر');
     }
     if (!input.partnerId || input.partnerId.trim() === '') {
@@ -48,7 +51,7 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
       for (const invoiceId in input.allocations) {
         const item = input.allocations[invoiceId];
         const allocAmount = typeof item === 'number' ? item : item?.amount || 0;
-        if (typeof allocAmount !== 'number' || isNaN(allocAmount) || allocAmount <= 0) {
+        if (typeof allocAmount !== 'number' || !isFinite(allocAmount) || isNaN(allocAmount) || allocAmount <= 0) {
           throw new Error(`مبلغ التخصيص للفاتورة [${invoiceId}] يجب أن يكون رقماً موجباً أكبر من الصفر.`);
         }
         totalAllocated += allocAmount;
@@ -103,7 +106,11 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
           const allocAmount = typeof item === 'number' ? item : item?.amount || 0;
           const invoiceTotal = Number(inv.totalAmount ?? inv.finalTotal ?? 0);
           const alreadyPaid = Number(inv.paidAmount ?? 0);
-          const remainingOwed = Math.max(0, invoiceTotal - alreadyPaid);
+          const remainingOwed = Math.max(0, Math.round((invoiceTotal - alreadyPaid) * 100) / 100);
+
+          if (remainingOwed <= 0.001) {
+            throw new Error(`INVOICE_ALREADY_PAID: الفاتورة [${invoiceId}] مدفوعة بالكامل بالفعل ولا يمكن تكرار التخصيص لها.`);
+          }
 
           if (allocAmount > remainingOwed + 0.001) {
             throw new Error(`OVER_ALLOCATION: المبلغ المخصص للفاتورة [${invoiceId}] (${allocAmount}) يتجاوز المبلغ المتبقي المستحق (${remainingOwed}).`);
@@ -140,7 +147,11 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
           const allocAmount = typeof item === 'number' ? item : item?.amount || 0;
           const invoiceTotal = Number(inv.totalAmount ?? inv.finalTotal ?? 0);
           const alreadyPaid = Number(inv.paidAmount ?? 0);
-          const remainingOwed = Math.max(0, invoiceTotal - alreadyPaid);
+          const remainingOwed = Math.max(0, Math.round((invoiceTotal - alreadyPaid) * 100) / 100);
+
+          if (remainingOwed <= 0.001) {
+            throw new Error(`INVOICE_ALREADY_PAID: الفاتورة [${saleId}] مدفوعة بالكامل بالفعل ولا يمكن تكرار التخصيص لها.`);
+          }
 
           if (allocAmount > remainingOwed + 0.001) {
             throw new Error(`OVER_ALLOCATION: المبلغ المخصص للفاتورة [${saleId}] (${allocAmount}) يتجاوز المبلغ المتبقي المستحق (${remainingOwed}).`);
@@ -156,8 +167,7 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
   ): Promise<VoucherWorkflowResult> {
     const isPayment = input.type === 'PAYMENT';
     const prefix = isPayment ? 'PYMT' : 'RCPT';
-    const randomSuffix = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const id = `${prefix}-${Date.now()}-${randomSuffix}`;
+    const id = generateTransactionUuid(prefix);
     const date = input.date || ctx.startedAt;
 
     const voucherRecord: Voucher = {
@@ -185,7 +195,8 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
           const item = input.allocations[invoiceId];
           const allocAmount = typeof item === 'number' ? item : item?.amount || 0;
           if (allocAmount > 0) {
-            await PurchaseRepository.updatePaidAmount(invoiceId, allocAmount);
+            await PurchaseRepository.updatePaidAmount(invoiceId, allocAmount, ctx.tenantId);
+            await VoucherInvoiceLinkRepository.createLink(id, invoiceId, allocAmount, typeof item === 'object' ? item.note : undefined);
           }
         }
       }
@@ -197,7 +208,7 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
 
       // 4. Record single authoritative Financial Transaction
       await FinancialTransactionRepository.record({
-        id: db.generateId('FT'),
+        id: generateTransactionUuid('FT'),
         Transaction_Type: 'Payment',
         Reference_ID: id,
         Reference_Table: 'Vouchers',
@@ -223,7 +234,7 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         tenantId: ctx.tenantId,
         branchId: ctx.branchId
       });
-      await db.addJournalEntry(entry);
+      await AccountingRepository.addEntry(entry);
 
       // 6. Publish Projection Event within transaction
       await ProjectionEventBus.publish('SUPPLIER_PAYMENT_PROCESSED', id, {
@@ -256,7 +267,8 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
           const item = input.allocations[saleId];
           const allocAmount = typeof item === 'number' ? item : item?.amount || 0;
           if (allocAmount > 0) {
-            await SalesRepository.updatePaidAmount(saleId, allocAmount);
+            await SalesRepository.updatePaidAmount(saleId, allocAmount, ctx.tenantId);
+            await VoucherInvoiceLinkRepository.createLink(id, saleId, allocAmount, typeof item === 'object' ? item.note : undefined);
           }
         }
       }
@@ -266,7 +278,7 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
       }
 
       await FinancialTransactionRepository.record({
-        id: db.generateId('FT'),
+        id: generateTransactionUuid('FT'),
         Transaction_Type: 'Receipt',
         Reference_ID: id,
         Reference_Table: 'Vouchers',
@@ -291,7 +303,7 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         tenantId: ctx.tenantId,
         branchId: ctx.branchId
       });
-      await db.addJournalEntry(entry);
+      await AccountingRepository.addEntry(entry);
 
       await ProjectionEventBus.publish('CUSTOMER_RECEIPT_PROCESSED', id, {
         customerId: input.partnerId,

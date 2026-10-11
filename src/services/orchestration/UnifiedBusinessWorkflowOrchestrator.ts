@@ -66,6 +66,7 @@ export interface WorkflowVoucherParams {
   paymentMethod?: 'CASH' | 'TRANSFER';
   allocations?: Record<string, number | { amount: number; note?: string }>;
   transactionUuid?: string;
+  idempotencyKey?: string;
 }
 
 export interface WorkflowStockAdjustmentParams {
@@ -147,22 +148,24 @@ export class UnifiedBusinessWorkflowOrchestrator {
   /**
    * Manage idempotency lifecycle before entering critical execution section
    */
-  public static async acquireIdempotencyKey(key: string): Promise<void> {
+  public static async acquireIdempotencyKey(key: string, tenantIdParam?: string, branchIdParam?: string): Promise<void> {
     if (!key) return;
 
-    // Retrieve and enforce trusted tenant context (Fail closed)
+    // Retrieve and enforce trusted tenant and branch context (Fail closed)
     const user = authService.getCurrentUser?.() || useAuthStore.getState().user;
     const authState = useAuthStore.getState();
-    const tenantId = (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
-    const branchId = (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
+    const tenantId = tenantIdParam || (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
+    const branchId = branchIdParam || (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
 
-    if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant') {
+    if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'main') {
       throw new Error("FAIL_CLOSED: لا يمكن حجز مفتاح Idempotency بدون سياق مؤسسة موثوق (Trusted Tenant Context Required).");
     }
 
-    const effectiveBranchId = branchId && branchId !== 'main' ? branchId : 'BRH-DEFAULT';
+    if (!branchId || branchId === 'main' || branchId === 'default' || branchId === 'default-branch' || branchId === 'BRH-DEFAULT') {
+      throw new Error("FAIL_CLOSED: لا يمكن حجز مفتاح Idempotency بدون فرع موثوق للمؤسسة (Trusted Branch Context Required).");
+    }
 
-    const existing = await IdempotencyRegistry.get(key);
+    const existing = await IdempotencyRegistry.get(key, tenantId);
     if (existing) {
       if (existing.status === 'COMMITTED') {
         return;
@@ -175,7 +178,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
         key,
         status: 'PROCESSING',
         tenantId,
-        branchId: effectiveBranchId,
+        branchId,
         operationType: 'WORKFLOW',
         entityType: 'INVOICE',
         fingerprint: key,
@@ -186,7 +189,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
     try {
       await TransactionService.ensureIdempotency(key);
     } catch (err) {
-      await IdempotencyRegistry.delete(key).catch(() => null);
+      await IdempotencyRegistry.delete(key, tenantId).catch(() => null);
       throw err;
     }
   }
@@ -336,8 +339,16 @@ export class UnifiedBusinessWorkflowOrchestrator {
     const tenantId = (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
     const branchId = (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
 
-    if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant') {
+    if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'main') {
       throw new Error("FAIL_CLOSED: عملية سداد المورد تتطلب سياق مؤسسة موثوق (Trusted Tenant Context Required).");
+    }
+
+    if (!branchId || branchId === 'main' || branchId === 'default' || branchId === 'default-branch' || branchId === 'BRH-DEFAULT') {
+      throw new Error("FAIL_CLOSED: عملية سداد المورد تتطلب فرع موثوق للمؤسسة (Trusted Branch Context Required).");
+    }
+
+    if (typeof params.amount !== 'number' || !isFinite(params.amount) || isNaN(params.amount) || params.amount <= 0) {
+      throw new Error("مبلغ السداد يجب أن يكون رقماً موجباً أكبر من الصفر.");
     }
 
     const transactionUuid = params.idempotencyKey || params.transactionUuid || generateTransactionUuid('PAYMENT');
@@ -355,7 +366,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
       },
       {
         tenantId,
-        branchId: branchId || 'BRH-DEFAULT',
+        branchId,
         idempotencyKey: transactionUuid
       }
     );
@@ -376,7 +387,24 @@ export class UnifiedBusinessWorkflowOrchestrator {
   public static async processCustomerReceipt(
     params: WorkflowVoucherParams
   ): Promise<{ success: boolean; receipt: Receipt }> {
-    const transactionUuid = params.transactionUuid || generateTransactionUuid('RECEIPT');
+    const user = authService.getCurrentUser?.() || useAuthStore.getState().user;
+    const authState = useAuthStore.getState();
+    const tenantId = (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
+    const branchId = (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
+
+    if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'main') {
+      throw new Error("FAIL_CLOSED: عملية سند القبض تتطلب سياق مؤسسة موثوق (Trusted Tenant Context Required).");
+    }
+
+    if (!branchId || branchId === 'main' || branchId === 'default' || branchId === 'default-branch' || branchId === 'BRH-DEFAULT') {
+      throw new Error("FAIL_CLOSED: عملية سند القبض تتطلب فرع موثوق للمؤسسة (Trusted Branch Context Required).");
+    }
+
+    if (typeof params.amount !== 'number' || !isFinite(params.amount) || isNaN(params.amount) || params.amount <= 0) {
+      throw new Error("مبلغ السند يجب أن يكون رقماً موجباً أكبر من الصفر.");
+    }
+
+    const transactionUuid = params.idempotencyKey || params.transactionUuid || generateTransactionUuid('RECEIPT');
 
     const result = await WorkflowOrchestrator.execute(
       voucherWorkflow,
@@ -389,7 +417,11 @@ export class UnifiedBusinessWorkflowOrchestrator {
         paymentMethod: params.paymentMethod,
         allocations: params.allocations
       },
-      { idempotencyKey: transactionUuid }
+      {
+        tenantId,
+        branchId,
+        idempotencyKey: transactionUuid
+      }
     );
 
     if (!result.success) {

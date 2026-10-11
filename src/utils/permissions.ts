@@ -186,15 +186,6 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
  * Examines if the given role has the requested permission (resolving aliases and normalization).
  */
 export function can(role: string | null | undefined, permission: Permission | string, customPermissions?: string[]): boolean {
-  if (!role || role.trim() === '') return false;
-  
-  const normalizedRole = normalizeRole(role);
-  
-  // Super admin / Owner bypass
-  if (['admin', 'owner', 'platform_owner', 'tenant_admin'].includes(normalizedRole)) {
-    return true;
-  }
-  
   const canonicalPerm = resolveCanonicalPermission(permission);
 
   // Check user custom permissions override if present
@@ -205,6 +196,15 @@ export function can(role: string | null | undefined, permission: Permission | st
         customPermissions.some(cp => resolveCanonicalPermission(cp) === canonicalPerm)) {
       return true;
     }
+  }
+
+  if (!role || role.trim() === '') return false;
+  
+  const normalizedRole = normalizeRole(role);
+  
+  // Super admin / Owner bypass
+  if (['admin', 'owner', 'platform_owner', 'tenant_admin'].includes(normalizedRole)) {
+    return true;
   }
 
   const permissions = ROLE_PERMISSIONS[normalizedRole];

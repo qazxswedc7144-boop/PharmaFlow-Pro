@@ -49,7 +49,7 @@ export class WorkflowExecutionPipeline {
       // Step 9: Idempotency Check & Acquisition
       if (ctx.idempotencyKey) {
         const payloadFingerprint = JSON.stringify(input ?? {});
-        const existing = await IdempotencyRegistry.get(ctx.idempotencyKey);
+        const existing = await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId);
         if (existing) {
           // Detect payload mismatch on duplicate key
           if (
@@ -111,7 +111,7 @@ export class WorkflowExecutionPipeline {
 
       // Step 12: Mark Idempotency Completed & Invalidate Meter Cache
       if (ctx.idempotencyKey) {
-        await IdempotencyRegistry.updateStatus(ctx.idempotencyKey, 'COMMITTED', domainResult).catch(() => null);
+        await IdempotencyRegistry.updateStatus(ctx.idempotencyKey, 'COMMITTED', domainResult, undefined, ctx.tenantId).catch(() => null);
         UsageMeterService.invalidate();
       }
 
@@ -170,7 +170,7 @@ export class WorkflowExecutionPipeline {
 
       // Rollback Idempotency status
       if (ctx.idempotencyKey) {
-        await IdempotencyRegistry.delete(ctx.idempotencyKey).catch(() => null);
+        await IdempotencyRegistry.delete(ctx.idempotencyKey, ctx.tenantId).catch(() => null);
       }
 
       // Register Incident Recovery

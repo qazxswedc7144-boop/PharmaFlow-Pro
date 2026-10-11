@@ -98,7 +98,7 @@ export const PurchaseRepository = {
   },
 
   updatePaidAmount: async (id: string, amount: number, tenantId?: string): Promise<void> => {
-    if (typeof amount !== 'number' || isNaN(amount) || amount <= 0) {
+    if (typeof amount !== 'number' || !isFinite(amount) || isNaN(amount) || amount <= 0) {
       throw new Error('ALLOCATION_AMOUNT_INVALID: مبلغ السداد يجب أن يكون رقماً موجباً أكبر من الصفر.');
     }
     await db.safeTransaction('rw', ['invoices'], async () => {
@@ -106,21 +106,26 @@ export const PurchaseRepository = {
       if (!purchase) {
         throw new Error(`INVOICE_NOT_FOUND: الفاتورة [${id}] غير موجودة.`);
       }
-      if (tenantId && purchase.tenantId && purchase.tenantId !== tenantId) {
+      if (tenantId && (!purchase.tenantId || purchase.tenantId !== tenantId)) {
         throw new Error(`CROSS_TENANT_INVOICE_FORBIDDEN: الفاتورة [${id}] تابعة لمؤسسة أخرى.`);
       }
       const total = Number(purchase.totalAmount ?? purchase.finalTotal ?? 0);
       const currentPaid = Number(purchase.paidAmount ?? 0);
-      const remaining = Math.max(0, total - currentPaid);
+      const remaining = Math.max(0, Math.round((total - currentPaid) * 100) / 100);
+
+      if (remaining <= 0.001) {
+        throw new Error(`INVOICE_ALREADY_PAID: الفاتورة [${id}] مسددة بالكامل بالفعل ولا يمكن تكرار السداد لها.`);
+      }
 
       if (amount > remaining + 0.001) {
         throw new Error(`OVER_ALLOCATION: مبلغ السداد (${amount}) يتجاوز المتبقي على الفاتورة (${remaining}).`);
       }
 
-      const newPaid = currentPaid + amount;
+      const calculatedPaid = Math.round((currentPaid + amount) * 100) / 100;
+      const newPaid = Math.min(total, calculatedPaid);
       await db.invoices.update(id, {
         paidAmount: newPaid,
-        paymentStatus: newPaid >= total ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : purchase.paymentStatus),
+        paymentStatus: newPaid >= total - 0.001 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : purchase.paymentStatus),
         updatedAt: new Date().toISOString()
       });
     });

@@ -24,7 +24,8 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
   public tables = [
     'vouchers', 'receipts', 'payments', 'suppliers', 'customers',
     'journalEntries', 'journalLines', 'accounts', 'financialTransactions',
-    'auditLogs', 'idempotencyKeys', 'projectionEvents'
+    'auditLogs', 'idempotencyKeys', 'projectionEvents', 'voucherInvoiceLinks',
+    'invoices'
   ];
 
   public async validateInput(input: VoucherCancellationInput): Promise<void> {
@@ -58,13 +59,35 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     if (input.type === 'RECEIPT') {
       await db.receipts.delete(input.id);
       if (input.partnerId && input.partnerId !== 'عميل نقدي') {
-        await db.updateCustomerBalance(input.partnerId, -input.amount);
+        // Reverting receipt restores customer receivable balance (+amount)
+        await db.updateCustomerBalance(input.partnerId, input.amount);
       }
     } else {
       await db.payments.delete(input.id);
       if (input.partnerId && input.partnerId !== 'مورد نقدي') {
-        await db.updateSupplierBalance(input.partnerId, -input.amount);
+        // Reverting payment restores supplier payable balance (+amount)
+        await db.updateSupplierBalance(input.partnerId, input.amount);
       }
+    }
+
+    // Revert invoice allocations linked to this voucher
+    try {
+      const links = await db.db.voucherInvoiceLinks.where('voucherId').equals(input.id).toArray();
+      for (const link of links) {
+        const inv = await db.invoices.get(link.invoiceId);
+        if (inv) {
+          const newPaid = Math.max(0, Math.round(((inv.paidAmount || 0) - (link.Paid_Amount || 0)) * 100) / 100);
+          const total = Number(inv.totalAmount ?? inv.finalTotal ?? 0);
+          await db.invoices.update(link.invoiceId, {
+            paidAmount: newPaid,
+            paymentStatus: newPaid <= 0.001 ? 'UNPAID' : (newPaid < total - 0.001 ? 'PARTIAL' : 'PAID'),
+            updatedAt: new Date().toISOString()
+          });
+        }
+        await db.db.voucherInvoiceLinks.delete(link.id);
+      }
+    } catch (linkErr) {
+      console.warn('[VoucherCancellation] Error reverting voucher invoice links:', linkErr);
     }
 
     // Reverse journal entries linked
