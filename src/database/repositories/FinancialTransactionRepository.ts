@@ -1,4 +1,3 @@
-
 import { db } from '@/core/db';
 import { FinancialTransaction } from '@/types';
 import { authService } from '@features/auth/services/authService';
@@ -68,7 +67,8 @@ export const FinancialTransactionRepository = {
       branchId
     } as FinancialTransaction;
 
-    const ftsTbl = db.financialTransactions;
+    // ✅ التعديل: استخدام tx إن وُجد
+    const ftsTbl = tx?.financialTransactions ?? db.financialTransactions;
     await ftsTbl.put(transaction);
     
     await db.addAuditLog(
