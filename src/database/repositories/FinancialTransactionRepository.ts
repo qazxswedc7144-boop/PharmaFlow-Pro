@@ -71,11 +71,13 @@ export const FinancialTransactionRepository = {
     const ftsTbl = tx?.financialTransactions ?? db.financialTransactions;
     await ftsTbl.put(transaction);
     
+    // ✅ التعديل: تمرير tx إلى دالة addAuditLog
     await db.addAuditLog(
       'CREATE', 
       'VOUCHER',
       transaction.Reference_ID, 
-      `تم تسجيل مبلغ مسدد بقيمة ${transaction.Paid_Amount.toLocaleString()} د.إ (${transaction.Transaction_Type}) لجهة: ${transaction.Entity_Name}`
+      `تم تسجيل مبلغ مسدد بقيمة ${transaction.Paid_Amount.toLocaleString()} د.إ (${transaction.Transaction_Type}) لجهة: ${transaction.Entity_Name}`,
+      tx
     );
 
     return id;
