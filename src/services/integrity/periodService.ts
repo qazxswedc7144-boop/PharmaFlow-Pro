@@ -3,7 +3,7 @@ import { db } from '@/core/db';
 
 export class PeriodService {
   static async getCurrentPeriod() {
-    const periods = await db.db.accountingPeriods.toArray();
+    const periods = await db.accountingPeriods.toArray();
     return periods[periods.length - 1];
   }
 

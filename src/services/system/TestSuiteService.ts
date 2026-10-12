@@ -786,7 +786,7 @@ export class TestSuiteService {
       const invoiceId = `TEST-INV-${Date.now()}`;
 
       // Seed a dummy sales invoice as POSTED
-      await db.db.sales.add({
+      await db.sales.add({
         id: invoiceId,
         SaleID: invoiceId,
         customerId: 'CUST-TEST',
@@ -815,7 +815,7 @@ export class TestSuiteService {
       );
 
       // Clean up
-      await db.db.sales.delete(invoiceId);
+      await db.sales.delete(invoiceId);
     }
 
     // Test Case 4: App restart replay attempt
@@ -824,7 +824,7 @@ export class TestSuiteService {
       const firstInvoiceId = `REPLAY-INV-${Date.now()}`;
 
       // Insert COMPLETED record and mock the POSTED invoice
-      await db.db.sales.add({
+      await db.sales.add({
         id: firstInvoiceId,
         SaleID: firstInvoiceId,
         customerId: 'CUST-REPLAY',
@@ -858,7 +858,7 @@ export class TestSuiteService {
       );
 
       // Clean up
-      await db.db.sales.delete(firstInvoiceId);
+      await db.sales.delete(firstInvoiceId);
       await db.idempotencyKeys.delete(key4);
     }
   }

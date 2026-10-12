@@ -15,7 +15,7 @@ class PredictionService {
   private async getRecentUsageBoosts() {
     // In a real app, we might query itemUsageLog or a dedicated analytics table
     // For now, let's get the most used products from itemUsageLog
-    const usage = await db.db.itemUsageLog.toArray();
+    const usage = await db.itemUsageLog.toArray();
     const productCounts: Record<string, number> = {};
     const partnerCounts: Record<string, number> = {};
 
@@ -52,15 +52,15 @@ class PredictionService {
     const q = query.toLowerCase();
     let allProducts: Product[] = [];
     try {
-      allProducts = await db.db.products.where('is_active').equals(1 as any).toArray().catch(() => []);
+      allProducts = await db.products.where('is_active').equals(1 as any).toArray().catch(() => []);
       if (allProducts.length === 0) {
-        allProducts = await db.db.products.where('Is_Active').equals(1 as any).toArray().catch(() => []);
+        allProducts = await db.products.where('Is_Active').equals(1 as any).toArray().catch(() => []);
       }
       if (allProducts.length === 0) {
-        allProducts = await db.db.products.toArray().catch(() => []);
+        allProducts = await db.products.toArray().catch(() => []);
       }
     } catch {
-      allProducts = await db.db.products.toArray().catch(() => []);
+      allProducts = await db.products.toArray().catch(() => []);
     }
     const { productCounts } = await this.getRecentUsageBoosts();
 
@@ -98,7 +98,7 @@ class PredictionService {
     if (cached) return cached;
 
     const q = query.toLowerCase();
-    const allSuppliers = await db.db.suppliers.where('Is_Active').equals(1).toArray();
+    const allSuppliers = await db.suppliers.where('Is_Active').equals(1).toArray();
     const { partnerCounts } = await this.getRecentUsageBoosts();
 
     const scored = allSuppliers.map(s => {
@@ -134,7 +134,7 @@ class PredictionService {
     if (cached) return cached;
 
     const q = query.toLowerCase();
-    const allCustomers = await db.db.customers.where('Is_Active').equals(1).toArray();
+    const allCustomers = await db.customers.where('Is_Active').equals(1).toArray();
     const { partnerCounts } = await this.getRecentUsageBoosts();
 
     const scored = allCustomers.map(c => {

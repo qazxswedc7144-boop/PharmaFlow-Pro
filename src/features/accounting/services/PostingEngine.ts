@@ -58,7 +58,7 @@ export class PostingEngine {
     await db.updateCustomerBalance(sale.customerId, sale.finalTotal);
 
     // 5. Update Sale Status
-    await db.db.sales.update(saleId, { 
+    await db.sales.update(saleId, { 
       InvoiceStatus: 'POSTED',
       isArchived: true,
       lastPostedAt: new Date().toISOString()
@@ -108,7 +108,7 @@ export class PostingEngine {
     await db.updateCustomerBalance(sale.customerId, -sale.finalTotal);
 
     // 4. Update Sale Status
-    await db.db.sales.update(saleId, { InvoiceStatus: 'DRAFT_EDIT' });
+    await db.sales.update(saleId, { InvoiceStatus: 'DRAFT_EDIT' });
   }
 
   static async postPurchase(purchaseId: string): Promise<void> {
@@ -153,7 +153,7 @@ export class PostingEngine {
     await db.updateSupplierBalance(purchase.partnerId, purchase.totalAmount);
 
     // 5. Update Purchase Status
-    await db.db.purchases.update(purchaseId, { 
+    await db.purchases.update(purchaseId, { 
       invoiceStatus: 'POSTED',
       isArchived: true,
       lastPostedAt: new Date().toISOString()
@@ -202,7 +202,7 @@ export class PostingEngine {
     await db.updateSupplierBalance(purchase.partnerId, -(purchase.totalAmount || 0));
 
     // 4. Update Status
-    await db.db.purchases.update(purchaseId, { invoiceStatus: 'DRAFT_EDIT' });
+    await db.purchases.update(purchaseId, { invoiceStatus: 'DRAFT_EDIT' });
   }
 
   static async postVoucher(voucherId: string): Promise<void> {
@@ -211,7 +211,7 @@ export class PostingEngine {
     // Ensure accounts are seeded
     await AccountingEngine.seedAccounts();
 
-    const voucher = await db.db.cashFlow.get(voucherId);
+    const voucher = await db.cashFlow.get(voucherId);
     if (!voucher) throw new Error("Voucher not found");
     
     // 4. Accounting Period Lock Check
@@ -259,7 +259,7 @@ export class PostingEngine {
   static async unpostInvoice(id: string, type?: 'SALE' | 'PURCHASE'): Promise<void> {
     // Attempt to detect type if not provided
     if (!type) {
-        const sale = await db.db.sales.get(id);
+        const sale = await db.sales.get(id);
         if (sale) await this.unpostSale(id);
         else await this.unpostPurchase(id);
     } else {
@@ -299,7 +299,7 @@ export class PostingEngine {
   }
 
   private static async validateTrialBalance(): Promise<void> {
-    const accounts = await db.db.accounts.toArray();
+    const accounts = await db.accounts.toArray();
     let totalBalance = 0;
     for (const acc of accounts) {
       totalBalance += (acc.balance || 0);

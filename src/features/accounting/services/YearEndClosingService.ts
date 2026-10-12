@@ -12,14 +12,14 @@ export class YearEndClosingService {
 
     await db.runTransaction(async () => {
       // 1. Check if period is already locked
-      const period = await db.db.Accounting_Periods.filter(p => p.Start_Date === startDate).first();
+      const period = await db.Accounting_Periods.filter(p => p.Start_Date === startDate).first();
       if (period?.Is_Locked) throw new Error("السنة المالية مقفلة بالفعل.");
 
       // 2. Calculate Net Profit for the year
       const range = createSafeDateRange(`${year}-01-01`, `${year}-12-31`);
       if (!range) throw new Error("نطاق تاريخ غير صالح للسنة المالية.");
 
-      const entries = await db.db.journalEntries
+      const entries = await db.journalEntries
         .where('date')
         .between(`${year}-01-01`, `${year}-12-31`, true, true)
         .toArray();
@@ -76,14 +76,14 @@ export class YearEndClosingService {
 
       // 4. Lock Period
       if (period) {
-        await db.db.Accounting_Periods.update(period.id, {
+        await db.Accounting_Periods.update(period.id, {
           Is_Locked: true,
           Locked_By: userId,
           Locked_At: new Date().toISOString(),
           lastModified: new Date().toISOString()
         });
       } else {
-        await db.db.Accounting_Periods.put({
+        await db.Accounting_Periods.put({
           id: db.generateId('PER'),
           Start_Date: startDate,
           End_Date: endDate,

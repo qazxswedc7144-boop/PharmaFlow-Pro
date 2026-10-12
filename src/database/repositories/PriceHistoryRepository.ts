@@ -4,7 +4,7 @@ import { db } from '@/core/db';
 
 export const PriceHistoryRepository = {
   record: async (productId: string, name: string, partnerId: string, price: number, date: string): Promise<void> => {
-    await db.db.priceHistory.add({
+    await db.priceHistory.add({
       id: db.generateId('PH'),
       productId,
       name,
@@ -16,7 +16,7 @@ export const PriceHistoryRepository = {
   },
 
   getDetailedLastPrice: async (productId: string, partnerId: string): Promise<any | null> => {
-    const records = await db.db.priceHistory
+    const records = await db.priceHistory
       .where('productId')
       .equals(productId)
       .and(r => r.partnerId === partnerId)
@@ -26,7 +26,7 @@ export const PriceHistoryRepository = {
   },
 
   getPreferredPartnerPrice: async (productId: string): Promise<{ price: number, partner: string } | null> => {
-    const records = await db.db.priceHistory.where('productId').equals(productId).toArray();
+    const records = await db.priceHistory.where('productId').equals(productId).toArray();
     if (records.length === 0) return null;
 
     // Count by partner
@@ -63,7 +63,7 @@ export const PriceHistoryRepository = {
 
   getAveragePriceForProduct: async (productId: string): Promise<number> => {
     // Basic implementation: get average of last few sales
-    const sales = await db.db.sales.toArray();
+    const sales = await db.sales.toArray();
     const itemPrices = sales
       .flatMap(s => s.items)
       .filter(i => i.product_id === productId)

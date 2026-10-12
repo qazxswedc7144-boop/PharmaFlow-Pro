@@ -8,11 +8,11 @@ import { InvoiceAdjustment } from '@/types';
 export const AdjustmentRepository = {
   
   async getAll(): Promise<InvoiceAdjustment[]> {
-    return await db.db.invoiceAdjustments.toArray();
+    return await db.invoiceAdjustments.toArray();
   },
 
   async getByInvoice(invoiceId: string): Promise<InvoiceAdjustment[]> {
-    return await db.db.invoiceAdjustments.where('InvoiceID').equals(invoiceId).toArray();
+    return await db.invoiceAdjustments.where('InvoiceID').equals(invoiceId).toArray();
   },
 
   async save(adjustment: InvoiceAdjustment): Promise<void> {
@@ -20,11 +20,11 @@ export const AdjustmentRepository = {
       ...adjustment,
       lastModified: new Date().toISOString()
     };
-    await db.db.invoiceAdjustments.put(data);
+    await db.invoiceAdjustments.put(data);
   },
 
   async delete(id: string): Promise<void> {
-    await db.db.invoiceAdjustments.delete(id);
+    await db.invoiceAdjustments.delete(id);
   },
 
   /**

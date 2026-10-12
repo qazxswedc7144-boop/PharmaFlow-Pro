@@ -223,7 +223,7 @@ const BackupManagement: React.FC = () => {
 
   const loadBackups = async () => {
     try {
-      const data = await db.db.systemBackups.orderBy('createdAt').reverse().toArray();
+      const data = await db.systemBackups.orderBy('createdAt').reverse().toArray();
       setBackups(data);
     } catch (e) {
       console.error("Failed to load backups:", e);

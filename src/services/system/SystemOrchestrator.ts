@@ -59,13 +59,13 @@ export class SystemOrchestrator {
     try {
       const processingKeys = await db.idempotencyKeys.where('status').equals('PROCESSING').toArray().catch(() => []);
       for (const record of processingKeys) {
-        let sale = await db.db.sales.where('transactionUuid').equals(record.id).first().catch(() => null);
+        let sale = await db.sales.where('transactionUuid').equals(record.id).first().catch(() => null);
         if (!sale) {
-          sale = await db.db.sales.filter((s: any) => s.transactionUuid === record.id || s.id === record.id).first().catch(() => null);
+          sale = await db.sales.filter((s: any) => s.transactionUuid === record.id || s.id === record.id).first().catch(() => null);
         }
-        let purchase = await db.db.purchases.where('transactionUuid').equals(record.id).first().catch(() => null);
+        let purchase = await db.purchases.where('transactionUuid').equals(record.id).first().catch(() => null);
         if (!purchase) {
-          purchase = await db.db.purchases.filter((p: any) => p.transactionUuid === record.id || p.id === record.id).first().catch(() => null);
+          purchase = await db.purchases.filter((p: any) => p.transactionUuid === record.id || p.id === record.id).first().catch(() => null);
         }
         let invoice = sale || purchase;
         if (!invoice) {

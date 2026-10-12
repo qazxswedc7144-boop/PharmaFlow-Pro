@@ -61,7 +61,7 @@ export const SharedAutomationActions = {
       const user = authService.getCurrentUser();
       const now = new Date().toISOString();
       const id = db.generateId('TRX');
-      await db.db.financialTransactions.put({
+      await db.financialTransactions.put({
         ...data,
         id: id,
         Transaction_ID: id,

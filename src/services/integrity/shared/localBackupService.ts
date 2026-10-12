@@ -4,7 +4,7 @@ import { db } from '@/core/db';
 export class LocalBackupService {
   async createBackup(name: string) {
     const data = await this.collectData();
-    await db.db.systemBackups.add({
+    await db.systemBackups.add({
       id: `BK-${Date.now()}`,
       backupName: name,
       backupType: 'MANUAL',

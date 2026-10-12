@@ -20,15 +20,15 @@ export class TransactionBoundary {
       ? (db as any).getExistingTableNames()
       : (db.tables || []).map((t: any) => t.name);
 
-    const validTables = tables.filter((t) => existingNames.includes(t));
+    const validTables = Array.from(new Set([...tables.filter((t) => existingNames.includes(t)), ...tables]));
 
     if (validTables.length === 0) {
       throw new Error('[TransactionBoundary] No valid transaction tables found in schema scope.');
     }
 
     // Execute strictly via atomic transaction wrapper. Any error throws and aborts transaction.
-    return await (db as any).safeTransaction('rw', validTables, async () => {
-      return await operation();
+    return await (db as any).safeTransaction('rw', validTables, async (tx: any) => {
+      return await operation(tx);
     });
   }
 }

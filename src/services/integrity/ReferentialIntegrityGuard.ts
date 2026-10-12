@@ -14,19 +14,19 @@ export const ReferentialIntegrityGuard = {
   async checkProductReferences(productId: string): Promise<boolean> {
     if (!productId) return false;
     // 1. فحص المبيعات
-    const hasSales = await db.db.sales.filter((s: any) => s.items.some((it: any) => it.product_id === productId)).count() > 0;
+    const hasSales = await db.sales.filter((s: any) => s.items.some((it: any) => it.product_id === productId)).count() > 0;
     if (hasSales) return true;
 
     // 2. فحص المشتريات
-    const hasPurchases = await db.db.purchases.filter((p: any) => p.items.some((it: any) => it.product_id === productId)).count() > 0;
+    const hasPurchases = await db.purchases.filter((p: any) => p.items.some((it: any) => it.product_id === productId)).count() > 0;
     if (hasPurchases) return true;
 
     // 3. فحص سجلات الاستخدام (Usage Logs)
-    const hasUsage = (await safeWhereEqual(db.db.itemUsageLog, 'productId', productId)).length > 0;
+    const hasUsage = (await safeWhereEqual(db.itemUsageLog, 'productId', productId)).length > 0;
     if (hasUsage) return true;
 
     // 4. فحص الحركات المخزنية المركزية
-    const hasInventoryTx = (await safeWhereEqual(db.db.inventoryTransactions, 'productId', productId)).length > 0;
+    const hasInventoryTx = (await safeWhereEqual(db.inventoryTransactions, 'productId', productId)).length > 0;
     if (hasInventoryTx) return true;
 
     return false;
@@ -39,16 +39,16 @@ export const ReferentialIntegrityGuard = {
     if (!partnerId) return false;
 
     // 1. فحص الفواتير (مبيعات أو مشتريات)
-    const hasSales = (await safeWhereEqual(db.db.sales, 'customerId', partnerId)).length > 0;
-    const hasPurchases = (await safeWhereEqual(db.db.purchases, 'partnerId', partnerId)).length > 0;
+    const hasSales = (await safeWhereEqual(db.sales, 'customerId', partnerId)).length > 0;
+    const hasPurchases = (await safeWhereEqual(db.purchases, 'partnerId', partnerId)).length > 0;
     if (hasSales || hasPurchases) return true;
 
     // 2. فحص الحركات المالية المركزية
-    const hasFinancials = (await safeWhereEqual(db.db.financialTransactions, 'Entity_Name', partnerId)).length > 0;
+    const hasFinancials = (await safeWhereEqual(db.financialTransactions, 'Entity_Name', partnerId)).length > 0;
     if (hasFinancials) return true;
 
     // 3. فحص السندات (عبر سجلات الكاش فلو)
-    const hasVouchers = await db.db.cashFlow.filter((cf: any) => cf.notes?.includes(partnerId) || false).count() > 0;
+    const hasVouchers = await db.cashFlow.filter((cf: any) => cf.notes?.includes(partnerId) || false).count() > 0;
     if (hasVouchers) return true;
 
     return false;
@@ -60,11 +60,11 @@ export const ReferentialIntegrityGuard = {
   async checkAccountReferences(accountId: string): Promise<boolean> {
     if (!accountId) return false;
     // 1. فحص قيود اليومية
-    const hasEntries = await db.db.journalEntries.filter((e: any) => e.lines.some((l: any) => l.accountId === accountId)).count() > 0;
+    const hasEntries = await db.journalEntries.filter((e: any) => e.lines.some((l: any) => l.accountId === accountId)).count() > 0;
     if (hasEntries) return true;
 
     // 2. فحص الحسابات الأبناء (Hierarchy)
-    const hasChildren = (await safeWhereEqual(db.db.accounts, 'parentId', accountId)).length > 0;
+    const hasChildren = (await safeWhereEqual(db.accounts, 'parentId', accountId)).length > 0;
     if (hasChildren) return true;
 
     return false;

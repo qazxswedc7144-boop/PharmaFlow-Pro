@@ -11,23 +11,23 @@ import { generateTransactionUuid } from '@/utils/uuid';
 export const FinancialTransactionRepository = {
   
   getAll: async (): Promise<FinancialTransaction[]> => {
-    return await db.db.financialTransactions.orderBy('Transaction_Date').reverse().toArray();
+    return await db.financialTransactions.orderBy('Transaction_Date').reverse().toArray();
   },
 
   getById: async (id: string): Promise<FinancialTransaction | undefined> => {
-    return await db.db.financialTransactions.get(id);
+    return await db.financialTransactions.get(id);
   },
 
   getByReference: async (refId: string): Promise<FinancialTransaction[]> => {
     if (!refId) return [];
-    return await db.db.financialTransactions.where('Reference_ID').equals(refId).toArray();
+    return await db.financialTransactions.where('Reference_ID').equals(refId).toArray();
   },
 
   /**
    * تسجيل حركة مالية مركزية جديدة (Unique Transaction Registry)
    */
   // Fix: Added Paid_Amount to Omit and made it optional in the input type to allow defaulting to Amount in implementation
-  record: async (data: Omit<FinancialTransaction, 'Transaction_ID' | 'Created_At' | 'Created_By' | 'lastModified' | 'Transaction_Date' | 'Paid_Amount'> & { Transaction_Date?: string; Paid_Amount?: number; id?: string }): Promise<string> => {
+  record: async (data: Omit<FinancialTransaction, 'Transaction_ID' | 'Created_At' | 'Created_By' | 'lastModified' | 'Transaction_Date' | 'Paid_Amount'> & { Transaction_Date?: string; Paid_Amount?: number; id?: string }, tx?: any): Promise<string> => {
     const user = authService.getCurrentUser();
     const id = data.id || generateTransactionUuid('TRX');
     const now = new Date().toISOString();
@@ -68,7 +68,8 @@ export const FinancialTransactionRepository = {
       branchId
     } as FinancialTransaction;
 
-    await db.db.financialTransactions.put(transaction);
+    const ftsTbl = db.financialTransactions;
+    await ftsTbl.put(transaction);
     
     await db.addAuditLog(
       'CREATE', 
@@ -89,7 +90,7 @@ export const FinancialTransactionRepository = {
     for (const trx of transactions) {
       trx.isDeleted = true;
       trx.lastModified = now;
-      await db.db.financialTransactions.put(trx);
+      await db.financialTransactions.put(trx);
     }
   }
 };

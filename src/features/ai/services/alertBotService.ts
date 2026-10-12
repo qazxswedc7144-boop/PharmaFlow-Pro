@@ -19,7 +19,7 @@ export const alertBotService = {
       const thresholdDays = await db.getSetting('expiry_threshold_days', 30);
       await db.clearOldAlerts();
 
-       const batches = await db.db.medicineBatches.toArray();
+       const batches = await db.medicineBatches.toArray();
       const products = await db.getProducts();
       const today = new Date();
       

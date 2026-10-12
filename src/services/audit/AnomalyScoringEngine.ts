@@ -91,7 +91,7 @@ export class AnomalyScoringEngine {
   }
 
   private static async checkFinancialImbalance(): Promise<number> {
-    const entries = await db.db.journalEntries.toArray();
+    const entries = await db.journalEntries.toArray();
     let imbalancedCount = 0;
     for (const entry of entries) {
       const debits = (entry.lines || []).reduce((sum, l) => sum + (l.debit || 0), 0);
@@ -103,7 +103,7 @@ export class AnomalyScoringEngine {
   }
 
   private static async checkDuplicateTransactions(): Promise<number> {
-    const sales = await db.db.sales.toArray();
+    const sales = await db.sales.toArray();
     const hashes = new Set();
     let duplicates = 0;
     for (const s of sales) {
@@ -115,19 +115,19 @@ export class AnomalyScoringEngine {
   }
 
   private static async checkMissingJournalLinks(): Promise<number> {
-    const sales = await db.db.sales.filter(s => s.InvoiceStatus === 'POSTED').toArray();
-    const purchases = await db.db.purchases.filter(p => p.invoiceStatus === 'POSTED').toArray();
+    const sales = await db.sales.filter(s => s.InvoiceStatus === 'POSTED').toArray();
+    const purchases = await db.purchases.filter(p => p.invoiceStatus === 'POSTED').toArray();
     
     let missing = 0;
     for (const s of sales) {
       if (!s.id) continue;
-      const entries = await safeWhereEqual(db.db.journalEntries, 'sourceId', s.id);
+      const entries = await safeWhereEqual(db.journalEntries, 'sourceId', s.id);
       const entry = entries[0] || null;
       if (!entry) missing++;
     }
     for (const p of purchases) {
       if (!p.id) continue;
-      const entries = await safeWhereEqual(db.db.journalEntries, 'sourceId', p.id);
+      const entries = await safeWhereEqual(db.journalEntries, 'sourceId', p.id);
       const entry = entries[0] || null;
       if (!entry) missing++;
     }
@@ -140,12 +140,12 @@ export class AnomalyScoringEngine {
   private static async checkVolumeSpike(): Promise<number> {
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 3600000).toISOString();
-    if (!db.db.sales) {
+    if (!db.sales) {
       console.error("[AnomalyScoringEngine] sales table not found");
       return 0;
     }
     if (!oneHourAgo) return 0;
-    const recentSales = await safeWhereAbove(db.db.sales, 'date', oneHourAgo);
+    const recentSales = await safeWhereAbove(db.sales, 'date', oneHourAgo);
     const count = recentSales.length;
     
     // Threshold: > 100 transactions per hour is a spike (increased for development)
@@ -155,7 +155,7 @@ export class AnomalyScoringEngine {
   }
 
   private static async checkSecurityFlags(): Promise<number> {
-    const logs = await db.db.Audit_Log.filter(l => l.Change_Type === 'UPDATE').toArray();
+    const logs = await db.Audit_Log.filter(l => l.Change_Type === 'UPDATE').toArray();
     // Check for unauthorized modification attempts (e.g. non-admin trying to edit posted invoices)
     // This is a simplified check based on audit logs
     const suspicious = logs.filter(l => l.Table_Name === 'Audit_Log').length; // Audit log itself shouldn't be updated

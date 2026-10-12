@@ -157,7 +157,7 @@ export class BackupOrchestrator {
         if (vaultPass) {
           password = vaultPass;
         } else {
-          const passRecord = await db.db.settings.get('backupPassword');
+          const passRecord = await db.settings.get('backupPassword');
           if (passRecord?.value && typeof passRecord.value === 'string') {
             password = passRecord.value;
           }

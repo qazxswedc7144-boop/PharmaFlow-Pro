@@ -3,7 +3,7 @@ import { db } from '@/core/db';
 import { VoucherInvoiceLink } from '@/types';
 
 export const VoucherInvoiceLinkRepository = {
-  createLink: async (voucherId: string, invoiceId: string, amount: number, note?: string): Promise<string> => {
+  createLink: async (voucherId: string, invoiceId: string, amount: number, note?: string, _tx?: any): Promise<string> => {
     const id = db.generateId('LNK');
     const link: VoucherInvoiceLink = {
       id,
@@ -14,16 +14,16 @@ export const VoucherInvoiceLinkRepository = {
       note,
       updatedAt: new Date().toISOString()
     };
-    const key = await db.db.voucherInvoiceLinks.put(link);
-    return String(key);
+    await db.voucherInvoiceLinks.put(link);
+    return id;
   },
 
   getByVoucher: async (voucherId: string): Promise<VoucherInvoiceLink[]> => {
-    return await db.db.voucherInvoiceLinks.where('voucherId').equals(voucherId).toArray();
+    return await db.voucherInvoiceLinks.where('voucherId').equals(voucherId).toArray();
   },
 
   getByInvoice: async (invoiceId: string): Promise<VoucherInvoiceLink[]> => {
-    return await db.db.voucherInvoiceLinks.where('invoiceId').equals(invoiceId).toArray();
+    return await db.voucherInvoiceLinks.where('invoiceId').equals(invoiceId).toArray();
   },
 
   getTotalPaidForInvoice: async (invoiceId: string): Promise<number> => {

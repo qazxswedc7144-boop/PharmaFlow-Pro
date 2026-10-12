@@ -13,7 +13,7 @@ export const AuditRepository = {
    * جلب كافة السجلات مع ترتيب زمني تنازلي
    */
   getAll: async (limit: number = 500): Promise<FinancialAuditEntry[]> => {
-    return await db.db.Audit_Log
+    return await db.Audit_Log
       .orderBy('Modified_At')
       .reverse()
       .limit(limit)
@@ -25,7 +25,7 @@ export const AuditRepository = {
    */
   getByRecord: async (recordId: string): Promise<FinancialAuditEntry[]> => {
     if (!recordId) return [];
-    return await db.db.Audit_Log
+    return await db.Audit_Log
       .where('Record_ID')
       .equals(recordId)
       .reverse()
@@ -57,6 +57,6 @@ export const AuditRepository = {
     };
 
     // الإضافة مباشرة عبر Dexie لتجنب الحواجز البرمجية العادية
-    await db.db.Audit_Log.add(entry);
+    await db.Audit_Log.add(entry);
   }
 };

@@ -37,7 +37,7 @@ export const AccountingRepository = {
     return await db.journalEntries.orderBy('date').reverse().limit(MAX_ACCOUNTING_SLICE).toArray();
   },
 
-  addEntry: async (entry: AccountingEntry) => {
+  addEntry: async (entry: AccountingEntry, tx?: any) => {
     // Audit log integration
     const totalDebit = entry.lines.reduce((sum, l) => sum + (l.debit || 0), 0);
     const totalCredit = entry.lines.reduce((sum, l) => sum + (l.credit || 0), 0);
@@ -46,7 +46,7 @@ export const AccountingRepository = {
       throw new Error(`قيد غير متزن: إجمالي المدين (${totalDebit}) لا يساوي إجمالي الدائن (${totalCredit}) للفاتورة #${entry.sourceId}`);
     }
 
-    await db.safeTransaction('rw', ['journalEntries', 'accounts', 'journalLines'], async () => {
+    const performWrite = async (t: any) => {
       const entryId = entry.id || generateTransactionUuid('JE');
       
       let tenantId = (entry as any).tenantId;
@@ -71,7 +71,11 @@ export const AccountingRepository = {
         throw new Error('FAIL_CLOSED: قيد اليومية يتطلب فرع موثوق للمؤسسة (Trusted Branch Context Required).');
       }
 
-      await db.journalEntries.add({
+      const jeTbl = (t && t.journalEntries) ? t.journalEntries : db.journalEntries;
+      const accTbl = (t && t.accounts) ? t.accounts : db.accounts;
+      const jlTbl = (t && t.journalLines) ? t.journalLines : db.journalLines;
+
+      await jeTbl.put({
         ...entry,
         id: entryId,
         createdAt: (entry as any).createdAt || entry.created_at || new Date().toISOString(),
@@ -80,16 +84,16 @@ export const AccountingRepository = {
         branchId,
         status: entry.status || 'Posted'
       });
-      
+
       // Update account balances
       for (const line of entry.lines) {
         const lineAccId = line.accountId || line.account_id || 'ACC-GENERIC';
         const lineEntryId = line.entryId || line.entry_id || entryId;
         const amount = (line.debit || 0) - (line.credit || 0);
         if (lineAccId) {
-          const account = await db.accounts.get(lineAccId);
+          const account = await accTbl.get(lineAccId);
           if (account) {
-            await db.accounts.update(lineAccId, {
+            await accTbl.update(lineAccId, {
               balance: (account.balance || 0) + amount,
               updatedAt: new Date().toISOString()
             });
@@ -97,7 +101,7 @@ export const AccountingRepository = {
         }
 
         // Also save journal lines separately if needed for indexing
-        await db.journalLines.add({
+        await jlTbl.add({
           ...line,
           id: line.id || line.lineId || generateTransactionUuid('JL'),
           entryId: lineEntryId,
@@ -108,7 +112,14 @@ export const AccountingRepository = {
           branchId
         });
       }
-    });
+    };
+
+    const activeTx = tx || (db as any).currentTransaction || (db as any).idbdb?.currentTransaction || (globalThis as any).Dexie?.currentTransaction;
+    if (activeTx) {
+      await performWrite(activeTx);
+    } else {
+      await db.safeTransaction('rw', ['journalEntries', 'accounts', 'journalLines'], performWrite);
+    }
   },
 
   // Alias for addEntry to support legacy code

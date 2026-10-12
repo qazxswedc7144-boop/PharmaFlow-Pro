@@ -69,8 +69,8 @@ export class FinancialDefenseSystem {
    */
   static async calculateIntegrityScore(): Promise<number> {
     try {
-      const sales = await db.db.sales.toArray();
-      const journalEntries = await db.db.journalEntries.toArray();
+      const sales = await db.sales.toArray();
+      const journalEntries = await db.journalEntries.toArray();
       
       let issues = 0;
       

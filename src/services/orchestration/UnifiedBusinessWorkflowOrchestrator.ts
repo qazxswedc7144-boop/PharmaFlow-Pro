@@ -467,7 +467,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
     params: WorkflowStockTransferStatusParams
   ): Promise<{ success: boolean }> {
     const { transferId, newStatus, updatedBy, receivedQuantities } = params;
-    const rawTransfer = await db.db.branchTransfers.get(transferId);
+    const rawTransfer = await db.branchTransfers.get(transferId);
     if (!rawTransfer) throw new Error("لم يتم العثور على طلب النقل");
 
     if (rawTransfer.status === newStatus) return { success: true };
@@ -480,7 +480,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
       { branchId, lockType: "BRANCH_TRANSFER", ownerId: updatedBy, ttl: 15000 },
       async () => {
         return await TransactionService.runSafe(transferId, async () => {
-          const rawItems = await db.db.branchTransferItems.where("transferId").equals(transferId).toArray();
+          const rawItems = await db.branchTransferItems.where("transferId").equals(transferId).toArray();
           const previousStatus = rawTransfer.status;
           const now = new Date().toISOString();
 
@@ -521,7 +521,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
                 ? receivedQuantities[item.id]
                 : item.qty;
 
-              await db.db.branchTransferItems.update(item.id, { receivedQty: recQty });
+              await db.branchTransferItems.update(item.id, { receivedQty: recQty });
 
               const targetWarehouse = (rawTransfer as any).targetWarehouseId || 
                 (rawTransfer.targetBranchId.startsWith('WH-') ? rawTransfer.targetBranchId : `WH-${rawTransfer.targetBranchId}`);
@@ -573,7 +573,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
 
           rawTransfer.status = newStatus;
           rawTransfer.updatedAt = now;
-          await db.db.branchTransfers.put(rawTransfer);
+          await db.branchTransfers.put(rawTransfer);
 
           await ProjectionEventBus.publish('STOCK_TRANSFER_STATUS_CHANGED', transferId, { newStatus, previousStatus });
           await AuditService.log({
@@ -662,9 +662,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
         }
 
         if (type === 'SALE') {
-          await db.db.sales.update(invoiceId, { InvoiceStatus: 'DRAFT_EDIT', lastModified: new Date().toISOString() });
+          await db.sales.update(invoiceId, { InvoiceStatus: 'DRAFT_EDIT', lastModified: new Date().toISOString() });
         } else {
-          await db.db.purchases.update(invoiceId, { invoiceStatus: 'DRAFT_EDIT', lastModified: new Date().toISOString() });
+          await db.purchases.update(invoiceId, { invoiceStatus: 'DRAFT_EDIT', lastModified: new Date().toISOString() });
         }
 
         await AuditService.log({
@@ -715,9 +715,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
         }
 
         if (type === 'SALE') {
-          await db.db.sales.update(invoiceId, { InvoiceStatus: 'VOID', isDeleted: true, lastModified: new Date().toISOString() });
+          await db.sales.update(invoiceId, { InvoiceStatus: 'VOID', isDeleted: true, lastModified: new Date().toISOString() });
         } else {
-          await db.db.purchases.update(invoiceId, { invoiceStatus: 'VOID', isDeleted: true, lastModified: new Date().toISOString() });
+          await db.purchases.update(invoiceId, { invoiceStatus: 'VOID', isDeleted: true, lastModified: new Date().toISOString() });
         }
 
         await AuditService.log({

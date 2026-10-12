@@ -97,7 +97,7 @@ export class IntegritySweepService {
       if (Math.abs(debits - credits) > 0.01) {
         if (autoFix && entry.id) {
           console.warn(`AUTO_FIX: Deleting imbalanced journal entry [${entry.id}]`);
-          await db.db.journalEntries.delete(entry.id);
+          await db.journalEntries.delete(entry.id);
         } else if (!autoFix) {
           healthy = false;
         }
@@ -111,7 +111,7 @@ export class IntegritySweepService {
     let healthy = true;
     for (const p of products) {
       if (!p.id) continue;
-      const transactions = await db.db.inventoryTransactions.where('productId').equals(p.id).toArray();
+      const transactions = await db.inventoryTransactions.where('productId').equals(p.id).toArray();
       const calculatedStock = transactions.reduce((sum: number, t: any) => sum + (t.QuantityChange || 0), 0);
       const currentStock = Number(p.stock || p.StockQuantity || 0);
       
@@ -151,7 +151,7 @@ export class IntegritySweepService {
       if (balance < -0.01) {
         if (autoFix && s.id) {
           console.warn(`AUTO_FIX: Correcting overpaid sale [${s.SaleID}]`);
-          await db.db.sales.update(s.id, { paidAmount: s.finalTotal });
+          await db.sales.update(s.id, { paidAmount: s.finalTotal });
         } else if (!autoFix) {
           healthy = false;
         }
@@ -166,7 +166,7 @@ export class IntegritySweepService {
       if (balance < -0.01) {
         if (autoFix && p.id) {
           console.warn(`AUTO_FIX: Correcting overpaid purchase [${p.invoiceId}]`);
-          await db.db.purchases.update(p.id, { paidAmount: totalAmt });
+          await db.purchases.update(p.id, { paidAmount: totalAmt });
         } else if (!autoFix) {
           healthy = false;
         }
@@ -177,11 +177,11 @@ export class IntegritySweepService {
   }
 
   private static async validateOrphans(autoFix = false): Promise<boolean> {
-    const transactions = await db.db.inventoryTransactions.toArray();
+    const transactions = await db.inventoryTransactions.toArray();
     let healthy = true;
     for (const t of transactions) {
       if (t.SourceDocumentType === 'SALE') {
-        const sale = await db.db.sales.get(t.SourceDocumentID);
+        const sale = await db.sales.get(t.SourceDocumentID);
         if (!sale) {
           if (autoFix) {
             console.error(`AUTO_FIX BLOCKED: Physical deletion of orphan inventory transaction [${t.TransactionID}] is forbidden by architecture.`);
@@ -191,7 +191,7 @@ export class IntegritySweepService {
           }
         }
       } else if (t.SourceDocumentType === 'PURCHASE') {
-        const purchase = await db.db.purchases.get(t.SourceDocumentID);
+        const purchase = await db.purchases.get(t.SourceDocumentID);
         if (!purchase) {
           if (autoFix) {
             console.error(`AUTO_FIX BLOCKED: Physical deletion of orphan inventory transaction [${t.TransactionID}] is forbidden by architecture.`);
@@ -206,7 +206,7 @@ export class IntegritySweepService {
   }
 
   private static async validateVouchers(autoFix = false): Promise<boolean> {
-    const settlements = await db.db.settlements.toArray();
+    const settlements = await db.settlements.toArray();
     const cashFlow = await db.getCashFlow();
     const vouchers = cashFlow.filter((c: any) => c.notes?.includes('سند #'));
     let healthy = true;
@@ -221,7 +221,7 @@ export class IntegritySweepService {
           if (autoFix) {
             console.warn(`AUTO_FIX: Correcting over-allocated voucher #${vId}`);
             // Simple fix: delete settlements for this voucher to allow re-allocation
-            await db.db.settlements.bulkDelete(vSettlements.map((s: any) => s.id));
+            await db.settlements.bulkDelete(vSettlements.map((s: any) => s.id));
           } else {
             healthy = false;
           }
@@ -291,7 +291,7 @@ export class IntegritySweepService {
     const now = new Date().toISOString();
     
     // Check if we already have a recent critical alert for the same issues to prevent flooding
-    const recentAlerts = await db.db.systemAlerts
+    const recentAlerts = await db.systemAlerts
       .where('timestamp').above(new Date(Date.now() - 5 * 60 * 1000).toISOString())
       .filter((a: any) => a.severity === 'CRITICAL')
       .toArray();
@@ -310,7 +310,7 @@ export class IntegritySweepService {
       timestamp: now,
       isRead: false
     };
-    await db.db.systemAlerts.put(alert);
+    await db.systemAlerts.put(alert);
 
     if (IS_PREVIEW) {
       console.warn("PREVIEW GUARD: Critical data integrity failure detected, but bypassing RECOVERY_MODE switch.");

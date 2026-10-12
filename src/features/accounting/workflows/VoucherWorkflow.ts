@@ -45,7 +45,6 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
       throw new Error('يرجى تحديد الشريك (عميل أو مورد)');
     }
 
-    // Validate allocations structure and total bounds
     if (input.allocations && Object.keys(input.allocations).length > 0) {
       let totalAllocated = 0;
       for (const invoiceId in input.allocations) {
@@ -71,7 +70,6 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
     const isPayment = input.type === 'PAYMENT';
 
     if (isPayment) {
-      // 1. Verify Supplier existence and tenant isolation
       if (input.partnerId && input.partnerId !== 'مورد نقدي') {
         const supplier = await db.suppliers.get(input.partnerId);
         if (!supplier) {
@@ -82,26 +80,20 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         }
       }
 
-      // 2. Verify Allocated Invoices: existence, tenant isolation, supplier ownership, and no over-allocation
       if (input.allocations && Object.keys(input.allocations).length > 0) {
         for (const invoiceId in input.allocations) {
           const inv = await db.invoices.get(invoiceId);
           if (!inv) {
             throw new Error(`INVOICE_NOT_FOUND: فاتورة المشتريات [${invoiceId}] غير موجودة.`);
           }
-
-          // Verify tenant ownership of the invoice
           if (inv.tenantId && inv.tenantId !== ctx.tenantId) {
             throw new Error(`CROSS_TENANT_INVOICE_FORBIDDEN: الفاتورة [${invoiceId}] تابعة لمؤسسة أخرى.`);
           }
-
-          // Verify partner ownership
           const invPartner = inv.partnerId || (inv as any).supplier_id || (inv as any).partner_id;
           if (invPartner && invPartner !== input.partnerId) {
             throw new Error(`SUPPLIER_INVOICE_MISMATCH: الفاتورة [${invoiceId}] لا تنتمي إلى المورد المحدد [${input.partnerId}].`);
           }
 
-          // Prevent over-allocation on individual invoice
           const item = input.allocations[invoiceId];
           const allocAmount = typeof item === 'number' ? item : item?.amount || 0;
           const invoiceTotal = Number(inv.totalAmount ?? inv.finalTotal ?? 0);
@@ -118,7 +110,6 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         }
       }
     } else {
-      // Receipt business rules
       if (input.partnerId && input.partnerId !== 'عميل نقدي') {
         const customer = await db.customers.get(input.partnerId);
         if (!customer) {
@@ -163,7 +154,8 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
 
   public async executeDomainSteps(
     input: VoucherWorkflowInput,
-    ctx: WorkflowContext
+    ctx: WorkflowContext,
+    tx?: any
   ): Promise<VoucherWorkflowResult> {
     const isPayment = input.type === 'PAYMENT';
     const prefix = isPayment ? 'PYMT' : 'RCPT';
@@ -185,28 +177,31 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
       syncStatus: 'NEW'
     };
 
-    // 1. Persist Voucher
-    await db.db.vouchers.put(voucherRecord);
-
     if (isPayment) {
-      // 2. Process Purchase allocations with over-allocation prevention
+      // Stage 2: Invoice Allocation & Link
       if (input.allocations) {
         for (const invoiceId in input.allocations) {
           const item = input.allocations[invoiceId];
           const allocAmount = typeof item === 'number' ? item : item?.amount || 0;
           if (allocAmount > 0) {
-            await PurchaseRepository.updatePaidAmount(invoiceId, allocAmount, ctx.tenantId);
-            await VoucherInvoiceLinkRepository.createLink(id, invoiceId, allocAmount, typeof item === 'object' ? item.note : undefined);
+            await PurchaseRepository.updatePaidAmount(invoiceId, allocAmount, ctx.tenantId, tx);
+            await VoucherInvoiceLinkRepository.createLink(id, invoiceId, allocAmount, typeof item === 'object' ? item.note : undefined, tx);
           }
         }
       }
-
-      // 3. Update Supplier Balance
-      if (input.partnerId && input.partnerId !== 'مورد نقدي') {
-        await db.updateSupplierBalance(input.partnerId, -input.amount);
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_ALLOCATION') {
+        throw new Error('SIMULATED_ALLOCATION_FAILURE');
       }
 
-      // 4. Record single authoritative Financial Transaction
+      // Stage 3: Supplier Balance Update
+      if (input.partnerId && input.partnerId !== 'مورد نقدي') {
+        await (db as any).updateSupplierBalance(input.partnerId, -input.amount, tx);
+      }
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_BALANCE_UPDATE') {
+        throw new Error('SIMULATED_BALANCE_UPDATE_FAILURE');
+      }
+
+      // Stage 4: FinancialTransaction Record
       await FinancialTransactionRepository.record({
         id: generateTransactionUuid('FT'),
         Transaction_Type: 'Payment',
@@ -220,9 +215,12 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         Notes: input.notes || `سند صرف للمورد #${id}`,
         tenantId: ctx.tenantId,
         branchId: ctx.branchId
-      } as any);
+      } as any, tx);
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_FT') {
+        throw new Error('SIMULATED_FT_FAILURE');
+      }
 
-      // 5. Generate single authoritative balanced double-entry Journal Entry
+      // Stage 5: JournalEntry / JournalLines
       const entry = await accountingEngine.generateVoucherEntry({
         type: 'PAYMENT',
         amount: input.amount,
@@ -234,9 +232,19 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         tenantId: ctx.tenantId,
         branchId: ctx.branchId
       });
-      await AccountingRepository.addEntry(entry);
+      await AccountingRepository.addEntry(entry, tx);
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_JOURNAL') {
+        throw new Error('SIMULATED_JOURNAL_POSTING_FAILURE');
+      }
 
-      // 6. Publish Projection Event within transaction
+      // Stage 1: Persist Voucher at the end (failsafe ordering)
+      const vouchersTbl = (tx && tx.vouchers) ? tx.vouchers : db.vouchers;
+      await vouchersTbl.put(voucherRecord);
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_VOUCHER') {
+        throw new Error('SIMULATED_VOUCHER_FAILURE');
+      }
+
+      // Publish Projection Event
       await ProjectionEventBus.publish('SUPPLIER_PAYMENT_PROCESSED', id, {
         supplierId: input.partnerId,
         amount: input.amount,
@@ -304,6 +312,9 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         branchId: ctx.branchId
       });
       await AccountingRepository.addEntry(entry);
+
+      const vouchersTbl = (tx && tx.vouchers) ? tx.vouchers : db.vouchers;
+      await vouchersTbl.put(voucherRecord);
 
       await ProjectionEventBus.publish('CUSTOMER_RECEIPT_PROCESSED', id, {
         customerId: input.partnerId,

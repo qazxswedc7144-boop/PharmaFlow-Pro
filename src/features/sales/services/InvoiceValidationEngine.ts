@@ -72,8 +72,8 @@ export const InvoiceValidationEngine = {
     // التحقق من تكرار الفاتورة عبر البصمة بصورة فعالة باستخدام الفهرس
     const hash = InvoiceValidationEngine.generateHash(invoice);
     
-    const duplicateSales = await db.db.sales.where('hash').equals(hash).toArray();
-    const duplicatePurchases = await db.db.purchases.where('hash').equals(hash).toArray();
+    const duplicateSales = await db.sales.where('hash').equals(hash).toArray();
+    const duplicatePurchases = await db.purchases.where('hash').equals(hash).toArray();
     
     const isDuplicate = [...duplicateSales, ...duplicatePurchases].some(inv => inv.id !== invoice.id);
     if (isDuplicate) {

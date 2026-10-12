@@ -21,7 +21,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
   loadInventory: async () => {
     const [products, categories] = await Promise.all([
       InventoryService.getProducts(),
-      db.db.categories.toArray(),
+      db.categories.toArray(),
     ]);
     set({ products, categories: categories as unknown as Category[] });
   },
@@ -36,7 +36,7 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
       id: categoryId,
       categoryId: category.categoryId || categoryId
     };
-    await db.db.categories.put(payload);
+    await db.categories.put(payload);
     await get().loadInventory();
   },
 }));

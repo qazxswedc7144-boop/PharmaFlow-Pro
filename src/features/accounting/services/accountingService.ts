@@ -343,7 +343,7 @@ export const accountingService = {
         isSynced: false,
         updatedAt: today
       };
-      await db.db.cashFlow.put(cfRecord);
+      await db.cashFlow.put(cfRecord);
       
       const ftId = db.generateId('FT');
       await FinancialTransactionRepository.record({
@@ -475,7 +475,7 @@ export const accountingService = {
 
     return await db.runTransaction(async () => {
       // 1. Find the Journal Entry to reverse balances
-      const entry = await db.db.journalEntries.where('sourceId').equals(voucherId).first();
+      const entry = await db.journalEntries.where('sourceId').equals(voucherId).first();
       let partnerId: string | null = null;
 
       if (entry) {
@@ -486,7 +486,7 @@ export const accountingService = {
 
         // 2. Reverse Partner Balances
         // Find partnerId from settlements
-        const settlements = await db.db.settlements.where('voucherId').equals(voucherId).toArray();
+        const settlements = await db.settlements.where('voucherId').equals(voucherId).toArray();
         if (settlements.length > 0) {
           partnerId = settlements[0].partnerId;
           const totalSettled = settlements.reduce((sum, s) => sum + s.amount, 0);
@@ -510,13 +510,13 @@ export const accountingService = {
         }
 
         // 3. Delete Journal Entry
-        await db.db.journalEntries.delete(entry.id);
+        await db.journalEntries.delete(entry.id);
       }
 
       // 4. Delete CashFlow record
-      const cashflows = await db.db.cashFlow.filter(cf => cf.transaction_id === voucherId || (cf.notes ? cf.notes.includes(`#${voucherId}`) : false)).toArray();
+      const cashflows = await db.cashFlow.filter(cf => cf.transaction_id === voucherId || (cf.notes ? cf.notes.includes(`#${voucherId}`) : false)).toArray();
       for (const cf of cashflows) {
-        await db.db.cashFlow.delete(cf.id);
+        await db.cashFlow.delete(cf.id);
       }
 
       // 5. Delete Financial Transaction
@@ -525,14 +525,14 @@ export const accountingService = {
       // 6. Delete Links and Settlements
       const links = await VoucherInvoiceLinkRepository.getByVoucher(voucherId);
       for (const link of links) {
-        await db.db.voucherInvoiceLinks.delete(link.linkId);
+        await db.voucherInvoiceLinks.delete(link.linkId);
         // Re-reconcile invoices
         await ReconciliationEngine.reconcileInvoicePayments(link.invoiceId);
       }
 
-      const settlements = await db.db.settlements.where('voucherId').equals(voucherId).toArray();
+      const settlements = await db.settlements.where('voucherId').equals(voucherId).toArray();
       for (const s of settlements) {
-        await db.db.settlements.delete(s.id);
+        await db.settlements.delete(s.id);
       }
 
       // 7. Final Reconcile

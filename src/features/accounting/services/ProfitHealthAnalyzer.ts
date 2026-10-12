@@ -102,7 +102,7 @@ export class ProfitHealthAnalyzer {
       highRiskEntities
     };
     
-    await db.db.profitHealth.put(health);
+    await db.profitHealth.put(health);
     
     if (healthStatus === 'Critical') {
       await AlertCenter.addAlert({
@@ -117,6 +117,6 @@ export class ProfitHealthAnalyzer {
   }
 
   static async getLatestHealth() {
-    return await db.db.profitHealth.orderBy('date').last();
+    return await db.profitHealth.orderBy('date').last();
   }
 }

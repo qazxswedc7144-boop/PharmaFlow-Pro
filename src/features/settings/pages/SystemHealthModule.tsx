@@ -359,7 +359,7 @@ const SystemHealthModule: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
       );
       
       // 2. Fetch the backup record from Dexie
-      const record = await db.db.systemBackups.get(backupId);
+      const record = await db.systemBackups.get(backupId);
       if (!record || !record.dataSnapshot) {
         throw new Error('فشل استنباط نسخة قاعدة البيانات المحلية المشفرة.');
       }

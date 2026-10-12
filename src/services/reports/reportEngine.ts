@@ -331,7 +331,7 @@ export class ReportEngine {
     const invoices = await db.invoices.where('type').equals('SALE').toArray() as Sale[];
     
     // receipts are stored in vouchers or cash movements
-    const receipts = await db.db.receipts.toArray();
+    const receipts = await db.receipts.toArray();
     const vouchers = await db.vouchers.filter((v: { type?: string }) => v.type === 'RECEIPT').toArray();
 
     const customerDetails = (customers as Customer[]).map((cust: Customer) => {
@@ -379,7 +379,7 @@ export class ReportEngine {
     const purchases = await db.invoices.where('type').equals('PURCHASE').toArray() as Purchase[];
     
     // payments tables
-    const payments = await db.db.payments.toArray();
+    const payments = await db.payments.toArray();
     const vouchers = await db.vouchers.filter((v: { type?: string }) => v.type === 'PAYMENT').toArray();
 
     const result = (suppliers as Supplier[]).map((sup: Supplier) => {

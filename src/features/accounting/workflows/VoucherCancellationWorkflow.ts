@@ -72,7 +72,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
 
     // Revert invoice allocations linked to this voucher
     try {
-      const links = await db.db.voucherInvoiceLinks.where('voucherId').equals(input.id).toArray();
+      const links = await db.voucherInvoiceLinks.where('voucherId').equals(input.id).toArray();
       for (const link of links) {
         const inv = await db.invoices.get(link.invoiceId);
         if (inv) {
@@ -84,7 +84,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
             updatedAt: new Date().toISOString()
           });
         }
-        await db.db.voucherInvoiceLinks.delete(link.id);
+        await db.voucherInvoiceLinks.delete(link.id);
       }
     } catch (linkErr) {
       console.warn('[VoucherCancellation] Error reverting voucher invoice links:', linkErr);
@@ -100,7 +100,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     }
 
     // Delete or update status in vouchers table
-    await db.db.vouchers.delete(input.id).catch(() => null);
+    await db.vouchers.delete(input.id).catch(() => null);
 
     await (AuditService.log as any)({
       action: 'DELETE',

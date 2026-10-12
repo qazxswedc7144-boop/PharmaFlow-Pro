@@ -9,9 +9,9 @@ export class ProductionCleanupService {
       // ⚠️ WARNING: This is a destructive operation. 
       // It does not handle dependencies, journal entries, or stock movements.
       // Use ProductionCleanupService.runCleanup() for a safe, dependency-aware cleanup.
-      await db.db.products.clear();
-      await db.db.purchases.clear();
-      await db.db.sales.clear();
+      await db.products.clear();
+      await db.purchases.clear();
+      await db.sales.clear();
       
       console.log("✅ تم حذف البيانات التجريبية بنجاح!");
       // alert("تم تصفير النظام من البيانات التجريبية"); // Removed alert as it's not recommended in iframe
@@ -47,14 +47,14 @@ export class ProductionCleanupService {
       let deletedCount = 0;
 
       // Fetch all data
-      const sales = await db.db.sales.toArray();
-      const purchases = await db.db.purchases.toArray();
-      const vouchers = await db.db.cashFlow.toArray();
-      const journalEntries = await db.db.journalEntries.toArray();
-      const stockMovements = await db.db.inventoryTransactions.toArray();
-      const customers = await db.db.customers.toArray();
-      const suppliers = await db.db.suppliers.toArray();
-      const products = await db.db.products.toArray();
+      const sales = await db.sales.toArray();
+      const purchases = await db.purchases.toArray();
+      const vouchers = await db.cashFlow.toArray();
+      const journalEntries = await db.journalEntries.toArray();
+      const stockMovements = await db.inventoryTransactions.toArray();
+      const customers = await db.customers.toArray();
+      const suppliers = await db.suppliers.toArray();
+      const products = await db.products.toArray();
 
       // Step 2: Unpost all demo invoices
       const demoSales = sales.filter(s => this.isDemo(s));
@@ -82,7 +82,7 @@ export class ProductionCleanupService {
       
       // 1. Vouchers
       const demoVoucherIds = demoVouchers.map(v => v.transaction_id);
-      await db.db.cashFlow.bulkDelete(demoVoucherIds);
+      await db.cashFlow.bulkDelete(demoVoucherIds);
       deletedCount += demoVoucherIds.length;
 
       // 2. Journal Entries (demo only)
@@ -95,7 +95,7 @@ export class ProductionCleanupService {
         if (demoVoucherIds.includes(e.sourceId)) return true;
         return false;
       }).map(e => e.id);
-      await db.db.journalEntries.bulkDelete(demoJournalIds);
+      await db.journalEntries.bulkDelete(demoJournalIds);
       deletedCount += demoJournalIds.length;
 
       // 3. Stock Movements (demo only)
@@ -105,28 +105,28 @@ export class ProductionCleanupService {
         if (demoPurchases.some(p => p.id === m.SourceDocumentID)) return true;
         return false;
       }).map(m => m.TransactionID);
-      await db.db.inventoryTransactions.bulkDelete(demoStockIds);
+      await db.inventoryTransactions.bulkDelete(demoStockIds);
       deletedCount += demoStockIds.length;
 
       // 4. Invoices
-      await db.db.sales.bulkDelete(demoSales.map(s => s.id).filter(Boolean) as string[]);
-      await db.db.purchases.bulkDelete(demoPurchases.map(p => p.id).filter(Boolean) as string[]);
+      await db.sales.bulkDelete(demoSales.map(s => s.id).filter(Boolean) as string[]);
+      await db.purchases.bulkDelete(demoPurchases.map(p => p.id).filter(Boolean) as string[]);
       deletedCount += demoSales.length + demoPurchases.length;
 
       // 5. Customers
       const demoCustomerIds = customers.filter(c => this.isDemo(c)).map(c => c.id).filter(Boolean) as string[];
-      await db.db.customers.bulkDelete(demoCustomerIds);
+      await db.customers.bulkDelete(demoCustomerIds);
       deletedCount += demoCustomerIds.length;
 
       // 6. Suppliers
       const demoSupplierIds = suppliers.filter(s => this.isDemo(s)).map(s => s.id).filter(Boolean) as string[];
-      await db.db.suppliers.bulkDelete(demoSupplierIds);
+      await db.suppliers.bulkDelete(demoSupplierIds);
       deletedCount += demoSupplierIds.length;
 
       // 7. Products (demo only – only if not linked to real invoices)
       const demoProducts = products.filter(p => this.isDemo(p));
-      const realSales = (await db.db.sales.toArray()).filter(s => !this.isDemo(s));
-      const realPurchases = (await db.db.purchases.toArray()).filter(p => !this.isDemo(p));
+      const realSales = (await db.sales.toArray()).filter(s => !this.isDemo(s));
+      const realPurchases = (await db.purchases.toArray()).filter(p => !this.isDemo(p));
       
       const productsToDelete = demoProducts.filter(p => {
         const linkedToSale = realSales.some((s: { items?: { product_id: string }[] }) => 
@@ -138,14 +138,14 @@ export class ProductionCleanupService {
         return !linkedToSale && !linkedToPurchase;
       }).map(p => p.id).filter(Boolean) as string[];
       
-      await db.db.products.bulkDelete(productsToDelete);
+      await db.products.bulkDelete(productsToDelete);
       deletedCount += productsToDelete.length;
 
       // Step 4: Integrity Check
       console.log("Running Integrity Checks...");
       
       // 1. Trial Balance
-      const accounts = await db.db.accounts.toArray();
+      const accounts = await db.accounts.toArray();
       const totalBalance = accounts.reduce((sum: number, acc: any) => sum + (acc.balance || 0), 0);
       
       if (Math.abs(totalBalance) > 0.01) {
@@ -153,10 +153,10 @@ export class ProductionCleanupService {
       }
 
       // 2. Orphan Check (Journal Entries)
-      const remainingEntries = await db.db.journalEntries.toArray();
-      const remainingSales = await db.db.sales.toArray();
-      const remainingPurchases = await db.db.purchases.toArray();
-      const remainingVouchers = await db.db.cashFlow.toArray();
+      const remainingEntries = await db.journalEntries.toArray();
+      const remainingSales = await db.sales.toArray();
+      const remainingPurchases = await db.purchases.toArray();
+      const remainingVouchers = await db.cashFlow.toArray();
 
       const orphans = remainingEntries.filter((e: any) => {
         if (e.sourceType === 'SALE' && !remainingSales.some((s: any) => s.id === e.sourceId)) return true;
@@ -167,18 +167,18 @@ export class ProductionCleanupService {
 
       if (orphans.length > 0) {
         console.warn(`Detected ${orphans.length} orphan journal entries. Cleaning up...`);
-        await db.db.journalEntries.bulkDelete(orphans.map((o: any) => o.id));
+        await db.journalEntries.bulkDelete(orphans.map((o: any) => o.id));
       }
 
         // 3. Stock vs Ledger Check
-        const remainingProducts = await db.db.products.toArray();
+        const remainingProducts = await db.products.toArray();
         for (const p of remainingProducts) {
           if (!p.id) continue;
-          const movements = await db.db.inventoryTransactions.where('productId').equals(p.id).toArray();
+          const movements = await db.inventoryTransactions.where('productId').equals(p.id).toArray();
           const calculatedStock = movements.reduce((sum: number, m: any) => sum + (m.QuantityChange || 0), 0);
           if (Math.abs(calculatedStock - (p.stock || p.StockQuantity || 0)) > 0.001) {
             console.warn(`Stock mismatch for ${p.name || p.Name}: Ledger=${p.stock || p.StockQuantity}, Calculated=${calculatedStock}. Fixing...`);
-            await db.db.products.update(p.id, { 
+            await db.products.update(p.id, { 
               stock: calculatedStock,
               updated_at: new Date().toISOString()
             });

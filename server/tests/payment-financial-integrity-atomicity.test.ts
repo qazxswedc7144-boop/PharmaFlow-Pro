@@ -16,14 +16,14 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
 
   beforeEach(async () => {
     // Clear Dexie tables
-    await db.db.vouchers.clear();
-    await db.db.journalEntries.clear();
-    await db.db.journalLines.clear();
-    await db.db.financialTransactions.clear();
-    await db.db.invoices.clear();
-    await db.db.suppliers.clear();
-    await db.db.voucherInvoiceLinks.clear();
-    await db.db.idempotencyRecords.clear();
+    await db.vouchers.clear();
+    await db.journalEntries.clear();
+    await db.journalLines.clear();
+    await db.financialTransactions.clear();
+    await db.invoices.clear();
+    await db.suppliers.clear();
+    await db.voucherInvoiceLinks.clear();
+    await db.idempotencyRecords.clear();
 
     // Setup active authenticated user with required permissions
     useAuthStore.setState({
@@ -105,11 +105,11 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     ).rejects.toThrow(/مبلغ السداد يجب أن يكون رقماً موجباً أكبر من الصفر|مبلغ السند يجب أن يكون أكبر من الصفر/i);
 
     // Verify zero mutations
-    const vouchers = await db.db.vouchers.toArray();
+    const vouchers = await db.vouchers.toArray();
     expect(vouchers.length).toBe(0);
-    const transactions = await db.db.financialTransactions.toArray();
+    const transactions = await db.financialTransactions.toArray();
     expect(transactions.length).toBe(0);
-    const journals = await db.db.journalEntries.toArray();
+    const journals = await db.journalEntries.toArray();
     expect(journals.length).toBe(0);
   });
 
@@ -138,7 +138,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     expect(sup?.balance).toBe(1500);
 
     // Zero vouchers/financial records created
-    expect((await db.db.vouchers.toArray()).length).toBe(0);
+    expect((await db.vouchers.toArray()).length).toBe(0);
   });
 
   // -------------------------------------------------------------------------
@@ -205,7 +205,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     const voucherId = result.payment.id;
 
     // Exactly 1 FinancialTransaction
-    const transactions = await db.db.financialTransactions.toArray();
+    const transactions = await db.financialTransactions.toArray();
     expect(transactions.length).toBe(1);
     const trx = transactions[0];
     expect(trx.Reference_ID).toBe(voucherId);
@@ -214,7 +214,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     expect(trx.branchId).toBe(branchId);
 
     // Exactly 1 JournalEntry
-    const journalEntries = await db.db.journalEntries.toArray();
+    const journalEntries = await db.journalEntries.toArray();
     expect(journalEntries.length).toBe(1);
     const entry = journalEntries[0];
     expect(entry.referenceId).toBe(voucherId);
@@ -222,7 +222,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     expect(entry.branchId).toBe(branchId);
 
     // Journal Lines must be balanced: Total Debit == Total Credit
-    const lines = await db.db.journalLines.where('entryId').equals(entry.id).toArray();
+    const lines = await db.journalLines.where('entryId').equals(entry.id).toArray();
     expect(lines.length).toBeGreaterThanOrEqual(2);
 
     const totalDebit = lines.reduce((acc, l) => acc + (Number(l.debit) || 0), 0);
@@ -254,7 +254,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
 
     // Verify zero partial financial state:
     // 1. Voucher was NOT created or was rolled back
-    const vouchers = await db.db.vouchers.toArray();
+    const vouchers = await db.vouchers.toArray();
     expect(vouchers.length).toBe(0);
 
     // 2. PUR-001 was NOT partially updated
@@ -266,11 +266,11 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     expect(supplier?.balance).toBe(1500);
 
     // 4. Zero FinancialTransaction
-    const transactions = await db.db.financialTransactions.toArray();
+    const transactions = await db.financialTransactions.toArray();
     expect(transactions.length).toBe(0);
 
     // 5. Zero JournalEntry
-    const journalEntries = await db.db.journalEntries.toArray();
+    const journalEntries = await db.journalEntries.toArray();
     expect(journalEntries.length).toBe(0);
   });
 
@@ -297,9 +297,9 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     // Verify first run side-effects
     expect((await db.suppliers.get(supplierId))?.balance).toBe(1250);
     expect((await db.invoices.get('PUR-001'))?.paidAmount).toBe(450);
-    expect((await db.db.vouchers.toArray()).length).toBe(1);
-    expect((await db.db.financialTransactions.toArray()).length).toBe(1);
-    expect((await db.db.journalEntries.toArray()).length).toBe(1);
+    expect((await db.vouchers.toArray()).length).toBe(1);
+    expect((await db.financialTransactions.toArray()).length).toBe(1);
+    expect((await db.journalEntries.toArray()).length).toBe(1);
 
     // Second execution (Retry with same idempotencyKey)
     const secondRun = await UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
@@ -322,12 +322,12 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     expect((await db.invoices.get('PUR-001'))?.paidAmount).toBe(450);
 
     // Total vouchers must STILL be 1 (NOT 2)
-    expect((await db.db.vouchers.toArray()).length).toBe(1);
+    expect((await db.vouchers.toArray()).length).toBe(1);
 
     // Total financial transactions must STILL be 1 (NOT 2)
-    expect((await db.db.financialTransactions.toArray()).length).toBe(1);
+    expect((await db.financialTransactions.toArray()).length).toBe(1);
 
     // Total journal entries must STILL be 1 (NOT 2)
-    expect((await db.db.journalEntries.toArray()).length).toBe(1);
+    expect((await db.journalEntries.toArray()).length).toBe(1);
   });
 });

@@ -8,7 +8,7 @@ import { AnomalyScoringEngine } from '@/services/audit/AnomalyScoringEngine';
 export class AlertCenter {
   static async addAlert(alert: Omit<SystemAlert, 'id' | 'timestamp' | 'isRead' | 'resolvedStatus'>) {
     // Check for existing unread duplicate to prevent flooding
-    const existingAlerts = await safeWhereEqual<SystemAlert>(db.db.systemAlerts, 'isRead', 0);
+    const existingAlerts = await safeWhereEqual<SystemAlert>(db.systemAlerts, 'isRead', 0);
     const existing = existingAlerts.find(a => a.message === alert.message && a.severity === alert.severity);
       
     if (existing) return existing;
@@ -21,7 +21,7 @@ export class AlertCenter {
       resolvedStatus: 'OPEN'
     };
     
-    await db.db.systemAlerts.put(newAlert);
+    await db.systemAlerts.put(newAlert);
     
     // If critical, we might want to trigger safe mode if too many in 24h
     if (alert.severity === 'CRITICAL') {
@@ -34,7 +34,7 @@ export class AlertCenter {
   private static async checkCriticalThreshold() {
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     if (!oneDayAgo) return;
-    const criticalAlerts = (await safeWhereAbove<SystemAlert>(db.db.systemAlerts, 'timestamp', oneDayAgo))
+    const criticalAlerts = (await safeWhereAbove<SystemAlert>(db.systemAlerts, 'timestamp', oneDayAgo))
       .filter(a => a.severity === 'CRITICAL');
       
     if (criticalAlerts.length >= 10) {
@@ -55,12 +55,12 @@ export class AlertCenter {
   }
 
   static async getActiveAlerts() {
-    const alerts = await safeWhereEqual<SystemAlert>(db.db.systemAlerts, 'resolvedStatus', 'OPEN');
+    const alerts = await safeWhereEqual<SystemAlert>(db.systemAlerts, 'resolvedStatus', 'OPEN');
     return alerts.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }
 
   static async resolveAlert(id: string) {
-    await db.db.systemAlerts.update(id, { 
+    await db.systemAlerts.update(id, { 
       resolvedStatus: 'RESOLVED',
       isRead: true 
     });
@@ -73,12 +73,12 @@ export class AlertCenter {
   }
 
   static async clearCriticalAlerts() {
-    const criticalAlerts = await db.db.systemAlerts
+    const criticalAlerts = await db.systemAlerts
       .filter(a => a.severity === 'CRITICAL')
       .toArray();
     
     for (const alert of criticalAlerts) {
-      await db.db.systemAlerts.delete(alert.id);
+      await db.systemAlerts.delete(alert.id);
     }
     console.log(`Cleared ${criticalAlerts.length} critical alerts. 🧹`);
   }

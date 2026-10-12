@@ -97,12 +97,13 @@ export const PurchaseRepository = {
     }) as unknown as Purchase[];
   },
 
-  updatePaidAmount: async (id: string, amount: number, tenantId?: string): Promise<void> => {
+  updatePaidAmount: async (id: string, amount: number, tenantId?: string, tx?: any): Promise<void> => {
     if (typeof amount !== 'number' || !isFinite(amount) || isNaN(amount) || amount <= 0) {
       throw new Error('ALLOCATION_AMOUNT_INVALID: مبلغ السداد يجب أن يكون رقماً موجباً أكبر من الصفر.');
     }
-    await db.safeTransaction('rw', ['invoices'], async () => {
-      const purchase = await db.invoices.get(id);
+    const performUpdate = async (t: any) => {
+      const invoicesTbl = db.invoices;
+      const purchase = await invoicesTbl.get(id);
       if (!purchase) {
         throw new Error(`INVOICE_NOT_FOUND: الفاتورة [${id}] غير موجودة.`);
       }
@@ -123,12 +124,19 @@ export const PurchaseRepository = {
 
       const calculatedPaid = Math.round((currentPaid + amount) * 100) / 100;
       const newPaid = Math.min(total, calculatedPaid);
-      await db.invoices.update(id, {
+      await invoicesTbl.update(id, {
         paidAmount: newPaid,
         paymentStatus: newPaid >= total - 0.001 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : purchase.paymentStatus),
         updatedAt: new Date().toISOString()
       });
-    });
+    };
+
+    const activeTx = tx || (db as any).currentTransaction || (db as any).idbdb?.currentTransaction || (globalThis as any).Dexie?.currentTransaction;
+    if (activeTx) {
+      await performUpdate(activeTx);
+    } else {
+      await db.safeTransaction('rw', ['invoices'], performUpdate);
+    }
   },
 
   settleSupplierFIFO: async (supplierId: string, amount: number): Promise<void> => {

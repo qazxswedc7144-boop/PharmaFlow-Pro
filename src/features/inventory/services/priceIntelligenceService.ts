@@ -43,14 +43,14 @@ export const priceIntelligenceService = {
         qty: item.qty,
         price: item.price
       };
-      await db.db.itemUsageLog.add(logEntry);
+      await db.itemUsageLog.add(logEntry);
       
       // تحديث إحصائيات المنتج في الخلفية
-      const product = await db.db.products.get(item.product_id);
+      const product = await db.products.get(item.product_id);
       if (product) {
         product.usageCount = (product.usageCount || 0) + 1;
         product.lastModified = timestamp;
-        await db.db.products.put(product);
+        await db.products.put(product);
       }
     }
     

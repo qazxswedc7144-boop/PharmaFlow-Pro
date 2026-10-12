@@ -6,7 +6,7 @@ export class AccountingReportsService {
   
   // 1. استعلام الأصناف منخفضة المخزون (Advanced Query)
   static async getLowStockItems() {
-    return await db.db.inventory
+    return await db.inventory
       .filter(item => item.currentQuantity <= item.minQuantity)
       .sortBy('currentQuantity');
   }

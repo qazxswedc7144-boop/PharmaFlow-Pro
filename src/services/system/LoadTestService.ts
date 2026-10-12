@@ -19,7 +19,7 @@ export class LoadTestService {
     const actualTableNames = typeof db.getExistingTableNames === 'function' ? db.getExistingTableNames() : db.tables.map(t => t.name);
     if (actualTableNames.includes('systemPerformanceLog')) {
       try {
-        await db.db.systemPerformanceLog.add(metric);
+        await db.systemPerformanceLog.add(metric);
       } catch (e) {
         console.warn("Failed to write performance metric:", e);
       }
@@ -78,7 +78,7 @@ export class LoadTestService {
         UnitPrice: 15, // Fallback
         StockQuantity: 1000 // Fallback
       }));
-      await db.db.products.bulkAdd(baseProducts);
+      await db.products.bulkAdd(baseProducts);
     }
 
     const partners = await db.getSuppliers();
@@ -127,7 +127,7 @@ export class LoadTestService {
           lastModified: date.toISOString()
         };
       });
-      await db.db.sales.bulkAdd(sales);
+      await db.sales.bulkAdd(sales);
     });
 
     // 3. Generate 8,000 Purchase Invoices
@@ -172,7 +172,7 @@ export class LoadTestService {
           lastModified: date.toISOString()
         };
       });
-      await db.db.purchases.bulkAdd(purchases);
+      await db.purchases.bulkAdd(purchases);
     });
 
     // 4. Generate 50,000 Stock Movements
@@ -198,7 +198,7 @@ export class LoadTestService {
           Created_At: date.toISOString()
         };
       });
-      await db.db.inventoryTransactions.bulkAdd(movements);
+      await db.inventoryTransactions.bulkAdd(movements);
     });
 
     // 5. Generate 6,000 Receipts
@@ -218,7 +218,7 @@ export class LoadTestService {
           branchId: 'MAIN'
         };
       });
-      await db.db.cashFlow.bulkAdd(receipts);
+      await db.cashFlow.bulkAdd(receipts);
     });
 
     // 6. Generate 5,000 Payments
@@ -238,7 +238,7 @@ export class LoadTestService {
           branchId: 'MAIN'
         };
       });
-      await db.db.cashFlow.bulkAdd(payments);
+      await db.cashFlow.bulkAdd(payments);
     });
 
     const endTime = performance.now();
@@ -270,19 +270,19 @@ export class LoadTestService {
 
     // 2. Invoice open time (simulated by fetching one specific record)
     await this.measure("INVOICE_OPEN_TIME", async () => {
-      await db.db.sales.limit(1).toArray();
+      await db.sales.limit(1).toArray();
     });
 
     // 3. Search response time
     await this.measure("SEARCH_RESPONSE_TIME", async () => {
-      await db.db.sales.where('SaleID').startsWith('S100').toArray();
+      await db.sales.where('SaleID').startsWith('S100').toArray();
     });
 
     // 4. Stock recalculation time
     await this.measure("STOCK_RECALCULATION_TIME", async () => {
       const products = await db.getProducts();
       for (const p of products.slice(0, 10)) {
-        await db.db.inventoryTransactions.where('productId').equals(p.id).toArray();
+        await db.inventoryTransactions.where('productId').equals(p.id).toArray();
       }
     });
 

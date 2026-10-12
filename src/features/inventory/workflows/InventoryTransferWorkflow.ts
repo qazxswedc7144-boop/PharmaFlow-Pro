@@ -76,7 +76,7 @@ export class InventoryTransferWorkflow implements BusinessWorkflow<InventoryTran
       updatedAt: now
     };
 
-    await db.db.branchTransfers.put(transferRecord);
+    await db.branchTransfers.put(transferRecord);
 
     const transferItems = input.items.map((item) => ({
       id: `TRFI-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -89,7 +89,7 @@ export class InventoryTransferWorkflow implements BusinessWorkflow<InventoryTran
       createdAt: now
     }));
 
-    await db.db.branchTransferItems.bulkAdd(transferItems);
+    await db.branchTransferItems.bulkAdd(transferItems);
 
     // If autoExecute is requested, execute atomic physical transfer immediately via Unified Engine
     if (shouldAutoExecute) {

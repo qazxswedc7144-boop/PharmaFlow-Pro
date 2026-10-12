@@ -101,7 +101,7 @@ export class FinancialHealthService {
     };
 
     // Save snapshot (one per day usually, but we'll save this one)
-    await db.db.financialHealthSnapshots.put(snapshot);
+    await db.financialHealthSnapshots.put(snapshot);
 
     return snapshot;
   }
@@ -260,18 +260,18 @@ export class FinancialHealthService {
     }
 
     // Save alerts (only if not already present and unread to avoid flooding)
-    const existingAlerts = await db.db.systemAlerts.where('isRead').equals(0).toArray();
+    const existingAlerts = await db.systemAlerts.where('isRead').equals(0).toArray();
     
     for (const alert of alerts) {
       const isDuplicate = existingAlerts.some(a => a.message === alert.message && a.severity === alert.severity);
       if (!isDuplicate) {
-        await db.db.systemAlerts.put(alert);
+        await db.systemAlerts.put(alert);
         
         // If critical, check threshold via AlertCenter logic
         if (alert.severity === 'CRITICAL') {
           // We don't call addAlert here to avoid recursion, but we trigger the threshold check
           const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-          const criticalCount = await db.db.systemAlerts
+          const criticalCount = await db.systemAlerts
             .where('timestamp').above(oneDayAgo)
             .filter(a => a.severity === 'CRITICAL')
             .count();
@@ -336,10 +336,10 @@ export class FinancialHealthService {
   }
 
   static async getLatestSnapshot(): Promise<FinancialHealthSnapshot | undefined> {
-    return await db.db.financialHealthSnapshots.orderBy('date').reverse().first();
+    return await db.financialHealthSnapshots.orderBy('date').reverse().first();
   }
 
   static async getActiveAlerts(): Promise<SystemAlert[]> {
-    return await db.db.systemAlerts.where('isRead').equals(0).toArray();
+    return await db.systemAlerts.where('isRead').equals(0).toArray();
   }
 }

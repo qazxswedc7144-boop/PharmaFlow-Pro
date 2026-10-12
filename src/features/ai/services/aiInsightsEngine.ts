@@ -147,7 +147,7 @@ export class AIInsightsEngine {
     const customers = await SupplierRepository.getCustomers();
     const suppliers = await SupplierRepository.getSuppliers();
     
-    const purchases = await db.db.purchases.toArray();
+    const purchases = await db.purchases.toArray();
     
     const topCustomers = [...customers].sort((a, b) => (b.balance || 0) - (a.balance || 0)).slice(0, 5);
     const highDebtCustomers = customers.filter(c => (c.balance || 0) > 10000);

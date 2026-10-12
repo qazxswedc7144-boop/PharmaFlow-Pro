@@ -19,16 +19,16 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
     IdempotencyRegistry.clearInMemory();
 
     // Clean tables
-    await db.db.vouchers.clear();
-    await db.db.invoices.clear();
-    await db.db.suppliers.clear();
-    await db.db.customers.clear();
-    await db.db.financialTransactions.clear();
-    await db.db.journalEntries.clear();
-    await db.db.journalLines.clear();
-    await db.db.accounts.clear();
-    await db.db.idempotencyKeys.clear();
-    await db.db.voucherInvoiceLinks.clear();
+    await db.vouchers.clear();
+    await db.invoices.clear();
+    await db.suppliers.clear();
+    await db.customers.clear();
+    await db.financialTransactions.clear();
+    await db.journalEntries.clear();
+    await db.journalLines.clear();
+    await db.accounts.clear();
+    await db.idempotencyKeys.clear();
+    await db.voucherInvoiceLinks.clear();
 
     // Ensure core chart of accounts exist for the tenant
     await db.accounts.put({
@@ -262,7 +262,7 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       expect(inv?.paymentStatus).toBe('PARTIAL');
 
       // 3. Exactly ONE Financial Transaction created
-      const ftList = await db.db.financialTransactions.where('Reference_ID').equals(result.payment.id).toArray();
+      const ftList = await db.financialTransactions.where('Reference_ID').equals(result.payment.id).toArray();
       expect(ftList.length).toBe(1);
       expect(ftList[0].Amount).toBe(payAmount);
       expect(ftList[0].Transaction_Type).toBe('Payment');
@@ -288,7 +288,7 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       expect(totalDebit).toBe(totalCredit);
 
       // 6. Voucher Invoice Link record created
-      const links = await db.db.voucherInvoiceLinks.where('voucherId').equals(result.payment.id).toArray();
+      const links = await db.voucherInvoiceLinks.where('voucherId').equals(result.payment.id).toArray();
       expect(links.length).toBe(1);
       expect(links[0].Paid_Amount).toBe(payAmount);
       expect(links[0].invoiceId).toBe('INV-BAL-01');
@@ -328,6 +328,78 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
 
       const supp = await db.suppliers.get('SUP-FULL-01');
       expect(supp?.balance).toBe(0);
+    });
+
+    it('POSITIVE: exact verification of user example (Balance 1500, Invoice paid 200, Payment 350, Allocation 350 -> Balance 1150, Invoice paid 550)', async () => {
+      await db.suppliers.put({
+        id: 'SUP-EX-01',
+        Supplier_Name: 'Exact Example Supplier',
+        balance: 1500,
+        tenantId
+      } as any);
+
+      await db.invoices.put({
+        id: 'INV-EX-01',
+        tenantId,
+        partnerId: 'SUP-EX-01',
+        totalAmount: 1000,
+        paidAmount: 200,
+        paymentStatus: 'PARTIAL',
+        type: 'PURCHASE'
+      } as any);
+
+      const result = await UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+        partnerId: 'SUP-EX-01',
+        amount: 350,
+        allocations: {
+          'INV-EX-01': 350
+        }
+      });
+
+      expect(result.success).toBe(true);
+
+      const supp = await db.suppliers.get('SUP-EX-01');
+      expect(supp?.balance).toBe(1150);
+
+      const inv = await db.invoices.get('INV-EX-01');
+      expect(inv?.paidAmount).toBe(550);
+    });
+
+    it('NEGATIVE: zero mutation to Supplier Balance and Invoice Paid Amount if allocation or payment fails', async () => {
+      await db.suppliers.put({
+        id: 'SUP-FAIL-MUTATE-01',
+        Supplier_Name: 'Mutation Test Supplier',
+        balance: 1500,
+        tenantId
+      } as any);
+
+      await db.invoices.put({
+        id: 'INV-FAIL-MUTATE-01',
+        tenantId,
+        partnerId: 'SUP-FAIL-MUTATE-01',
+        totalAmount: 1000,
+        paidAmount: 200,
+        paymentStatus: 'PARTIAL',
+        type: 'PURCHASE'
+      } as any);
+
+      // Attempt over-allocation (fails validation)
+      await expect(
+        UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+          partnerId: 'SUP-FAIL-MUTATE-01',
+          amount: 900,
+          allocations: {
+            'INV-FAIL-MUTATE-01': 900 // Exceeds remaining 800
+          }
+        })
+      ).rejects.toThrow();
+
+      // Verify ZERO mutation
+      const supp = await db.suppliers.get('SUP-FAIL-MUTATE-01');
+      expect(supp?.balance).toBe(1500);
+
+      const inv = await db.invoices.get('INV-FAIL-MUTATE-01');
+      expect(inv?.paidAmount).toBe(200);
     });
   });
 
@@ -372,7 +444,7 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       const invAfterFirst = await db.invoices.get('INV-RETRY-01');
       expect(invAfterFirst?.paidAmount).toBe(500);
 
-      const ftCountFirst = (await db.db.financialTransactions.toArray()).length;
+      const ftCountFirst = (await db.financialTransactions.toArray()).length;
       const jeCountFirst = (await db.journalEntries.toArray()).length;
       expect(ftCountFirst).toBe(1);
       expect(jeCountFirst).toBe(1);
@@ -397,10 +469,49 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       const invAfterSecond = await db.invoices.get('INV-RETRY-01');
       expect(invAfterSecond?.paidAmount).toBe(500); // NOT 1000!
 
-      const ftCountSecond = (await db.db.financialTransactions.toArray()).length;
+      const ftCountSecond = (await db.financialTransactions.toArray()).length;
       const jeCountSecond = (await db.journalEntries.toArray()).length;
       expect(ftCountSecond).toBe(1); // EXACTLY 1, not duplicated!
       expect(jeCountSecond).toBe(1); // EXACTLY 1, not duplicated!
+    });
+
+    it('NEGATIVE: rejects request when same idempotencyKey is used with a different payload', async () => {
+      const idempotencyKey = 'IDEMP-RETRY-CONFLICT-TEST-01';
+
+      // 1st Execution
+      await db.suppliers.put({
+        id: 'SUP-CONFLICT-01',
+        Supplier_Name: 'Conflict Supplier',
+        balance: 2000,
+        tenantId
+      } as any);
+
+      await db.invoices.put({
+        id: 'INV-CONFLICT-01',
+        tenantId,
+        partnerId: 'SUP-CONFLICT-01',
+        totalAmount: 1000,
+        paidAmount: 0,
+        type: 'PURCHASE'
+      } as any);
+
+      const firstRes = await UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+        partnerId: 'SUP-CONFLICT-01',
+        amount: 300,
+        idempotencyKey,
+        allocations: { 'INV-CONFLICT-01': 300 }
+      });
+      expect(firstRes.success).toBe(true);
+
+      // 2nd Execution with SAME key but DIFFERENT payload (amount: 600 instead of 300)
+      await expect(
+        UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+          partnerId: 'SUP-CONFLICT-01',
+          amount: 600,
+          idempotencyKey,
+          allocations: { 'INV-CONFLICT-01': 600 }
+        })
+      ).rejects.toThrow();
     });
   });
 
@@ -428,7 +539,7 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       ).rejects.toThrow(/INVOICE_NOT_FOUND/i);
 
       // Verify NO vouchers created
-      const vouchers = await db.db.vouchers.toArray();
+      const vouchers = await db.vouchers.toArray();
       expect(vouchers.length).toBe(0);
 
       // Verify supplier balance untouched
@@ -436,80 +547,152 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       expect(supp?.balance).toBe(1000);
 
       // Verify NO financial transactions or journal entries
-      const fts = await db.db.financialTransactions.toArray();
+      const fts = await db.financialTransactions.toArray();
       expect(fts.length).toBe(0);
       const jes = await db.journalEntries.toArray();
       expect(jes.length).toBe(0);
     });
 
-    it('Failure during FinancialTransaction throws and rolls back', async () => {
-      await db.suppliers.put({
-        id: 'SUP-FAIL-02',
-        Supplier_Name: 'Fail FT Supplier',
-        balance: 1000,
-        tenantId
-      } as any);
+    it('Failure after Invoice Allocation rolls back allocations and all records', async () => {
+      (globalThis as any).__FAIL_AT_STAGE__ = 'AFTER_ALLOCATION';
+      try {
+        await db.suppliers.put({
+          id: 'SUP-FAIL-STG2',
+          Supplier_Name: 'Fail Stage 2',
+          balance: 1000,
+          tenantId
+        } as any);
 
-      // Mock FinancialTransactionRepository.record to fail
-      const recordSpy = vi.spyOn(FinancialTransactionRepository, 'record').mockRejectedValueOnce(
-        new Error('SIMULATED_FINANCIAL_TRANSACTION_FAILURE')
-      );
+        await db.invoices.put({
+          id: 'INV-STG2',
+          tenantId,
+          partnerId: 'SUP-FAIL-STG2',
+          totalAmount: 500,
+          paidAmount: 0,
+          type: 'PURCHASE'
+        } as any);
 
-      await expect(
-        UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
-          partnerId: 'SUP-FAIL-02',
-          amount: 250
-        })
-      ).rejects.toThrow(/SIMULATED_FINANCIAL_TRANSACTION_FAILURE/i);
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+            partnerId: 'SUP-FAIL-STG2',
+            amount: 200,
+            allocations: { 'INV-STG2': 200 }
+          })
+        ).rejects.toThrow(/SIMULATED_ALLOCATION_FAILURE/i);
 
-      // Dexie atomic boundary rolls back all preceding writes
-      const vouchers = await db.db.vouchers.toArray();
-      expect(vouchers.length).toBe(0);
+        expect((await db.vouchers.toArray()).length).toBe(0);
+        expect((await db.suppliers.get('SUP-FAIL-STG2'))?.balance).toBe(1000);
+        expect((await db.invoices.get('INV-STG2'))?.paidAmount).toBe(0);
+        expect((await db.financialTransactions.toArray()).length).toBe(0);
+        expect((await db.journalEntries.toArray()).length).toBe(0);
+        expect((await db.voucherInvoiceLinks.toArray()).length).toBe(0);
+      } finally {
+        (globalThis as any).__FAIL_AT_STAGE__ = undefined;
+      }
+    });
 
-      const supp = await db.suppliers.get('SUP-FAIL-02');
-      expect(supp?.balance).toBe(1000);
+    it('Failure after Supplier Balance Update rolls back balance and all records', async () => {
+      (globalThis as any).__FAIL_AT_STAGE__ = 'AFTER_BALANCE_UPDATE';
+      try {
+        await db.suppliers.put({
+          id: 'SUP-FAIL-STG3',
+          Supplier_Name: 'Fail Stage 3',
+          balance: 1000,
+          tenantId
+        } as any);
 
-      const fts = await db.db.financialTransactions.toArray();
-      expect(fts.length).toBe(0);
-      const jes = await db.journalEntries.toArray();
-      expect(jes.length).toBe(0);
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+            partnerId: 'SUP-FAIL-STG3',
+            amount: 200
+          })
+        ).rejects.toThrow(/SIMULATED_BALANCE_UPDATE_FAILURE/i);
 
-      recordSpy.mockRestore();
+        expect((await db.vouchers.toArray()).length).toBe(0);
+        expect((await db.suppliers.get('SUP-FAIL-STG3'))?.balance).toBe(1000);
+        expect((await db.financialTransactions.toArray()).length).toBe(0);
+        expect((await db.journalEntries.toArray()).length).toBe(0);
+      } finally {
+        (globalThis as any).__FAIL_AT_STAGE__ = undefined;
+      }
+    });
+
+    it('Failure during FinancialTransaction rolls back and leaves zero partial records', async () => {
+      (globalThis as any).__FAIL_AT_STAGE__ = 'AFTER_FT';
+      try {
+        await db.suppliers.put({
+          id: 'SUP-FAIL-02',
+          Supplier_Name: 'Fail FT Supplier',
+          balance: 1000,
+          tenantId
+        } as any);
+
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+            partnerId: 'SUP-FAIL-02',
+            amount: 250
+          })
+        ).rejects.toThrow(/SIMULATED_FT_FAILURE/i);
+
+        expect((await db.vouchers.toArray()).length).toBe(0);
+        expect((await db.suppliers.get('SUP-FAIL-02'))?.balance).toBe(1000);
+        expect((await db.financialTransactions.toArray()).length).toBe(0);
+        expect((await db.journalEntries.toArray()).length).toBe(0);
+      } finally {
+        (globalThis as any).__FAIL_AT_STAGE__ = undefined;
+      }
     });
 
     it('Failure during JournalEntry generation/posting throws and rolls back', async () => {
-      await db.suppliers.put({
-        id: 'SUP-FAIL-03',
-        Supplier_Name: 'Fail JE Supplier',
-        balance: 1000,
-        tenantId
-      } as any);
+      (globalThis as any).__FAIL_AT_STAGE__ = 'AFTER_JOURNAL';
+      try {
+        await db.suppliers.put({
+          id: 'SUP-FAIL-03',
+          Supplier_Name: 'Fail JE Supplier',
+          balance: 1000,
+          tenantId
+        } as any);
 
-      // Mock AccountingRepository.addEntry to fail
-      const addEntrySpy = vi.spyOn(AccountingRepository, 'addEntry').mockRejectedValueOnce(
-        new Error('SIMULATED_JOURNAL_POSTING_FAILURE')
-      );
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+            partnerId: 'SUP-FAIL-03',
+            amount: 250
+          })
+        ).rejects.toThrow(/SIMULATED_JOURNAL_POSTING_FAILURE/i);
 
-      await expect(
-        UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
-          partnerId: 'SUP-FAIL-03',
-          amount: 250
-        })
-      ).rejects.toThrow(/SIMULATED_JOURNAL_POSTING_FAILURE/i);
+        expect((await db.vouchers.toArray()).length).toBe(0);
+        expect((await db.suppliers.get('SUP-FAIL-03'))?.balance).toBe(1000);
+        expect((await db.financialTransactions.toArray()).length).toBe(0);
+        expect((await db.journalEntries.toArray()).length).toBe(0);
+      } finally {
+        (globalThis as any).__FAIL_AT_STAGE__ = undefined;
+      }
+    });
 
-      // Dexie atomic boundary rolls back all preceding writes
-      const vouchers = await db.db.vouchers.toArray();
-      expect(vouchers.length).toBe(0);
+    it('Failure after Voucher creation rolls back voucher and all records', async () => {
+      (globalThis as any).__FAIL_AT_STAGE__ = 'AFTER_VOUCHER';
+      try {
+        await db.suppliers.put({
+          id: 'SUP-FAIL-STG1',
+          Supplier_Name: 'Fail Stage 1',
+          balance: 1000,
+          tenantId
+        } as any);
 
-      const supp = await db.suppliers.get('SUP-FAIL-03');
-      expect(supp?.balance).toBe(1000);
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+            partnerId: 'SUP-FAIL-STG1',
+            amount: 200
+          })
+        ).rejects.toThrow(/SIMULATED_VOUCHER_FAILURE/i);
 
-      const fts = await db.db.financialTransactions.toArray();
-      expect(fts.length).toBe(0);
-      const jes = await db.journalEntries.toArray();
-      expect(jes.length).toBe(0);
-
-      addEntrySpy.mockRestore();
+        expect((await db.vouchers.toArray()).length).toBe(0);
+        expect((await db.suppliers.get('SUP-FAIL-STG1'))?.balance).toBe(1000);
+        expect((await db.financialTransactions.toArray()).length).toBe(0);
+        expect((await db.journalEntries.toArray()).length).toBe(0);
+      } finally {
+        (globalThis as any).__FAIL_AT_STAGE__ = undefined;
+      }
     });
   });
 

@@ -173,14 +173,14 @@ export class InventoryService {
   static async getProductDetails(productId: string) {
     const priceHist = await ProductRepository.getPriceHistory(productId);
     const purchHist = await ProductRepository.getPurchaseHistory(productId);
-    const moves = await db.db.inventoryTransactions
+    const moves = await db.inventoryTransactions
       .where('productId')
       .equals(productId)
       .reverse()
       .limit(20)
       .toArray();
 
-    const stocks = await db.db.warehouseStock
+    const stocks = await db.warehouseStock
       .where('productId')
       .equals(productId)
       .toArray();

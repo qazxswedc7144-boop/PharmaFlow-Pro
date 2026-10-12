@@ -628,7 +628,7 @@ export class PharmaFlowDB extends Dexie {
     return newBalance;
   }
 
-  async updateSupplierBalance(id: string, delta: number) {
+  async updateSupplierBalance(id: string, delta: number, _tx?: any) {
     const supp = await this.suppliers.get(id);
     if (!supp) throw new Error(`SUPPLIER_NOT_FOUND: المورد [${id}] غير موجود لتحديث الرصيد.`);
     const newBalance = Math.round(((Number(supp.balance) || 0) + delta) * 100) / 100;
@@ -1720,7 +1720,7 @@ export const dbProxy = new Proxy({} as any, {
       await dbProxy.customers.update(id, { balance: newBalance });
       return newBalance;
     };
-    if (prop === 'updateSupplierBalance') return async (id: string, delta: number) => {
+    if (prop === 'updateSupplierBalance') return async (id: string, delta: number, _tx?: any) => {
       const s = await dbProxy.suppliers.get(id);
       if (!s) throw new Error(`SUPPLIER_NOT_FOUND: المورد [${id}] غير موجود لتحديث الرصيد.`);
       const newBalance = Math.round(((Number(s.balance) || 0) + delta) * 100) / 100;
@@ -1783,7 +1783,6 @@ export const dbProxy = new Proxy({} as any, {
         };
         rawTableArgs.forEach(extractTableNames);
 
-        let opThrew = false;
         let thrownError: any = null;
         try {
           const validTables = tableNames.length > 0 ? tableNames : (target.tables ? target.tables.map(t => t.name) : ALL_SCHEMA_TABLE_NAMES);
@@ -1791,7 +1790,6 @@ export const dbProxy = new Proxy({} as any, {
             try {
               return operation ? await operation(tx) : undefined;
             } catch (err) {
-              opThrew = true;
               thrownError = err;
               throw err;
             }

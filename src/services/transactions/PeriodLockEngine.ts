@@ -6,7 +6,7 @@ export class PeriodLockEngine {
   static async isPeriodLocked(dateStr: string): Promise<boolean> {
     try {
       const date = new Date(dateStr);
-      const periods = await db.db.accountingPeriods.toArray();
+      const periods = await db.accountingPeriods.toArray();
       const matchingPeriod = periods.find(p => {
         const start = new Date(p.Start_Date);
         const end = new Date(p.End_Date);
@@ -20,7 +20,7 @@ export class PeriodLockEngine {
   }
 
   static async lockPeriod(periodId: string) {
-    return await db.db.accountingPeriods.update(periodId, { Is_Locked: true, Locked_At: new Date().toISOString() });
+    return await db.accountingPeriods.update(periodId, { Is_Locked: true, Locked_At: new Date().toISOString() });
   }
 
   static async validateOperation(dateStr: string, operationName?: string) {
@@ -39,10 +39,10 @@ export class PeriodLockEngine {
   }
 
   static async seedDefaultPeriod() {
-    const count = await db.db.accountingPeriods.count();
+    const count = await db.accountingPeriods.count();
     if (count === 0) {
       const now = new Date();
-      await db.db.accountingPeriods.add({
+      await db.accountingPeriods.add({
         id: 'DEFAULT-PERIOD',
         Start_Date: new Date(now.getFullYear(), 0, 1).toISOString(),
         End_Date: new Date(now.getFullYear(), 11, 31).toISOString(),

@@ -130,7 +130,7 @@ export const BackupService = {
       let parentBackupId: string | undefined;
 
       if (isIncremental) {
-        const lastBackup = await db.db.systemBackups.orderBy('createdAt').reverse().first();
+        const lastBackup = await db.systemBackups.orderBy('createdAt').reverse().first();
         if (lastBackup) {
           parentBackupId = lastBackup.id;
           snapshot = await this.collectIncrementalSnapshot(lastBackup.createdAt);
@@ -167,7 +167,7 @@ export const BackupService = {
         parentBackupId
       };
 
-      await db.db.systemBackups.add(backupRecord);
+      await db.systemBackups.add(backupRecord);
       
       // PHASE 4 — Cleanup old backups
       await this.cleanupOldBackups();
@@ -188,7 +188,7 @@ export const BackupService = {
         status: 'FAILED',
         restoreTested: false
       };
-      await db.db.systemBackups.add(failedRecord);
+      await db.systemBackups.add(failedRecord);
       throw error;
     }
   },
@@ -204,7 +204,7 @@ export const BackupService = {
    */
   async exportDatabase(): Promise<any> {
     const tables: any = {};
-    const tableNames = typeof db.getExistingTableNames === 'function' ? db.getExistingTableNames() : db.db.tables.map(t => t.name);
+    const tableNames = typeof db.getExistingTableNames === 'function' ? db.getExistingTableNames() : db.tables.map(t => t.name);
     
     for (const name of tableNames) {
       tables[name] = await (db.db as any)[name].toArray();
@@ -304,7 +304,7 @@ export const BackupService = {
   },
 
   async clearAllTables() {
-    const tables = typeof db.getExistingTableNames === 'function' ? db.getExistingTableNames() : db.db.tables.map(t => t.name);
+    const tables = typeof db.getExistingTableNames === 'function' ? db.getExistingTableNames() : db.tables.map(t => t.name);
     for (const table of tables) {
       await (db.db as any)[table].clear();
     }
@@ -325,9 +325,9 @@ export const BackupService = {
     console.log("Safeguard checking restored transactional balances & master schema links...");
     
     // Validate table existence
-    const invoices = await db.db.invoices.toArray();
-    const sales = await db.db.sales.toArray();
-    const purchases = await db.db.purchases.toArray();
+    const invoices = await db.invoices.toArray();
+    const sales = await db.sales.toArray();
+    const purchases = await db.purchases.toArray();
     
     const linkedInvoices = invoices.filter(inv => 
       sales.some(s => s.id === inv.id) || purchases.some(p => p.id === inv.id)
@@ -338,14 +338,14 @@ export const BackupService = {
     }
 
     // Validate quantities
-    const products = await db.db.products.toArray();
+    const products = await db.products.toArray();
     const invalidStock = products.filter(p => p.StockQuantity === undefined || isNaN(p.StockQuantity) || p.StockQuantity < 0);
     if (invalidStock.length > 0) {
       console.warn("Stock Alert: Certain product listings indicate negative unit storage levels.");
     }
 
     // Financial double-entry bookkeeping credit-debit matching rule
-    const journalEntries = await db.db.journalEntries.toArray();
+    const journalEntries = await db.journalEntries.toArray();
     let totalDebit = 0;
     let totalCredit = 0;
     journalEntries.forEach(entry => {
@@ -425,7 +425,7 @@ export const BackupService = {
       throw new Error('RESTORE_DENIED: Only administrators can perform system restore operations.');
     }
 
-    const backup = await db.db.systemBackups.get(backupId);
+    const backup = await db.systemBackups.get(backupId);
     if (!backup || backup.status !== 'SUCCESS') {
       throw new Error('RESTORE_FAILED: Selected backup snapshot is missing or invalid.');
     }
@@ -454,7 +454,7 @@ export const BackupService = {
       await this.performRestore(snapshot, backup.backupName, backup.id, backup.isIncremental);
 
       backup.restoreTested = true;
-      await db.db.systemBackups.put(backup);
+      await db.systemBackups.put(backup);
 
     } catch (e: any) {
       console.error("Internal snapshot restore failed! Initiating rollback...", e);
@@ -482,21 +482,21 @@ export const BackupService = {
     
     await db.runTransaction(async () => {
       // Clear transactional stores
-      await db.db.sales.clear();
-      await db.db.purchases.clear();
-      await db.db.journalEntries.clear();
-      await db.db.inventoryTransactions.clear();
-      await db.db.financialTransactions.clear();
-      await db.db.voucherInvoiceLinks.clear();
-      await db.db.settlements.clear();
-      await db.db.Audit_Log.clear();
-      if (db.db.warehouseStock) await db.db.warehouseStock.clear();
+      await db.sales.clear();
+      await db.purchases.clear();
+      await db.journalEntries.clear();
+      await db.inventoryTransactions.clear();
+      await db.financialTransactions.clear();
+      await db.voucherInvoiceLinks.clear();
+      await db.settlements.clear();
+      await db.Audit_Log.clear();
+      if (db.warehouseStock) await db.warehouseStock.clear();
       
       if (!isIncremental) {
-        await db.db.products.clear();
-        await db.db.customers.clear();
-        await db.db.suppliers.clear();
-        await db.db.accounts.clear();
+        await db.products.clear();
+        await db.customers.clear();
+        await db.suppliers.clear();
+        await db.accounts.clear();
       }
 
       // Restore data mapping
@@ -521,7 +521,7 @@ export const BackupService = {
         timestamp: new Date().toISOString(),
         details: `System restored from internal index record: ${name} (${id})`
       };
-      await db.db.Audit_Log.add(auditEntry);
+      await db.Audit_Log.add(auditEntry);
     });
   },
 
@@ -540,7 +540,7 @@ export const BackupService = {
   },
 
   async verifyRestoreSuccess() {
-    const entries = await db.db.journalEntries.toArray();
+    const entries = await db.journalEntries.toArray();
     let totalDebit = 0;
     let totalCredit = 0;
     entries.forEach(e => {
@@ -558,18 +558,18 @@ export const BackupService = {
   },
 
   async cleanupOldBackups() {
-    const backups = await db.db.systemBackups.orderBy('createdAt').toArray();
+    const backups = await db.systemBackups.orderBy('createdAt').toArray();
     if (backups.length > 30) {
       const toDelete = backups.slice(0, backups.length - 30);
       for (const b of toDelete) {
-        await db.db.systemBackups.delete(b.id);
+        await db.systemBackups.delete(b.id);
       }
     }
   },
 
   async runScheduledBackup() {
     const now = new Date();
-    const lastBackup = await db.db.systemBackups.orderBy('createdAt').reverse().first();
+    const lastBackup = await db.systemBackups.orderBy('createdAt').reverse().first();
     
     let shouldBackup = false;
     let type: SystemBackup['backupType'] = 'SCHEDULED_DAILY';
@@ -613,7 +613,7 @@ export const BackupService = {
         errors.push("Data integrity sweep failed. Critical inconsistencies detected.");
       }
 
-      const lastBackup = await db.db.systemBackups.orderBy('createdAt').reverse().first();
+      const lastBackup = await db.systemBackups.orderBy('createdAt').reverse().first();
       if (lastBackup && lastBackup.status === 'SUCCESS' && lastBackup.dataSnapshot) {
         try {
           const encryptedObj = JSON.parse(lastBackup.dataSnapshot);

@@ -101,9 +101,9 @@ export class WorkflowExecutionPipeline {
           entityId: ctx.idempotencyKey
         },
         async () => {
-          return await TransactionBoundary.executeAtomic<TResult>(tables, async () => {
+          return await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
             // Step 11: Execute Domain Steps
-            const res = await workflow.executeDomainSteps(input, ctx);
+            const res = await workflow.executeDomainSteps(input, ctx, tx);
             return res;
           });
         }

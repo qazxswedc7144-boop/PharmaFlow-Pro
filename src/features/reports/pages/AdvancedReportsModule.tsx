@@ -44,22 +44,22 @@ const AdvancedReportsModule: React.FC<{ onBack: () => void }> = ({ onBack }) => 
       switch (sectionId) {
         case 'inventory':
           result = await AccountingReportsService.getLowStockItems();
-          if (!result.length) result = await db.db.inventory.toArray();
+          if (!result.length) result = await db.inventory.toArray();
           break;
         case 'item-profits':
-          result = await db.db.itemProfits.toArray();
+          result = await db.itemProfits.toArray();
           break;
         case 'customer-profits':
           result = await AccountingReportsService.getTopProfitableCustomers();
           break;
         case 'supplier-profits':
-          result = await db.db.supplierProfits.toArray();
+          result = await db.supplierProfits.toArray();
           break;
         case 'account-movements':
           result = await AccountingReportsService.getRecentAccountMovements();
           break;
         case 'purchases':
-          result = await db.db.purchasesByItem.toArray();
+          result = await db.purchasesByItem.toArray();
           break;
         case 'expiring':
           result = await AccountingReportsService.getExpiringSoonItems();
