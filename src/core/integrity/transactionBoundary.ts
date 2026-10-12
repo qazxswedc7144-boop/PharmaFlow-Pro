@@ -8,28 +8,25 @@ export class TransactionBoundary {
    */
   public static async executeAtomic<T>(
     tables: string[],
-    operation: () => Promise<T>
+    operation: (tx: any) => Promise<T>
   ): Promise<T> {
-    // If running in headless/Node environment without IndexedDB, execute directly
-    if (typeof indexedDB === 'undefined' || !db || !db.transaction) {
-      return await operation();
-    }
+    const existingNames: string[] =
+      typeof (db as any).getExistingTableNames === 'function'
+        ? (db as any).getExistingTableNames()
+        : (db.tables || []).map((t: any) => t.name);
 
-    // Determine actual available tables in Dexie schema to avoid missing table errors
-    const existingNames: string[] = typeof (db as any).getExistingTableNames === 'function'
-      ? (db as any).getExistingTableNames()
-      : (db.tables || []).map((t: any) => t.name);
-
-    const validTables = Array.from(new Set([...tables.filter((t) => existingNames.includes(t)), ...tables]));
+    // FIX 1: صحيحة الفلترة بدون إعادة إضافة الجداول
+    const validTables = tables.filter((t) => existingNames.includes(t));
 
     if (validTables.length === 0) {
-      throw new Error('[TransactionBoundary] No valid transaction tables found in schema scope.');
+      throw new Error(
+        '[TransactionBoundary] No valid transaction tables found in schema scope.'
+      );
     }
 
-    // Execute strictly via atomic transaction wrapper. Any error throws and aborts transaction.
+    // FIX 2: لا يوجد fallback — التنفيذ الحصري عبر Transaction
     return await (db as any).safeTransaction('rw', validTables, async (tx: any) => {
       return await operation(tx);
     });
   }
 }
-
