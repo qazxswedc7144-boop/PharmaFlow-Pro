@@ -860,15 +860,17 @@ export class PharmaFlowDB extends Dexie {
   }
 
   // --- AUDIT LOG HELPERS ---
-  async addAuditLog(userId: string, action: string, targetType: string, details: string) {
-    await this.auditLogs.add({
-      id: this.generateId('LOG'),
-      timestamp: new Date().toISOString(),
-      user_id: userId,
-      action: action as any,
-      target_type: targetType as any,
-      target_id: details
-    });
+  async addAuditLog(userId: string, action: string, targetType: string, details: string, tx?: any) {
+  const auditTable = tx?.auditLogs ?? this.auditLogs;
+
+  await auditTable.add({
+    id: this.generateId('LOG'),
+    timestamp: new Date().toISOString(),
+    user_id: userId,
+    action: action as any,
+    target_type: targetType as any,
+    target_id: details
+  });
   }
 
   // --- PROTECTION HELPERS ---
@@ -1757,16 +1759,20 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'saveAccountingPeriod') return async (period: any) => dbProxy.accountingPeriods.put(period);
     if (prop === 'getValidationRules') return async () => [];
     if (prop === 'isDateLocked') return async (_date: string) => false;
-    if (prop === 'addAuditLog') return async (userId: string, action: string, targetType: string, details: string) => {
-      return await dbProxy.auditLogs.add({
-        id: dbProxy.generateId('AUDIT'),
-        userId,
-        action,
-        targetType,
-        details,
-        timestamp: new Date().toISOString()
-      });
-    };
+    if (prop === 'addAuditLog') {
+  return async (userId: string, action: string, targetType: string, details: string, tx?: any) => {
+    const auditTable = tx?.auditLogs ?? dbProxy.auditLogs;
+
+    return await auditTable.add({
+      id: dbProxy.generateId('AUDIT'),
+      userId,
+      action,
+      targetType,
+      details,
+      timestamp: new Date().toISOString()
+    });
+  };
+    }
     if (prop === 'saveCurrency') return async (currency: any) => {
       const currencies = (await dbProxy.getCurrencies()) || [];
       await dbProxy.saveSetting('CURRENCIES', [...currencies.filter((c: any) => c.code !== currency.code), currency]);
