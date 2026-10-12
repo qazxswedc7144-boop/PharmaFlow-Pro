@@ -178,6 +178,15 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
     };
 
     if (isPayment) {
+      // Stage 1: Persist Voucher FIRST.
+      // This guarantees that AFTER_VOUCHER tests a real post-mutation failure.
+      const vouchersTbl = (tx && tx.vouchers) ? tx.vouchers : db.vouchers;
+      await vouchersTbl.put(voucherRecord);
+
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_VOUCHER') {
+        throw new Error('SIMULATED_VOUCHER_FAILURE');
+      }
+
       // Stage 2: Invoice Allocation & Link
       if (input.allocations) {
         for (const invoiceId in input.allocations) {
@@ -191,6 +200,11 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
       }
       if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_ALLOCATION') {
         throw new Error('SIMULATED_ALLOCATION_FAILURE');
+      }
+
+      // Stage 2.5: Explicit failure after VoucherInvoiceLink creation
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_LINK') {
+        throw new Error('SIMULATED_LINK_FAILURE');
       }
 
       // Stage 3: Supplier Balance Update
@@ -237,14 +251,7 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         throw new Error('SIMULATED_JOURNAL_POSTING_FAILURE');
       }
 
-      // Stage 1: Persist Voucher at the end (failsafe ordering)
-      const vouchersTbl = (tx && tx.vouchers) ? tx.vouchers : db.vouchers;
-      await vouchersTbl.put(voucherRecord);
-      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_VOUCHER') {
-        throw new Error('SIMULATED_VOUCHER_FAILURE');
-      }
-
-      // Publish Projection Event
+      // Stage 6: Projection Event
       await ProjectionEventBus.publish('SUPPLIER_PAYMENT_PROCESSED', id, {
         supplierId: input.partnerId,
         amount: input.amount,
