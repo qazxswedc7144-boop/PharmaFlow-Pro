@@ -631,15 +631,7 @@ export class PharmaFlowDB extends Dexie {
     await this.customers.update(id, { balance: newBalance });
     return newBalance;
   }
-
-  async updateSupplierBalance(id: string, delta: number, _tx?: any) {
-    const supp = await this.suppliers.get(id);
-    if (!supp) throw new Error(`SUPPLIER_NOT_FOUND: المورد [${id}] غير موجود لتحديث الرصيد.`);
-    const newBalance = Math.round(((Number(supp.balance) || 0) + delta) * 100) / 100;
-    await this.suppliers.update(id, { balance: newBalance });
-    return newBalance;
-  }
-
+  
   async recordCashFlow(data: Record<string, unknown>) {
     return await this.cashFlow.add({ ...data, id: this.generateId('CF') });
   }
