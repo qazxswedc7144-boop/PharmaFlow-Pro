@@ -601,22 +601,26 @@ export class PharmaFlowDB extends Dexie {
       details: l.details || `تمت عملية ${l.action} على المستند`
     }));
   }
-  async addInvoiceHistory(log: { invoiceId: string; userId: string; userName: string; timestamp: string; action: string; details: string }) {
-    const now = log.timestamp || new Date().toISOString();
-    return await this.Audit_Log.add({
-      id: 'AUD-' + Date.now() + Math.random().toString(36).substring(3, 8),
-      user_id: log.userId || 'system',
-      userName: log.userName || 'System User',
-      action: (log.action === 'CREATED' ? 'CREATE' : log.action === 'POSTED' ? 'POST' : log.action) as 'CREATE' | 'POST' | string,
-      target_type: 'SALE',
-      target_id: log.invoiceId || '',
-      timestamp: now,
-      details: log.details || '',
-      Modified_At: now,
-      Record_ID: log.invoiceId || 'REC-INV'
-    });
+  async updateSupplierBalance(id: string, delta: number, tx?: any) {
+  const suppliersTable = tx?.suppliers ?? this.suppliers;
+
+  const supp = await suppliersTable.get(id);
+
+  if (!supp) {
+    throw new Error(
+      `SUPPLIER_NOT_FOUND: المورد [${id}] غير موجود لتحديث الرصيد.`
+    );
   }
 
+  const newBalance =
+    Math.round(((Number(supp.balance) || 0) + delta) * 100) / 100;
+
+  await suppliersTable.update(id, {
+    balance: newBalance
+  });
+
+  return newBalance;
+  }
   async saveMedicineAlert(alert: Record<string, unknown>) { return await this.systemAlerts.add(alert); }
   async persist() { return true; }
   
@@ -1720,13 +1724,28 @@ export const dbProxy = new Proxy({} as any, {
       await dbProxy.customers.update(id, { balance: newBalance });
       return newBalance;
     };
-    if (prop === 'updateSupplierBalance') return async (id: string, delta: number, _tx?: any) => {
-      const s = await dbProxy.suppliers.get(id);
-      if (!s) throw new Error(`SUPPLIER_NOT_FOUND: المورد [${id}] غير موجود لتحديث الرصيد.`);
-      const newBalance = Math.round(((Number(s.balance) || 0) + delta) * 100) / 100;
-      await dbProxy.suppliers.update(id, { balance: newBalance });
-      return newBalance;
-    };
+    if (prop === 'updateSupplierBalance') {
+  return async (id: string, delta: number, tx?: any) => {
+    const suppliersTable = tx?.suppliers ?? dbProxy.suppliers;
+
+    const s = await suppliersTable.get(id);
+
+    if (!s) {
+      throw new Error(
+        `SUPPLIER_NOT_FOUND: المورد [${id}] غير موجود لتحديث الرصيد.`
+      );
+    }
+
+    const newBalance =
+      Math.round(((Number(s.balance) || 0) + delta) * 100) / 100;
+
+    await suppliersTable.update(id, {
+      balance: newBalance
+    });
+
+    return newBalance;
+  };
+    }
     if (prop === 'updateAccountBalance') return async (id: string, delta: number) => {
       try {
         const a = await dbProxy.accounts.get(id);
