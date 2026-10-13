@@ -35,7 +35,7 @@ export class AccountingEngine {
 
   static async getCoreAccount(type: 'CASH' | 'BANK' | 'RECEIVABLE' | 'PAYABLE' | 'INVENTORY' | 'SALES_REVENUE' | 'COGS' | 'EXPENSE'): Promise<string> {
     try {
-      const setting = await configurationService.get<any>(`ACCOUNT_${type}`);
+      const setting = configurationService.getSync<any>(`ACCOUNT_${type}`);
       if (setting) return typeof setting === 'string' ? setting : setting.value || setting;
     } catch (e) {
       console.warn(`Error fetching ACCOUNT_${type} from configurationService:`, e);
