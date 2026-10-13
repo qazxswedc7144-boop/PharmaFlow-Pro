@@ -130,8 +130,23 @@ export class IdempotencyRegistry {
     result?: any,
     failureReason?: string,
     tenantId?: string
+  ): Promise<void>;
+  public static async updateStatus(
+    key: string,
+    status: IdempotencyStatus,
+    result?: any,
+    options?: { failureReason?: string; tenantId?: string }
+  ): Promise<void>;
+  public static async updateStatus(
+    key: string,
+    status: IdempotencyStatus,
+    result?: any,
+    failureReasonOrOpts?: string | { failureReason?: string; tenantId?: string },
+    tenantId?: string
   ): Promise<void> {
-    const existing = await this.get(key, tenantId);
+    const effectiveFailureReason = typeof failureReasonOrOpts === 'string' ? failureReasonOrOpts : (failureReasonOrOpts as any)?.failureReason;
+    const effectiveTenantId = typeof failureReasonOrOpts === 'object' && failureReasonOrOpts !== null ? (failureReasonOrOpts as any).tenantId : tenantId;
+    const existing = await this.get(key, effectiveTenantId);
     const now = new Date().toISOString();
 
     if (existing) {
@@ -141,7 +156,7 @@ export class IdempotencyRegistry {
         existing.result = result;
         existing.responseData = result;
       }
-      if (failureReason !== undefined) existing.failureReason = failureReason;
+      if (effectiveFailureReason !== undefined) existing.failureReason = effectiveFailureReason;
 
       await this.save(existing);
     } else {
@@ -159,7 +174,7 @@ export class IdempotencyRegistry {
         createdAt: now,
         completedAt: status === 'COMMITTED' ? now : undefined,
         result,
-        failureReason
+        failureReason: effectiveFailureReason
       });
     }
   }

@@ -101,7 +101,7 @@ export const PurchaseRepository = {
     if (typeof amount !== 'number' || !isFinite(amount) || isNaN(amount) || amount <= 0) {
       throw new Error('ALLOCATION_AMOUNT_INVALID: مبلغ السداد يجب أن يكون رقماً موجباً أكبر من الصفر.');
     }
-    const performUpdate = async (t: any) => {
+    const performUpdate = async (_t: any) => {
       const invoicesTbl = db.invoices;
       const purchase = await invoicesTbl.get(id);
       if (!purchase) {

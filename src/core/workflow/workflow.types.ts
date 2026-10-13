@@ -67,5 +67,5 @@ export interface BusinessWorkflow<TInput = any, TResult = any> {
   hooks?: WorkflowHooks<TInput, TResult>;
   validateInput?: (input: TInput, ctx: WorkflowContext) => Promise<void>;
   validateBusinessRules?: (input: TInput, ctx: WorkflowContext) => Promise<void>;
-  executeDomainSteps(input: TInput, ctx: WorkflowContext): Promise<TResult>;
+  executeDomainSteps(input: TInput, ctx: WorkflowContext, tx?: any): Promise<TResult>;
 }

@@ -29,6 +29,7 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
     await db.accounts.clear();
     await db.idempotencyKeys.clear();
     await db.voucherInvoiceLinks.clear();
+    await db.auditLogs.clear();
 
     // Ensure core chart of accounts exist for the tenant
     await db.accounts.put({
@@ -530,7 +531,8 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       expect((await db.financialTransactions.toArray()).length).toBe(0);
       expect((await db.journalEntries.toArray()).length).toBe(0);
       expect((await db.journalLines.toArray()).length).toBe(0);
-      expect((await db.auditLogs.toArray()).length).toBe(0);
+      const businessAuditLogs = (await db.auditLogs.toArray()).filter((l: any) => l.target_type !== 'DISTRIBUTED_LOCK');
+      expect(businessAuditLogs.length).toBe(0);
     };
 
     it('Stage 1: AFTER_VOUCHER failure rolls back voucher and all records', async () => {

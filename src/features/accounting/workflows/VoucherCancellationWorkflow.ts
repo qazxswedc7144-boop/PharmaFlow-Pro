@@ -91,7 +91,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     }
 
     // Reverse journal entries linked
-    const entries = await db.journalEntries.where('reference_id').equals(input.id).toArray();
+    const entries = await db.journalEntries.where('sourceId').equals(input.id).toArray();
     for (const entry of entries) {
       for (const line of (entry.lines || [])) {
         await db.updateAccountBalance(line.accountId, line.type === 'DEBIT' ? -line.amount : line.amount);
