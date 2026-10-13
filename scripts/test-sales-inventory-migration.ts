@@ -123,6 +123,27 @@ async function setupTestDb() {
     } as any
   ]);
 
+  await db.customers.bulkAdd([
+    {
+      id: 'CUST-001',
+      name: 'General Customer',
+      balance: 0,
+      currentBalance: 0,
+      tenantId: 'TEN-DEV-001',
+      branchId: 'BR-MAIN',
+      is_active: true
+    } as any,
+    {
+      id: 'CUST-002',
+      name: 'Amoxil Customer',
+      balance: 0,
+      currentBalance: 0,
+      tenantId: 'TEN-DEV-001',
+      branchId: 'BR-MAIN',
+      is_active: true
+    } as any
+  ]);
+
   // Seed standard warehouseStock for PROD-PANADOL in WH-MAIN
   await db.warehouseStock.add({
     id: 'WHS-WH-MAIN-PROD-PANADOL',

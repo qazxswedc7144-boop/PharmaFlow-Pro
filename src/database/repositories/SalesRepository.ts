@@ -41,12 +41,13 @@ export const SalesRepository = {
     }) as unknown as Sale[];
   },
 
-  updatePaidAmount: async (id: string, amount: number, tenantId?: string): Promise<void> => {
+  updatePaidAmount: async (id: string, amount: number, tenantId?: string, tx?: any): Promise<void> => {
     if (typeof amount !== 'number' || !isFinite(amount) || isNaN(amount) || amount <= 0) {
       throw new Error('ALLOCATION_AMOUNT_INVALID: مبلغ السداد يجب أن يكون رقماً موجباً أكبر من الصفر.');
     }
-    await db.safeTransaction('rw', ['invoices'], async () => {
-      const sale = await db.invoices.get(id);
+    const performUpdate = async (_t: any) => {
+      const invoicesTbl = db.invoices;
+      const sale = await invoicesTbl.get(id);
       if (!sale) {
         throw new Error(`INVOICE_NOT_FOUND: فاتورة المبيعات [${id}] غير موجودة.`);
       }
@@ -67,11 +68,23 @@ export const SalesRepository = {
 
       const calculatedPaid = Math.round((currentPaid + amount) * 100) / 100;
       const newPaid = Math.min(total, calculatedPaid);
-      await db.invoices.update(id, {
+      const newRemaining = Math.max(0, Math.round((total - newPaid) * 100) / 100);
+      await invoicesTbl.update(id, {
         paidAmount: newPaid,
+        remainingAmount: newRemaining,
+        remaining: newRemaining,
         paymentStatus: newPaid >= total - 0.001 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : sale.paymentStatus),
         updatedAt: new Date().toISOString()
       });
-    });
+    };
+
+    const activeTx = tx || (db as any).currentTransaction || (db as any).idbdb?.currentTransaction || (globalThis as any).Dexie?.currentTransaction;
+    if (activeTx) {
+      await performUpdate(activeTx);
+    } else {
+      await db.safeTransaction('rw', ['invoices'], async (t: any) => {
+        await performUpdate(t);
+      });
+    }
   }
 };

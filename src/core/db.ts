@@ -628,11 +628,12 @@ export class PharmaFlowDB extends Dexie {
   async saveMedicineAlert(alert: Record<string, unknown>) { return await this.systemAlerts.add(alert); }
   async persist() { return true; }
   
-  async updateCustomerBalance(id: string, delta: number) {
-    const cust = await this.customers.get(id);
+  async updateCustomerBalance(id: string, delta: number, tx?: any) {
+    const customersTable = tx?.customers ?? this.customers;
+    const cust = await customersTable.get(id);
     if (!cust) throw new Error(`CUSTOMER_NOT_FOUND: العميل [${id}] غير موجود لتحديث الرصيد.`);
     const newBalance = Math.round(((Number(cust.balance) || 0) + delta) * 100) / 100;
-    await this.customers.update(id, { balance: newBalance });
+    await customersTable.update(id, { balance: newBalance });
     return newBalance;
   }
   
@@ -657,7 +658,9 @@ export class PharmaFlowDB extends Dexie {
     customerId: string, items: InvoiceItem[], total: number, isReturnOrId: boolean | string, idOrIsCash: any,
     _currency?: string, paymentStatus?: string, docStatus?: InvoiceStatus, _auditScore?: number,
     _riskLevel?: string, _totalCost?: number, refId?: string, _attachment?: string, date?: string,
-    transactionUuid?: string
+    transactionUuid?: string,
+    tenantId?: string,
+    branchId?: string
   ) {
     let isReturn = false;
     let saleId = '';
@@ -678,23 +681,34 @@ export class PharmaFlowDB extends Dexie {
     const nowIso = new Date().toISOString();
     const docDate = date || nowIso;
     saleId = saleId || this.generateId('SALE');
-    const finStatusStr = payStatusStr === 'Cash' ? 'Paid' : 'Unpaid';
+    const isCashSale = payStatusStr === 'Cash';
+    const finStatusStr = isCashSale ? 'Paid' : 'Unpaid';
     const docStatusStr = docStatus || 'POSTED';
+
+    const userSession = getCurrentUserSession();
+    const effectiveTenantId = tenantId || userSession?.tenantId || 'tenant-default';
+    const effectiveBranchId = branchId || userSession?.branchId || 'main';
+    const calculatedPaid = isCashSale ? (total || 0) : 0;
+    const calculatedRemaining = Math.max(0, Math.round(((total || 0) - calculatedPaid) * 100) / 100);
 
     const sale: any = {
       id: saleId,
       invoiceNumber: invNum,
       invoice_number: invNum,
+      invoiceId: invNum,
       date: docDate,
       Date: docDate,
       partnerId: customerId || 'CUST-GEN',
       partner_id: customerId || 'CUST-GEN',
       partnerName: 'Customer',
       type: 'SALE',
+      totalAmount: total || 0,
       subtotal: total || 0,
       tax: 0,
       finalTotal: total || 0,
-      paidAmount: payStatusStr === 'Cash' ? (total || 0) : 0,
+      paidAmount: calculatedPaid,
+      remainingAmount: calculatedRemaining,
+      remaining: calculatedRemaining,
       paymentStatus: payStatusStr as 'Cash' | 'Credit',
       payment_status: payStatusStr,
       financialStatus: finStatusStr,
@@ -709,10 +723,10 @@ export class PharmaFlowDB extends Dexie {
       transactionUuid: transactionUuid || `TX-${Date.now()}`,
       hash: `HASH-${Date.now()}`,
       SaleID: saleId,
-      tenantId: 'tenant-default',
-      tenant_id: 'tenant-default',
-      branchId: 'main',
-      branch_id: 'main',
+      tenantId: effectiveTenantId,
+      tenant_id: effectiveTenantId,
+      branchId: effectiveBranchId,
+      branch_id: effectiveBranchId,
       createdAt: nowIso,
       isSynced: (typeof navigator !== 'undefined' && navigator.onLine),
       syncStatus: (typeof navigator !== 'undefined' && navigator.onLine) ? 'SYNCED' : 'PENDING',
@@ -1641,11 +1655,12 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'addInvoiceHistory') return async (log: any) => dbProxy.auditLogs.add({ id: dbProxy.generateId('HIST'), ...log });
     if (prop === 'persist') return async () => true;
     if (prop === 'resetResilientMode') return () => { isDbBlocked = false; };
-    if (prop === 'updateCustomerBalance') return async (id: string, delta: number) => {
-      const c = await dbProxy.customers.get(id);
+    if (prop === 'updateCustomerBalance') return async (id: string, delta: number, tx?: any) => {
+      const customersTable = tx?.customers ?? dbProxy.customers;
+      const c = await customersTable.get(id);
       if (!c) throw new Error(`CUSTOMER_NOT_FOUND: العميل [${id}] غير موجود لتحديث الرصيد.`);
       const newBalance = Math.round(((Number(c.balance) || 0) + delta) * 100) / 100;
-      await dbProxy.customers.update(id, { balance: newBalance });
+      await customersTable.update(id, { balance: newBalance });
       return newBalance;
     };
     if (prop === 'updateSupplierBalance') {

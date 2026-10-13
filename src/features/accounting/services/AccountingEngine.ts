@@ -67,27 +67,31 @@ export class AccountingEngine {
     const invAcc = await this.getCoreAccount('INVENTORY');
 
     const lines: JournalLine[] = [];
-    const entryId = `JE-${Date.now()}`;
+    const entryId = generateTransactionUuid('JE');
 
     // Multi-currency conversion
     const currencyCode = (sale as any).currencyCode || CurrencyService.getCurrentCurrencyCode();
-    const { baseAmount } = await CurrencyService.convertToBase(sale.finalTotal ?? 0, currencyCode, sale.date);
+    const rawTotal = (sale as any).totalAmount ?? (sale as any).finalTotal ?? (sale as any).total ?? 0;
+    const { baseAmount } = await CurrencyService.convertToBase(rawTotal, currencyCode, sale.date || new Date().toISOString());
+
+    const tenantId = (sale as any).tenantId;
+    const branchId = (sale as any).branchId;
 
     // 1. Revenue Impact
     if (sale.paymentStatus === 'Cash') {
-      lines.push(await this.createLine(entryId, cashAcc, baseAmount, 0));
+      lines.push(await this.createLine(entryId, cashAcc, baseAmount, 0, tenantId, branchId));
     } else {
-      lines.push(await this.createLine(entryId, arAcc, baseAmount, 0));
+      lines.push(await this.createLine(entryId, arAcc, baseAmount, 0, tenantId, branchId));
     }
-    lines.push(await this.createLine(entryId, revenueAcc, 0, baseAmount));
+    lines.push(await this.createLine(entryId, revenueAcc, 0, baseAmount, tenantId, branchId));
 
     // 2. COGS Impact
     const totalCalculatedCost = await this.calculateTotalCOGS(items);
-    const { baseAmount: baseCost } = await CurrencyService.convertToBase(totalCalculatedCost, currencyCode, sale.date);
+    const { baseAmount: baseCost } = await CurrencyService.convertToBase(totalCalculatedCost, currencyCode, sale.date || new Date().toISOString());
     
     if (baseCost > 0) {
-      lines.push(await this.createLine(entryId, cogsAcc, baseCost, 0));
-      lines.push(await this.createLine(entryId, invAcc, 0, baseCost));
+      lines.push(await this.createLine(entryId, cogsAcc, baseCost, 0, tenantId, branchId));
+      lines.push(await this.createLine(entryId, invAcc, 0, baseCost, tenantId, branchId));
     }
 
     this.validateEntryBalance(lines);
@@ -95,14 +99,16 @@ export class AccountingEngine {
     return {
       id: entryId,
       entry_id: entryId,
-      date: sale.date,
-      referenceId: sale.SaleID,
-      description: `فاتورة مبيعات رقم ${sale.SaleID}`,
+      date: sale.date || new Date().toISOString(),
+      referenceId: sale.SaleID || sale.id,
+      description: `فاتورة مبيعات رقم ${sale.SaleID || sale.id}`,
       TotalAmount: baseAmount,
       status: 'Posted',
       sourceId: sale.id,
       sourceType: 'SALE',
       lines,
+      tenantId,
+      branchId,
       created_at: new Date().toISOString(),
       lastModified: new Date().toISOString(),
       timestamp: new Date().toISOString()
@@ -164,26 +170,30 @@ export class AccountingEngine {
     const invAcc = await this.getCoreAccount('INVENTORY');
 
     const lines: JournalLine[] = [];
-    const entryId = `JE-${Date.now()}`;
+    const entryId = generateTransactionUuid('JE');
 
     const currencyCode = (sale as any).currencyCode || CurrencyService.getCurrentCurrencyCode();
-    const { baseAmount } = await CurrencyService.convertToBase(sale.finalTotal ?? 0, currencyCode, sale.date);
+    const rawTotal = (sale as any).totalAmount ?? (sale as any).finalTotal ?? (sale as any).total ?? 0;
+    const { baseAmount } = await CurrencyService.convertToBase(rawTotal, currencyCode, sale.date || new Date().toISOString());
+
+    const tenantId = (sale as any).tenantId;
+    const branchId = (sale as any).branchId;
 
     // Reverse Revenue: Debit Revenue, Credit Cash/AR
-    lines.push(await this.createLine(entryId, revenueAcc, baseAmount, 0));
+    lines.push(await this.createLine(entryId, revenueAcc, baseAmount, 0, tenantId, branchId));
     if (sale.paymentStatus === 'Cash') {
-      lines.push(await this.createLine(entryId, cashAcc, 0, baseAmount));
+      lines.push(await this.createLine(entryId, cashAcc, 0, baseAmount, tenantId, branchId));
     } else {
-      lines.push(await this.createLine(entryId, arAcc, 0, baseAmount));
+      lines.push(await this.createLine(entryId, arAcc, 0, baseAmount, tenantId, branchId));
     }
 
     // Reverse COGS: Debit Inventory, Credit COGS
     const totalCalculatedCost = await this.calculateTotalCOGS(items);
-    const { baseAmount: baseCost } = await CurrencyService.convertToBase(totalCalculatedCost, currencyCode, sale.date);
+    const { baseAmount: baseCost } = await CurrencyService.convertToBase(totalCalculatedCost, currencyCode, sale.date || new Date().toISOString());
     
     if (baseCost > 0) {
-      lines.push(await this.createLine(entryId, invAcc, baseCost, 0));
-      lines.push(await this.createLine(entryId, cogsAcc, 0, baseCost));
+      lines.push(await this.createLine(entryId, invAcc, baseCost, 0, tenantId, branchId));
+      lines.push(await this.createLine(entryId, cogsAcc, 0, baseCost, tenantId, branchId));
     }
 
     this.validateEntryBalance(lines);
@@ -191,16 +201,19 @@ export class AccountingEngine {
     return {
       id: entryId,
       entry_id: entryId,
-      date: sale.date,
-      referenceId: sale.SaleID,
-      description: `مرتجع مبيعات فاتورة رقم ${sale.SaleID}`,
+      date: sale.date || new Date().toISOString(),
+      referenceId: sale.SaleID || sale.id,
+      description: `مرتجع مبيعات فاتورة رقم ${sale.SaleID || sale.id}`,
       TotalAmount: baseAmount,
       status: 'Posted',
       sourceId: sale.id,
       sourceType: 'RETURN',
       lines,
+      tenantId,
+      branchId,
       created_at: new Date().toISOString(),
-      lastModified: new Date().toISOString()
+      lastModified: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     };
   }
 

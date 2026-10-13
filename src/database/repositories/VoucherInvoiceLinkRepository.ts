@@ -14,7 +14,8 @@ export const VoucherInvoiceLinkRepository = {
       note,
       updatedAt: new Date().toISOString()
     };
-    await db.voucherInvoiceLinks.put(link);
+    const linksTbl = (_tx && _tx.voucherInvoiceLinks) ? _tx.voucherInvoiceLinks : db.voucherInvoiceLinks;
+    await linksTbl.put(link);
     return id;
   },
 

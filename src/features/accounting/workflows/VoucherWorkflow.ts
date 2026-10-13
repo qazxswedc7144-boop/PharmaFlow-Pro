@@ -276,22 +276,41 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
       return { id, voucher: voucherRecord, document: doc };
 
     } else {
-      // Receipt execution
+      // Stage 1: Persist Voucher FIRST
+      const vouchersTbl = (tx && tx.vouchers) ? tx.vouchers : db.vouchers;
+      await vouchersTbl.put(voucherRecord);
+
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_VOUCHER') {
+        throw new Error('SIMULATED_VOUCHER_FAILURE');
+      }
+
+      // Stage 2: Invoice Allocation & Link
       if (input.allocations) {
         for (const saleId in input.allocations) {
           const item = input.allocations[saleId];
           const allocAmount = typeof item === 'number' ? item : item?.amount || 0;
           if (allocAmount > 0) {
-            await SalesRepository.updatePaidAmount(saleId, allocAmount, ctx.tenantId);
-            await VoucherInvoiceLinkRepository.createLink(id, saleId, allocAmount, typeof item === 'object' ? item.note : undefined);
+            await SalesRepository.updatePaidAmount(saleId, allocAmount, ctx.tenantId, tx);
+            await VoucherInvoiceLinkRepository.createLink(id, saleId, allocAmount, typeof item === 'object' ? item.note : undefined, tx);
           }
         }
       }
-
-      if (input.partnerId && input.partnerId !== 'عميل نقدي') {
-        await db.updateCustomerBalance(input.partnerId, -input.amount);
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_ALLOCATION') {
+        throw new Error('SIMULATED_ALLOCATION_FAILURE');
+      }
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_LINK') {
+        throw new Error('SIMULATED_LINK_FAILURE');
       }
 
+      // Stage 3: Customer Balance Update
+      if (input.partnerId && input.partnerId !== 'عميل نقدي') {
+        await (db as any).updateCustomerBalance(input.partnerId, -input.amount, tx);
+      }
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_BALANCE_UPDATE') {
+        throw new Error('SIMULATED_BALANCE_UPDATE_FAILURE');
+      }
+
+      // Stage 4: FinancialTransaction Record
       await FinancialTransactionRepository.record({
         id: generateTransactionUuid('FT'),
         Transaction_Type: 'Receipt',
@@ -305,8 +324,12 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         Notes: input.notes || `سند قبض من العميل #${id}`,
         tenantId: ctx.tenantId,
         branchId: ctx.branchId
-      } as any);
+      } as any, tx);
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_FT') {
+        throw new Error('SIMULATED_FT_FAILURE');
+      }
 
+      // Stage 5: JournalEntry
       const entry = await accountingEngine.generateVoucherEntry({
         type: 'RECEIPT',
         amount: input.amount,
@@ -318,10 +341,10 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         tenantId: ctx.tenantId,
         branchId: ctx.branchId
       });
-      await AccountingRepository.addEntry(entry);
-
-      const vouchersTbl = (tx && tx.vouchers) ? tx.vouchers : db.vouchers;
-      await vouchersTbl.put(voucherRecord);
+      await AccountingRepository.addEntry(entry, tx);
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_JOURNAL') {
+        throw new Error('SIMULATED_JOURNAL_POSTING_FAILURE');
+      }
 
       await ProjectionEventBus.publish('CUSTOMER_RECEIPT_PROCESSED', id, {
         customerId: input.partnerId,
