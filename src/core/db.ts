@@ -483,11 +483,15 @@ export class PharmaFlowDB extends Dexie {
   }
 
   getExistingTableNames(): string[] {
-    const actualTableNames = this.tables.map(t => t.name);
+    const actualTableNames = this.tables ? this.tables.map(t => t.name) : [];
+    if (actualTableNames.length === 0) {
+      return ALL_SCHEMA_TABLE_NAMES;
+    }
     const nativeDB = (this as any).idbdb;
-    if (nativeDB && nativeDB.objectStoreNames) {
+    if (nativeDB && nativeDB.objectStoreNames && nativeDB.objectStoreNames.length > 0) {
       const storeNames = Array.from(nativeDB.objectStoreNames) as string[];
-      return actualTableNames.filter(t => storeNames.includes(t));
+      const filtered = actualTableNames.filter(t => storeNames.includes(t));
+      return filtered.length > 0 ? filtered : actualTableNames;
     }
     return actualTableNames;
   }
@@ -1441,25 +1445,7 @@ function wrapQueryChain(obj: any, tableName: string): any {
             const res = val.apply(targetObj, args);
             if (res && typeof res.then === 'function') {
               return res.catch((err: any) => {
-                if (err && (
-                  err.name === 'ConstraintError' || 
-                  err.name === 'BulkError' || 
-                  err.name === 'AbortError' || 
-                  err.name === 'TransactionAbortedError' ||
-                  err.name === 'TransactionCommittedTooEarlyError' ||
-                  err.inner?.name === 'ConstraintError' ||
-                  err.inner?.name === 'AbortError' ||
-                  err.inner?.name === 'TransactionAbortedError'
-                )) {
-                  throw err;
-                }
-                console.warn(`[DB RESILIENT] Query operation promised rejection in table "${tableName}":`, err);
-                isDbBlocked = true;
-                const mockTable = getMockTable(tableName);
-                const fallbackObj = (mockTable as any).where ? (mockTable as any).where() : createMockCollection([]);
-                return typeof fallbackObj[targetProp] === 'function'
-                  ? fallbackObj[targetProp](...args)
-                  : Promise.resolve([]);
+                throw err;
               });
             }
             if (res && typeof res === 'object') {
@@ -1467,25 +1453,7 @@ function wrapQueryChain(obj: any, tableName: string): any {
             }
             return res;
           } catch (err: any) {
-            if (err && (
-              err.name === 'ConstraintError' || 
-              err.name === 'BulkError' || 
-              err.name === 'AbortError' || 
-              err.name === 'TransactionAbortedError' ||
-              err.name === 'TransactionCommittedTooEarlyError' ||
-              err.inner?.name === 'ConstraintError' ||
-              err.inner?.name === 'AbortError' ||
-              err.inner?.name === 'TransactionAbortedError'
-            )) {
-              throw err;
-            }
-            console.warn(`[DB RESILIENT] Query method "${String(targetProp)}" execution failed on table "${tableName}":`, err);
-            isDbBlocked = true;
-            const mockTable = getMockTable(tableName);
-            const fallbackObj = (mockTable as any).where ? (mockTable as any).where() : createMockCollection([]);
-            return typeof fallbackObj[targetProp] === 'function'
-              ? fallbackObj[targetProp](...args)
-              : undefined;
+            throw err;
           }
         };
       }
@@ -1509,43 +1477,11 @@ function wrapTable(realTable: any, tableName: string): any {
       if (typeof realVal === 'function') {
         const boundFn = realVal.bind(tObj);
         return (...args: any[]) => {
-          // Mirror writes into mock store to ensure continuous memory state across fallbacks
-          try {
-            const mockTable = getMockTable(tableName);
-            if (tProp === 'put' || tProp === 'add') {
-              mockTable.put(args[0]);
-            } else if (tProp === 'bulkPut' || tProp === 'bulkAdd') {
-              mockTable.bulkPut(args[0]);
-            } else if (tProp === 'delete') {
-              mockTable.delete(args[0]);
-            } else if (tProp === 'update') {
-              mockTable.update(args[0], args[1]);
-            } else if (tProp === 'clear') {
-              mockTable.clear();
-            }
-          } catch {}
-
           try {
             const res = boundFn(...args);
             if (res && typeof res.then === 'function') {
               return res.catch((err: any) => {
-                if (err && (
-                  err.name === 'ConstraintError' || 
-                  err.name === 'BulkError' || 
-                  err.name === 'AbortError' || 
-                  err.name === 'TransactionAbortedError' ||
-                  err.name === 'TransactionCommittedTooEarlyError' ||
-                  err.inner?.name === 'ConstraintError' ||
-                  err.inner?.name === 'AbortError' ||
-                  err.inner?.name === 'TransactionAbortedError'
-                )) {
-                  throw err;
-                }
-                console.warn(`[DB RESILIENT] Promised operation failure on table "${tableName}":`, err);
-                isDbBlocked = true;
-                const mockTable = getMockTable(tableName);
-                const fallbackFn = (mockTable as any)[tProp];
-                return typeof fallbackFn === 'function' ? fallbackFn(...args) : Promise.resolve(null);
+                throw err;
               });
             }
             if (res && typeof res === 'object') {
@@ -1553,23 +1489,7 @@ function wrapTable(realTable: any, tableName: string): any {
             }
             return res;
           } catch (err: any) {
-            if (err && (
-              err.name === 'ConstraintError' || 
-              err.name === 'BulkError' || 
-              err.name === 'AbortError' || 
-              err.name === 'TransactionAbortedError' ||
-              err.name === 'TransactionCommittedTooEarlyError' ||
-              err.inner?.name === 'ConstraintError' ||
-              err.inner?.name === 'AbortError' ||
-              err.inner?.name === 'TransactionAbortedError'
-            )) {
-              throw err;
-            }
-            console.warn(`[DB RESILIENT] Table operation "${String(tProp)}" failed on table "${tableName}":`, err);
-            isDbBlocked = true;
-            const mockTable = getMockTable(tableName);
-            const fallbackFn = (mockTable as any)[tProp];
-            return typeof fallbackFn === 'function' ? fallbackFn(...args) : undefined;
+            throw err;
           }
         };
       }
