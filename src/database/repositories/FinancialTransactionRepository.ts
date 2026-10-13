@@ -25,8 +25,7 @@ export const FinancialTransactionRepository = {
   /**
    * تسجيل حركة مالية مركزية جديدة (Unique Transaction Registry)
    */
-  // Fix: Added Paid_Amount to Omit and made it optional in the input type to allow defaulting to Amount in implementation
-  record: async (data: Omit<FinancialTransaction, 'Transaction_ID' | 'Created_At' | 'Created_By' | 'lastModified' | 'Transaction_Date' | 'Paid_Amount'> & { Transaction_Date?: string; Paid_Amount?: number; id?: string }, tx?: any): Promise<string> => {
+  record: async (data: Omit<FinancialTransaction, 'Transaction_ID' | 'Created_At' | 'Created_By' | 'lastModified' | 'Transaction_Date' | 'Paid_Amount'> & { Transaction_Date?: string; Paid_Amount?: number; id?: string; tenantId?: string; branchId?: string }, tx?: any): Promise<string> => {
     const user = authService.getCurrentUser();
     const id = data.id || generateTransactionUuid('TRX');
     const now = new Date().toISOString();

@@ -124,8 +124,11 @@ export const PurchaseRepository = {
 
       const calculatedPaid = Math.round((currentPaid + amount) * 100) / 100;
       const newPaid = Math.min(total, calculatedPaid);
+      const newRemaining = Math.max(0, Math.round((total - newPaid) * 100) / 100);
       await invoicesTbl.update(id, {
         paidAmount: newPaid,
+        remainingAmount: newRemaining,
+        remaining: newRemaining,
         paymentStatus: newPaid >= total - 0.001 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : purchase.paymentStatus),
         updatedAt: new Date().toISOString()
       });

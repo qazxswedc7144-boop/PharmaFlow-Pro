@@ -727,7 +727,9 @@ export class PharmaFlowDB extends Dexie {
     supplierId: string, items: InvoiceItem[], total: number, id: string,
     isCash: boolean, _currency: string, docStatus: InvoiceStatus, _auditScore: number,
     _riskLevel: string, refId: string, _attachment: string, isReturn: boolean, date: string,
-    transactionUuid?: string
+    transactionUuid?: string,
+    tenantId?: string,
+    branchId?: string
   ) {
     const invNum = this.generateId('PURCH');
     const nowIso = new Date().toISOString();
@@ -736,6 +738,11 @@ export class PharmaFlowDB extends Dexie {
     const payStatusStr = isCash ? 'Cash' : 'Credit';
     const finStatusStr = isCash ? 'Paid' : 'Unpaid';
     const docStatusStr = docStatus || 'POSTED';
+    const userSession = getCurrentUserSession();
+    const effectiveTenantId = tenantId || userSession?.tenantId || 'tenant-default';
+    const effectiveBranchId = branchId || userSession?.branchId || 'main';
+    const calculatedPaid = isCash ? (total || 0) : 0;
+    const calculatedRemaining = Math.max(0, Math.round(((total || 0) - calculatedPaid) * 100) / 100);
 
     const purchase: any = {
       id: purId,
@@ -750,8 +757,11 @@ export class PharmaFlowDB extends Dexie {
       type: 'PURCHASE',
       subtotal: total || 0,
       tax: 0,
+      totalAmount: total || 0,
       finalTotal: total || 0,
-      paidAmount: isCash ? (total || 0) : 0,
+      paidAmount: calculatedPaid,
+      remainingAmount: calculatedRemaining,
+      remaining: calculatedRemaining,
       paymentStatus: payStatusStr as 'Cash' | 'Credit',
       payment_status: payStatusStr,
       financialStatus: finStatusStr,
@@ -765,10 +775,10 @@ export class PharmaFlowDB extends Dexie {
       notes: `Ref: ${refId || purId}`,
       transactionUuid: transactionUuid || `TX-${Date.now()}`,
       hash: `HASH-${Date.now()}`,
-      tenantId: 'tenant-default',
-      tenant_id: 'tenant-default',
-      branchId: 'main',
-      branch_id: 'main',
+      tenantId: effectiveTenantId,
+      tenant_id: effectiveTenantId,
+      branchId: effectiveBranchId,
+      branch_id: effectiveBranchId,
       createdAt: nowIso,
       isSynced: (typeof navigator !== 'undefined' && navigator.onLine),
       syncStatus: (typeof navigator !== 'undefined' && navigator.onLine) ? 'SYNCED' : 'PENDING',

@@ -115,20 +115,24 @@ export class AccountingEngine {
     const invAcc = await this.getCoreAccount('INVENTORY');
 
     const lines: JournalLine[] = [];
-    const entryId = `JE-${Date.now()}`;
+    const entryId = generateTransactionUuid('JE');
 
     // Multi-currency conversion
     const currencyCode = (purchase as any).currencyCode || CurrencyService.getCurrentCurrencyCode();
-    const { baseAmount } = await CurrencyService.convertToBase(purchase.totalAmount || purchase.finalTotal || 0, currencyCode, purchase.date || new Date().toISOString());
+    const rawTotal = (purchase as any).totalAmount ?? (purchase as any).finalTotal ?? (purchase as any).total ?? 0;
+    const { baseAmount } = await CurrencyService.convertToBase(rawTotal, currencyCode, purchase.date || new Date().toISOString());
+
+    const tenantId = (purchase as any).tenantId;
+    const branchId = (purchase as any).branchId;
 
     // Debit Inventory
-    lines.push(await this.createLine(entryId, invAcc, baseAmount, 0));
+    lines.push(await this.createLine(entryId, invAcc, baseAmount, 0, tenantId, branchId));
 
     // Credit Cash or Payable
     if (purchase.status === 'PAID') {
-      lines.push(await this.createLine(entryId, cashAcc, 0, baseAmount));
+      lines.push(await this.createLine(entryId, cashAcc, 0, baseAmount, tenantId, branchId));
     } else {
-      lines.push(await this.createLine(entryId, apAcc, 0, baseAmount));
+      lines.push(await this.createLine(entryId, apAcc, 0, baseAmount, tenantId, branchId));
     }
 
     this.validateEntryBalance(lines);
@@ -137,13 +141,15 @@ export class AccountingEngine {
       id: entryId,
       entry_id: entryId,
       date: purchase.date || new Date().toISOString(),
-      referenceId: purchase.invoiceId,
-      description: `فاتورة مشتريات رقم ${purchase.invoiceId}`,
+      referenceId: purchase.invoiceId || purchase.id,
+      description: purchase.notes || `فاتورة مشتريات رقم ${purchase.invoiceId || purchase.id}`,
       TotalAmount: baseAmount,
       status: 'Posted',
       sourceId: purchase.id,
       sourceType: 'PURCHASE',
       lines,
+      tenantId,
+      branchId,
       created_at: new Date().toISOString(),
       lastModified: new Date().toISOString(),
       timestamp: new Date().toISOString()
@@ -341,7 +347,8 @@ export class AccountingEngine {
    */
   static async postInvoice(
     invoice: Sale | Purchase | UnifiedInvoice,
-    _costResult?: { totalCost: number }
+    _costResult?: { totalCost: number },
+    tx?: any
   ): Promise<void> {
     
     const type = ('type' in invoice && invoice.type) ? invoice.type : (('customerId' in invoice && invoice.customerId) ? 'SALE' : 'PURCHASE');
@@ -367,10 +374,10 @@ export class AccountingEngine {
 
     if (Array.isArray(entry)) {
       for (const e of entry) {
-        await AccountingRepository.addEntry(e);
+        await AccountingRepository.addEntry(e, tx);
       }
     } else {
-      await AccountingRepository.addEntry(entry);
+      await AccountingRepository.addEntry(entry, tx);
     }
   }
 

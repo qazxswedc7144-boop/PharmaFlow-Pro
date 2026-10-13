@@ -333,6 +333,8 @@ export interface FinancialTransaction extends SyncableEntity {
   Direction: 'Debit' | 'Credit'; 
   Transaction_Date: string; 
   Notes: string; 
+  tenantId?: string;
+  branchId?: string;
 }
 
 export interface VoucherInvoiceLink extends SyncableEntity {

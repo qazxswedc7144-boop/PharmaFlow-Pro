@@ -56,7 +56,44 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     }
   }
 
-  public async validateBusinessRules(input: PurchaseWorkflowInput): Promise<void> {
+  public async validateBusinessRules(input: PurchaseWorkflowInput, ctx: WorkflowContext): Promise<void> {
+    if (ctx && (!ctx.tenantId || ctx.tenantId === 'default' || ctx.tenantId === 'default-tenant')) {
+      throw new Error('FAIL_CLOSED: يتطلب تنفيذ فاتورة المشتريات وجود سياق مؤسسة موثوق (Trusted Tenant Context Required).');
+    }
+
+    // 1. Cross-Tenant Supplier Validation
+    if (input.supplierId && input.supplierId !== 'مورد نقدي') {
+      const supplier = await db.suppliers.get(input.supplierId);
+      if (!supplier) {
+        throw new Error(`SUPPLIER_NOT_FOUND: لم يتم العثور على المورد المحدد [${input.supplierId}].`);
+      }
+      if (ctx?.tenantId && supplier.tenantId && supplier.tenantId !== ctx.tenantId) {
+        throw new Error(`CROSS_TENANT_SUPPLIER_FORBIDDEN: المورد [${input.supplierId}] تابع لمؤسسة أخرى.`);
+      }
+    }
+
+    // 2. Cross-Tenant Product Validation
+    for (const item of input.items || []) {
+      const productId = item.productId || (item as any).product_id;
+      if (productId) {
+        const product = await db.products.get(productId);
+        if (!product) {
+          throw new Error(`PRODUCT_NOT_FOUND: الصنف [${productId}] غير موجود.`);
+        }
+        if (ctx?.tenantId && product.tenantId && product.tenantId !== ctx.tenantId) {
+          throw new Error(`CROSS_TENANT_PRODUCT_FORBIDDEN: الصنف [${productId}] تابع لمؤسسة أخرى.`);
+        }
+      }
+    }
+
+    // 3. Cross-Tenant Existing Invoice Validation
+    if (input.id) {
+      const existing = await db.invoices.get(input.id);
+      if (existing && ctx?.tenantId && existing.tenantId && existing.tenantId !== ctx.tenantId) {
+        throw new Error(`CROSS_TENANT_INVOICE_FORBIDDEN: فاتورة المشتريات [${input.id}] تابعة لمؤسسة أخرى.`);
+      }
+    }
+
     await validationService.validateInvoice(input, 'PURCHASE');
     if (!input.isEdit && input.id) {
       await validationService.validateInvoiceIdUniqueness(input.id, 'purchases', db.db);
@@ -65,7 +102,8 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
   public async executeDomainSteps(
     input: PurchaseWorkflowInput,
-    ctx: WorkflowContext
+    ctx: WorkflowContext,
+    tx?: any
   ): Promise<PurchaseWorkflowResult> {
     const finalStatus: InvoiceStatus = input.invoiceStatus || 'POSTED';
     const isPosting = finalStatus === 'POSTED' || finalStatus === 'LOCKED';
@@ -87,8 +125,14 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       input.attachment,
       isReturn,
       effectiveDate,
-      ctx.idempotencyKey
+      ctx.idempotencyKey,
+      ctx.tenantId,
+      ctx.branchId
     );
+
+    if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_PURCHASE_DOC') {
+      throw new Error('SIMULATED_PURCHASE_DOC_FAILURE');
+    }
 
     const refId = (savedDoc as any)?.id || docId;
     let costResult = { totalCost: 0, itemCosts: {} as Record<string, number> };
@@ -201,11 +245,19 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         }
       }
 
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_INVENTORY') {
+        throw new Error('SIMULATED_INVENTORY_FAILURE');
+      }
+
       // 4. Financial & Accounting Ledger Execution
       const suppId = input.supplierId;
       if (suppId && suppId !== 'مورد نقدي') {
         const balanceDelta = isReturn ? -input.total : input.total;
-        await db.updateSupplierBalance(suppId, balanceDelta);
+        await db.updateSupplierBalance(suppId, balanceDelta, tx);
+      }
+
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_SUPPLIER_BALANCE') {
+        throw new Error('SIMULATED_SUPPLIER_BALANCE_FAILURE');
       }
 
       await FinancialTransactionRepository.record({
@@ -218,13 +270,31 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         Amount: input.total,
         Direction: isReturn ? 'Debit' : 'Credit',
         Transaction_Date: effectiveDate,
-        Notes: `فاتورة مشتريات #${refId}`
-      });
+        Notes: `فاتورة مشتريات #${refId}`,
+        tenantId: ctx.tenantId,
+        branchId: ctx.branchId
+      }, tx);
+
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_FT') {
+        throw new Error('SIMULATED_FT_FAILURE');
+      }
 
       await accountingEngine.postInvoice(
-        { ...input, type: 'PURCHASE', id: refId, transactionUuid: ctx.idempotencyKey },
-        costResult
+        {
+          ...input,
+          type: 'PURCHASE',
+          id: refId,
+          transactionUuid: ctx.idempotencyKey,
+          tenantId: ctx.tenantId,
+          branchId: ctx.branchId
+        },
+        costResult,
+        tx
       );
+
+      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_JOURNAL') {
+        throw new Error('SIMULATED_JOURNAL_FAILURE');
+      }
 
       await ProjectionEventBus.publish('INVOICE_POSTED', refId, {
         type: 'PURCHASE',
