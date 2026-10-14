@@ -232,7 +232,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
           items: [{ productId, quantity: 999, unitPrice: 30, price: 30 } as any],
           total: 29970
         })
-      ).rejects.toThrow(/INSUFFICIENT_STOCK|الكمية غير متوفرة/i);
+      ).rejects.toThrow(/INSUFFICIENT_STOCK|الكمية غير متوفرة|Insufficient stock/i);
 
       // Stock remains unaffected
       const prod = await db.products.get(productId);

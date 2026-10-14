@@ -655,40 +655,24 @@ export class PharmaFlowDB extends Dexie {
 
   // --- LEGACY ORCHESTRATION HELPERS ---
   async processSale(
-    customerId: string, items: InvoiceItem[], total: number, isReturnOrId: boolean | string, idOrIsCash: any,
-    _currency?: string, paymentStatus?: string, docStatus?: InvoiceStatus, _auditScore?: number,
-    _riskLevel?: string, _totalCost?: number, refId?: string, _attachment?: string, date?: string,
+    customerId: string, items: InvoiceItem[], total: number, id: string,
+    isCash: boolean, _currency: string, docStatus: InvoiceStatus, _auditScore: number,
+    _riskLevel: string, refId: string, _attachment: string, isReturn: boolean, date: string,
     transactionUuid?: string,
     tenantId?: string,
     branchId?: string
   ) {
-    let isReturn = false;
-    let saleId = '';
-    let payStatusStr = 'Cash';
-
-    if (typeof isReturnOrId === 'string') {
-      saleId = isReturnOrId;
-      const isCash = typeof idOrIsCash === 'boolean' ? idOrIsCash : idOrIsCash === 'Cash';
-      payStatusStr = isCash ? 'Cash' : 'Credit';
-      isReturn = typeof refId === 'boolean' ? (refId as any) : false;
-    } else {
-      isReturn = !!isReturnOrId;
-      saleId = typeof idOrIsCash === 'string' ? idOrIsCash : (typeof refId === 'string' ? refId : '');
-      payStatusStr = paymentStatus || 'Cash';
-    }
-
     const invNum = this.generateId('INV');
     const nowIso = new Date().toISOString();
     const docDate = date || nowIso;
-    saleId = saleId || this.generateId('SALE');
-    const isCashSale = payStatusStr === 'Cash';
-    const finStatusStr = isCashSale ? 'Paid' : 'Unpaid';
+    const saleId = id || this.generateId('SALE');
+    const payStatusStr = isCash ? 'Cash' : 'Credit';
+    const finStatusStr = isCash ? 'Paid' : 'Unpaid';
     const docStatusStr = docStatus || 'POSTED';
-
     const userSession = getCurrentUserSession();
     const effectiveTenantId = tenantId || userSession?.tenantId || 'tenant-default';
     const effectiveBranchId = branchId || userSession?.branchId || 'main';
-    const calculatedPaid = isCashSale ? (total || 0) : 0;
+    const calculatedPaid = isCash ? (total || 0) : 0;
     const calculatedRemaining = Math.max(0, Math.round(((total || 0) - calculatedPaid) * 100) / 100);
 
     const sale: any = {
