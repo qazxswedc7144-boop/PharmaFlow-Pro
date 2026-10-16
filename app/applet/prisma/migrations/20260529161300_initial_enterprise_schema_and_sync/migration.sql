@@ -250,7 +250,8 @@ CREATE TABLE "journal_lines" (
     CONSTRAINT "journal_lines_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: journal_lines_tenantId_idx" ON "journal_lines"("tenantId");
+-- CreateIndex: journal_lines_tenantId_idx
+CREATE INDEX "journal_lines_tenantId_idx" ON "journal_lines"("tenantId");
 CREATE INDEX "journal_lines_entryId_idx" ON "journal_lines"("entryId");
 CREATE INDEX "journal_lines_accountId_idx" ON "journal_lines"("accountId");
 
@@ -298,7 +299,8 @@ CREATE TABLE "customers" (
     CONSTRAINT "customers_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: customers_tenantId_idx" ON "customers"("tenantId");
+-- CreateIndex: customers_tenantId_idx
+CREATE INDEX "customers_tenantId_idx" ON "customers"("tenantId");
 
 -- CreateTable: suppliers
 CREATE TABLE "suppliers" (
@@ -315,7 +317,8 @@ CREATE TABLE "suppliers" (
     CONSTRAINT "suppliers_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: suppliers_tenantId_idx" ON "suppliers"("tenantId");
+-- CreateIndex: suppliers_tenantId_idx
+CREATE INDEX "suppliers_tenantId_idx" ON "suppliers"("tenantId");
 
 -- CreateTable: invoices
 CREATE TABLE "invoices" (
@@ -365,7 +368,8 @@ CREATE TABLE "invoice_items" (
     CONSTRAINT "invoice_items_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: invoice_items_tenantId_idx" ON "invoice_items"("tenantId");
+-- CreateIndex: invoice_items_tenantId_idx
+CREATE INDEX "invoice_items_tenantId_idx" ON "invoice_items"("tenantId");
 CREATE INDEX "invoice_items_invoiceId_idx" ON "invoice_items"("invoiceId");
 CREATE INDEX "invoice_items_productId_idx" ON "invoice_items"("productId");
 
@@ -413,7 +417,8 @@ CREATE TABLE "inventory_movements" (
     CONSTRAINT "inventory_movements_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: inventory_movements_productId_idx" ON "inventory_movements"("productId");
+-- CreateIndex: inventory_movements_productId_idx
+CREATE INDEX "inventory_movements_productId_idx" ON "inventory_movements"("productId");
 CREATE INDEX "inventory_movements_batchId_idx" ON "inventory_movements"("batchId");
 CREATE INDEX "inventory_movements_createdAt_idx" ON "inventory_movements"("createdAt");
 CREATE INDEX "inventory_movements_branchId_idx" ON "inventory_movements"("branchId");
@@ -438,7 +443,8 @@ CREATE TABLE "audit_logs" (
     CONSTRAINT "audit_logs_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: audit_logs_timestamp_idx" ON "audit_logs"("timestamp");
+-- CreateIndex: audit_logs_timestamp_idx
+CREATE INDEX "audit_logs_timestamp_idx" ON "audit_logs"("timestamp");
 CREATE INDEX "audit_logs_userId_idx" ON "audit_logs"("userId");
 CREATE INDEX "audit_logs_entity_entityId_idx" ON "audit_logs"("entity", "entityId");
 CREATE INDEX "audit_logs_createdAt_idx" ON "audit_logs"("createdAt");
@@ -489,7 +495,8 @@ CREATE TABLE "sync_queue" (
     CONSTRAINT "sync_queue_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: sync_queue_syncStatus_idx" ON "sync_queue"("syncStatus");
+-- CreateIndex: sync_queue_syncStatus_idx
+CREATE INDEX "sync_queue_syncStatus_idx" ON "sync_queue"("syncStatus");
 CREATE INDEX "sync_queue_createdAt_idx" ON "sync_queue"("createdAt");
 CREATE INDEX "sync_queue_tenantId_idx" ON "sync_queue"("tenantId");
 
@@ -631,7 +638,8 @@ CREATE TABLE "branch_transfer_items" (
     CONSTRAINT "branch_transfer_items_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: branch_transfer_items_transferId_idx" ON "branch_transfer_items"("transferId");
+-- CreateIndex: branch_transfer_items_transferId_idx
+CREATE INDEX "branch_transfer_items_transferId_idx" ON "branch_transfer_items"("transferId");
 CREATE INDEX "branch_transfer_items_productId_idx" ON "branch_transfer_items"("productId");
 CREATE INDEX "branch_transfer_items_tenantId_idx" ON "branch_transfer_items"("tenantId");
 
@@ -673,7 +681,8 @@ CREATE TABLE "payments" (
     CONSTRAINT "payments_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: payments_tenantId_idx" ON "payments"("tenantId");
+-- CreateIndex: payments_tenantId_idx
+CREATE INDEX "payments_tenantId_idx" ON "payments"("tenantId");
 CREATE INDEX "payments_branchId_idx" ON "payments"("branchId");
 CREATE INDEX "payments_date_idx" ON "payments"("date");
 
@@ -694,7 +703,8 @@ CREATE TABLE "expenses" (
     CONSTRAINT "expenses_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: expenses_tenantId_idx" ON "expenses"("tenantId");
+-- CreateIndex: expenses_tenantId_idx
+CREATE INDEX "expenses_tenantId_idx" ON "expenses"("tenantId");
 CREATE INDEX "expenses_branchId_idx" ON "expenses"("branchId");
 CREATE INDEX "expenses_date_idx" ON "expenses"("date");
 
@@ -790,7 +800,8 @@ CREATE TABLE "crash_logs" (
     CONSTRAINT "crash_logs_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: crash_logs_timestamp_idx" ON "crash_logs"("timestamp");
+-- CreateIndex: crash_logs_timestamp_idx
+CREATE INDEX "crash_logs_timestamp_idx" ON "crash_logs"("timestamp");
 CREATE INDEX "crash_logs_tenantId_idx" ON "crash_logs"("tenantId");
 CREATE INDEX "crash_logs_branchId_idx" ON "crash_logs"("branchId");
 
@@ -808,7 +819,8 @@ CREATE TABLE "device_registrations" (
     CONSTRAINT "device_registrations_pkey" PRIMARY KEY ("deviceId")
 );
 
--- CreateIndex: device_registrations_tenantId_idx" ON "device_registrations"("tenantId");
+-- CreateIndex: device_registrations_tenantId_idx
+CREATE INDEX "device_registrations_tenantId_idx" ON "device_registrations"("tenantId");
 CREATE INDEX "device_registrations_branchId_idx" ON "device_registrations"("branchId");
 
 -- CreateTable: ai_usage_logs
@@ -825,7 +837,8 @@ CREATE TABLE "ai_usage_logs" (
     CONSTRAINT "ai_usage_logs_pkey" PRIMARY KEY ("id")
 );
 
--- CreateIndex: ai_usage_logs_timestamp_idx" ON "ai_usage_logs"("timestamp");
+-- CreateIndex: ai_usage_logs_timestamp_idx
+CREATE INDEX "ai_usage_logs_timestamp_idx" ON "ai_usage_logs"("timestamp");
 CREATE INDEX "ai_usage_logs_tenantId_idx" ON "ai_usage_logs"("tenantId");
 CREATE INDEX "ai_usage_logs_userId_idx" ON "ai_usage_logs"("userId");
 
