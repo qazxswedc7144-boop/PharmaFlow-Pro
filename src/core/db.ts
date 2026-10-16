@@ -1449,7 +1449,6 @@ function wrapQueryChain(obj: any, tableName: string): any {
       const val = targetObj[targetProp];
       if (typeof val === 'function') {
         return (...args: any[]) => {
-          try {
             const res = val.apply(targetObj, args);
             if (res && typeof res.then === 'function') {
               return res.catch((err: any) => {
@@ -1460,9 +1459,6 @@ function wrapQueryChain(obj: any, tableName: string): any {
               return wrapQueryChain(res, tableName);
             }
             return res;
-          } catch (err: any) {
-            throw err;
-          }
         };
       }
       return val;
@@ -1485,7 +1481,6 @@ function wrapTable(realTable: any, tableName: string): any {
       if (typeof realVal === 'function') {
         const boundFn = realVal.bind(tObj);
         return (...args: any[]) => {
-          try {
             const res = boundFn(...args);
             if (res && typeof res.then === 'function') {
               return res.catch((err: any) => {
@@ -1496,9 +1491,6 @@ function wrapTable(realTable: any, tableName: string): any {
               return wrapQueryChain(res, tableName);
             }
             return res;
-          } catch (err: any) {
-            throw err;
-          }
         };
       }
       return realVal;
