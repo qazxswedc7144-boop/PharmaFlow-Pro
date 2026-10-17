@@ -121,41 +121,20 @@ function getOfflineProxy(): PrismaClient {
   });
 }
 
-// Resilient wrapper with exponential backoff and auto-reconnection
+// Simplified: no retry, no fallback — let errors propagate to reveal root cause
 async function withRetry<T>(operation: () => Promise<T>, operationName: string): Promise<T> {
-  if (isDatabaseDisabled || (disabledUntil > 0 && Date.now() < disabledUntil)) {
-    return handleOfflineFallback<T>(operationName);
+  try {
+    return await operation();
+  } catch (error: any) {
+    console.error('[Prisma] REAL CONNECTION ERROR:', {
+      code: error?.code,
+      name: error?.name,
+      message: error?.message,
+      meta: error?.meta,
+      operationName,
+    });
+    throw error;
   }
-
-  for (let i = 0; i < MAX_RETRIES; i++) {
-    try {
-      return await operation();
-    } catch (error: any) {
-      if (isConnectionError(error)) {
-        isDatabaseDisabled = true;
-        if (basePrisma) {
-          const clientToDisconnect = basePrisma;
-          basePrisma = null;
-          try {
-            clientToDisconnect.$disconnect().catch(() => {});
-          } catch {
-            // ignore
-          }
-        }
-        console.info(`[Prisma] Offline/local mode activated for '${operationName}'.`);
-        break;
-      }
-
-      if (i < MAX_RETRIES - 1) {
-        const delay = INITIAL_DELAY * Math.pow(2, i);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      } else {
-        console.info(`[Prisma] Handled fallback for '${operationName}'.`);
-      }
-    }
-  }
-
-  return handleOfflineFallback<T>(operationName);
 }
 
 function getPrismaClient(): PrismaClient {
