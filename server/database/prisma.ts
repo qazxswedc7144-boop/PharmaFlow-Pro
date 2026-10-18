@@ -20,12 +20,9 @@ function isConnectionError(err: any): boolean {
   const msg = String(err?.message || err?.cause || err?.kind || err || "");
   const code = String(err?.code || "");
   const name = String(err?.name || "");
-  if (name) {}
 
-  // ONLY real connection/network error codes from Prisma
-  if (['P1001', 'P1002', 'P1008', 'P1010', 'P1017', 'P2024'].includes(code)) return true;
+  if (code.startsWith('P1') || code === 'P2024' || name.includes('PrismaClientInitializationError') || name.includes('PrismaClientRustPanicError')) return true;
 
-  // Network errors
   if (
     msg.includes('ECONNREFUSED') ||
     msg.includes('ECONNRESET') ||
@@ -33,10 +30,12 @@ function isConnectionError(err: any): boolean {
     msg.includes('ENOTFOUND') ||
     msg.includes("Can't reach database") ||
     msg.includes('Connection pool timeout') ||
-    msg.includes('Kind: Closed')
+    msg.includes('Kind: Closed') ||
+    msg.includes('Authentication failed') ||
+    msg.includes('credentials') ||
+    msg.includes('circuit breaker')
   ) return true;
 
-  // Offline error class
   if (err instanceof OfflineDatabaseError) return true;
 
   return false;
@@ -121,20 +120,41 @@ function getOfflineProxy(): PrismaClient {
   });
 }
 
-// Simplified: no retry, no fallback — let errors propagate to reveal root cause
+// Resilient wrapper with retry and offline fallback on connection/auth errors
 async function withRetry<T>(operation: () => Promise<T>, operationName: string): Promise<T> {
-  try {
-    return await operation();
-  } catch (error: any) {
-    console.error('[Prisma] REAL CONNECTION ERROR:', {
-      code: error?.code,
-      name: error?.name,
-      message: error?.message,
-      meta: error?.meta,
-      operationName,
-    });
-    throw error;
+  if (isDatabaseDisabled || (disabledUntil > 0 && Date.now() < disabledUntil)) {
+    return handleOfflineFallback<T>(operationName);
   }
+
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      if (isConnectionError(error)) {
+        isDatabaseDisabled = true;
+        if (basePrisma) {
+          const clientToDisconnect = basePrisma;
+          basePrisma = null;
+          try {
+            clientToDisconnect.$disconnect().catch(() => {});
+          } catch {
+            // ignore
+          }
+        }
+        console.info(`[Prisma] Offline/local mode activated for '${operationName}' due to error: ${error?.message || error}`);
+        break;
+      }
+
+      if (i < MAX_RETRIES - 1) {
+        const delay = INITIAL_DELAY * Math.pow(2, i);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        console.warn(`[Prisma] Operation '${operationName}' failed after retries:`, error?.message || error);
+      }
+    }
+  }
+
+  return handleOfflineFallback<T>(operationName);
 }
 
 function getPrismaClient(): PrismaClient {
