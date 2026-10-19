@@ -180,11 +180,11 @@ html, body {
   }
 }
 
-/* Print Media Styles */
+/* Print Media Styles Optimization */
 @media print {
   @page {
-    size: auto;
-    margin: 12mm;
+    size: A4 portrait;
+    margin: 10mm;
   }
 
   body, html, #root {
@@ -192,24 +192,33 @@ html, body {
     color: #000000 !important;
     overflow: visible !important;
     height: auto !important;
+    width: 100% !important;
     margin: 0 !important;
     padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .print\:hidden,
   .no-print,
   header.sticky,
   aside,
-  nav {
+  nav,
+  button,
+  .filter-bar,
+  .summary-cards {
     display: none !important;
   }
 
-  .print\:block {
+  .print\:block,
+  main {
     display: block !important;
-  }
-
-  main, div {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
     box-shadow: none !important;
+    border: none !important;
+    background: white !important;
   }
 
   table {
@@ -225,10 +234,17 @@ html, body {
 
   thead {
     display: table-header-group;
+    background-color: #f1f5f5 !important;
+  }
+
+  th, td {
+    padding: 10px 8px !important;
+    font-size: 11px !important;
+    border-bottom: 1px solid #cbd5e1 !important;
+    color: #0f172a !important;
   }
 
   tfoot {
     display: table-footer-group;
   }
 }
-

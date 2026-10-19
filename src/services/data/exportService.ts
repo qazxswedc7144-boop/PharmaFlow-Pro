@@ -1,4 +1,3 @@
-
 import { db } from '@/core/db';
 import { CurrencyService } from '@/services/localization/CurrencyService';
 import { PrintTemplateEngine } from '@/services/integrity/shared/templateEngineService';
@@ -154,15 +153,17 @@ export const ExportService = {
   },
 
   /**
-   * محرك الرندرة الموحد المعتمد على القوالب (Smart Template Renderer) - للطباعة
+   * محرك الرندرة الموحد المعتمد على القوالب (Smart Template Renderer) - للطباعة بدون أخطاء بيضاء
    */
   exportToPDF: async (data: any, type: 'SALE' | 'PURCHASE' | 'VOUCHER' | 'REPORT') => {
-    // 1. تحميل القالب النشط من المحرك
     const activeTemplate = await PrintTemplateEngine.getActiveTemplate(type);
     const layoutConfig = JSON.parse(activeTemplate.TemplateLayoutJSON || '{}');
     
     const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
+    if (!printWindow) {
+      alert('يرجى السماح بالنوافذ المنبثقة (Popups) لطباعة المستند.');
+      return;
+    }
 
     const invoiceConfig = await db.getSetting('invoice_config', {
       pharmacyName: 'PharmaFlow',
@@ -182,31 +183,31 @@ export const ExportService = {
 
     if (type === 'REPORT') {
       contentHtml = `
-        <div class="mb-8">
-          <h2 class="text-xl font-black border-b-2 pb-2 mb-4" style="color: ${layoutConfig.primaryColor || '#1E4D4D'}">تقرير إحصائي: ${data.reportName || 'عام'}</h2>
-          <div class="grid grid-cols-2 gap-4">
+        <div style="margin-bottom: 2rem;">
+          <h2 style="font-size: 18px; font-weight: 900; border-bottom: 2px solid ${layoutConfig.primaryColor || '#1E4D4D'}; padding-bottom: 8px; margin-bottom: 16px; color: ${layoutConfig.primaryColor || '#1E4D4D'}">تقرير إحصائي: ${data.reportName || 'عام'}</h2>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;">
              ${(data.summary || []).map((s: any) => `
-               <div class="p-4 bg-slate-50 rounded-xl">
-                  <p class="text-[10px] font-bold opacity-50 uppercase">${s.label}</p>
-                  <p class="text-lg font-black">${s.value}</p>
+               <div style="padding: 16px; background: #f8fafa; border-radius: 12px; border: 1px solid #edf2f2;">
+                  <p style="font-size: 10px; font-weight: bold; opacity: 0.5; text-transform: uppercase; margin: 0 0 4px 0;">${s.label}</p>
+                  <p style="font-size: 16px; font-weight: 900; margin: 0; color: #1e293b;">${s.value}</p>
                </div>
              `).join('')}
           </div>
         </div>
-        <table class="w-full text-right border-collapse">
+        <table style="width: 100%; text-align: right; border-collapse: collapse; margin-top: 16px;">
           <thead>
-            <tr class="bg-slate-100 border-y-2 border-slate-200">
-               ${(data.headers || []).map((h: string) => `<th class="py-3 px-2 text-xs font-black">${h}</th>`).join('')}
+            <tr style="background-color: #f1f5f5; border-bottom: 2px solid #cbd5e1;">
+               ${(data.headers || []).map((h: string) => `<th style="padding: 12px 8px; font-size: 12px; font-weight: 900; color: #334155;">${h}</th>`).join('')}
             </tr>
           </thead>
           <tbody>
-            ${(data.rows || []).map((row: any) => `
-              <tr class="border-b border-slate-100">
+            ${(data.rows || []).map((row: any, idx: number) => `
+              <tr style="border-bottom: 1px solid #f1f5f5; background-color: ${idx % 2 === 0 ? '#ffffff' : '#fafcfc'};">
                 ${(data.headers || []).map((h: string) => {
                   const keyIndex = data.headers.indexOf(h);
                   const fallbackKey = Object.keys(row)[keyIndex];
                   const fallbackVal = fallbackKey !== undefined ? row[fallbackKey] : '';
-                  return `<td class="py-3 px-2 text-xs font-bold">${row[h] || fallbackVal || ''}</td>`;
+                  return `<td style="padding: 12px 8px; font-size: 12px; font-weight: 700; color: #1e293b;">${row[h] || fallbackVal || ''}</td>`;
                 }).join('')}
               </tr>
             `).join('')}
@@ -215,100 +216,112 @@ export const ExportService = {
       `;
     } else {
       contentHtml = `
-        <div class="grid grid-cols-2 gap-4 mb-6 bg-slate-50 p-4 rounded-2xl">
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; background: #f8fafa; padding: 16px; border-radius: 16px;">
            <div>
-              <p class="text-[9px] font-black opacity-40 uppercase">الطرف الثاني / العميل</p>
-              <p class="text-sm font-black">${data.customerId || data.partnerName || data.name || 'عميل نقدي'}</p>
+              <p style="font-size: 9px; font-weight: 900; opacity: 0.4; text-transform: uppercase; margin: 0;">الطرف الثاني / العميل</p>
+              <p style="font-size: 14px; font-weight: 900; margin: 4px 0 0 0;">${data.customerId || data.partnerName || data.name || 'عميل نقدي'}</p>
            </div>
-           <div class="text-left">
-              <p class="text-[9px] font-black opacity-40 uppercase">الرقم الضريبي</p>
-              <p class="text-sm font-black">${invoiceConfig.taxNumber}</p>
+           <div style="text-align: left;">
+              <p style="font-size: 9px; font-weight: 900; opacity: 0.4; text-transform: uppercase; margin: 0;">الرقم الضريبي</p>
+              <p style="font-size: 14px; font-weight: 900; margin: 4px 0 0 0;">${invoiceConfig.taxNumber}</p>
            </div>
         </div>
 
-        <table class="w-full text-right mb-8">
+        <table style="width: 100%; text-align: right; border-collapse: collapse; margin-bottom: 32px;">
           <thead>
-            <tr class="border-b-2 border-slate-200" style="border-color: ${layoutConfig.primaryColor || '#1E4D4D'}">
-              <th class="py-2 text-xs font-black">الصنف / البيان</th>
-              <th class="py-2 text-center text-xs font-black">الكمية</th>
-              <th class="py-2 text-left text-xs font-black">المجموع</th>
+            <tr style="border-bottom: 2px solid ${layoutConfig.primaryColor || '#1E4D4D'};">
+              <th style="padding: 10px 4px; font-size: 12px; font-weight: 900;">الصنف / البيان</th>
+              <th style="padding: 10px 4px; text-align: center; font-size: 12px; font-weight: 900;">الكمية</th>
+              <th style="padding: 10px 4px; text-align: left; font-size: 12px; font-weight: 900;">المجموع</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-100">
+          <tbody>
             ${(data.items || []).map((it: any) => `
-              <tr>
-                <td class="py-3 text-xs font-bold">${it.name}</td>
-                <td class="py-3 text-center text-xs font-bold">${it.qty}</td>
-                <td class="py-3 text-left text-xs font-black">${it.sum.toLocaleString()}</td>
+              <tr style="border-bottom: 1px solid #f8fafa;">
+                <td style="padding: 12px 4px; font-size: 12px; font-weight: 700;">${it.name}</td>
+                <td style="padding: 12px 4px; text-align: center; font-size: 12px; font-weight: 700;">${it.qty}</td>
+                <td style="padding: 12px 4px; text-align: left; font-size: 12px; font-weight: 900;">${it.sum.toLocaleString()}</td>
               </tr>
             `).join('')}
-            ${type === 'VOUCHER' ? `<tr><td colspan="3" class="py-10 text-center font-bold border-2 border-dashed rounded-xl mt-4">${data.notes || 'لا توجد ملاحظات'}</td></tr>` : ''}
+            ${type === 'VOUCHER' ? `<tr><td colspan="3" style="padding: 24px; text-align: center; font-weight: bold; border: 2px dashed #e2e8f0; border-radius: 12px; margin-top: 16px;">${data.notes || 'لا توجد ملاحظات'}</td></tr>` : ''}
           </tbody>
         </table>
 
-        <div class="flex justify-end pt-4 border-t-4 border-double border-slate-200">
-          <div class="text-left">
-            <p class="text-[10px] font-black opacity-40 uppercase">الإجمالي النهائي المستحق</p>
-            <p class="text-3xl font-black" style="color: ${layoutConfig.primaryColor || '#1E4D4D'}">${total.toLocaleString()} <span class="text-xs">${currency}</span></p>
+        <div style="display: flex; justify-content: flex-end; padding-top: 16px; border-top: 4px double #e2e8f0;">
+          <div style="text-align: left;">
+            <p style="font-size: 10px; font-weight: 900; opacity: 0.4; text-transform: uppercase; margin: 0;">الإجمالي النهائي المستحق</p>
+            <p style="font-size: 24px; font-weight: 900; color: ${layoutConfig.primaryColor || '#1E4D4D'}; margin: 4px 0 0 0;">${total.toLocaleString()} <span style="font-size: 12px;">${currency}</span></p>
           </div>
         </div>
       `;
     }
 
     const html = `
-      <html dir="${activeTemplate.RTL_Support ? 'rtl' : 'ltr'}">
+      <!DOCTYPE html>
+      <html dir="${activeTemplate.RTL_Support ? 'rtl' : 'ltr'}" lang="ar">
         <head>
+          <meta charset="UTF-8">
           <title>${activeTemplate.TemplateName}_${refId}</title>
-          <script src="https://cdn.tailwindcss.com"></script>
-          <link href="https://fonts.googleapis.com/css2?family=${layoutConfig.font || 'Cairo'}:wght@400;700;900&display=swap" rel="stylesheet">
           <style>
-            body { font-family: '${layoutConfig.font || 'Cairo'}', sans-serif; padding: 40px; color: #1E4D4D; }
+            @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+            body { font-family: 'Cairo', sans-serif; padding: 30px; background: #ffffff; color: #1e293b; margin: 0; direction: rtl; }
+            .print-container { max-width: 700px; margin: 0 auto; border: 1px solid #e2e8f0; padding: 32px; border-radius: 24px; background: #ffffff; }
+            .no-print { display: flex; gap: 12px; justify-content: center; margin-top: 30px; }
+            button { padding: 12px 28px; border-radius: 14px; font-weight: 900; font-family: 'Cairo', sans-serif; cursor: pointer; border: none; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
             @media print { 
-               .no-print { display: none; } 
-               body { padding: 0; }
-               .print-container { border: none !important; box-shadow: none !important; }
+              .no-print { display: none !important; } 
+              body { padding: 0 !important; background: white !important; }
+              .print-container { border: none !important; box-shadow: none !important; padding: 0 !important; max-width: 100% !important; }
             }
           </style>
         </head>
-        <body class="bg-gray-50">
-          <div class="print-container max-w-2xl mx-auto border-2 border-slate-100 p-8 rounded-[40px] shadow-sm bg-white min-h-[29.7cm]">
-            <div class="flex justify-between items-start mb-8 border-b-2 pb-4" style="border-color: ${layoutConfig.primaryColor || '#1E4D4D'}">
+        <body>
+          <div class="print-container">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 2px solid ${layoutConfig.primaryColor || '#1E4D4D'}; padding-bottom: 16px;">
               <div>
-                <h1 class="text-2xl font-black" style="color: ${layoutConfig.primaryColor || '#1E4D4D'}">${invoiceConfig.pharmacyName}</h1>
-                <p class="text-[10px] font-bold opacity-60">${invoiceConfig.address}</p>
-                <p class="text-[10px] font-bold opacity-60">هاتف: ${invoiceConfig.phone}</p>
+                <h1 style="font-size: 20px; font-weight: 900; color: ${layoutConfig.primaryColor || '#1E4D4D'}; margin: 0 0 4px 0;">${invoiceConfig.pharmacyName}</h1>
+                <p style="font-size: 10px; font-weight: bold; opacity: 0.6; margin: 0 0 2px 0;">${invoiceConfig.address}</p>
+                <p style="font-size: 10px; font-weight: bold; opacity: 0.6; margin: 0;">هاتف: ${invoiceConfig.phone}</p>
               </div>
-              <div class="text-left">
-                <h2 class="text-xl font-black uppercase">${
+              <div style="text-align: left;">
+                <h2 style="font-size: 16px; font-weight: 900; margin: 0 0 4px 0; text-transform: uppercase;">${
                   type === 'SALE' ? 'فاتورة مبيعات' : 
                   type === 'PURCHASE' ? 'فاتورة مشتريات' : 
                   type === 'VOUCHER' ? 'سند مالي' : 'تقرير نظام'
                 }</h2>
-                <p class="text-xs font-black">#${refId}</p>
-                <p class="text-[10px] font-bold opacity-60">${date}</p>
+                <p style="font-size: 12px; font-weight: 900; margin: 0 0 2px 0;">#${refId}</p>
+                <p style="font-size: 10px; font-weight: bold; opacity: 0.6; margin: 0;">${date}</p>
               </div>
             </div>
 
             ${contentHtml}
 
-            <div class="mt-12 pt-6 border-t border-slate-100 text-center">
-               <p class="text-[10px] font-bold text-slate-400 italic">${invoiceConfig.footerNote}</p>
-               <div class="mt-4 opacity-30 text-[8px] font-black uppercase">Printed by: ${user?.User_Name || 'Unknown'} | Template: ${activeTemplate.TemplateName}</div>
+            <div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #f1f5f5; text-align: center;">
+               <p style="font-size: 10px; font-weight: bold; color: #94a3b8; font-style: italic; margin: 0 0 8px 0;">${invoiceConfig.footerNote}</p>
+               <div style="opacity: 0.4; font-size: 8px; font-weight: 900; text-transform: uppercase;">Printed by: ${user?.User_Name || 'Unknown'} | Template: ${activeTemplate.TemplateName}</div>
             </div>
           </div>
           
-          <div class="fixed bottom-10 left-0 right-0 flex justify-center no-print gap-4">
-             <button onclick="window.print()" class="bg-[#1E4D4D] text-white px-12 py-4 rounded-2xl font-black shadow-2xl active:scale-95 transition-all">طباعة المستند 🖨️</button>
-             <button onclick="window.close()" class="bg-white border-2 border-slate-100 text-slate-400 px-6 py-4 rounded-2xl font-black shadow-lg">إغلاق</button>
+          <div class="no-print">
+             <button onclick="window.print()" style="background: #1E4D4D; color: white;">طباعة المستند 🖨️</button>
+             <button onclick="window.close()" style="background: #f1f5f5; color: #64748b; border: 1px solid #e2e8f0;">إغلاق</button>
           </div>
+
+          <script>
+            window.onload = function() {
+              setTimeout(() => {
+                // Ensure layout and fonts are fully rendered
+              }, 300);
+            };
+          </script>
         </body>
       </html>
     `;
 
+    printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
 
-    // توثيق عملية الطباعة (Audit Trail)
     db.addAuditLog(
       'SYSTEM', 
       type === 'REPORT' ? 'OTHER' : type as any, 

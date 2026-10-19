@@ -117,7 +117,13 @@ export default function ReportPageLayout({
         <div className="flex items-center gap-3">
           <motion.button
             whileTap={{ scale: 0.95 }}
-            onClick={() => onPrint ? onPrint() : window.print()}
+            onClick={() => {
+              if (onPrint) {
+                onPrint();
+              } else {
+                window.print();
+              }
+            }}
             className="flex items-center gap-2 px-3 py-2 bg-[#1E4D4D] text-white rounded-xl text-xs font-bold shadow-sm hover:bg-[#153737] transition-all cursor-pointer"
             title="طباعة التقرير"
             id="print-report-header-btn"
@@ -154,7 +160,10 @@ export default function ReportPageLayout({
                   className="absolute left-0 mt-2 w-52 bg-white rounded-3xl shadow-2xl border border-slate-100 p-2 z-[100]"
                 >
                   <button 
-                    onClick={() => { onPrint?.(); setIsMenuOpen(false); }}
+                    onClick={() => { 
+                      if (onPrint) { onPrint(); } else { window.print(); } 
+                      setIsMenuOpen(false); 
+                    }}
                     className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-xs font-black text-slate-600 hover:bg-slate-50 hover:text-[#1E4D4D] transition-all"
                   >
                     <Printer size={16} />
