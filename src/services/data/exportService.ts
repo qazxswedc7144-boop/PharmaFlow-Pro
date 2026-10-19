@@ -4,6 +4,7 @@ import { PrintTemplateEngine } from '@/services/integrity/shared/templateEngineS
 import { authService } from '@features/auth/services/authService';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import html2canvas from 'html2canvas';
 
 /**
  * Export Service - محرك الطباعة والتصدير الموحد المطور (Unified Template Engine)
@@ -47,7 +48,6 @@ export const ExportService = {
 
     const headers = customHeaders || Object.keys(items[0]);
     
-    // Generate XML-based Microsoft Excel 2003 Spreadsheet (.xls) with RTL support and UTF-8 encoding
     const escapeXml = (unsafe: any) => {
       if (unsafe === null || unsafe === undefined) return '';
       return String(unsafe)
@@ -127,33 +127,79 @@ export const ExportService = {
   },
 
   /**
-   * Export to PDF
+   * تصدير PDF يدعم العناصر (DOM element / html2canvas) أو مصفوفة البيانات التقليدية
    */
-  exportToPDFFile: async (title: string, columns: string[], rows: any[][], filename: string) => {
-    const doc = new jsPDF({ orientation: 'landscape' }) as any;
-    
-    // Add title
-    doc.setFontSize(18);
-    doc.text(title, 14, 22);
-    
-    // Add timestamp
-    doc.setFontSize(10);
-    doc.text(`Generated on: ${new Date().toLocaleString('ar-EG')}`, 14, 30);
+  exportToPDFFile: async (titleOrElement: string | HTMLElement, columnsOrFilename: string[] | string, rowsOrUndefined?: any[][], maybeFilename?: string) => {
+    try {
+      // 1. If element selector or HTMLElement is passed, use html2canvas for 100% Arabic support
+      if (
+        (typeof titleOrElement === 'string' && (titleOrElement.startsWith('#') || titleOrElement.startsWith('.') || document.getElementById(titleOrElement))) ||
+        titleOrElement instanceof HTMLElement
+      ) {
+        const element = titleOrElement instanceof HTMLElement 
+          ? titleOrElement 
+          : (document.getElementById(titleOrElement) || document.querySelector(titleOrElement));
+        const filename = typeof columnsOrFilename === 'string' ? columnsOrFilename : 'report_document';
+        
+        if (element) {
+          const canvas = await html2canvas(element as HTMLElement, {
+            scale: 2,
+            useCORS: true,
+            logging: false,
+            backgroundColor: '#ffffff'
+          });
 
-    autoTable(doc, {
-      head: [columns],
-      body: rows,
-      startY: 35,
-      styles: { font: 'helvetica', halign: 'right' },
-      headStyles: { fillColor: [30, 77, 77], textColor: 255 },
-      alternateRowStyles: { fillColor: [248, 250, 250] }
-    });
+          const imgData = canvas.toDataURL('image/png');
+          const pdf = new jsPDF({
+            orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+            unit: 'mm',
+            format: 'a4'
+          });
 
-    doc.save(`${filename}.pdf`);
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+          pdf.addImage(imgData, 'PNG', 0, 10, pdfWidth, pdfHeight);
+          pdf.save(`${filename}.pdf`);
+          
+          db.addAuditLog('SYSTEM', 'OTHER', filename, "تم تصدير التقرير بصيغة PDF بنجاح");
+          return;
+        }
+      }
+
+      // 2. Fallback traditional signature: (title, columns, rows, filename)
+      const title = String(titleOrElement || 'تقرير');
+      const columns = Array.isArray(columnsOrFilename) ? columnsOrFilename : [];
+      const rows = rowsOrUndefined || [];
+      const filename = maybeFilename || 'report';
+
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }) as any;
+      
+      doc.setFontSize(16);
+      doc.text(title, 14, 20);
+      
+      doc.setFontSize(10);
+      doc.text(`تاريخ التصدير: ${new Date().toLocaleString('ar-EG')}`, 14, 28);
+
+      autoTable(doc, {
+        head: [columns],
+        body: rows,
+        startY: 34,
+        styles: { font: 'helvetica', halign: 'right', fontSize: 10 },
+        headStyles: { fillColor: [30, 77, 77], textColor: 255 },
+        alternateRowStyles: { fillColor: [248, 250, 250] }
+      });
+
+      doc.save(`${filename}.pdf`);
+      db.addAuditLog('SYSTEM', 'OTHER', filename, "تم تصدير التقرير بصيغة PDF بنجاح");
+    } catch (error) {
+      console.error("[ExportService] PDF export error:", error);
+      alert("حدث خطأ أثناء تصدير ملف الـ PDF. يرجى المحاولة مرة أخرى.");
+    }
   },
 
   /**
-   * محرك الرندرة الموحد المعتمد على القوالب (Smart Template Renderer) - للطباعة بدون أخطاء بيضاء
+   * محرك الطباعة الموحد عبر نافذة منبثقة (Popup Print)
    */
   exportToPDF: async (data: any, type: 'SALE' | 'PURCHASE' | 'VOUCHER' | 'REPORT') => {
     const activeTemplate = await PrintTemplateEngine.getActiveTemplate(type);
@@ -161,7 +207,7 @@ export const ExportService = {
     
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      alert('يرجى السماح بالنوافذ المنبثقة (Popups) لطباعة المستند.');
+      alert('يرجى السماح بالنوافذ المنبثقة (Popups) لعرض المستند للطباعة.');
       return;
     }
 
@@ -306,14 +352,6 @@ export const ExportService = {
              <button onclick="window.print()" style="background: #1E4D4D; color: white;">طباعة المستند 🖨️</button>
              <button onclick="window.close()" style="background: #f1f5f5; color: #64748b; border: 1px solid #e2e8f0;">إغلاق</button>
           </div>
-
-          <script>
-            window.onload = function() {
-              setTimeout(() => {
-                // Ensure layout and fonts are fully rendered
-              }, 300);
-            };
-          </script>
         </body>
       </html>
     `;

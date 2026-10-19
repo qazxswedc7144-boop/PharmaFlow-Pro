@@ -100,9 +100,9 @@ export default function ReportPageLayout({
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F8FAFA] font-cairo text-slate-900 overflow-x-hidden" dir="rtl">
+    <div className="flex flex-col min-h-screen bg-[#F8FAFA] font-cairo text-slate-900" dir="rtl">
       {/* HEADER */}
-      <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-xl border-b border-slate-100 px-6 h-20 flex items-center justify-between shadow-sm print:hidden">
+      <header className="sticky top-0 z-[100] bg-white/90 backdrop-blur-xl border-b border-slate-100 px-6 h-20 flex items-center justify-between shadow-sm print:hidden">
         <div className="flex items-center gap-4">
           <motion.button 
             whileTap={{ scale: 0.9 }}
@@ -142,7 +142,8 @@ export default function ReportPageLayout({
             </motion.button>
           )}
 
-          <div className="relative" ref={menuRef}>
+          {/* DROPDOWN MENU CONTAINER */}
+          <div className="relative z-[150]" ref={menuRef}>
             <motion.button 
               whileTap={{ scale: 0.9 }}
               onClick={() => setIsMenuOpen(!isMenuOpen)}
@@ -157,7 +158,7 @@ export default function ReportPageLayout({
                   initial={{ opacity: 0, scale: 0.9, y: -10 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.9, y: -10 }}
-                  className="absolute left-0 mt-2 w-52 bg-white rounded-3xl shadow-2xl border border-slate-100 p-2 z-[100]"
+                  className="absolute left-0 mt-2 w-56 bg-white rounded-3xl shadow-2xl border border-slate-100 p-2 z-[200]"
                 >
                   <button 
                     onClick={() => { 
