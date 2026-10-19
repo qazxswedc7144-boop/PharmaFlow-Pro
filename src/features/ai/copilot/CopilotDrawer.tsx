@@ -231,54 +231,55 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = memo(({ isOpen, onClo
             }}
             dir="rtl"
           >
-            {/* Drawer Header - تم إصلاح المشكلة هنا */}
-            <div className="p-3 sm:p-4 bg-gradient-to-r from-[#1E4D4D] to-[#143737] text-white shadow-md flex items-center justify-between shrink-0 gap-2">
+            {/* Drawer Header - تم ضبط المساحات لإظهار النص كاملاً */}
+            <div className="px-2 py-3 sm:p-4 bg-gradient-to-r from-[#1E4D4D] to-[#143737] text-white shadow-md flex items-center justify-between shrink-0 gap-1 sm:gap-2">
               
               {/* حاوية النصوص والأيقونة */}
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-400/30 flex items-center justify-center text-teal-300 shadow-inner shrink-0">
-                  <Bot size={22} className="animate-pulse" />
+              <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
+                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-teal-500/20 border border-teal-400/30 flex items-center justify-center text-teal-300 shadow-inner shrink-0">
+                  <Bot size={18} className="animate-pulse sm:w-6 sm:h-6" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-nowrap min-w-0">
-                    <h2 className="text-sm sm:text-base font-black tracking-tight whitespace-nowrap truncate">
+                  <div className="flex items-center gap-1.5 flex-nowrap min-w-0">
+                    <h2 className="text-[13px] sm:text-base font-black tracking-tight whitespace-nowrap truncate">
                       المساعد الذكي (Pharma Copilot)
                     </h2>
-                    <span className="text-[10px] bg-teal-400/20 text-teal-200 border border-teal-300/30 px-2 py-0.5 rounded-full font-bold shrink-0">
+                    <span className="text-[9px] sm:text-[10px] bg-teal-400/20 text-teal-200 border border-teal-300/30 px-1.5 py-0.5 rounded-full font-bold shrink-0">
                       {userContext.userRole}
                     </span>
                   </div>
-                  <p className="text-[10px] sm:text-[11px] text-teal-100/80 whitespace-nowrap truncate">
+                  {/* تم تصغير الخط قليلاً ليتسع النص كاملاً */}
+                  <p className="text-[10px] sm:text-[11px] text-teal-100/80 whitespace-nowrap truncate mt-0.5">
                     مساعد التخطيط والتحليل والرقابة الصيدلانية
                   </p>
                 </div>
               </div>
 
-              {/* حاوية الأزرار */}
-              <div className="flex items-center gap-1.5 shrink-0">
+              {/* حاوية الأزرار - تم تصغير الحواف لتوفير مساحة */}
+              <div className="flex items-center gap-0.5 sm:gap-1.5 shrink-0">
                 <button
                   onClick={() => setShowOptions((v) => !v)}
-                  className={`p-2 rounded-xl transition-colors cursor-pointer ${
+                  className={`p-1.5 sm:p-2 rounded-xl transition-colors cursor-pointer ${
                     showOptions ? 'bg-teal-700/80 text-white' : 'text-teal-200 hover:bg-teal-800/60'
                   }`}
                   title="إعدادات الاستجابة"
                 >
-                  <SlidersHorizontal size={18} />
+                  <SlidersHorizontal size={16} className="sm:w-[18px] sm:h-[18px]" />
                 </button>
                 <button
                   onClick={handleClearChat}
                   disabled={messages.length === 0}
-                  className="p-2 text-teal-200 hover:text-rose-300 hover:bg-teal-800/60 rounded-xl transition-colors disabled:opacity-40 cursor-pointer"
+                  className="p-1.5 sm:p-2 text-teal-200 hover:text-rose-300 hover:bg-teal-800/60 rounded-xl transition-colors disabled:opacity-40 cursor-pointer"
                   title="مسح المحادثة"
                 >
-                  <Trash2 size={18} />
+                  <Trash2 size={16} className="sm:w-[18px] sm:h-[18px]" />
                 </button>
                 <button
                   onClick={onClose}
-                  className="p-2 text-teal-200 hover:text-white hover:bg-teal-800/60 rounded-xl transition-colors cursor-pointer"
+                  className="p-1.5 sm:p-2 text-teal-200 hover:text-white hover:bg-teal-800/60 rounded-xl transition-colors cursor-pointer"
                   title="إغلاق"
                 >
-                  <X size={20} />
+                  <X size={18} className="sm:w-5 sm:h-5" />
                 </button>
               </div>
             </div>
