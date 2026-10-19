@@ -238,13 +238,13 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = memo(({ isOpen, onClo
                   <Bot size={22} className="animate-pulse" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-black tracking-tight">المساعد الذكي (Pharma Copilot)</h2>
-                    <span className="text-[10px] bg-teal-400/20 text-teal-200 border border-teal-300/30 px-2 py-0.5 rounded-full font-bold">
+                  <div className="flex items-center gap-2 flex-nowrap">
+                    <h2 className="text-sm sm:text-base font-black tracking-tight whitespace-nowrap">المساعد الذكي (Pharma Copilot)</h2>
+                    <span className="text-[10px] bg-teal-400/20 text-teal-200 border border-teal-300/30 px-2 py-0.5 rounded-full font-bold shrink-0">
                       {userContext.userRole}
                     </span>
                   </div>
-                  <p className="text-[11px] text-teal-100/80">
+                  <p className="text-[10px] sm:text-[11px] text-teal-100/80 whitespace-nowrap">
                     مساعد التخطيط والتحليل والرقابة الصيدلانية
                   </p>
                 </div>
