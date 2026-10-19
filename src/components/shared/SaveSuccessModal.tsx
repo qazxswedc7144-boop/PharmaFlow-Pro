@@ -27,8 +27,6 @@ export const SaveSuccessModal: React.FC<SaveSuccessModalProps> = ({
   date,
   partnerName,
   accountingStatus = 'مرحل ومقفل بنجاح',
-  inventoryStatus = 'محدث ومقفل بالكامل',
-  balanceStatus = 'محدث بالكامل',
   onClose,
   onNewInvoice,
   onViewInvoice

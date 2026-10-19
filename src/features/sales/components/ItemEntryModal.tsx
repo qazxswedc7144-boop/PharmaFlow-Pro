@@ -60,7 +60,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const [manualItemName, setManualItemName] = useState<string>('');
   const [tempQty, setTempQty] = useState<string | number>('');
   const [tempPrice, setTempPrice] = useState<string | number>('');
-  const [tempExpiry, setTempExpiry] = useState<string>('');
+  const [tempExpiry, setTempExpiry] = useState<string>(new Date().toISOString().split('T')[0] || '');
   const [tempNote, setTempNote] = useState<string>('');
   const [categoryName, setCategoryName] = useState<string>('');
   const [showSearchDropdown, setShowSearchDropdown] = useState<boolean>(false);
@@ -215,7 +215,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     setManualItemName('');
     setTempQty('');
     setTempPrice('');
-    setTempExpiry('');
+    setTempExpiry(new Date().toISOString().split('T')[0] || '');
     setTempNote('');
     setCategoryName('');
     setIsConfirmedNewProduct(false);
@@ -352,13 +352,13 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
         isCompact={false} 
         noPadding={true} 
         noOuterPadding={true}
-        maxWidth="w-[calc(100%-10px)] max-w-md"
+        maxWidth="w-[calc(100%-10px)] mx-auto max-w-md"
         transparentContainer={true}
         positionClass="items-center"
       >
         <div 
           dir="rtl" 
-          className="w-[calc(100%-10px)] mx-[5px] sm:max-w-md bg-white rounded-[28px] overflow-hidden flex flex-col box-border p-0 border-0 shadow-2xl transition-all duration-150 ease-out font-cairo"
+          className="w-[calc(100%-10px)] mx-auto sm:max-w-md bg-white rounded-[28px] overflow-hidden flex flex-col box-border p-0 border-0 shadow-2xl transition-all duration-150 ease-out font-cairo"
           style={{ 
             maxHeight: isKeyboardUp ? '56vh' : '90vh',
             transform: isKeyboardUp ? 'translateY(-4vh)' : 'none'
