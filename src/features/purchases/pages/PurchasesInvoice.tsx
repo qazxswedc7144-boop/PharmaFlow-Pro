@@ -815,42 +815,46 @@ const PurchasesInvoice: React.FC<{ onNavigate?: (view: string, params?: Record<s
         </div>
       </Modal>
 
-      {/* ADD NEW SUPPLIER MODAL */}
-      <Modal
-        isOpen={isAddSupplierModalOpen}
-        onClose={cancelAddSupplier}
-        title=""
-        maxWidth="w-full max-w-[340px]"
-        noPadding={true}
-        centerOnMobile={true}
-        showCloseButton={false}
-      >
-        <div className="pt-[2px] px-[2px] pb-4 text-center space-y-1 bg-white">
-          <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-500">
-            <User size={24} />
-          </div>
-          <div className="space-y-[2px]">
-            <h3 className="text-sm font-black text-[#1E4D4D]">مورد غير مسجل</h3>
-            <p className="text-[11px] font-bold text-slate-500 leading-relaxed px-2">
-              هذا المورد غير مسجل، هل تريد إضافة <span className="text-[#1E4D4D] underline">[{newSupplierName}]</span> كاسم جديد؟
-            </p>
-          </div>
-          <div className="flex gap-[2px] pt-1 px-2">
-            <button 
-              onClick={confirmAddSupplier}
-              className="flex-[2] h-10 bg-[#1E4D4D] text-white rounded-xl font-black text-[11px] shadow-md active:scale-95 transition-all"
+      {/* ADD NEW SUPPLIER MODAL - Top Third Positioning */}
+      <AnimatePresence>
+        {isAddSupplierModalOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-start justify-center pt-[15vh] p-4 bg-slate-900/50 backdrop-blur-sm" dir="rtl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: -20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -20 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-2xl w-full max-w-[340px] shadow-2xl overflow-hidden p-5 relative"
             >
-              نعم
-            </button>
-            <button 
-              onClick={cancelAddSupplier}
-              className="flex-1 h-10 bg-slate-100 text-slate-500 rounded-xl font-black text-[11px] active:scale-95 transition-all"
-            >
-              لا
-            </button>
+              <div className="text-center space-y-3">
+                <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-500">
+                  <User size={24} />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-base font-bold text-slate-800">مورد غير مسجل</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    هذا المورد غير مسجل، هل تريد إضافة <span className="text-[#1E4D4D] font-bold underline">[{newSupplierName}]</span> كاسم جديد؟
+                  </p>
+                </div>
+                <div className="flex gap-3 w-full mt-5">
+                  <button 
+                    onClick={confirmAddSupplier}
+                    className="flex-[2] h-10 bg-teal-600 text-white rounded-xl font-bold text-sm shadow-md active:scale-95 transition-all"
+                  >
+                    نعم
+                  </button>
+                  <button 
+                    onClick={cancelAddSupplier}
+                    className="flex-1 h-10 bg-slate-100 text-slate-700 rounded-xl font-bold text-sm active:scale-95 transition-all"
+                  >
+                    لا
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           </div>
-        </div>
-      </Modal>
+        )}
+      </AnimatePresence>
 
       {/* Confirmation Save Modal - Unified Pattern */}
       <AnimatePresence>
