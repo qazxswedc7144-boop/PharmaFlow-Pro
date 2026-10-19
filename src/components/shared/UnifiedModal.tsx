@@ -195,7 +195,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
 
   return (
     <div 
-      className="fixed inset-0 bg-slate-900/40 dark:bg-slate-950/60 backdrop-blur-sm z-[2000] flex items-center justify-center p-4" 
+      className="fixed inset-0 z-[9999] flex items-start justify-center p-4 pt-[15vh] bg-slate-900/50 backdrop-blur-xs" 
       onClick={isLegacyMode ? propOnClose : closeModal}
       dir="rtl"
       role="dialog"
@@ -206,7 +206,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95, y: 15 }}
         transition={{ type: "spring", stiffness: 420, damping: 28 }}
-        className="w-full max-w-lg bg-white dark:bg-gray-900 rounded-[28px] border border-slate-100 dark:border-gray-800 shadow-2xl overflow-hidden transition-colors"
+        className="w-full max-w-sm bg-white dark:bg-gray-900 rounded-2xl border border-slate-100 dark:border-gray-800 shadow-2xl overflow-hidden transition-colors"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Decorative Top Accent Bar */}
@@ -222,15 +222,15 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                   : 'bg-rose-500'
         }`} />
 
-        <div className="p-7">
+        <div className="p-5">
           {/* Header Panel */}
-          <div className="flex items-start justify-between mb-6">
+          <div className="flex items-start justify-between mb-4">
             <div className="space-y-1">
-              <h3 className="text-lg font-black text-slate-800 dark:text-slate-100 flex items-center gap-2">
+              <h3 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
                 {!isLegacyMode && activeLabel ? activeLabel.title : propTitle}
                 {!isLegacyMode && <Sparkles size={16} className="text-yellow-500 animate-pulse" />}
               </h3>
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 uppercase tracking-wider font-extrabold max-w-[340px] leading-relaxed">
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-[300px]">
                 {!isLegacyMode && activeLabel ? activeLabel.subtitle : 'بوابة القيود المالية المتكاملة والمعايرة الفورية'}
               </p>
             </div>
@@ -245,9 +245,9 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
           </div>
 
           {/* Form Content */}
-          <div className="space-y-4 mb-7">
+          <div className="space-y-3.5 mb-5">
             {isInvoiceSaveConfirm ? (
-              <div className="space-y-3.5 bg-slate-50 dark:bg-gray-800/40 p-5 rounded-2xl border border-slate-100 dark:border-gray-800 text-right">
+              <div className="space-y-3 bg-slate-50 dark:bg-gray-800/40 p-4 rounded-2xl border border-slate-100 dark:border-gray-800 text-right">
                 <div className="flex justify-between items-center py-1.5 border-b border-slate-100/50 dark:border-gray-800">
                   <span className="text-xs font-black text-slate-400 dark:text-gray-500">رقم الفاتورة:</span>
                   <span className="text-xs font-black text-slate-800 dark:text-white font-mono bg-slate-100 dark:bg-gray-800 px-2.5 py-1 rounded-lg">
@@ -301,7 +301,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                           placeholder={`أدخل ${fallbackName}`}
                           value={propFormData[field] || ""}
                           onChange={e => propSetFormData?.({...propFormData, [field]: e.target.value})}
-                          className="w-full px-4 py-3 bg-slate-50 dark:bg-gray-800 border border-slate-100 dark:border-gray-750 rounded-2xl text-xs font-black text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-none transition-all"
+                          className="w-full px-3 py-2.5 bg-slate-50 dark:bg-gray-800 border border-slate-100 dark:border-gray-750 rounded-xl text-xs font-black text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:outline-none transition-all"
                         />
                       </div>
                     );
@@ -319,7 +319,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                   </label>
                   
                   <div className="relative">
-                    <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400">
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
                       <User size={15} />
                     </div>
                     
@@ -333,7 +333,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                       }}
                       onFocus={() => setShowPartnerDropdown(true)}
                       disabled={isSaving}
-                      className={`w-full pr-10 pl-4 py-3 bg-slate-50 dark:bg-gray-800 border rounded-2xl text-xs font-black text-slate-800 dark:text-white focus:outline-none transition-all ${
+                      className={`w-full pr-10 pl-4 py-2.5 bg-slate-50 dark:bg-gray-800 border rounded-xl text-xs font-black text-slate-800 dark:text-white focus:outline-none transition-all ${
                         errors.partnerId 
                           ? 'border-red-400 dark:border-red-500 ring-2 ring-red-500/10' 
                           : 'border-slate-100 dark:border-gray-750 focus:ring-2 focus:ring-[#1E4D4D]/10 focus:border-[#1E4D4D]'
@@ -348,7 +348,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                         initial={{ opacity: 0, y: 8 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 8 }}
-                        className="absolute z-[2100] top-full right-0 left-0 mt-1.5 bg-white dark:bg-gray-850 border border-slate-100 dark:border-gray-750 rounded-2xl shadow-xl max-h-48 overflow-y-auto custom-scrollbar"
+                        className="absolute z-[2100] top-full right-0 left-0 mt-1.5 bg-white dark:bg-gray-850 border border-slate-100 dark:border-gray-750 rounded-xl shadow-xl max-h-40 overflow-y-auto custom-scrollbar"
                       >
                         {relevantPartners.length > 0 ? (
                           relevantPartners.map((partner: any) => (
@@ -359,7 +359,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                                 setPartnerSearch('');
                                 setShowPartnerDropdown(false);
                               }}
-                              className="w-full text-right px-4 py-3 hover:bg-slate-50 dark:hover:bg-gray-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex justify-between items-center transition-all border-b border-slate-50/50 dark:border-gray-800 last:border-0"
+                              className="w-full text-right px-3.5 py-2.5 hover:bg-slate-50 dark:hover:bg-gray-800 text-xs font-bold text-slate-700 dark:text-slate-300 flex justify-between items-center transition-all border-b border-slate-50/50 dark:border-gray-800 last:border-0"
                             >
                               <span>{partner.Supplier_Name}</span>
                               <div className="flex items-center gap-2">
@@ -373,7 +373,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                             </button>
                           ))
                         ) : (
-                          <div className="p-4 text-center text-xs text-slate-400 font-bold">
+                          <div className="p-3 text-center text-xs text-slate-400 font-bold">
                             لا توجد نتائج مطابقة لـ "{partnerSearch}"
                           </div>
                         )}
@@ -395,7 +395,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                     المبلغ الإجمالي ({currency}) <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400">
+                    <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none text-slate-400">
                       <Scale size={15} />
                     </div>
                     <input
@@ -405,13 +405,13 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                       value={formData.amount}
                       onChange={(e) => updateField('amount', e.target.value)}
                       disabled={isSaving}
-                      className={`w-full pr-10 pl-12 py-3 bg-slate-50 dark:bg-gray-800 border rounded-2xl text-xs font-black text-slate-800 dark:text-white focus:outline-none transition-all ${
+                      className={`w-full pr-10 pl-12 py-2.5 bg-slate-50 dark:bg-gray-800 border rounded-xl text-xs font-black text-slate-800 dark:text-white focus:outline-none transition-all ${
                         errors.amount 
                           ? 'border-red-400 dark:border-red-500 ring-2 ring-red-500/10' 
                           : 'border-slate-100 dark:border-gray-750 focus:ring-2 focus:ring-[#1E4D4D]/10 focus:border-[#1E4D4D]'
                       }`}
                     />
-                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 font-extrabold text-[10px] uppercase">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 font-extrabold text-[10px] uppercase">
                       {currency}
                     </div>
                   </div>
@@ -424,7 +424,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                 </div>
 
                 {/* Grid for Date and Reference - Responsive column layout */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {/* 3. Document Date */}
                   <div className="space-y-1">
                     <label className="block text-xs font-black text-slate-500 dark:text-gray-400 mr-1">
@@ -436,7 +436,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                         value={formData.date}
                         onChange={(e) => updateField('date', e.target.value)}
                         disabled={isSaving}
-                        className={`w-full px-4 py-3 bg-slate-50 dark:bg-gray-800 border rounded-2xl text-xs font-black text-slate-800 dark:text-white focus:outline-none transition-all border-slate-100 dark:border-gray-750 focus:ring-2 focus:ring-[#1E4D4D]/10 focus:border-[#1E4D4D]`}
+                        className="w-full px-3 py-2.5 bg-slate-50 dark:bg-gray-800 border rounded-xl text-xs font-black text-slate-800 dark:text-white focus:outline-none transition-all border-slate-100 dark:border-gray-750 focus:ring-2 focus:ring-[#1E4D4D]/10 focus:border-[#1E4D4D]"
                       />
                     </div>
                   </div>
@@ -452,7 +452,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                       value={formData.referenceNumber}
                       onChange={(e) => updateField('referenceNumber', e.target.value)}
                       disabled={isSaving}
-                      className="w-full px-4 py-3 bg-slate-50 dark:bg-gray-800 border border-slate-100 dark:border-gray-750 rounded-2xl text-xs font-black text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1E4D4D]/10 focus:border-[#1E4D4D] transition-all"
+                      className="w-full px-3 py-2.5 bg-slate-50 dark:bg-gray-800 border border-slate-100 dark:border-gray-750 rounded-xl text-xs font-black text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1E4D4D]/10 focus:border-[#1E4D4D] transition-all"
                     />
                   </div>
                 </div>
@@ -468,7 +468,7 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
                     value={formData.description}
                     onChange={(e) => updateField('description', e.target.value)}
                     disabled={isSaving}
-                    className="w-full px-4 py-3 bg-slate-50 dark:bg-gray-800 border border-slate-100 dark:border-gray-750 rounded-2xl text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1E4D4D]/10 focus:border-[#1E4D4D] transition-all resize-none"
+                    className="w-full px-3 py-2.5 bg-slate-50 dark:bg-gray-800 border border-slate-100 dark:border-gray-750 rounded-xl text-xs font-medium text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#1E4D4D]/10 focus:border-[#1E4D4D] transition-all resize-none"
                   />
                 </div>
               </>
@@ -478,16 +478,16 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
           </div>
 
           {/* Action Buttons */}
-          <div className="flex gap-3">
+          <div className="flex gap-3 w-full mt-5">
             <button
               onClick={isLegacyMode ? handleLegacySave : () => saveForm(toast.addToast)}
               disabled={isSaving || legacySaving}
-              className={`flex-[2] py-4 rounded-2xl font-black text-xs text-white transition-all duration-200 active:scale-95 flex items-center justify-center gap-2.5 ${
+              className={`flex-1 py-2.5 rounded-xl text-sm font-bold text-white transition-all duration-200 active:scale-95 flex items-center justify-center gap-2 ${
                 (isSaving || legacySaving)
                   ? "bg-slate-350 dark:bg-slate-700 cursor-not-allowed text-slate-500 dark:text-slate-400" 
                   : isLegacyMode 
-                    ? "bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-600/20" 
-                    : activeLabel?.btnColor + " shadow-xl"
+                    ? "bg-teal-600 hover:bg-teal-700 shadow-xl shadow-teal-600/20" 
+                    : "bg-teal-600 hover:bg-teal-700 text-white shadow-xl shadow-teal-600/20"
               }`}
             >
               {(isSaving || legacySaving) ? (
@@ -505,14 +505,14 @@ export const UnifiedModal: React.FC<UnifiedModalProps> = ({
             <button 
               onClick={isLegacyMode ? propOnClose : closeModal}
               disabled={isSaving || legacySaving}
-              className="flex-1 py-4 bg-slate-50 dark:bg-gray-800 hover:bg-slate-100 dark:hover:bg-gray-700 rounded-2xl text-xs font-black text-slate-400 dark:text-slate-300 hover:text-red-500 dark:hover:text-red-400 transition-all border border-slate-100 dark:border-gray-750 shadow-sm"
+              className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-gray-800 dark:hover:bg-gray-700 rounded-xl text-sm font-bold transition-all border border-slate-100 dark:border-gray-750 shadow-sm"
             >
               إلغاء
             </button>
           </div>
           
           {/* Helpful shortcuts tip */}
-          <div className="mt-4 text-center">
+          <div className="mt-3 text-center">
             <span className="text-[9px] text-slate-350 dark:text-slate-500 font-bold uppercase tracking-wider">
               مفاتيح الاختصار: [Ctrl+Enter] للحفظ السريع - [Esc] للإغلاق
             </span>
