@@ -281,7 +281,7 @@ const PurchasesInvoice: React.FC<{ onNavigate?: (view: string, params?: Record<s
       setItems(updatedItems);
       addToast("تم دمج الكمية للصنف المكرر", "info");
     } else {
-      setItems([...items, newItem]);
+setItems(prevItems => [...prevItems, newItem]);
     }
   };
 
@@ -737,10 +737,13 @@ const PurchasesInvoice: React.FC<{ onNavigate?: (view: string, params?: Record<s
       <ItemEntryModal 
         isOpen={isAddItemModalOpen}
         onClose={() => {
-          setIsAddItemModalOpen(false);
-          setEditingItem(null);
-          setSelectedProduct(null);
-        }}
+  setIsAddItemModalOpen(false);
+  setEditingItem(null);
+  setSelectedProduct(null);
+  setSearchTerm('');           
+  setManualItemName('');       
+  setShowSearchDropdown(false); 
+}}
         onAdd={(item: any) => handleAddItem(item)}
         mode="purchase"
         initialData={editingItem ? {
