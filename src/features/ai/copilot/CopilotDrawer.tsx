@@ -231,26 +231,31 @@ export const CopilotDrawer: React.FC<CopilotDrawerProps> = memo(({ isOpen, onClo
             }}
             dir="rtl"
           >
-            {/* Drawer Header */}
-            <div className="p-4 bg-gradient-to-r from-[#1E4D4D] to-[#143737] text-white shadow-md flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-400/30 flex items-center justify-center text-teal-300 shadow-inner">
+            {/* Drawer Header - تم إصلاح المشكلة هنا */}
+            <div className="p-3 sm:p-4 bg-gradient-to-r from-[#1E4D4D] to-[#143737] text-white shadow-md flex items-center justify-between shrink-0 gap-2">
+              
+              {/* حاوية النصوص والأيقونة */}
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-400/30 flex items-center justify-center text-teal-300 shadow-inner shrink-0">
                   <Bot size={22} className="animate-pulse" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2 flex-nowrap">
-                    <h2 className="text-sm sm:text-base font-black tracking-tight whitespace-nowrap">المساعد الذكي (Pharma Copilot)</h2>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-nowrap min-w-0">
+                    <h2 className="text-sm sm:text-base font-black tracking-tight whitespace-nowrap truncate">
+                      المساعد الذكي (Pharma Copilot)
+                    </h2>
                     <span className="text-[10px] bg-teal-400/20 text-teal-200 border border-teal-300/30 px-2 py-0.5 rounded-full font-bold shrink-0">
                       {userContext.userRole}
                     </span>
                   </div>
-                  <p className="text-[10px] sm:text-[11px] text-teal-100/80 whitespace-nowrap">
+                  <p className="text-[10px] sm:text-[11px] text-teal-100/80 whitespace-nowrap truncate">
                     مساعد التخطيط والتحليل والرقابة الصيدلانية
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-1.5">
+              {/* حاوية الأزرار */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   onClick={() => setShowOptions((v) => !v)}
                   className={`p-2 rounded-xl transition-colors cursor-pointer ${
