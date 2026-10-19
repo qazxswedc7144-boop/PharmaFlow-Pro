@@ -226,19 +226,26 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   };
 
   useEffect(() => {
-    const search = async () => {
-      if (manualItemName.length > 1) {
-        let results = await db.products.filter(p => {
-          const nameMatch = !!(p.Name && p.Name.toLowerCase().includes(manualItemName.toLowerCase()));
-          const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
-          return nameMatch || barcodeMatch;
-        }).limit(10).toArray();
-        if (mode === 'sale') results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
-        setFilteredProducts(results as ProductItem[]);
-      } else { setFilteredProducts([]); }
-    };
-    search();
-  }, [manualItemName, mode]);
+  const search = async () => {
+    if (manualItemName.length > 1) {
+      const searchLower = manualItemName.toLowerCase();
+      let results = await db.products.filter(p => {
+        const pName = (p.Name || p.name || '').toLowerCase();
+        const nameMatch = pName.includes(searchLower);
+        const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
+        return nameMatch || barcodeMatch;
+      }).limit(10).toArray();
+      
+      if (mode === 'sale') {
+        results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
+      }
+      setFilteredProducts(results as ProductItem[]);
+    } else { 
+      setFilteredProducts([]); 
+    }
+  };
+  search();
+}, [manualItemName, mode]);
 
   const selectProduct = (p: ProductItem) => {
     setManualItemName(p.Name || ''); 
