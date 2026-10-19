@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAppStore } from '@/hooks/useAppStore';
 import { normalizeToISODate, getExpiryStatus } from '@/utils/expiryUtils';
 import { priceIntelligenceService } from '@/features/inventory/services/priceIntelligenceService';
+import { useToast } from '@/hooks/useToast';
 
 interface ProductItem {
   id: string;
@@ -77,6 +78,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const [isKeyboardUp, setIsKeyboardUp] = useState<boolean>(false);
 
   const { currency } = useAppStore();
+  const { success } = useToast();
 
   const itemNameInputRef = useRef<HTMLInputElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
@@ -295,6 +297,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       category: categoryName || 'عام', 
       sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
     });
+    success("تم إضافة الصنف بنجاح");
     if (initialData) {
       onClose();
     } else {
@@ -330,6 +333,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       category: categoryName || 'عام', 
       sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
     });
+    success("تم إضافة الصنف بنجاح");
     if (initialData) {
       onClose();
     } else {
@@ -348,13 +352,13 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
         isCompact={false} 
         noPadding={true} 
         noOuterPadding={true}
-        maxWidth="max-w-[440px] w-[95vw]"
+        maxWidth="w-[calc(100%-10px)] max-w-md"
         transparentContainer={true}
         positionClass="items-center"
       >
         <div 
           dir="rtl" 
-          className="w-full max-w-[440px] mx-auto bg-white rounded-[28px] overflow-hidden flex flex-col box-border p-0 m-0 border-0 shadow-2xl transition-all duration-150 ease-out font-cairo"
+          className="w-[calc(100%-10px)] mx-[5px] sm:max-w-md bg-white rounded-[28px] overflow-hidden flex flex-col box-border p-0 border-0 shadow-2xl transition-all duration-150 ease-out font-cairo"
           style={{ 
             maxHeight: isKeyboardUp ? '56vh' : '90vh',
             transform: isKeyboardUp ? 'translateY(-4vh)' : 'none'

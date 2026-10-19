@@ -436,6 +436,7 @@ model InventoryBatch {
   @@index([batchNumber])
   @@index([createdAt])
   @@index([tenantId])
+  @@index([productId])
   @@map("inventory_batches")
 }
 
