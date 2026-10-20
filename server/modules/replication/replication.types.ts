@@ -25,6 +25,22 @@ export interface ReplicationEvent {
   sequence: number; // local monotonic counter for sequencing
   vectorClock: { [branchId: string]: number }; // vector clock for causality
   checksum?: string; // checksum for telemetry verification
+
+  // ⬇️ ⬇️ الحقلين الجديدين ⬇️ ⬇️
+
+  /**
+   * sessionId للعميل اللي أنتج الـ event.
+   * لو موجود، الـ Gateway يستبعد الـ client هذا بس (مش كل عملاء الفرع)
+   * وده اللي يمنع الـ loopback بدون ما يكسر الـ multi-tab sync.
+   */
+  originSessionId?: string;
+
+  /**
+   * نطاق النشر:
+   *  - "SAME_BRANCH": يوصل لعملاء نفس الفرع بس (تعديل مخزون، فاتورة...).
+   *  - "ALL_BRANCHES" أو ما شي قيمة: يوصل للكل (تحويلات، تحديثات عامة).
+   */
+  scope?: "SAME_BRANCH" | "ALL_BRANCHES";
 }
 
 export interface ClientConnectionInfo {
