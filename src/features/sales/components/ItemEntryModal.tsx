@@ -54,10 +54,6 @@ interface ItemEntryModalProps {
   } | null;
 }
 
-  } | null;
-} // 👈 هذا نهاية interface ItemEntryModalProps (السطر 55)
-
-
 // 👈 نترك سطر فارغ هنا (اضغط Enter)
 const formatDateDisplay = (dateStr: string) => {
   if (!dateStr) return '';
@@ -71,11 +67,6 @@ const formatDateDisplay = (dateStr: string) => {
   return dateStr;
 };
 // 👈 نترك سطر فارغ هنا (اضغط Enter)
-
-
-export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({ // 👈 هذا السطر 57
-  isOpen, onClose, onAdd, mode, initialData
-}) => {
   
 export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   isOpen, onClose, onAdd, mode, initialData
