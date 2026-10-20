@@ -809,7 +809,7 @@ function MainLayout() {
         )}
       </AnimatePresence>
 
-      <aside className={`absolute inset-y-0 right-0 w-64 bg-white border-l border-slate-100 relative z-50 transition-all duration-500 lg:translate-x-0 lg:static ${isSidebarOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'}`}>
+      <aside className={`absolute inset-y-0 right-0 w-64 bg-white border-l border-slate-100 z-[210] transition-all duration-500 lg:translate-x-0 lg:static ${isSidebarOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'}`}>
         <div className="flex flex-col h-full">
           <div className="px-6 py-8 flex flex-col gap-4">
             <div className="flex justify-between items-center w-full">

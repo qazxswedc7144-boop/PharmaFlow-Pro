@@ -1,25 +1,48 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "experimentalDecorators": true,
     "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "skipLibCheck": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "strict": false,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "noImplicitAny": false,
+    "strictNullChecks": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "strictFunctionTypes": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@features/*": ["src/features/*"]
-    }
+      "@/*": [
+        "./src/*"
+      ],
+      "@features/*": [
+        "./src/features/*"
+      ]
+    },
+    "noEmit": true
   },
-  "include": ["src", "server", "packages"]
+  "include": ["src", "server.ts"]
 }

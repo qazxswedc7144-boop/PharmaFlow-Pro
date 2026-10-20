@@ -229,24 +229,12 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     const search = async () => {
       if (manualItemName.length > 1) {
         let results = await db.products.filter(p => {
-          const n1 = p.name || p.Name || '';
-          const n2 = p.Name || p.name || '';
-          const nameMatch = !!(n1.toLowerCase().includes(manualItemName.toLowerCase()) || n2.toLowerCase().includes(manualItemName.toLowerCase()));
+          const nameMatch = !!(p.Name && p.Name.toLowerCase().includes(manualItemName.toLowerCase()));
           const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
           return nameMatch || barcodeMatch;
-        }).toArray();
-
+        }).limit(10).toArray();
         if (mode === 'sale') results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
-
-        const uniqueMap = new Map();
-        for (const r of results) {
-          const key = (r.Name || r.name || '').trim().toLowerCase();
-          if (key && !uniqueMap.has(key)) {
-            uniqueMap.set(key, r);
-          }
-        }
-        let uniqueResults = Array.from(uniqueMap.values()).slice(0, 10);
-        setFilteredProducts(uniqueResults as ProductItem[]);
+        setFilteredProducts(results as ProductItem[]);
       } else { setFilteredProducts([]); }
     };
     search();
@@ -262,8 +250,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     qtyInputRef.current?.focus();
   };
 
-  const handleFinalize = async (forcedId?: string | React.MouseEvent) => {
-    const idToUse = typeof forcedId === 'string' ? forcedId : undefined;
+  const handleFinalize = async () => {
     if (!manualItemName || !tempQty || !tempPrice) return;
     
     let existing = await db.products.where('name').equals(manualItemName).first().catch(() => null) ||
@@ -272,18 +259,18 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       existing = await db.products.filter(p => ((p.Name || p.name || '')).toLowerCase() === manualItemName.toLowerCase()).first().catch(() => null);
     }
 
-    let finalProductId = idToUse || selectedProductId || existing?.id || null;
+    let finalProductId = selectedProductId || existing?.id || null;
 
     if (!existing && mode === 'sale') {
       finalProductId = finalProductId || ('manual-' + Date.now());
     }
 
-    if (!existing && !idToUse && mode === 'purchase' && !isConfirmedNewProduct) { 
+    if (!existing && mode === 'purchase' && !isConfirmedNewProduct) { 
       setIsConfirmNewProductOpen(true); 
       return; 
     }
 
-    if (!existing && !idToUse && mode === 'purchase' && isConfirmedNewProduct) {
+    if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
       const newProd = {
         id: 'PROD-' + Date.now(),
         ProductID: 'PROD-' + Date.now(),
@@ -312,8 +299,12 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
     });
     success("تم إضافة الصنف بنجاح");
-    resetForm();
-    onClose();
+    if (initialData) {
+      onClose();
+    } else {
+      resetForm();
+      setTimeout(() => itemNameInputRef.current?.focus(), 100);
+    }
   };
 
   const handleConfirmRegister = async () => {
@@ -332,7 +323,25 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     };
     await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
     await db.products.put(newProd as any);
-    await handleFinalize(newProd.id);
+    
+    onAdd({ 
+      id: initialData?.id || Date.now().toString(), 
+      productId: newProd.id, 
+      name: manualItemName, 
+      qty: parseFloat(tempQty as string), 
+      price: parseFloat(tempPrice as string), 
+      expiryDate: normalizeToISODate(tempExpiry), 
+      note: tempNote, 
+      category: categoryName || 'عام', 
+      sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
+    });
+    success("تم إضافة الصنف بنجاح");
+    if (initialData) {
+      onClose();
+    } else {
+      resetForm();
+      setTimeout(() => itemNameInputRef.current?.focus(), 100);
+    }
   };
 
   return (

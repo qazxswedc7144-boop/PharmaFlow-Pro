@@ -2,12 +2,11 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { IncomingMessage, Server as HttpServer } from "http";
+import url from "url";
 import jwt from "jsonwebtoken";
 import { Role } from "@prisma/client";
 import { ReplicationSubscriber } from "./replication.subscriber.js";
 import { ReplicationEvent, ClientConnectionInfo } from "./replication.types.js";
-import { prisma } from "../../database/prisma.js";
-import { PolicyEngine } from "../../services/rbac/policy.engine.js";
 
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
@@ -19,19 +18,11 @@ const getJwtSecret = () => {
   }
   return secret;
 };
-
 const AUTHORIZED_ROLES: string[] = [Role.ADMIN, Role.ACCOUNTANT, Role.PHARMACIST, Role.INVENTORY_MANAGER, Role.TENANT_ADMIN, Role.PLATFORM_OWNER];
-
-interface RateLimitTracker {
-  count: number;
-  resetAt: number;
-}
 
 interface CustomWebSocket extends WebSocket {
   isAlive?: boolean;
   session?: ClientConnectionInfo;
-  messageRateLimit?: RateLimitTracker;
-  changeBranchRateLimit?: RateLimitTracker;
 }
 
 export class ReplicationGateway {
@@ -58,16 +49,14 @@ export class ReplicationGateway {
     console.log("[REPLICATION_GATEWAY] WebSocket replication server initialized: listening for upgrade requests on /ws");
 
     // 2. Intercept Express HTTP Server generic upgrade requests
-    server.on("upgrade", async (request: IncomingMessage, socket: any, head: Buffer) => {
+    server.on("upgrade", (request: IncomingMessage, socket: any, head: Buffer) => {
       try {
-        const protocol = request.headers["x-forwarded-proto"] || "http";
-        const host = request.headers.host || "localhost";
-        const parsedUrl = new URL(request.url || "", `${protocol}://${host}`);
-        const { pathname, searchParams } = parsedUrl;
+        const parsedUrl = url.parse(request.url || "", true);
+        const { pathname } = parsedUrl;
 
         if (pathname === "/ws") {
           // Perform JWT Authentication prior to establishing WS socket handshake
-          const token = searchParams.get("token") || this.extractTokenFromCookies(request.headers.cookie);
+          const token = (parsedUrl.query.token as string) || this.extractTokenFromCookies(request.headers.cookie);
           
           if (!token) {
             console.warn("[REPLICATION_GATEWAY] Connection upgrade rejected: Missing credentials.");
@@ -77,76 +66,13 @@ export class ReplicationGateway {
           }
 
           try {
+            console.log("[REPLICATION_GATEWAY] Verifying token:", token);
             const decoded = jwt.verify(token, getJwtSecret()) as any;
+            console.log("[REPLICATION_GATEWAY] Decoded token:", decoded);
             
             // Validate RBAC roles are authorized to access replication streams
-            if (!decoded || !AUTHORIZED_ROLES.includes(decoded.role)) {
-              console.warn(`[REPLICATION_GATEWAY] Connection upgrade rejected: Unauthorized role ${decoded?.role}`);
-              socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-              socket.destroy();
-              return;
-            }
-
-            const userId = decoded.userId;
-            const tenantId = decoded.tenantId;
-            const requestedBranchId = decoded.branchId;
-            const jwtExpiresAt = decoded.exp ? decoded.exp * 1000 : Date.now() + 86400000;
-
-            if (!tenantId) {
-              console.warn("[REPLICATION_GATEWAY] Connection upgrade rejected: Missing tenantId in token claims.");
-              socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-              socket.destroy();
-              return;
-            }
-
-            if (!userId) {
-              console.warn("[REPLICATION_GATEWAY] Connection upgrade rejected: Missing userId in token claims.");
-              socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-              socket.destroy();
-              return;
-            }
-
-            // Fetch authorized branches for user in this tenant via BranchUser
-            let allowedBranchIds: string[] = [];
-            try {
-              const branchUsers = await prisma.branchUser.findMany({
-                where: { userId, tenantId },
-                select: { branchId: true }
-              });
-              allowedBranchIds = branchUsers.map(bu => bu.branchId);
-            } catch (dbErr: any) {
-              console.warn("[REPLICATION_GATEWAY] Failed to query branch users:", dbErr?.message);
-            }
-
-            const roleUpper = (decoded.role || "").toUpperCase();
-            const isTenantWide = roleUpper === "PLATFORM_OWNER" || roleUpper === "TENANT_ADMIN" || roleUpper === "OWNER";
-
-            // If tenant wide admin, allow all tenant branches or default if allowedBranchIds is empty
-            if (isTenantWide && allowedBranchIds.length === 0) {
-              try {
-                const tenantBranches = await prisma.branch.findMany({
-                  where: { tenantId },
-                  select: { id: true }
-                });
-                allowedBranchIds = tenantBranches.map(b => b.id);
-              } catch {
-                // fallback
-              }
-            }
-
-            // Reject if no allowed branches
-            if (allowedBranchIds.length === 0) {
-              console.warn(`[REPLICATION_GATEWAY] Connection upgrade rejected: User ${userId} has no assigned branches.`);
-              socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-              socket.destroy();
-              return;
-            }
-
-            const assignedBranchId = requestedBranchId || allowedBranchIds[0];
-
-            // Verify branch access
-            if (!isTenantWide && !allowedBranchIds.includes(assignedBranchId)) {
-              console.warn(`[REPLICATION_GATEWAY] Connection upgrade rejected: User ${userId} not authorized for branch ${assignedBranchId}`);
+            if (!AUTHORIZED_ROLES.includes(decoded.role)) {
+              console.warn(`[REPLICATION_GATEWAY] Connection upgrade rejected: Unauthorized role ${decoded.role}`);
               socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
               socket.destroy();
               return;
@@ -154,27 +80,25 @@ export class ReplicationGateway {
 
             // Authentication succeeded! Continue upgrade.
             this.wss?.handleUpgrade(request, socket, head, (ws) => {
+              const branchId = (parsedUrl.query.branchId as string) || decoded.branchId || "GENERIC";
               const session: ClientConnectionInfo = {
                 sessionId: Math.random().toString(36).substring(2, 14),
-                userId,
-                tenantId,
-                branchId: assignedBranchId,
+                userId: decoded.userId || "unknown",
+                branchId,
                 role: decoded.role,
-                allowedBranchIds,
-                connectedAt: new Date().toISOString(),
-                jwtExpiresAt,
+                connectedAt: new Date().toISOString()
               };
 
               this.wss?.emit("connection", ws, session);
             });
           } catch (jwtErr: any) {
-            console.warn("[REPLICATION_GATEWAY] Connection upgrade rejected: Invalid JWT Token.", jwtErr?.message);
+            console.warn("[REPLICATION_GATEWAY] Connection upgrade rejected: Invalid JWT Token.", jwtErr.message);
             socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
             socket.destroy();
           }
         }
       } catch (err: any) {
-        console.error("[REPLICATION_GATEWAY] Upgrade intercept failure:", err?.message);
+        console.error("[REPLICATION_GATEWAY] Upgrade intercept failure:", err.message);
         socket.destroy();
       }
     });
@@ -183,11 +107,9 @@ export class ReplicationGateway {
     this.wss.on("connection", (ws: CustomWebSocket, session: ClientConnectionInfo) => {
       ws.isAlive = true;
       ws.session = session;
-      ws.messageRateLimit = { count: 0, resetAt: Date.now() + 60000 };
-      ws.changeBranchRateLimit = { count: 0, resetAt: Date.now() + 60000 };
       this.activeSockets.set(session.sessionId, ws);
 
-      console.log(`🔌 [REPLICATION_GATEWAY] Client connected: user=${session.userId}, tenant=${session.tenantId}, role=${session.role}, branch=${session.branchId} (Sess: ${session.sessionId})`);
+      console.log(`🔌 [REPLICATION_GATEWAY] Client connected: user=${session.userId}, role=${session.role}, branch=${session.branchId} (Sess: ${session.sessionId})`);
 
       // Send initial acknowledgement handshake to client
       ws.send(JSON.stringify({
@@ -201,82 +123,23 @@ export class ReplicationGateway {
         ws.isAlive = true;
       });
 
-      ws.on("message", (rawMessage: any) => {
+      ws.on("message", (rawMessage: string) => {
         try {
-          const messageStr = typeof rawMessage === "string" ? rawMessage : rawMessage.toString("utf8");
-          
-          // Check message size (max 1MB)
-          if (messageStr.length > 1024 * 1024) {
-            ws.send(JSON.stringify({ type: "Error", message: "Oversized message rejected" }));
-            return;
-          }
-
-          // Rate limit check for messages (60 messages / minute)
-          const now = Date.now();
-          if (ws.messageRateLimit) {
-            if (now > ws.messageRateLimit.resetAt) {
-              ws.messageRateLimit.count = 1;
-              ws.messageRateLimit.resetAt = now + 60000;
-            } else {
-              ws.messageRateLimit.count++;
-              if (ws.messageRateLimit.count > 60) {
-                ws.send(JSON.stringify({ type: "RateLimitExceeded", message: "Message rate limit exceeded (max 60/min)" }));
-                return;
-              }
-            }
-          }
-
-          const msg = JSON.parse(messageStr);
+          const msg = JSON.parse(rawMessage);
           
           if (msg.type === "Heartbeat") {
             ws.send(JSON.stringify({ type: "HeartbeatAck", timestamp: Date.now() }));
           } else if (msg.type === "ChangeBranch") {
-            // Rate limit check for ChangeBranch (10 changes / minute)
-            if (ws.changeBranchRateLimit) {
-              if (now > ws.changeBranchRateLimit.resetAt) {
-                ws.changeBranchRateLimit.count = 1;
-                ws.changeBranchRateLimit.resetAt = now + 60000;
-              } else {
-                ws.changeBranchRateLimit.count++;
-                if (ws.changeBranchRateLimit.count > 10) {
-                  ws.send(JSON.stringify({ type: "RateLimitExceeded", message: "Change branch rate limit exceeded (max 10/min)" }));
-                  return;
-                }
-              }
-            }
-
+            // Support dynamially tuning or updating connection branch
             if (ws.session && msg.branchId) {
-              const targetBranchId = String(msg.branchId);
-              
-              // Verify branch access using PolicyEngine and allowedBranchIds
-              const identityCtx = {
-                userId: ws.session.userId,
-                tenantId: ws.session.tenantId,
-                role: ws.session.role,
-                branchId: ws.session.branchId
-              };
-
-              const hasAccess = PolicyEngine.canAccessBranch(identityCtx, targetBranchId) ||
-                                ws.session.allowedBranchIds.includes(targetBranchId);
-
-              if (!hasAccess) {
-                console.warn(`[REPLICATION_GATEWAY] Branch change denied for user ${ws.session.userId} to branch ${targetBranchId}`);
-                ws.send(JSON.stringify({
-                  type: "BranchChangeDenied",
-                  branchId: targetBranchId,
-                  reason: "Access denied to target branch"
-                }));
-                return;
-              }
-
               const old = ws.session.branchId;
-              ws.session.branchId = targetBranchId;
-              console.log(`[REPLICATION_GATEWAY] Session ${ws.session.sessionId} switched branch from ${old} to ${targetBranchId}`);
-              ws.send(JSON.stringify({ type: "BranchChanged", branchId: targetBranchId }));
+              ws.session.branchId = msg.branchId;
+              console.log(`[REPLICATION_GATEWAY] Session ${ws.session.sessionId} switched branch from ${old} to ${msg.branchId}`);
+              ws.send(JSON.stringify({ type: "BranchChanged", branchId: msg.branchId }));
             }
           }
         } catch (mErr: any) {
-          ws.send(JSON.stringify({ type: "Error", message: "Invalid JSON message format" }));
+          // ignore parsing error
         }
       });
 
@@ -286,24 +149,14 @@ export class ReplicationGateway {
       });
 
       ws.on("error", (errVal) => {
-        console.error(`[REPLICATION_GATEWAY] Error in socket session ${session.sessionId}:`, errVal?.message);
+        console.error(`[REPLICATION_GATEWAY] Error in socket session ${session.sessionId}:`, errVal.message);
         ws.terminate();
       });
     });
 
-    // 4. Heartbeat checking process: periodic ping-pong sweeps and JWT expiration checks
+    // 4. Heartbeat checking process: periodic ping-pong sweeps
     setInterval(() => {
-      const now = Date.now();
       this.wss?.clients.forEach((ws: CustomWebSocket) => {
-        if (!ws.session) return;
-
-        // Check JWT expiration
-        if (ws.session.jwtExpiresAt && now > ws.session.jwtExpiresAt) {
-          console.warn(`[REPLICATION_GATEWAY] JWT expired for session ${ws.session.sessionId}. Terminating.`);
-          ws.terminate();
-          return;
-        }
-
         if (ws.isAlive === false) {
           console.warn(`[REPLICATION_GATEWAY] Client dormant. Terminating session ${ws.session?.sessionId}`);
           return ws.terminate();
@@ -315,7 +168,7 @@ export class ReplicationGateway {
   }
 
   /**
-   * Pushes incoming replication events to the correct websocket connections with tenant & branch security.
+   * Pushes incoming replication events to the correct websocket connections.
    */
   private static routeEventToClients(event: ReplicationEvent): void {
     if (!event || !event.id) return;
@@ -323,35 +176,23 @@ export class ReplicationGateway {
     this.activeSockets.forEach((ws) => {
       if (!ws.session || ws.readyState !== WebSocket.OPEN) return;
 
-      // 1. Cross-tenant isolation check: tenantId must be present and match strictly
-      if (!event.tenantId || !ws.session.tenantId || event.tenantId !== ws.session.tenantId) {
-        console.warn(`[SECURITY] Rejected event ${event.id}: tenantId missing or mismatch`);
-        return;
+      const clientBranchId = ws.session.branchId;
+
+      // Anti-loopback guard: We do NOT push the event back to the client that originated it
+      if (clientBranchId === event.branchId) {
+        return; 
       }
 
-      // 2. Branch authorization check: client must have access to the event's branch
-      const eventBranchId = event.branchId;
-      const isAuthorizedForBranch = 
-        ws.session.branchId === eventBranchId ||
-        ws.session.allowedBranchIds.includes(eventBranchId) ||
-        ["PLATFORM_OWNER", "TENANT_ADMIN", "OWNER"].includes((ws.session.role || "").toUpperCase());
-
-      if (!isAuthorizedForBranch) {
-        return;
-      }
-
-      // 3. Anti-loopback guard: We do NOT push the event back to the client session that originated it
-      if (event.originSessionId && ws.session.sessionId === event.originSessionId) {
-        return;
-      }
-
+      // Check if event targets this branch:
+      // Since it's a multi-branch system, we deliver to other branches connected. 
+      // All branches are interested in general syncing (transfers, inventory balances, etc.)
       try {
         ws.send(JSON.stringify({
           type: "ReplicationEvent",
           event
         }));
       } catch (err: any) {
-        console.warn(`[REPLICATION_GATEWAY] Failed to send event to session ${ws.session.sessionId}:`, err?.message);
+        console.warn(`[REPLICATION_GATEWAY] Failed to send event to session ${ws.session.sessionId}:`, err.message);
       }
     });
   }
