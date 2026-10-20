@@ -889,6 +889,26 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           }
         });
       }
+      // ✅ إصلاح مشكلة PRODUCT_NOT_FOUND: تحويل الأصناف اليدوية إلى منتجات حقيقية قبل الحفظ
+let finalizedItems = [...items];
+for (let i = 0; i < finalizedItems.length; i++) {
+    const item = finalizedItems[i];
+    if (item.product_id?.startsWith('manual-')) {
+        const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+        await db.products.put({
+          id: newProdId,
+          ProductID: newProdId,
+          Name: item.name || 'صنف غير مسمى',
+          name: item.name || 'صنف غير مسمى',
+          categoryName: item.category || 'عام',
+          UnitPrice: item.price || 0,
+          price: item.price || 0,
+          Is_Active: 1,
+          created_at: new Date().toISOString()
+        });
+        finalizedItems[i] = { ...item, product_id: newProdId, productId: newProdId };
+    }
+}
 
       // سباق برمجي: إما يتم الحفظ أو ينتهي الوقت خلال 15 ثانية ويفك تجميد الأزرار تلقائياً
       const res = await Promise.race([
@@ -897,7 +917,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
             type: 'PURCHASE',
             payload: {
               supplierId: header.supplier_id,
-              items: items.map(item => ({
+              items: finalizedItems.map(item => ({
                 ...item,
                 expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
               })),
