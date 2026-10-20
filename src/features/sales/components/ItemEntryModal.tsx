@@ -226,28 +226,19 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   };
 
   useEffect(() => {
-  const search = async () => {
-    if (manualItemName.length > 1) {
-      const searchLower = manualItemName.toLowerCase();
-      let results = await db.products.filter(p => {
-        const pName = (p.Name || p.name || '').toLowerCase();
-        const nameMatch = pName.includes(searchLower);
-        const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
-        return nameMatch || barcodeMatch;
-      }).limit(20).toArray(); 
-      
-      if (mode === 'sale') {
-        results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
-      }
-      
-      const uniqueResults = results.filter((v, i, a) => a.findIndex(t => (t.Name || t.name) === (v.Name || v.name)) === i);
-      setFilteredProducts(uniqueResults.slice(0, 10) as ProductItem[]);
-    } else { 
-      setFilteredProducts([]); 
-    }
-  };
-  search();
-}, [manualItemName, mode]);
+    const search = async () => {
+      if (manualItemName.length > 1) {
+        let results = await db.products.filter(p => {
+          const nameMatch = !!(p.Name && p.Name.toLowerCase().includes(manualItemName.toLowerCase()));
+          const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
+          return nameMatch || barcodeMatch;
+        }).limit(10).toArray();
+        if (mode === 'sale') results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
+        setFilteredProducts(results as ProductItem[]);
+      } else { setFilteredProducts([]); }
+    };
+    search();
+  }, [manualItemName, mode]);
 
   const selectProduct = (p: ProductItem) => {
     setManualItemName(p.Name || ''); 
@@ -259,7 +250,8 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     qtyInputRef.current?.focus();
   };
 
-  const handleFinalize = async (forcedId?: string) => {
+  const handleFinalize = async (forcedId?: string | React.MouseEvent) => {
+    const idToUse = typeof forcedId === 'string' ? forcedId : undefined;
     if (!manualItemName || !tempQty || !tempPrice) return;
     
     let existing = await db.products.where('name').equals(manualItemName).first().catch(() => null) ||
@@ -268,18 +260,18 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       existing = await db.products.filter(p => ((p.Name || p.name || '')).toLowerCase() === manualItemName.toLowerCase()).first().catch(() => null);
     }
 
-    let finalProductId = forcedId || selectedProductId || existing?.id || null;
+    let finalProductId = idToUse || selectedProductId || existing?.id || null;
 
     if (!existing && mode === 'sale') {
       finalProductId = finalProductId || ('manual-' + Date.now());
     }
 
-    if (!existing && !forcedId && mode === 'purchase' && !isConfirmedNewProduct) { 
+    if (!existing && !idToUse && mode === 'purchase' && !isConfirmedNewProduct) { 
       setIsConfirmNewProductOpen(true); 
       return; 
     }
 
-    if (!existing && !forcedId && mode === 'purchase' && isConfirmedNewProduct) {
+    if (!existing && !idToUse && mode === 'purchase' && isConfirmedNewProduct) {
       const newProd = {
         id: 'PROD-' + Date.now(),
         ProductID: 'PROD-' + Date.now(),
@@ -292,6 +284,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
         created_at: new Date().toISOString()
       };
       await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
+      await db.products.put(newProd as any);
       finalProductId = newProd.id;
     }
 
@@ -316,25 +309,23 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   };
 
   const handleConfirmRegister = async () => {
-  setIsConfirmNewProductOpen(false);
-  setIsConfirmedNewProduct(true);
-  
-  const newProd = { 
-    id: 'PROD-' + Date.now(), 
-    ProductID: 'PROD-' + Date.now(),
-    Name: manualItemName, 
-    name: manualItemName,
-    categoryName: categoryName || 'عام', 
-    UnitPrice: parseFloat(tempPrice as string) || 0, 
-    price: parseFloat(tempPrice as string) || 0,
-    Is_Active: 1, 
-    created_at: new Date().toISOString() 
+    setIsConfirmNewProductOpen(false);
+    setIsConfirmedNewProduct(true);
+    const newProd = { 
+      id: 'PROD-' + Date.now(), 
+      ProductID: 'PROD-' + Date.now(),
+      Name: manualItemName, 
+      name: manualItemName,
+      categoryName: categoryName || 'عام', 
+      UnitPrice: parseFloat(tempPrice as string) || 0, 
+      price: parseFloat(tempPrice as string) || 0,
+      Is_Active: 1, 
+      created_at: new Date().toISOString() 
+    };
+    await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
+    await db.products.put(newProd as any);
+    await handleFinalize(newProd.id);
   };
-  
-  await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
-  
-  await handleFinalize(newProd.id);
-};
 
   return (
     <>
@@ -528,7 +519,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
 
           {/* الأزرار الأساسية */}
           <div className="flex gap-2 px-3.5 pt-2 pb-3 border-t border-slate-100 flex-nowrap w-full box-border bg-white flex-shrink-0 m-0">
-            <Button className="flex-[2] !h-10 !rounded-xl !text-[14px] font-bold" variant="primary" onClick={() => handleFinalize()}>
+            <Button className="flex-[2] !h-10 !rounded-xl !text-[14px] font-bold" variant="primary" onClick={handleFinalize}>
               {initialData ? 'تعديل الصنف' : 'إضافة الصنف'}
             </Button>
             <Button className="flex-1 !h-10 !rounded-xl !text-[14px] font-bold" variant="neutral" onClick={onClose}>
