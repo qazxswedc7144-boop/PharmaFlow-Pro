@@ -345,6 +345,8 @@ ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 
       categoryName: categoryName || 'عام', 
       UnitPrice: parseFloat(tempPrice as string) || 0, 
       price: parseFloat(tempPrice as string) || 0,
+      StockQuantity: parseFloat(tempQty as string) || 0, 
+      stock: parseFloat(tempQty as string) || 0,
       Is_Active: 1, 
       created_at: new Date().toISOString() 
     };
