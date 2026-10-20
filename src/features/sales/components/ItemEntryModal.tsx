@@ -274,12 +274,12 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       finalProductId = finalProductId || ('manual-' + Date.now());
     }
 
-    if (!existing && mode === 'purchase' && !isConfirmedNewProduct) { 
+    if (!existing && !forcedId && mode === 'purchase' && !isConfirmedNewProduct) { 
       setIsConfirmNewProductOpen(true); 
       return; 
     }
 
-    if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
+    if (!existing && !forcedId && mode === 'purchase' && isConfirmedNewProduct) {
       const newProd = {
         id: 'PROD-' + Date.now(),
         ProductID: 'PROD-' + Date.now(),
@@ -528,7 +528,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
 
           {/* الأزرار الأساسية */}
           <div className="flex gap-2 px-3.5 pt-2 pb-3 border-t border-slate-100 flex-nowrap w-full box-border bg-white flex-shrink-0 m-0">
-            <Button className="flex-[2] !h-10 !rounded-xl !text-[14px] font-bold" variant="primary" onClick={handleFinalize}>
+            <Button className="flex-[2] !h-10 !rounded-xl !text-[14px] font-bold" variant="primary" onClick={() => handleFinalize()}>
               {initialData ? 'تعديل الصنف' : 'إضافة الصنف'}
             </Button>
             <Button className="flex-1 !h-10 !rounded-xl !text-[14px] font-bold" variant="neutral" onClick={onClose}>
