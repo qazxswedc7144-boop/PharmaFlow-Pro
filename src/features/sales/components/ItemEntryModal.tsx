@@ -222,9 +222,10 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     setAvailableStock(null);
     setLastSellingPriceSuggestion(null);
     setPriceInsight('');
-    setSelectedProductId(null);
-  };
-
+      setSelectedProductId(null);
+  setFilteredProducts([]);
+  setShowSearchDropdown(false);
+};
   useEffect(() => {
     const search = async () => {
       if (manualItemName.length > 1) {
@@ -373,7 +374,11 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
               <input 
                 ref={itemNameInputRef} 
                 value={manualItemName} 
-                onChange={e => { setManualItemName(e.target.value); setShowSearchDropdown(true); }} 
+                onChange={e => { 
+  setManualItemName(e.target.value); 
+  setSelectedProductId(null); 
+  setShowSearchDropdown(true); 
+}}
                 onFocus={() => setShowSearchDropdown(true)}
                 className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-[14px] font-semibold text-[#1E4D4D] outline-none focus:bg-white text-right"
                 placeholder="ابحث عن صنف أو اكتب اسماً..." 
