@@ -89,7 +89,8 @@ export class ReplicationGateway {
 
             const userId = decoded.userId;
             const tenantId = decoded.tenantId;
-            const requestedBranchId = decoded.branchId || searchParams.get("branchId");
+            const requestedBranchId = decoded.branchId;
+            const jwtExpiresAt = decoded.exp ? decoded.exp * 1000 : Date.now() + 86400000;
 
             if (!tenantId) {
               console.warn("[REPLICATION_GATEWAY] Connection upgrade rejected: Missing tenantId in token claims.");
@@ -133,10 +134,18 @@ export class ReplicationGateway {
               }
             }
 
-            const assignedBranchId = requestedBranchId || allowedBranchIds[0] || "GENERIC";
+            // Reject if no allowed branches
+            if (allowedBranchIds.length === 0) {
+              console.warn(`[REPLICATION_GATEWAY] Connection upgrade rejected: User ${userId} has no assigned branches.`);
+              socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+              socket.destroy();
+              return;
+            }
+
+            const assignedBranchId = requestedBranchId || allowedBranchIds[0];
 
             // Verify branch access
-            if (!isTenantWide && assignedBranchId !== "GENERIC" && !allowedBranchIds.includes(assignedBranchId)) {
+            if (!isTenantWide && !allowedBranchIds.includes(assignedBranchId)) {
               console.warn(`[REPLICATION_GATEWAY] Connection upgrade rejected: User ${userId} not authorized for branch ${assignedBranchId}`);
               socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
               socket.destroy();
@@ -152,7 +161,8 @@ export class ReplicationGateway {
                 branchId: assignedBranchId,
                 role: decoded.role,
                 allowedBranchIds,
-                connectedAt: new Date().toISOString()
+                connectedAt: new Date().toISOString(),
+                jwtExpiresAt,
               };
 
               this.wss?.emit("connection", ws, session);
@@ -281,9 +291,19 @@ export class ReplicationGateway {
       });
     });
 
-    // 4. Heartbeat checking process: periodic ping-pong sweeps
+    // 4. Heartbeat checking process: periodic ping-pong sweeps and JWT expiration checks
     setInterval(() => {
+      const now = Date.now();
       this.wss?.clients.forEach((ws: CustomWebSocket) => {
+        if (!ws.session) return;
+
+        // Check JWT expiration
+        if (ws.session.jwtExpiresAt && now > ws.session.jwtExpiresAt) {
+          console.warn(`[REPLICATION_GATEWAY] JWT expired for session ${ws.session.sessionId}. Terminating.`);
+          ws.terminate();
+          return;
+        }
+
         if (ws.isAlive === false) {
           console.warn(`[REPLICATION_GATEWAY] Client dormant. Terminating session ${ws.session?.sessionId}`);
           return ws.terminate();
@@ -303,8 +323,9 @@ export class ReplicationGateway {
     this.activeSockets.forEach((ws) => {
       if (!ws.session || ws.readyState !== WebSocket.OPEN) return;
 
-      // 1. Cross-tenant isolation check
-      if (event.tenantId && ws.session.tenantId && event.tenantId !== ws.session.tenantId) {
+      // 1. Cross-tenant isolation check: tenantId must be present and match strictly
+      if (!event.tenantId || !ws.session.tenantId || event.tenantId !== ws.session.tenantId) {
+        console.warn(`[SECURITY] Rejected event ${event.id}: tenantId missing or mismatch`);
         return;
       }
 
@@ -319,7 +340,10 @@ export class ReplicationGateway {
         return;
       }
 
-
+      // 3. Anti-loopback guard: We do NOT push the event back to the client session that originated it
+      if (event.originSessionId && ws.session.sessionId === event.originSessionId) {
+        return;
+      }
 
       try {
         ws.send(JSON.stringify({

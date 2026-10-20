@@ -19,8 +19,9 @@ export type AuditReplicationAction =
 export interface ReplicationEvent {
   id: string; // unique UUID
   type: BusinessEventType;
-  tenantId?: string; // tenant that originated the event
+  tenantId: string; // mandatory tenant ID that originated the event
   branchId: string; // branch that originated the event
+  originSessionId?: string; // session that originated the event (anti-loopback)
   timestamp: string; // ISO date string
   payload: any; // payload details (e.g. qty changes, invoice details, etc.)
   sequence: number; // local monotonic counter for sequencing
@@ -36,6 +37,7 @@ export interface ClientConnectionInfo {
   role: string;
   allowedBranchIds: string[];
   connectedAt: string;
+  jwtExpiresAt: number;
 }
 
 export interface ReplicationStatus {

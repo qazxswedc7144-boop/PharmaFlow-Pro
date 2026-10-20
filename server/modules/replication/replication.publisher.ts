@@ -18,13 +18,28 @@ export class ReplicationPublisher {
   static async publish(params: {
     type: BusinessEventType;
     branchId: string;
+    tenantId?: string;
     payload: any;
     userId?: string;
+    originSessionId?: string;
     targetBranchId?: string; // If specified, Single Branch Broadcast. If undefined, Global Broadcast.
     targetBranchIds?: string[]; // If specified, Multi-Branch Broadcast.
   }): Promise<ReplicationEvent> {
     const eventId = randomUUID();
     const timestamp = new Date().toISOString();
+
+    // Resolve tenantId if not explicitly provided
+    let tenantId: string = params.tenantId || "";
+    if (!tenantId) {
+      const branchRecord = await prisma.branch.findUnique({
+        where: { id: params.branchId },
+        select: { tenantId: true },
+      });
+      if (!branchRecord?.tenantId) {
+        throw new Error(`[REPLICATION_PUBLISHER] Tenant ID could not be resolved for branch ${params.branchId}. Publishing denied.`);
+      }
+      tenantId = branchRecord.tenantId;
+    }
 
     // 1. Maintain microsecond/sequence accuracy
     const sequence = ++this.sequenceCounter;
@@ -41,7 +56,9 @@ export class ReplicationPublisher {
     const event: ReplicationEvent = {
       id: eventId,
       type: params.type,
+      tenantId,
       branchId: params.branchId,
+      originSessionId: params.originSessionId,
       timestamp,
       payload: params.payload,
       sequence,
