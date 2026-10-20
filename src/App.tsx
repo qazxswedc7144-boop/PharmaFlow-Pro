@@ -457,13 +457,13 @@ return (
       {isSidebarOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] lg:hidden" onClick={() => setIsSidebarOpen(false)} />}
     </AnimatePresence>
 
-    <aside className={`absolute inset-y-0 right-0 w-64 bg-white border-l border-slate-100 relative z-50 transition-all duration-500 lg:translate-x-0 lg:static ${isSidebarOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'}`}>
-      <div className="flex flex-col h-full">
-        <div className="px-6 py-8 flex flex-col gap-4">
-          <div className="flex justify-between items-center w-full">
-            <div className="flex items-center gap-3"><Logo size={40} /><BrandName className="text-xl" /></div>
-            <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden w-10 h-10 flex items-center justify-center bg-slate-50 rounded-xl text-slate-400 hover:bg-slate-100 transition-all"><X size={20} /></button>
-          </div>
+    <aside className={`absolute inset-y-0 right-0 w-64 bg-white border-l border-slate-100 z-50 transition-all duration-500 lg:translate-x-0 lg:static ${isSidebarOpen ? 'translate-x-0 shadow-2xl' : 'translate-x-full'}`}>
+  <div className="flex flex-col h-full">
+    <div className="px-6 py-8 flex flex-col gap-4">
+      <div className="flex justify-between items-center w-full">
+        <div className="flex items-center gap-3"><Logo size={40} /><BrandName className="text-xl" /></div>
+        <button onClick={() => setIsSidebarOpen(false)} className="lg:hidden w-10 h-10 flex items-center justify-center bg-slate-50 rounded-xl text-slate-400 hover:bg-slate-100 transition-all"><X size={20} /></button>
+      </div>
           <Tagline className="px-1 text-[8px]" />
         </div>
         <nav className="flex-1 px-4 py-4 space-y-6 overflow-y-auto custom-scrollbar">
