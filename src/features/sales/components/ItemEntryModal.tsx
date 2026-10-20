@@ -254,11 +254,10 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const handleFinalize = async () => {
     if (!manualItemName || !tempQty || !tempPrice) return;
     
-    let existing = await db.products.where('name').equals(manualItemName).first().catch(() => null) ||
-                   await db.products.where('Name').equals(manualItemName).first().catch(() => null);
-    if (!existing) {
-      existing = await db.products.filter(p => ((p.Name || p.name || '')).toLowerCase() === manualItemName.toLowerCase()).first().catch(() => null);
-    }
+    const searchName = manualItemName.trim().toLowerCase();
+let existing = await db.products.filter(p => 
+  ((p.Name || p.name || '')).trim().toLowerCase() === searchName
+).first().catch(() => null);
 
     let finalProductId = selectedProductId || existing?.id || null;
 
@@ -273,8 +272,8 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
 
     if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
       const newProd = {
-        id: 'PROD-' + Date.now(),
-        ProductID: 'PROD-' + Date.now(),
+        id: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
         Name: manualItemName,
         name: manualItemName,
         categoryName: categoryName || 'عام',
@@ -312,8 +311,8 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     setIsConfirmNewProductOpen(false);
     setIsConfirmedNewProduct(true);
     const newProd = { 
-      id: 'PROD-' + Date.now(), 
-      ProductID: 'PROD-' + Date.now(),
+      id: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
       Name: manualItemName, 
       name: manualItemName,
       categoryName: categoryName || 'عام', 
