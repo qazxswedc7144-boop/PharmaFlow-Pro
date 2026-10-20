@@ -27,8 +27,8 @@ export class PolicyEngine {
       return user.branchId === targetBranchId;
     }
 
-    // 3. User with no assigned branch defaults to tenant-level view or allowed
-    return true;
+    // 3. User with no assigned branch defaults to denied unless tenant-wide admin
+    return false;
   }
 
   /**

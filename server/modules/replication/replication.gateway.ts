@@ -319,10 +319,7 @@ export class ReplicationGateway {
         return;
       }
 
-      // 3. Anti-loopback guard: We do NOT push the event back to the client that originated it
-      if (ws.session.branchId === eventBranchId) {
-        return; 
-      }
+
 
       try {
         ws.send(JSON.stringify({
