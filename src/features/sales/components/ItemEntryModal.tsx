@@ -228,15 +228,21 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
 };
   useEffect(() => {
     const search = async () => {
-      if (manualItemName.length > 1) {
-        let results = await db.products.filter(p => {
-          const nameMatch = !!(p.Name && p.Name.toLowerCase().includes(manualItemName.toLowerCase()));
-          const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
-          return nameMatch || barcodeMatch;
-        }).limit(10).toArray();
-        if (mode === 'sale') results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
-        setFilteredProducts(results as ProductItem[]);
-      } else { setFilteredProducts([]); }
+     if (manualItemName.length > 1) {
+  let results = await db.products.filter(p => {
+    const nameMatch = !!(p.Name && p.Name.toLowerCase().includes(manualItemName.toLowerCase()));
+    const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
+    return nameMatch || barcodeMatch;
+  }).limit(20).toArray();
+  if (mode === 'sale') results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
+  
+  // ✅ إزالة الأصناف المكررة بناءً على الاسم
+  const uniqueResults = results.filter((product, index, self) =>
+    index === self.findIndex((p) => (p.Name || p.name || '').trim() === (product.Name || product.name || '').trim())
+  );
+  
+  setFilteredProducts(uniqueResults as ProductItem[]);
+} else { setFilteredProducts([]); } 
     };
     search();
   }, [manualItemName, mode]);
@@ -272,16 +278,18 @@ let existing = await db.products.filter(p =>
 
     if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
       const newProd = {
-        id: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-        Name: manualItemName,
-        name: manualItemName,
-        categoryName: categoryName || 'عام',
-        UnitPrice: parseFloat(tempPrice as string),
-        price: parseFloat(tempPrice as string),
-        Is_Active: 1,
-        created_at: new Date().toISOString()
-      };
+  id: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+  ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+  Name: manualItemName,
+  name: manualItemName,
+  categoryName: categoryName || 'عام',
+  UnitPrice: parseFloat(tempPrice as string),
+  price: parseFloat(tempPrice as string),
+  StockQuantity: parseFloat(tempQty as string) || 0, // ✅ إضافة الكمية كرصيد
+  stock: parseFloat(tempQty as string) || 0,          // ✅ دعم مسمى آخر للرصيد
+  Is_Active: 1,
+  created_at: new Date().toISOString()
+};
       await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
       await db.products.put(newProd as any);
       finalProductId = newProd.id;
