@@ -54,6 +54,29 @@ interface ItemEntryModalProps {
   } | null;
 }
 
+  } | null;
+} // 👈 هذا نهاية interface ItemEntryModalProps (السطر 55)
+
+
+// 👈 نترك سطر فارغ هنا (اضغط Enter)
+const formatDateDisplay = (dateStr: string) => {
+  if (!dateStr) return '';
+  const parts = dateStr.includes('-') ? dateStr.split('-') : dateStr.split('/');
+  if (parts.length === 3) {
+    const year = parts[0] || '';
+    const month = parseInt(parts[1] || '0', 10);
+    const day = parseInt(parts[2] || '0', 10);
+    return `${year}/${month}/${day}`;
+  }
+  return dateStr;
+};
+// 👈 نترك سطر فارغ هنا (اضغط Enter)
+
+
+export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({ // 👈 هذا السطر 57
+  isOpen, onClose, onAdd, mode, initialData
+}) => {
+  
 export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   isOpen, onClose, onAdd, mode, initialData
 }) => {
@@ -290,30 +313,35 @@ let existing = await db.products.filter(p =>
   Is_Active: 1,
   created_at: new Date().toISOString()
 };
-      await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
-      await db.products.put(newProd as any);
-      finalProductId = newProd.id;
-    }
+          // نترك الحفظ في قاعدة البيانات يعمل في الخلفية (بدون await) لتسريع الواجهة
+    WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
+      .then(() => db.products.put(newProd as any))
+      .catch(err => console.error("Background save failed:", err));
+      
+    finalProductId = newProd.id;
+  }
 
-    onAdd({ 
-      id: initialData?.id || Date.now().toString(), 
-      productId: finalProductId, 
-      name: manualItemName, 
-      qty: parseFloat(tempQty as string), 
-      price: parseFloat(tempPrice as string), 
-      expiryDate: normalizeToISODate(tempExpiry), 
-      note: tempNote, 
-      category: categoryName || 'عام', 
-      sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
-    });
-    success("تم إضافة الصنف بنجاح");
-    if (initialData) {
-      onClose();
-    } else {
-      resetForm();
-      setTimeout(() => itemNameInputRef.current?.focus(), 100);
-    }
-  };
+  // ✅ إرسال الصنف للجدول فوراً (سيظهر مباشرة)
+  onAdd({ 
+    id: initialData?.id || Date.now().toString(), 
+    productId: finalProductId, 
+    name: manualItemName, 
+    qty: parseFloat(tempQty as string), 
+    price: parseFloat(tempPrice as string), 
+    expiryDate: normalizeToISODate(tempExpiry), 
+    note: tempNote, 
+    category: categoryName || 'عام', 
+    sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
+  });
+  success("تم إضافة الصنف بنجاح");
+  
+  if (initialData) {
+    onClose();
+  } else {
+    resetForm();
+    setTimeout(() => itemNameInputRef.current?.focus(), 100);
+  }
+};
 
   const handleConfirmRegister = async () => {
     setIsConfirmNewProductOpen(false);
@@ -329,9 +357,10 @@ ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 
       Is_Active: 1, 
       created_at: new Date().toISOString() 
     };
-    await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
-    await db.products.put(newProd as any);
-    
+    // حفظ في الخلفية (بدون await)
+WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
+  .then(() => db.products.put(newProd as any))
+  .catch(err => console.error("Background save failed:", err));
     onAdd({ 
       id: initialData?.id || Date.now().toString(), 
       productId: newProd.id, 
@@ -472,18 +501,23 @@ ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 
                     </span>
                   )}
                 </div>
-                <input 
-                  ref={expiryInputRef} 
-                  type="date" 
-                  disabled={mode === 'sale'} 
-                  readOnly={mode === 'sale'} 
-                  value={tempExpiry} 
-                  onChange={e => setTempExpiry(e.target.value)} 
-                  onKeyDown={e => e.key === 'Enter' && priceInputRef.current?.focus()} 
-                  className={`w-full box-border h-10 border border-slate-200 rounded-xl px-2 text-[13px] font-semibold text-[#1E4D4D] outline-none text-right appearance-none ${
-                    mode === 'sale' ? 'bg-slate-100/80 cursor-not-allowed opacity-85' : 'bg-slate-50'
-                  }`} 
-                />
+                <div className="relative w-full h-10">
+  <input 
+    ref={expiryInputRef} 
+    type="date" 
+    disabled={mode === 'sale'} 
+    readOnly={mode === 'sale'} 
+    value={tempExpiry} 
+    onChange={e => setTempExpiry(e.target.value)} 
+    onKeyDown={e => e.key === 'Enter' && priceInputRef.current?.focus()} 
+    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed" 
+  />
+  <div className={`absolute inset-0 border border-slate-200 rounded-xl px-2 text-[13px] font-semibold text-[#1E4D4D] flex items-center justify-center pointer-events-none ${
+    mode === 'sale' ? 'bg-slate-100/80 opacity-85' : 'bg-slate-50'
+  }`}>
+    {formatDateDisplay(tempExpiry) || 'يوم / شهر / سنة'}
+  </div>
+</div>
               </div>
             </div>
 
