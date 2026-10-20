@@ -229,12 +229,24 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     const search = async () => {
       if (manualItemName.length > 1) {
         let results = await db.products.filter(p => {
-          const nameMatch = !!(p.Name && p.Name.toLowerCase().includes(manualItemName.toLowerCase()));
+          const n1 = p.name || p.Name || '';
+          const n2 = p.Name || p.name || '';
+          const nameMatch = !!(n1.toLowerCase().includes(manualItemName.toLowerCase()) || n2.toLowerCase().includes(manualItemName.toLowerCase()));
           const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
           return nameMatch || barcodeMatch;
-        }).limit(10).toArray();
+        }).toArray();
+
         if (mode === 'sale') results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
-        setFilteredProducts(results as ProductItem[]);
+
+        const uniqueMap = new Map();
+        for (const r of results) {
+          const key = (r.Name || r.name || '').trim().toLowerCase();
+          if (key && !uniqueMap.has(key)) {
+            uniqueMap.set(key, r);
+          }
+        }
+        let uniqueResults = Array.from(uniqueMap.values()).slice(0, 10);
+        setFilteredProducts(uniqueResults as ProductItem[]);
       } else { setFilteredProducts([]); }
     };
     search();
@@ -300,12 +312,8 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
     });
     success("تم إضافة الصنف بنجاح");
-    if (initialData) {
-      onClose();
-    } else {
-      resetForm();
-      setTimeout(() => itemNameInputRef.current?.focus(), 100);
-    }
+    resetForm();
+    onClose();
   };
 
   const handleConfirmRegister = async () => {
