@@ -222,24 +222,27 @@ const PurchasesInvoice: React.FC<{ onNavigate?: (view: string, params?: Record<s
     const rawExp = item.expiryDate || item.ExpiryDate || item.expiry_date || item.expirationDate || '';
     const normExp = normalizeToISODate(rawExp);
 
-    const newItem: InvoiceItem = {
-      ...item,
-      id: item.id || `PUR-DET-${Date.now()}`,
-      product_id: item.productId || item.product_id || `manual-${Date.now()}`,
-      productId: item.productId || item.product_id || `manual-${Date.now()}`,
-      name: item.name || item.productName || item.Name || '',
-      productName: item.productName || item.name || item.Name || '',
-      qty: Number(item.qty ?? item.quantity ?? 1),
-      quantity: Number(item.quantity ?? item.qty ?? 1),
-      price: Number(item.price ?? item.unitPrice ?? 0),
-      unitPrice: Number(item.unitPrice ?? item.price ?? 0),
-      sum: Number(item.sum ?? ((item.qty ?? item.quantity ?? 1) * (item.price ?? item.unitPrice ?? 0))),
-      subtotal: Number(item.subtotal ?? item.sum ?? ((item.qty ?? item.quantity ?? 1) * (item.price ?? item.unitPrice ?? 0))),
-      parent_id: header.invoice_number,
-      row_order: items.length + 1,
-      expiryDate: normExp,
-      category: item.category || item.categoryName || ''
-    };
+    // نولد بادئة عشوائية فريدة لمنع تعارض المعرفات
+const uniqueSuffix = Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+
+const newItem: InvoiceItem = {
+  ...item,
+  id: item.id || `PUR-DET-${uniqueSuffix}`,
+  product_id: item.productId || item.product_id || `manual-${uniqueSuffix}`,
+  productId: item.productId || item.product_id || `manual-${uniqueSuffix}`,
+  name: item.name || item.productName || item.Name || '',
+  productName: item.productName || item.name || item.Name || '',
+  qty: Number(item.qty ?? item.quantity ?? 1),
+  quantity: Number(item.quantity ?? item.qty ?? 1),
+  price: Number(item.price ?? item.unitPrice ?? 0),
+  unitPrice: Number(item.unitPrice ?? item.price ?? 0),
+  sum: Number(item.sum ?? ((item.qty ?? item.quantity ?? 1) * (item.price ?? item.unitPrice ?? 0))),
+  subtotal: Number(item.subtotal ?? item.sum ?? ((item.qty ?? item.quantity ?? 1) * (item.price ?? item.unitPrice ?? 0))),
+  parent_id: header.invoice_number,
+  row_order: items.length + 1,
+  expiryDate: normExp,
+  category: item.category || item.categoryName || ''
+};
 
     // Check if updating an existing row in the table
     const existingRowIdx = items.findIndex(i => i.id === newItem.id);
