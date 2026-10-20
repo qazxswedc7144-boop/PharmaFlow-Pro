@@ -234,12 +234,14 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
         const nameMatch = pName.includes(searchLower);
         const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
         return nameMatch || barcodeMatch;
-      }).limit(10).toArray();
+      }).limit(20).toArray(); 
       
       if (mode === 'sale') {
         results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
       }
-      setFilteredProducts(results as ProductItem[]);
+      
+      const uniqueResults = results.filter((v, i, a) => a.findIndex(t => (t.Name || t.name) === (v.Name || v.name)) === i);
+      setFilteredProducts(uniqueResults.slice(0, 10) as ProductItem[]);
     } else { 
       setFilteredProducts([]); 
     }
@@ -257,7 +259,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     qtyInputRef.current?.focus();
   };
 
-  const handleFinalize = async () => {
+  const handleFinalize = async (forcedId?: string) => {
     if (!manualItemName || !tempQty || !tempPrice) return;
     
     let existing = await db.products.where('name').equals(manualItemName).first().catch(() => null) ||
@@ -266,7 +268,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       existing = await db.products.filter(p => ((p.Name || p.name || '')).toLowerCase() === manualItemName.toLowerCase()).first().catch(() => null);
     }
 
-    let finalProductId = selectedProductId || existing?.id || null;
+    let finalProductId = forcedId || selectedProductId || existing?.id || null;
 
     if (!existing && mode === 'sale') {
       finalProductId = finalProductId || ('manual-' + Date.now());
@@ -314,40 +316,25 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   };
 
   const handleConfirmRegister = async () => {
-    setIsConfirmNewProductOpen(false);
-    setIsConfirmedNewProduct(true);
-    const newProd = { 
-      id: 'PROD-' + Date.now(), 
-      ProductID: 'PROD-' + Date.now(),
-      Name: manualItemName, 
-      name: manualItemName,
-      categoryName: categoryName || 'عام', 
-      UnitPrice: parseFloat(tempPrice as string) || 0, 
-      price: parseFloat(tempPrice as string) || 0,
-      Is_Active: 1, 
-      created_at: new Date().toISOString() 
-    };
-    await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
-    
-    onAdd({ 
-      id: initialData?.id || Date.now().toString(), 
-      productId: newProd.id, 
-      name: manualItemName, 
-      qty: parseFloat(tempQty as string), 
-      price: parseFloat(tempPrice as string), 
-      expiryDate: normalizeToISODate(tempExpiry), 
-      note: tempNote, 
-      category: categoryName || 'عام', 
-      sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
-    });
-    success("تم إضافة الصنف بنجاح");
-    if (initialData) {
-      onClose();
-    } else {
-      resetForm();
-      setTimeout(() => itemNameInputRef.current?.focus(), 100);
-    }
+  setIsConfirmNewProductOpen(false);
+  setIsConfirmedNewProduct(true);
+  
+  const newProd = { 
+    id: 'PROD-' + Date.now(), 
+    ProductID: 'PROD-' + Date.now(),
+    Name: manualItemName, 
+    name: manualItemName,
+    categoryName: categoryName || 'عام', 
+    UnitPrice: parseFloat(tempPrice as string) || 0, 
+    price: parseFloat(tempPrice as string) || 0,
+    Is_Active: 1, 
+    created_at: new Date().toISOString() 
   };
+  
+  await WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true });
+  
+  await handleFinalize(newProd.id);
+};
 
   return (
     <>
