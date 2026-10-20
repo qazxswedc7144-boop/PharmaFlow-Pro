@@ -8,7 +8,7 @@ import { AppProvider } from './contexts/AppContext';
 import { AuthProvider } from './features/auth/hooks/useAuth';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ReportProvider } from './contexts/ReportContext';
-import { NotificationProvider } from './contexts/NotificationContext';
+import { NotificationProvider } from '@/contexts/NotificationContext';
 import AppFaultBoundary from './shared/faults/AppFaultBoundary';
 
 // Services & Sync Engine
