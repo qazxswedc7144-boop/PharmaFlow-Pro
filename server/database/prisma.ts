@@ -44,8 +44,13 @@ function isConnectionError(err: any): boolean {
 const isProduction = process.env.NODE_ENV === "production" || process.cwd().includes("dist") || (typeof __filename !== "undefined" && __filename.includes("dist"));
 
 function handleOfflineFallback<T>(operationName: string): T {
-  if (isProduction || operationName === '$transaction') {
+  if (isProduction) {
     throw new OfflineDatabaseError('Prisma', operationName);
+  }
+
+  if (operationName === '$transaction') {
+    // If called via handleOfflineFallback, return a mock result or null
+    return null as unknown as T;
   }
 
   const parts = operationName.split('.');
@@ -82,8 +87,14 @@ function getOfflineProxy(): PrismaClient {
       }
 
       if (prop === '$transaction') {
-        return async () => {
-          throw new OfflineDatabaseError('Prisma', '$transaction');
+        return async (callback: any) => {
+          if (typeof callback === 'function') {
+            return await callback(getOfflineProxy());
+          }
+          if (Array.isArray(callback)) {
+            return await Promise.all(callback);
+          }
+          return callback;
         };
       }
       if (prop === '$queryRaw' || prop === '$executeRaw' || prop === '$executeRawUnsafe' || prop === '$queryRawUnsafe') {
