@@ -26,14 +26,17 @@ const getJwtRefreshSecret = () => {
   return secret;
 };
 
+// ✅ إصلاح 1: إضافة tenantId إلى واجهات الأنواع
 export interface DecodedAccessToken {
   userId: string;
   username: string;
   role: Role;
+  tenantId: string;
 }
 
 export interface DecodedRefreshToken {
   userId: string;
+  tenantId: string;
 }
 
 export class AuthService {
@@ -55,22 +58,29 @@ export class AuthService {
   /**
    * Token generator representing valid authorization duration (e.g., 1 hour).
    */
-  static generateAccessToken(user: { id: string; username: string; role: Role }): string {
+  // ✅ إصلاح 2: تمرير وحفظ tenantId داخل التوكن
+  static generateAccessToken(user: { id: string; username: string; role: Role; tenantId: string }): string {
     return jwt.sign(
-      { userId: user.id, username: user.username, role: user.role },
+      { 
+        userId: user.id, 
+        username: user.username, 
+        role: user.role,
+        tenantId: user.tenantId // 👈 إجباري لعزل المؤسسات
+      },
       getJwtSecret(),
-      { expiresIn: "4h" }
+      { expiresIn: "4h", algorithm: "HS256" } // ✅ تحديد الخوارزمية
     );
   }
 
   /**
    * Refreshes JWT tokens allowing users to request a new session within 7 days.
    */
-  static generateRefreshToken(user: { id: string }): string {
+  // ✅ إصلاح 3: تمرير وحفظ tenantId داخل توكن التحديث
+  static generateRefreshToken(user: { id: string; tenantId: string }): string {
     return jwt.sign(
-      { userId: user.id },
+      { userId: user.id, tenantId: user.tenantId }, 
       getJwtRefreshSecret(),
-      { expiresIn: "7d" }
+      { expiresIn: "7d", algorithm: "HS256" } // ✅ تحديد الخوارزمية
     );
   }
 
@@ -78,14 +88,16 @@ export class AuthService {
    * Safe payload parsing for verification of access signatures.
    */
   static verifyAccessToken(token: string): DecodedAccessToken {
-    return jwt.verify(token, getJwtSecret()) as DecodedAccessToken;
+    // ✅ إصلاح أمني: منع Algorithm Confusion
+    return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }) as DecodedAccessToken;
   }
 
   /**
    * Safe payload parsing for verification of refresh signatures.
    */
   static verifyRefreshToken(token: string): DecodedRefreshToken {
-    return jwt.verify(token, getJwtRefreshSecret()) as DecodedRefreshToken;
+    // ✅ إصلاح أمني: منع Algorithm Confusion
+    return jwt.verify(token, getJwtRefreshSecret(), { algorithms: ["HS256"] }) as DecodedRefreshToken;
   }
 
   /**
