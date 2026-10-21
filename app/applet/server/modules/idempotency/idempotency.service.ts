@@ -17,7 +17,23 @@ const metrics: IdempotencyMetrics = {
   concurrentLockPrevention: 0
 };
 
+/**
+ * دالة مساعدة لترتيب مفاتيح الكائن (Object) لضمان إنتاج Hash ثابت ومستقر
+ */
+function stableStringify(obj: any): string {
+  if (obj === null || typeof obj !== "object") return JSON.stringify(obj);
+  const sortedKeys = Object.keys(obj).sort();
+  return JSON.stringify(
+    sortedKeys.reduce((acc, key) => {
+      acc[key] = obj[key];
+      return acc;
+    }, {} as any)
+  );
+}
+
 export class IdempotencyService {
+  // ملاحظة: هذا الحفظ يعمل فقط داخل الـ Instance الواحد في Vercel
+  // الحماية الحقيقية تتم في قاعدة البيانات (Repository)
   private static inFlightKeys = new Set<string>();
 
   static generateRequestHash(
@@ -28,7 +44,7 @@ export class IdempotencyService {
   ): string {
     const serializedBody = typeof body === "string" 
       ? body 
-      : JSON.stringify(body ?? {});
+      : stableStringify(body ?? {});
           
     const rawString = `${method.toUpperCase()}:${endpoint}:${serializedBody}:${userId ?? "anonymous"}`;
     return crypto.createHash("sha256").update(rawString).digest("hex");
@@ -39,13 +55,18 @@ export class IdempotencyService {
   }
 
   static async handlePreRequest(
-    tenantId: string = "default-tenant",
+    tenantId: string, // 🚨 إجباري: لا يوجد default-tenant
     key: string,
     endpoint: string,
     method: string,
     body: any,
     userId: string | null
   ): Promise<{ status: "PROCESS"; hash: string } | { status: "REPLAY"; code: number; body: any }> {
+    
+    if (!tenantId) {
+      throw new Error("TENANT_ID_REQUIRED");
+    }
+
     const threadKey = `${tenantId}:${key}`;
     if (this.inFlightKeys.has(threadKey)) {
       metrics.concurrentLockPrevention++;
@@ -57,6 +78,7 @@ export class IdempotencyService {
     try {
       const hash = this.generateRequestHash(endpoint, method, body, userId);
       const existing = await IdempotencyRepository.findByKey(tenantId, key);
+      
       if (existing) {
         if (existing.processing) {
           metrics.concurrentLockPrevention++;
@@ -93,11 +115,13 @@ export class IdempotencyService {
         method,
         userId
       );
+      
       if (!isNew && record.processing) {
         metrics.concurrentLockPrevention++;
         logger.warn({ tenantId, key, endpoint, method }, "Concurrent attempt blocked on db lock acquisition.");
         throw new Error("CONCURRENT_LOCK");
       }
+      
       logger.info({ tenantId, key, endpoint, method, userId, hash }, "Idempotency key acquired. Proceeding to process.");
       return { status: "PROCESS", hash };
     } catch (err) {
@@ -106,14 +130,16 @@ export class IdempotencyService {
     }
   }
 
-  static async resolveRequest(tenantId: string = "default-tenant", key: string, responseStatus: number, responseBody: any): Promise<void> {
+  static async resolveRequest(tenantId: string, key: string, responseStatus: number, responseBody: any): Promise<void> {
+    if (!tenantId) return; 
     const threadKey = `${tenantId}:${key}`;
     this.inFlightKeys.delete(threadKey);
     await IdempotencyRepository.resolveKey(tenantId, key, responseBody, responseStatus);
     logger.debug({ tenantId, key, responseStatus }, "Idempotent response result cached successfully.");
   }
 
-  static async releaseLock(tenantId: string = "default-tenant", key: string): Promise<void> {
+  static async releaseLock(tenantId: string, key: string): Promise<void> {
+    if (!tenantId) return;
     const threadKey = `${tenantId}:${key}`;
     this.inFlightKeys.delete(threadKey);
     await IdempotencyRepository.releaseLock(tenantId, key);
