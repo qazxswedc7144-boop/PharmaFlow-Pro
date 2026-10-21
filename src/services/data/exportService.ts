@@ -2,6 +2,8 @@ import { db } from '@/core/db';
 import { CurrencyService } from '@/services/localization/CurrencyService';
 import { PrintTemplateEngine } from '@/services/integrity/shared/templateEngineService';
 import { authService } from '@features/auth/services/authService';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
 /**
  * دالة تنظيف النصوص لمنع ثغرات XSS
@@ -9,11 +11,11 @@ import { authService } from '@features/auth/services/authService';
 const sanitizeHTML = (str: any): string => {
   if (str === null || str === undefined) return '';
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+    .replace(/&/g, '&' + 'amp;')
+    .replace(/</g, '&' + 'lt;')
+    .replace(/>/g, '&' + 'gt;')
+    .replace(/"/g, '&' + 'quot;')
+    .replace(/'/g, '&' + '#039;');
 };
 
 /**
@@ -35,11 +37,10 @@ export const ExportService = {
         return `"${String(val).replace(/"/g, '""')}"`;
       }).join(','))
     ].join('\n');
-
+    
     const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
-    
     link.setAttribute('href', url);
     link.setAttribute('download', `${filename}.csv`);
     link.style.visibility = 'hidden';
@@ -51,63 +52,62 @@ export const ExportService = {
   },
 
   /**
-   * تصدير جداول البيانات بصيغة Excel XML Spreadsheet
+   * تصدير جداول البيانات بصيغة Excel XML Spreadsheet الرسمية المتوافقة مع Microsoft Excel و Google Sheets
    */
   exportToExcel: async function(items: any[], fileName: string, customHeaders?: string[]) {
     if (!items || items.length === 0) return;
-
-    const headers = customHeaders || Object.keys(items[0]);
     
+    const headers = customHeaders || Object.keys(items[0]);
     const escapeXml = (unsafe: any) => {
       if (unsafe === null || unsafe === undefined) return '';
       return String(unsafe)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
+        .replace(/&/g, '&' + 'amp;')
+        .replace(/</g, '&' + 'lt;')
+        .replace(/>/g, '&' + 'gt;')
+        .replace(/"/g, '&' + 'quot;')
+        .replace(/'/g, '&' + 'apos;');
     };
-
+    
     let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:o="urn:schemas-microsoft-com:office:office"
- xmlns:x="urn:schemas-microsoft-com:office:excel"
- xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
- xmlns:html="http://www.w3.org/TR/REC-html40">
- <Styles>
-  <Style ss:ID="Default" ss:Name="Normal">
-   <Alignment ss:Vertical="Center" ss:ReadingOrder="RightToLeft"/>
-   <Font ss:FontName="Segoe UI" ss:Size="11" ss:Color="#1E293B"/>
-  </Style>
-  <Style ss:ID="Header">
-   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
-   <Borders>
-    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#0F766E"/>
-   </Borders>
-   <Font ss:FontName="Segoe UI" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
-   <Interior ss:Color="#1E4D4D" ss:Pattern="Solid"/>
-  </Style>
-  <Style ss:ID="RowEven">
-   <Alignment ss:Vertical="Center"/>
-   <Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/>
-  </Style>
-  <Style ss:ID="RowOdd">
-   <Alignment ss:Vertical="Center"/>
-   <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
-  </Style>
-  <Style ss:ID="NumberCell">
-   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
-   <NumberFormat ss:Format="#,##0.00"/>
-  </Style>
- </Styles>
+xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:x="urn:schemas-microsoft-com:office:excel"
+xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+xmlns:html="http://www.w3.org/TR/REC-html40">
+<Styles>
+<Style ss:ID="Default" ss:Name="Normal">
+ <Alignment ss:Vertical="Center" ss:ReadingOrder="RightToLeft"/>
+ <Font ss:FontName="Segoe UI" ss:Size="11" ss:Color="#1E293B"/>
+</Style>
+<Style ss:ID="Header">
+ <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+ <Borders>
+ <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#0F766E"/>
+ </Borders>
+ <Font ss:FontName="Segoe UI" ss:Size="11" ss:Bold="1" ss:Color="#FFFFFF"/>
+ <Interior ss:Color="#1E4D4D" ss:Pattern="Solid"/>
+</Style>
+<Style ss:ID="RowEven">
+ <Alignment ss:Vertical="Center"/>
+ <Interior ss:Color="#F8FAFC" ss:Pattern="Solid"/>
+</Style>
+<Style ss:ID="RowOdd">
+ <Alignment ss:Vertical="Center"/>
+ <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+</Style>
+<Style ss:ID="NumberCell">
+ <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+ <NumberFormat ss:Format="#,##0.00"/>
+</Style>
+</Styles>
  <Worksheet ss:Name="${escapeXml(fileName.substring(0, 31))}">
-  <Table ss:DefaultRowHeight="22" ss:DefaultColumnWidth="120">
-   <Row ss:Height="26">
-    ${headers.map(h => `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`).join('\n    ')}
-   </Row>
+ <Table ss:DefaultRowHeight="22" ss:DefaultColumnWidth="120">
+ <Row ss:Height="26">
+${headers.map(h => `    <Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`).join('\n')}
+ </Row>
 `;
-
+    
     items.forEach((item, index) => {
       const styleId = index % 2 === 0 ? 'RowOdd' : 'RowEven';
       xml += `   <Row ss:Height="20">\n`;
@@ -118,11 +118,11 @@ export const ExportService = {
       });
       xml += `   </Row>\n`;
     });
-
+    
     xml += `  </Table>
- </Worksheet>
+</Worksheet>
 </Workbook>`;
-
+    
     const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -132,7 +132,7 @@ export const ExportService = {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-
+    
     await db.addAuditLog('SYSTEM', 'OTHER', fileName, "تم تصدير تقرير بصيغة Excel (XLS/Spreadsheet)");
   },
 
@@ -146,8 +146,8 @@ export const ExportService = {
         (typeof titleOrElement === 'string' && (titleOrElement.startsWith('#') || titleOrElement.startsWith('.') || document.getElementById(titleOrElement))) ||
         titleOrElement instanceof HTMLElement
       ) {
-        const element = titleOrElement instanceof HTMLElement 
-          ? titleOrElement 
+        const element = titleOrElement instanceof HTMLElement
+          ? titleOrElement
           : (document.getElementById(titleOrElement) || document.querySelector(titleOrElement));
         const filename = typeof columnsOrFilename === 'string' ? columnsOrFilename : 'report_document';
         
@@ -158,17 +158,16 @@ export const ExportService = {
             logging: false,
             backgroundColor: '#ffffff'
           });
-
+          
           const imgData = canvas.toDataURL('image/png');
           const pdf = new jsPDF({
             orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
             unit: 'mm',
             format: 'a4'
           });
-
+          
           const pdfWidth = pdf.internal.pageSize.getWidth();
           const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
           pdf.addImage(imgData, 'PNG', 0, 10, pdfWidth, pdfHeight);
           pdf.save(`${filename}.pdf`);
           
@@ -176,10 +175,9 @@ export const ExportService = {
           return;
         }
       }
-
+      
       // تم تعطيل الخيار البديل (autoTable) لأنه لا يدعم اللغة العربية ويسبب ظهور مربعات فارغة
       alert("تعذر إنشاء ملف PDF بالطريقة الرسومية. يرجى استخدام زر الطباعة بدلاً من ذلك.");
-      
     } catch (error) {
       console.error("[ExportService] PDF export error:", error);
       alert("حدث خطأ أثناء تصدير ملف الـ PDF. يرجى المحاولة مرة أخرى.");
@@ -192,13 +190,13 @@ export const ExportService = {
   exportToPDF: async (data: any, type: 'SALE' | 'PURCHASE' | 'VOUCHER' | 'REPORT') => {
     const activeTemplate = await PrintTemplateEngine.getActiveTemplate(type);
     const layoutConfig = JSON.parse(activeTemplate.TemplateLayoutJSON || '{}');
-    
     const printWindow = window.open('', '_blank');
+    
     if (!printWindow) {
       alert('يرجى السماح بالنوافذ المنبثقة (Popups) لعرض المستند للطباعة.');
       return;
     }
-
+    
     const invoiceConfig = await db.getSetting('invoice_config', {
       pharmacyName: 'PharmaFlow',
       address: 'الموقع غير محدد',
@@ -206,15 +204,15 @@ export const ExportService = {
       taxNumber: '-',
       footerNote: 'شكراً لتعاملكم معنا'
     });
-
+    
     const refId = data.SaleID || data.invoiceId || data.purchase_id || data.id || 'N/A';
     const date = new Date(data.date || data.Date || Date.now()).toLocaleDateString('ar-SA');
     const total = data.finalTotal || data.totalAmount || data.amount || 0;
     const currency = data.currency || CurrencyService.getCurrentCurrencyCode();
     const user = authService.getCurrentUser();
-
+    
     let contentHtml = '';
-
+    
     if (type === 'REPORT') {
       contentHtml = `
         <div style="margin-bottom: 2rem;">
@@ -260,7 +258,6 @@ export const ExportService = {
               <p style="font-size: 14px; font-weight: 900; margin: 4px 0 0 0;">${sanitizeHTML(invoiceConfig.taxNumber)}</p>
            </div>
         </div>
-
         <table style="width: 100%; text-align: right; border-collapse: collapse; margin-bottom: 32px;">
           <thead>
             <tr style="border-bottom: 2px solid ${layoutConfig.primaryColor || '#1E4D4D'};">
@@ -280,7 +277,6 @@ export const ExportService = {
             ${type === 'VOUCHER' ? `<tr><td colspan="3" style="padding: 24px; text-align: center; font-weight: bold; border: 2px dashed #e2e8f0; border-radius: 12px; margin-top: 16px;">${sanitizeHTML(data.notes || 'لا توجد ملاحظات')}</td></tr>` : ''}
           </tbody>
         </table>
-
         <div style="display: flex; justify-content: flex-end; padding-top: 16px; border-top: 4px double #e2e8f0;">
           <div style="text-align: left;">
             <p style="font-size: 10px; font-weight: 900; opacity: 0.4; text-transform: uppercase; margin: 0;">الإجمالي النهائي المستحق</p>
@@ -289,7 +285,7 @@ export const ExportService = {
         </div>
       `;
     }
-
+    
     const html = `
       <!DOCTYPE html>
       <html dir="${activeTemplate.RTL_Support ? 'rtl' : 'ltr'}" lang="ar">
@@ -298,20 +294,17 @@ export const ExportService = {
           <title>${activeTemplate.TemplateName}_${refId}</title>
           <style>
             @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
-            
             /* إجبار المتصفح على طباعة الألوان والخلفيات */
             * {
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
               color-adjust: exact !important;
             }
-
             body { font-family: 'Cairo', sans-serif; padding: 30px; background: #ffffff; color: #1e293b; margin: 0; direction: rtl; }
             .print-container { max-width: 750px; margin: 0 auto; border: 1px solid #e2e8f0; padding: 32px; border-radius: 16px; background: #ffffff; }
             .no-print { display: flex; gap: 12px; justify-content: center; margin-top: 30px; }
             button { padding: 12px 28px; border-radius: 14px; font-weight: 900; font-family: 'Cairo', sans-serif; cursor: pointer; border: none; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: all 0.2s; }
             button:disabled { opacity: 0.5; cursor: not-allowed; }
-
             /* إعدادات الطباعة الصارمة لمنع الصفحة البيضاء */
             @media print { 
               @page { size: A4; margin: 10mm; }
@@ -339,15 +332,12 @@ export const ExportService = {
                 <p style="font-size: 11px; font-weight: bold; opacity: 0.7; margin: 0;">${date}</p>
               </div>
             </div>
-
             ${contentHtml}
-
             <div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #f1f5f5; text-align: center;">
                <p style="font-size: 11px; font-weight: bold; color: #64748b; font-style: italic; margin: 0 0 8px 0;">${sanitizeHTML(invoiceConfig.footerNote)}</p>
                <div style="opacity: 0.4; font-size: 9px; font-weight: 900; text-transform: uppercase;">Printed by: ${sanitizeHTML(user?.User_Name || 'Unknown')} | Template: ${activeTemplate.TemplateName}</div>
             </div>
           </div>
-          
           <div class="no-print">
              <!-- الزر معطل مبدئياً حتى يتم تحميل الخط -->
              <button id="print-btn" onclick="window.print()" style="background: #1E4D4D; color: white;" disabled>
@@ -355,7 +345,6 @@ export const ExportService = {
              </button>
              <button onclick="window.close()" style="background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0;">إغلاق</button>
           </div>
-
           <!-- سكربت ذكي لانتظار تحميل الخط العربي قبل السماح بالطباعة -->
           <script>
             document.fonts.ready.then(function() {
@@ -367,11 +356,11 @@ export const ExportService = {
         </body>
       </html>
     `;
-
+    
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
-
+    
     await db.addAuditLog(
       'SYSTEM', 
       type === 'REPORT' ? 'OTHER' : type as any, 
