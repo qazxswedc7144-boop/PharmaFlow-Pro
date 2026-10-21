@@ -1,27 +1,21 @@
 // server/modules/idempotency/idempotency.repository.ts
 import { prisma } from "../../database/prisma.js";
 import { IdempotencyKey } from "@prisma/client";
+import { randomUUID } from "crypto";
 
 const inMemoryFallbackStore = new Map<string, IdempotencyKey>();
+const MAX_MEMORY_ENTRIES = 5000; // حد أقصى لمنع انهيار الذاكرة (OOM)
 
 function isDbConnectionError(err: any): boolean {
   const msg = String(err?.message || err || "");
+  // تم تحسين الفحص ليكون أكثر دقة وتجنب الأخطاء العامة
   return (
-    msg.includes("P1001") ||
-    msg.includes("P1002") ||
-    msg.includes("P1008") ||
-    msg.includes("P1017") ||
-    msg.includes("Can't reach database") ||
-    msg.includes("Database unavailable") ||
+    msg.includes("P1001") || // Can't reach database server
+    msg.includes("P1002") || // Database server timeout
+    msg.includes("P1008") || // Operations timed out
+    msg.includes("P1017") || // Server has closed the connection
     msg.includes("ECONNREFUSED") ||
-    msg.includes("database server") ||
-    msg.includes("Closed") ||
-    msg.includes("closed") ||
-    msg.includes("connection") ||
-    msg.includes("socket") ||
-    msg.includes("terminated") ||
-    msg.includes("reach database") ||
-    msg.includes("Can't reach")
+    msg.includes("Can't reach database")
   );
 }
 
@@ -56,6 +50,7 @@ export class IdempotencyRepository {
   ): Promise<{ record: IdempotencyKey; isNew: boolean }> {
     const expiresAt = new Date(Date.now() + expiresInMs);
     const cacheKey = `${tenantId}:${key}`;
+    
     try {
       return await prisma.$transaction(async (tx) => {
         const existing = await tx.idempotencyKey.findUnique({
@@ -81,6 +76,7 @@ export class IdempotencyRepository {
       });
     } catch (error) {
       if (isDbConnectionError(error)) {
+        // 🚨 تحذير: هذا الفحص يعمل فقط داخل نفس الـ Instance في Vercel
         const existing = inMemoryFallbackStore.get(cacheKey);
         if (existing) {
           if (new Date() > existing.expiresAt) {
@@ -89,8 +85,15 @@ export class IdempotencyRepository {
             return { record: existing, isNew: false };
           }
         }
+        
+        // حماية الذاكرة من الامتلاء
+        if (inMemoryFallbackStore.size >= MAX_MEMORY_ENTRIES) {
+          const firstKey = inMemoryFallbackStore.keys().next().value;
+          if (firstKey) inMemoryFallbackStore.delete(firstKey);
+        }
+
         const mockRecord: IdempotencyKey = {
-          id: Math.random().toString(36).substring(3, 11),
+          id: randomUUID(),
           tenantId,
           key,
           requestHash,
@@ -107,6 +110,8 @@ export class IdempotencyRepository {
         inMemoryFallbackStore.set(cacheKey, mockRecord);
         return { record: mockRecord, isNew: true };
       }
+      
+      // معالجة خطأ الـ Race Condition (إذا تم إنشاء المفتاح من طلب آخر في نفس اللحظة)
       const checkAgain = await prisma.idempotencyKey.findUnique({
         where: { tenantId_key: { tenantId, key } }
       });
@@ -145,7 +150,7 @@ export class IdempotencyRepository {
           return cached;
         }
         const mockRecord: IdempotencyKey = {
-          id: Math.random().toString(36).substring(3, 11),
+          id: randomUUID(),
           tenantId,
           key,
           requestHash: "",
@@ -162,7 +167,7 @@ export class IdempotencyRepository {
         inMemoryFallbackStore.set(cacheKey, mockRecord);
         return mockRecord;
       }
-      throw error;
+      throw error; // ✅ إعادة رمي الخطأ إذا لم يكن خطأ اتصال
     }
   }
 
@@ -186,7 +191,8 @@ export class IdempotencyRepository {
         }
         return null;
       }
-      return null;
+      // ✅ إعادة رمي الخطأ بدلاً من ابتلاعه
+      throw error; 
     }
   }
 
