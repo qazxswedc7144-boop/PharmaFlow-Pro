@@ -7,24 +7,32 @@ import { prisma } from "../../../../../server/database/prisma.js";
 
 export class AuthController {
   /**
-   * Safe login execution and register log audits.
+   * Safe login execution with tenant isolation and audit logging.
    */
   static async login(req: AuthenticatedRequest, res: Response) {
     try {
-      const { username, password } = req.body;
+      const { username, password, tenantId: requestedTenantId } = req.body;
 
       const user = await prisma.user.findUnique({
-        where: { username }
+        where: { username },
+        include: {
+          tenantUsers: {
+            include: { tenant: true }
+          }
+        }
       });
 
+      // 🚨 فحص أمني: لا نكشف إن كان المستخدم موجوداً أو لا
       if (!user || user.passwordHash === "") {
-        await AuditService.logLoginAttempt(undefined, username, "FAILED", req.ip);
+        await AuditService.logLoginAttempt(undefined, undefined, username, "FAILED", req.ip);
         return res.status(401).json({ error: "INVALID_CREDENTIALS", message: "خطأ في اسم المستخدم أو كلمة المرور." });
       }
 
       const isValid = await AuthService.verifyPassword(password, user.passwordHash);
       if (!isValid) {
-        await AuditService.logLoginAttempt(user.id, username, "FAILED", req.ip);
+        // نحتاج لمعرفة المؤسسة لتسجيل الفشل بدقة (نستخدم الأولى كاحتياط)
+        const fallbackTenantId = user.tenantUsers[0]?.tenantId;
+        await AuditService.logLoginAttempt(fallbackTenantId, user.id, username, "FAILED", req.ip);
         return res.status(401).json({ error: "INVALID_CREDENTIALS", message: "خطأ في اسم المستخدم أو كلمة المرور." });
       }
 
@@ -32,15 +40,34 @@ export class AuthController {
         return res.status(403).json({ error: "ACCOUNT_SUSPENDED", message: "حساب المستخدم معطل حالياً." });
       }
 
-      const accessToken = AuthService.generateAccessToken(user);
-      const refreshToken = AuthService.generateRefreshToken(user);
+      // 🚨 إصلاح جوهري: تحديد المؤسسة (Tenant) التي سيدخل بها المستخدم
+      let activeTenantId: string | undefined;
+      if (requestedTenantId) {
+        // التحقق أن المستخدم فعلاً عضو في المؤسسة المطلوبة
+        const membership = user.tenantUsers.find(tu => tu.tenantId === requestedTenantId && tu.tenant.isActive);
+        if (!membership) {
+          return res.status(403).json({ error: "TENANT_ACCESS_DENIED", message: "لا تملك صلاحية الوصول لهذه المؤسسة." });
+        }
+        activeTenantId = membership.tenantId;
+      } else {
+        // إذا لم يحدد، نستخدم أول مؤسسة نشطة
+        activeTenantId = user.tenantUsers.find(tu => tu.tenant.isActive)?.tenantId;
+      }
 
-      // Persist active sessions in database
+      if (!activeTenantId) {
+        return res.status(403).json({ error: "NO_ACTIVE_TENANT", message: "لا يوجد حساب مؤسسة نشط لهذا المستخدم." });
+      }
+
+      // ملاحظة: AuthService يجب أن يستقبل activeTenantId ليضعه في التوكن
+      const accessToken = AuthService.generateAccessToken({ ...user, tenantId: activeTenantId });
+      const refreshToken = AuthService.generateRefreshToken({ ...user, tenantId: activeTenantId });
+
+      // Persist active sessions
       await AuthService.createSession(user.id, accessToken, req.ip, req.headers["user-agent"]);
       await AuthService.createRefreshTokenRecord(user.id, refreshToken);
 
-      // Log audit
-      await AuditService.logLoginAttempt(user.id, username, "SUCCESS", req.ip);
+      // ✅ تسجيل النجاح مع الـ tenantId الصحيح
+      await AuditService.logLoginAttempt(activeTenantId, user.id, username, "SUCCESS", req.ip);
 
       return res.json({
         success: true,
@@ -49,11 +76,16 @@ export class AuthController {
         user: {
           id: user.id,
           username: user.username,
-          role: user.role
+          role: user.role,
+          tenantId: activeTenantId // ✅ مهم جداً للـ frontend
         }
       });
     } catch (err: any) {
-      return res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+      console.error("[AUTH] Login error:", err);
+      return res.status(500).json({ 
+        error: "INTERNAL_ERROR", 
+        message: process.env.NODE_ENV === 'production' ? "خطأ داخلي في الخادم." : err.message 
+      });
     }
   }
 
@@ -76,20 +108,35 @@ export class AuthController {
         return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "رمز التحديث تالف أو ملغى أو منتهي الصلاحية." });
       }
 
+      // جلب المستخدم مع مؤسساته
       const user = await prisma.user.findUnique({
-        where: { id: decoded.userId }
+        where: { id: decoded.userId },
+        include: { tenantUsers: { include: { tenant: true } } }
       });
 
       if (!user || !user.isActive) {
         return res.status(401).json({ error: "USER_INACTIVE", message: "لم يعد حساب المستخدم المرتبط نشطاً." });
       }
 
-      const newAccessToken = AuthService.generateAccessToken(user);
+      // استخراج tenantId من التوكن القديم أو من أول مؤسسة نشطة
+      const activeTenantId = (decoded as any).tenantId || user.tenantUsers.find(tu => tu.tenant.isActive)?.tenantId;
+
+      if (!activeTenantId) {
+        return res.status(403).json({ error: "NO_ACTIVE_TENANT", message: "لا يوجد حساب مؤسسة نشط." });
+      }
+
+      const newAccessToken = AuthService.generateAccessToken({ ...user, tenantId: activeTenantId });
+      
+      // ✅ Refresh Token Rotation (إصلاح أمني: إلغاء القديم وإصدار جديد)
+      await AuthService.revokeRefreshToken(refreshToken);
+      const newRefreshToken = AuthService.generateRefreshToken({ ...user, tenantId: activeTenantId });
+      await AuthService.createRefreshTokenRecord(user.id, newRefreshToken);
       await AuthService.createSession(user.id, newAccessToken, req.ip, req.headers["user-agent"]);
 
       return res.json({
         success: true,
-        accessToken: newAccessToken
+        accessToken: newAccessToken,
+        refreshToken: newRefreshToken // ✅ تم عكس الرمز
       });
     } catch (err: any) {
       return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "فشل التحقق من توقيع الرمز." });
@@ -115,18 +162,25 @@ export class AuthController {
       }
 
       if (req.user) {
+        // ✅ إصلاح: القيمة الصحيحة من الـ Enum + إضافة tenantId و ip
         await AuditService.log({
+          tenantId: req.user.tenantId || "SYSTEM",
           userId: req.user.userId,
-          action: "USER_LOGOUT",
+          action: "USER_LOGIN", // نستخدم USER_LOGIN لأن الـ Schema لا يحتوي على USER_LOGOUT
           entity: "User",
           entityId: req.user.userId,
-          after: "Sessions invalidated cleanly"
+          after: JSON.stringify({ event: "LOGOUT", message: "Sessions invalidated cleanly" }),
+          ipAddress: req.ip
         });
       }
 
       return res.json({ success: true, message: "تم تسجيل الخروج بنجاح وتدمير الرموز المفتوحة." });
     } catch (err: any) {
-      return res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+      console.error("[AUTH] Logout error:", err);
+      return res.status(500).json({ 
+        error: "INTERNAL_ERROR", 
+        message: process.env.NODE_ENV === 'production' ? "خطأ داخلي." : err.message 
+      });
     }
   }
 
@@ -142,7 +196,8 @@ export class AuthController {
       user: {
         id: req.user.userId,
         username: req.user.username,
-        role: req.user.role
+        role: req.user.role,
+        tenantId: req.user.tenantId, // ✅ إضافة مهمة جداً للـ frontend
       }
     });
   }
