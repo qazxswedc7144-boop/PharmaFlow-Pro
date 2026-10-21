@@ -174,8 +174,9 @@ const userId = authReq.user?.userId;
     }
 
     // Convert timestamp (epoch ms) to Date object, or fallback to current time
-    const parsedDate = timestamp ? new Date(timestamp) : new Date();
-
+    // Convert timestamp (epoch ms) to Date object, or fallback to current time
+const rawDate = timestamp ? new Date(timestamp) : new Date();
+const parsedDate = isNaN(rawDate.getTime()) ? new Date() : rawDate;
     const crashEntry = await prisma.crashLog.create({
       data: {
         tenantId: tenantId || null,
@@ -451,10 +452,9 @@ if (!deviceFingerprint || !tenantId || !expiryDate || !signature) {
     const expectedSignature = crypto.createHmac('sha256', secret).update(message).digest('hex');
 
     // Safe comparison
-    const isValid = crypto.timingSafeEqual(
-      Buffer.from(signature, 'hex'),
-      Buffer.from(expectedSignature, 'hex')
-    );
+const signatureBuf = Buffer.from(signature, 'hex');
+const expectedBuf = Buffer.from(expectedSignature, 'hex');
+const isValid = signatureBuf.length === expectedBuf.length && crypto.timingSafeEqual(signatureBuf, expectedBuf);
 
     return res.json({
       status: 'success',
