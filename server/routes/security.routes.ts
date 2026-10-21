@@ -151,16 +151,19 @@ router.post('/decrypt-backup', (req: Request, res: Response) => {
 router.post('/crash', async (req: Request, res: Response) => {
   try {
     const {
-      tenantId,
-      branchId,
-      userId,
-      route,
-      deviceFingerprint,
-      appVersion,
-      stackTrace,
-      errorMessage,
-      timestamp
-    } = req.body;
+  branchId,
+  route,
+  deviceFingerprint,
+  appVersion,
+  stackTrace,
+  errorMessage,
+  timestamp
+} = req.body;
+
+// 🚨 SEC-07 FIX: Force tenantId and userId from the token
+const authReq = req as AuthenticatedRequest;
+const tenantId = authReq.user?.tenantId;
+const userId = authReq.user?.userId;
 
     if (!route || !errorMessage) {
       return res.status(400).json({
