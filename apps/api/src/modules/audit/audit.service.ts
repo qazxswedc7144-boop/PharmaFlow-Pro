@@ -1,30 +1,35 @@
 // apps/api/src/modules/audit/audit.service.ts
 import { AuditRepository } from "./audit.repository.js";
 import { AuditLogPayload } from "./audit.types.js";
-import crypto from "crypto";
 
 export class AuditService {
   /**
-   * Safe, append-only logger of core mutations containing cryptographic UUID correlation.
+   * Safe, append-only logger of core mutations.
    */
   static async log(payload: AuditLogPayload) {
     try {
-      const eventId = crypto.randomUUID();
-      const doc = await AuditRepository.create({
-        ...payload,
-        action: payload.action
-      });
-      return { success: true, eventId, docId: doc.id };
+      // 🚨 إصلاح: التحقق من وجود tenantId قبل الحفظ
+      if (!payload.tenantId) {
+        console.warn("⚠️ Audit log rejected: Missing tenantId.");
+        return { success: false, error: "Missing tenantId" };
+      }
+
+      const doc = await AuditRepository.create(payload);
+      return { success: true, docId: doc?.id };
     } catch (err: any) {
       console.warn("⚠️ Immutable audit record injection failed:", err.message);
       return { success: false, error: err.message };
     }
   }
 
-  static async logInvoiceCreated(userId: string, invoiceId: string, payload: any, ip?: string) {
+  // 🚨 إصلاح: أضفنا tenantId (إجباري) و branchId (اختياري) لكل الدوال
+
+  static async logInvoiceCreated(tenantId: string, userId: string, invoiceId: string, payload: any, ip?: string, branchId?: string) {
     return this.log({
+      tenantId,
+      branchId,
       userId,
-      action: "INVOICE_CREATE",
+      action: "CREATE", // ✅ القيمة الصحيحة من الـ Schema
       entity: "Invoice",
       entityId: invoiceId,
       after: JSON.stringify(payload),
@@ -32,10 +37,12 @@ export class AuditService {
     });
   }
 
-  static async logInvoiceApproved(userId: string, invoiceId: string, payload: any, ip?: string) {
+  static async logInvoiceApproved(tenantId: string, userId: string, invoiceId: string, payload: any, ip?: string, branchId?: string) {
     return this.log({
+      tenantId,
+      branchId,
       userId,
-      action: "INVOICE_APPROVE",
+      action: "UPDATE", // ✅ القيمة الصحيحة من الـ Schema
       entity: "Invoice",
       entityId: invoiceId,
       after: JSON.stringify(payload),
@@ -43,10 +50,12 @@ export class AuditService {
     });
   }
 
-  static async logStockAdjusted(userId: string, productId: string, payload: any, ip?: string) {
+  static async logStockAdjusted(tenantId: string, userId: string, productId: string, payload: any, ip?: string, branchId?: string) {
     return this.log({
+      tenantId,
+      branchId,
       userId,
-      action: "STOCK_ADJUSTMENT",
+      action: "UPDATE", // ✅ القيمة الصحيحة من الـ Schema
       entity: "Product",
       entityId: productId,
       after: JSON.stringify(payload),
@@ -54,31 +63,35 @@ export class AuditService {
     });
   }
 
-  static async logLoginAttempt(userId: string | undefined, username: string, status: "SUCCESS" | "FAILED", ip?: string) {
+  static async logLoginAttempt(tenantId: string | undefined, userId: string | undefined, username: string, status: "SUCCESS" | "FAILED", ip?: string) {
     return this.log({
+      tenantId: tenantId || "SYSTEM", // يمكن استخدام SYSTEM للفشل قبل معرفة المؤسسة
       userId,
-      action: status === "SUCCESS" ? "USER_LOGIN" : "AUTH_FAILURE",
+      action: "USER_LOGIN", // ✅ القيمة الصحيحة من الـ Schema
       entity: "User",
       entityId: username,
-      after: status === "SUCCESS" ? "SUCCESSFUL_JWT" : "INVALID_PASSWORD",
+      after: JSON.stringify({ status, username }), // خزنا الحالة في الـ after
       ipAddress: ip
     });
   }
 
   static async logFailedAuth(ip: string, details: string) {
     return this.log({
-      action: "UNAUTHORIZED_ACCESSS_ATTEMPT",
+      tenantId: "SYSTEM", // لم نتمكن من تحديد المؤسسة بسبب فشل المصادقة
+      action: "USER_LOGIN", // استخدمنا نفس الـ enum، والتفاصيل في after
       entity: "GlobalGuard",
       entityId: ip,
-      after: details,
+      after: JSON.stringify({ error: details, type: "UNAUTHORIZED_ATTEMPT" }),
       ipAddress: ip
     });
   }
 
-  static async logJournalPosted(userId: string, entryId: string, payload: any, ip?: string) {
+  static async logJournalPosted(tenantId: string, userId: string, entryId: string, payload: any, ip?: string, branchId?: string) {
     return this.log({
+      tenantId,
+      branchId,
       userId,
-      action: "JOURNAL_POST",
+      action: "POST_JOURNAL", // ✅ القيمة الصحيحة من الـ Schema
       entity: "JournalEntry",
       entityId: entryId,
       after: JSON.stringify(payload),
