@@ -2,9 +2,19 @@ import { db } from '@/core/db';
 import { CurrencyService } from '@/services/localization/CurrencyService';
 import { PrintTemplateEngine } from '@/services/integrity/shared/templateEngineService';
 import { authService } from '@features/auth/services/authService';
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import html2canvas from 'html2canvas';
+
+/**
+ * دالة تنظيف النصوص لمنع ثغرات XSS
+ */
+const sanitizeHTML = (str: any): string => {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+};
 
 /**
  * Export Service - محرك الطباعة والتصدير الموحد المطور (Unified Template Engine)
@@ -37,13 +47,13 @@ export const ExportService = {
     link.click();
     document.body.removeChild(link);
     
-    db.addAuditLog('SYSTEM', 'OTHER', filename, "تم تصدير البيانات بصيغة جدولية (CSV)");
+    await db.addAuditLog('SYSTEM', 'OTHER', filename, "تم تصدير البيانات بصيغة جدولية (CSV)");
   },
 
   /**
-   * تصدير جداول البيانات بصيغة Excel XML Spreadsheet الرسمية المتوافقة مع Microsoft Excel و Google Sheets
+   * تصدير جداول البيانات بصيغة Excel XML Spreadsheet
    */
-  exportToExcel: function(items: any[], fileName: string, customHeaders?: string[]) {
+  exportToExcel: async function(items: any[], fileName: string, customHeaders?: string[]) {
     if (!items || items.length === 0) return;
 
     const headers = customHeaders || Object.keys(items[0]);
@@ -123,15 +133,15 @@ export const ExportService = {
     link.click();
     document.body.removeChild(link);
 
-    db.addAuditLog('SYSTEM', 'OTHER', fileName, "تم تصدير تقرير بصيغة Excel (XLS/Spreadsheet)");
+    await db.addAuditLog('SYSTEM', 'OTHER', fileName, "تم تصدير تقرير بصيغة Excel (XLS/Spreadsheet)");
   },
 
   /**
-   * تصدير PDF يدعم العناصر (DOM element / html2canvas) أو مصفوفة البيانات التقليدية
+   * تصدير PDF للعناصر الرسومية
    */
   exportToPDFFile: async (titleOrElement: string | HTMLElement, columnsOrFilename: string[] | string, rowsOrUndefined?: any[][], maybeFilename?: string) => {
     try {
-      // 1. If element selector or HTMLElement is passed, use html2canvas for 100% Arabic support
+      // استخدام html2canvas للحصول على دعم كامل للغة العربية بدلاً من autoTable
       if (
         (typeof titleOrElement === 'string' && (titleOrElement.startsWith('#') || titleOrElement.startsWith('.') || document.getElementById(titleOrElement))) ||
         titleOrElement instanceof HTMLElement
@@ -162,36 +172,14 @@ export const ExportService = {
           pdf.addImage(imgData, 'PNG', 0, 10, pdfWidth, pdfHeight);
           pdf.save(`${filename}.pdf`);
           
-          db.addAuditLog('SYSTEM', 'OTHER', filename, "تم تصدير التقرير بصيغة PDF بنجاح");
+          await db.addAuditLog('SYSTEM', 'OTHER', filename, "تم تصدير التقرير بصيغة PDF بنجاح");
           return;
         }
       }
 
-      // 2. Fallback traditional signature: (title, columns, rows, filename)
-      const title = String(titleOrElement || 'تقرير');
-      const columns = Array.isArray(columnsOrFilename) ? columnsOrFilename : [];
-      const rows = rowsOrUndefined || [];
-      const filename = maybeFilename || 'report';
-
-      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' }) as any;
+      // تم تعطيل الخيار البديل (autoTable) لأنه لا يدعم اللغة العربية ويسبب ظهور مربعات فارغة
+      alert("تعذر إنشاء ملف PDF بالطريقة الرسومية. يرجى استخدام زر الطباعة بدلاً من ذلك.");
       
-      doc.setFontSize(16);
-      doc.text(title, 14, 20);
-      
-      doc.setFontSize(10);
-      doc.text(`تاريخ التصدير: ${new Date().toLocaleString('ar-EG')}`, 14, 28);
-
-      autoTable(doc, {
-        head: [columns],
-        body: rows,
-        startY: 34,
-        styles: { font: 'helvetica', halign: 'right', fontSize: 10 },
-        headStyles: { fillColor: [30, 77, 77], textColor: 255 },
-        alternateRowStyles: { fillColor: [248, 250, 250] }
-      });
-
-      doc.save(`${filename}.pdf`);
-      db.addAuditLog('SYSTEM', 'OTHER', filename, "تم تصدير التقرير بصيغة PDF بنجاح");
     } catch (error) {
       console.error("[ExportService] PDF export error:", error);
       alert("حدث خطأ أثناء تصدير ملف الـ PDF. يرجى المحاولة مرة أخرى.");
@@ -230,12 +218,12 @@ export const ExportService = {
     if (type === 'REPORT') {
       contentHtml = `
         <div style="margin-bottom: 2rem;">
-          <h2 style="font-size: 18px; font-weight: 900; border-bottom: 2px solid ${layoutConfig.primaryColor || '#1E4D4D'}; padding-bottom: 8px; margin-bottom: 16px; color: ${layoutConfig.primaryColor || '#1E4D4D'}">تقرير إحصائي: ${data.reportName || 'عام'}</h2>
+          <h2 style="font-size: 18px; font-weight: 900; border-bottom: 2px solid ${layoutConfig.primaryColor || '#1E4D4D'}; padding-bottom: 8px; margin-bottom: 16px; color: ${layoutConfig.primaryColor || '#1E4D4D'}">تقرير إحصائي: ${sanitizeHTML(data.reportName || 'عام')}</h2>
           <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;">
              ${(data.summary || []).map((s: any) => `
                <div style="padding: 16px; background: #f8fafa; border-radius: 12px; border: 1px solid #edf2f2;">
-                  <p style="font-size: 10px; font-weight: bold; opacity: 0.5; text-transform: uppercase; margin: 0 0 4px 0;">${s.label}</p>
-                  <p style="font-size: 16px; font-weight: 900; margin: 0; color: #1e293b;">${s.value}</p>
+                  <p style="font-size: 10px; font-weight: bold; opacity: 0.5; text-transform: uppercase; margin: 0 0 4px 0;">${sanitizeHTML(s.label)}</p>
+                  <p style="font-size: 16px; font-weight: 900; margin: 0; color: #1e293b;">${sanitizeHTML(s.value)}</p>
                </div>
              `).join('')}
           </div>
@@ -243,7 +231,7 @@ export const ExportService = {
         <table style="width: 100%; text-align: right; border-collapse: collapse; margin-top: 16px;">
           <thead>
             <tr style="background-color: #f1f5f5; border-bottom: 2px solid #cbd5e1;">
-               ${(data.headers || []).map((h: string) => `<th style="padding: 12px 8px; font-size: 12px; font-weight: 900; color: #334155;">${h}</th>`).join('')}
+               ${(data.headers || []).map((h: string) => `<th style="padding: 12px 8px; font-size: 12px; font-weight: 900; color: #334155;">${sanitizeHTML(h)}</th>`).join('')}
             </tr>
           </thead>
           <tbody>
@@ -253,7 +241,7 @@ export const ExportService = {
                   const keyIndex = data.headers.indexOf(h);
                   const fallbackKey = Object.keys(row)[keyIndex];
                   const fallbackVal = fallbackKey !== undefined ? row[fallbackKey] : '';
-                  return `<td style="padding: 12px 8px; font-size: 12px; font-weight: 700; color: #1e293b;">${row[h] || fallbackVal || ''}</td>`;
+                  return `<td style="padding: 12px 8px; font-size: 12px; font-weight: 700; color: #1e293b;">${sanitizeHTML(row[h] || fallbackVal || '')}</td>`;
                 }).join('')}
               </tr>
             `).join('')}
@@ -265,11 +253,11 @@ export const ExportService = {
         <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; background: #f8fafa; padding: 16px; border-radius: 16px;">
            <div>
               <p style="font-size: 9px; font-weight: 900; opacity: 0.4; text-transform: uppercase; margin: 0;">الطرف الثاني / العميل</p>
-              <p style="font-size: 14px; font-weight: 900; margin: 4px 0 0 0;">${data.customerId || data.partnerName || data.name || 'عميل نقدي'}</p>
+              <p style="font-size: 14px; font-weight: 900; margin: 4px 0 0 0;">${sanitizeHTML(data.customerId || data.partnerName || data.name || 'عميل نقدي')}</p>
            </div>
            <div style="text-align: left;">
               <p style="font-size: 9px; font-weight: 900; opacity: 0.4; text-transform: uppercase; margin: 0;">الرقم الضريبي</p>
-              <p style="font-size: 14px; font-weight: 900; margin: 4px 0 0 0;">${invoiceConfig.taxNumber}</p>
+              <p style="font-size: 14px; font-weight: 900; margin: 4px 0 0 0;">${sanitizeHTML(invoiceConfig.taxNumber)}</p>
            </div>
         </div>
 
@@ -284,12 +272,12 @@ export const ExportService = {
           <tbody>
             ${(data.items || []).map((it: any) => `
               <tr style="border-bottom: 1px solid #f8fafa;">
-                <td style="padding: 12px 4px; font-size: 12px; font-weight: 700;">${it.name}</td>
-                <td style="padding: 12px 4px; text-align: center; font-size: 12px; font-weight: 700;">${it.qty}</td>
-                <td style="padding: 12px 4px; text-align: left; font-size: 12px; font-weight: 900;">${it.sum.toLocaleString()}</td>
+                <td style="padding: 12px 4px; font-size: 12px; font-weight: 700;">${sanitizeHTML(it.name)}</td>
+                <td style="padding: 12px 4px; text-align: center; font-size: 12px; font-weight: 700;">${sanitizeHTML(it.qty)}</td>
+                <td style="padding: 12px 4px; text-align: left; font-size: 12px; font-weight: 900;">${Number(it.sum || 0).toLocaleString()}</td>
               </tr>
             `).join('')}
-            ${type === 'VOUCHER' ? `<tr><td colspan="3" style="padding: 24px; text-align: center; font-weight: bold; border: 2px dashed #e2e8f0; border-radius: 12px; margin-top: 16px;">${data.notes || 'لا توجد ملاحظات'}</td></tr>` : ''}
+            ${type === 'VOUCHER' ? `<tr><td colspan="3" style="padding: 24px; text-align: center; font-weight: bold; border: 2px dashed #e2e8f0; border-radius: 12px; margin-top: 16px;">${sanitizeHTML(data.notes || 'لا توجد ملاحظات')}</td></tr>` : ''}
           </tbody>
         </table>
 
@@ -310,14 +298,26 @@ export const ExportService = {
           <title>${activeTemplate.TemplateName}_${refId}</title>
           <style>
             @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+            
+            /* إجبار المتصفح على طباعة الألوان والخلفيات */
+            * {
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+              color-adjust: exact !important;
+            }
+
             body { font-family: 'Cairo', sans-serif; padding: 30px; background: #ffffff; color: #1e293b; margin: 0; direction: rtl; }
-            .print-container { max-width: 700px; margin: 0 auto; border: 1px solid #e2e8f0; padding: 32px; border-radius: 24px; background: #ffffff; }
+            .print-container { max-width: 750px; margin: 0 auto; border: 1px solid #e2e8f0; padding: 32px; border-radius: 16px; background: #ffffff; }
             .no-print { display: flex; gap: 12px; justify-content: center; margin-top: 30px; }
-            button { padding: 12px 28px; border-radius: 14px; font-weight: 900; font-family: 'Cairo', sans-serif; cursor: pointer; border: none; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+            button { padding: 12px 28px; border-radius: 14px; font-weight: 900; font-family: 'Cairo', sans-serif; cursor: pointer; border: none; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: all 0.2s; }
+            button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+            /* إعدادات الطباعة الصارمة لمنع الصفحة البيضاء */
             @media print { 
+              @page { size: A4; margin: 10mm; }
+              body { padding: 0 !important; background: white !important; font-size: 12pt; }
               .no-print { display: none !important; } 
-              body { padding: 0 !important; background: white !important; }
-              .print-container { border: none !important; box-shadow: none !important; padding: 0 !important; max-width: 100% !important; }
+              .print-container { border: none !important; box-shadow: none !important; padding: 0 !important; max-width: 100% !important; border-radius: 0 !important; }
             }
           </style>
         </head>
@@ -325,9 +325,9 @@ export const ExportService = {
           <div class="print-container">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 2px solid ${layoutConfig.primaryColor || '#1E4D4D'}; padding-bottom: 16px;">
               <div>
-                <h1 style="font-size: 20px; font-weight: 900; color: ${layoutConfig.primaryColor || '#1E4D4D'}; margin: 0 0 4px 0;">${invoiceConfig.pharmacyName}</h1>
-                <p style="font-size: 10px; font-weight: bold; opacity: 0.6; margin: 0 0 2px 0;">${invoiceConfig.address}</p>
-                <p style="font-size: 10px; font-weight: bold; opacity: 0.6; margin: 0;">هاتف: ${invoiceConfig.phone}</p>
+                <h1 style="font-size: 20px; font-weight: 900; color: ${layoutConfig.primaryColor || '#1E4D4D'}; margin: 0 0 4px 0;">${sanitizeHTML(invoiceConfig.pharmacyName)}</h1>
+                <p style="font-size: 11px; font-weight: bold; opacity: 0.7; margin: 0 0 2px 0;">${sanitizeHTML(invoiceConfig.address)}</p>
+                <p style="font-size: 11px; font-weight: bold; opacity: 0.7; margin: 0;">هاتف: ${sanitizeHTML(invoiceConfig.phone)}</p>
               </div>
               <div style="text-align: left;">
                 <h2 style="font-size: 16px; font-weight: 900; margin: 0 0 4px 0; text-transform: uppercase;">${
@@ -335,23 +335,35 @@ export const ExportService = {
                   type === 'PURCHASE' ? 'فاتورة مشتريات' : 
                   type === 'VOUCHER' ? 'سند مالي' : 'تقرير نظام'
                 }</h2>
-                <p style="font-size: 12px; font-weight: 900; margin: 0 0 2px 0;">#${refId}</p>
-                <p style="font-size: 10px; font-weight: bold; opacity: 0.6; margin: 0;">${date}</p>
+                <p style="font-size: 13px; font-weight: 900; margin: 0 0 2px 0;">#${sanitizeHTML(refId)}</p>
+                <p style="font-size: 11px; font-weight: bold; opacity: 0.7; margin: 0;">${date}</p>
               </div>
             </div>
 
             ${contentHtml}
 
             <div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #f1f5f5; text-align: center;">
-               <p style="font-size: 10px; font-weight: bold; color: #94a3b8; font-style: italic; margin: 0 0 8px 0;">${invoiceConfig.footerNote}</p>
-               <div style="opacity: 0.4; font-size: 8px; font-weight: 900; text-transform: uppercase;">Printed by: ${user?.User_Name || 'Unknown'} | Template: ${activeTemplate.TemplateName}</div>
+               <p style="font-size: 11px; font-weight: bold; color: #64748b; font-style: italic; margin: 0 0 8px 0;">${sanitizeHTML(invoiceConfig.footerNote)}</p>
+               <div style="opacity: 0.4; font-size: 9px; font-weight: 900; text-transform: uppercase;">Printed by: ${sanitizeHTML(user?.User_Name || 'Unknown')} | Template: ${activeTemplate.TemplateName}</div>
             </div>
           </div>
           
           <div class="no-print">
-             <button onclick="window.print()" style="background: #1E4D4D; color: white;">طباعة المستند 🖨️</button>
-             <button onclick="window.close()" style="background: #f1f5f5; color: #64748b; border: 1px solid #e2e8f0;">إغلاق</button>
+             <!-- الزر معطل مبدئياً حتى يتم تحميل الخط -->
+             <button id="print-btn" onclick="window.print()" style="background: #1E4D4D; color: white;" disabled>
+               جاري تجهيز المستند...
+             </button>
+             <button onclick="window.close()" style="background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0;">إغلاق</button>
           </div>
+
+          <!-- سكربت ذكي لانتظار تحميل الخط العربي قبل السماح بالطباعة -->
+          <script>
+            document.fonts.ready.then(function() {
+              const btn = document.getElementById('print-btn');
+              btn.disabled = false;
+              btn.innerText = 'طباعة المستند 🖨️';
+            });
+          </script>
         </body>
       </html>
     `;
@@ -360,7 +372,7 @@ export const ExportService = {
     printWindow.document.write(html);
     printWindow.document.close();
 
-    db.addAuditLog(
+    await db.addAuditLog(
       'SYSTEM', 
       type === 'REPORT' ? 'OTHER' : type as any, 
       refId, 
