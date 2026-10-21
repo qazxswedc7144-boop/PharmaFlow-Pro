@@ -1,6 +1,5 @@
 // apps/api/src/modules/audit/audit.repository.ts
-// يفضل استخدام مسار مطلق أو Alias بدلاً من المسارات النسبية الطويلة
-import { prisma } from "@server/database/prisma.js"; 
+import { prisma } from "../../../../../server/database/prisma.js"; 
 import { AuditLogPayload } from "./audit.types.js";
 import { Prisma } from "@prisma/client";
 
