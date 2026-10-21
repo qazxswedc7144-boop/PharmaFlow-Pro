@@ -1,40 +1,17 @@
 // server/database/tenantPrisma.ts
 import { prisma } from "./prisma.js";
 import { getCurrentTenantId } from "../context/tenantContext.js";
+import { Prisma } from "@prisma/client";
 
 export const TENANT_OWNED_MODELS = [
-  "product",
-  "customer",
-  "supplier",
-  "invoice",
-  "invoiceItem",
-  "journalEntry",
-  "journalLine",
-  "account",
-  "inventoryBatch",
-  "inventoryMovement",
-  "branch",
-  "branchInventory",
-  "branchTransfer",
-  "branchTransferItem",
-  "branchUser",
-  "payment",
-  "expense",
-  "reservation",
-  "customRole",
-  "userRole",
-  "userPermissionOverride",
-  "auditLog",
-  "idempotencyKey",
-  "syncQueue",
-  "syncEvent",
-  "tenantUser",
-  "tenantSubscription",
-  "license",
-  "usageCounter",
-  "crashLog",
-  "deviceRegistration",
-  "aiUsageLog"
+  "product", "customer", "supplier", "invoice", "invoiceItem",
+  "journalEntry", "journalLine", "account", "inventoryBatch",
+  "inventoryMovement", "branch", "branchInventory", "branchTransfer",
+  "branchTransferItem", "branchUser", "payment", "expense",
+  "reservation", "customRole", "userRole", "userPermissionOverride",
+  "auditLog", "idempotencyKey", "syncQueue", "syncEvent",
+  "tenantUser", "tenantSubscription", "license", "usageCounter",
+  "crashLog", "deviceRegistration", "aiUsageLog"
 ] as const;
 
 export type TenantOwnedModel = typeof TENANT_OWNED_MODELS[number];
@@ -43,13 +20,54 @@ const TENANT_OWNED_MODELS_SET = new Set<string>(
   TENANT_OWNED_MODELS.map((m) => m.toLowerCase())
 );
 
+const SYSTEM_ALLOWED_MODELS = new Set(["customrole"]);
+
 export function isTenantOwnedModel(modelName: string): boolean {
   return TENANT_OWNED_MODELS_SET.has(modelName.toLowerCase());
 }
 
 /**
- * Creates a tenant-isolated proxy around the Prisma Client.
- * Automatically injects tenantId filter into where clauses and sets tenantId on writes.
+ * دالة مساعدة لحقن tenantId بشكل تعاودي في عمليات الكتابة المتداخلة
+ */
+function injectTenantIdToData(data: any, currentTenantId: string, modelName: string): any {
+  if (!data || typeof data !== "object") return data;
+
+  const isSystemAllowed = SYSTEM_ALLOWED_MODELS.has(modelName.toLowerCase());
+  const targetTenantId = isSystemAllowed && data.isSystemRole ? null : (data.tenantId || currentTenantId);
+
+  const newData = { ...data, tenantId: targetTenantId };
+
+  // معالجة العلاقات المتداخلة
+  for (const key of Object.keys(newData)) {
+    const value = newData[key];
+    if (value && typeof value === "object") {
+      if (value.create) {
+        newData[key] = {
+          ...value,
+          create: injectTenantIdToData(value.create, currentTenantId, key)
+        };
+      } else if (value.createMany && Array.isArray(value.createMany.data)) {
+        newData[key] = {
+          ...value,
+          createMany: {
+            ...value.createMany,
+            data: value.createMany.data.map((item: any) => injectTenantIdToData(item, currentTenantId, key))
+          }
+        };
+      } else if (value.update) {
+        newData[key] = {
+          ...value,
+          update: injectTenantIdToData(value.update, currentTenantId, key)
+        };
+      }
+    }
+  }
+
+  return newData;
+}
+
+/**
+ * ينشئ وكيل (Proxy) معزول للمستأجر
  */
 export function getTenantScopedPrisma(explicitTenantId?: string) {
   return new Proxy(prisma, {
@@ -57,7 +75,6 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
       const propStr = String(prop);
       const modelNameLower = propStr.toLowerCase();
 
-      // If prop is a tenant-owned model
       if (isTenantOwnedModel(modelNameLower)) {
         const rawModel = (target as any)[prop];
         if (!rawModel) return rawModel;
@@ -65,7 +82,7 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
         return new Proxy(rawModel, {
           get(modelTarget, operationProp) {
             const operation = String(operationProp);
-            const originalMethod = modelTarget[operationProp];
+            const originalMethod = modelTarget[operationProp as keyof typeof modelTarget];
 
             if (typeof originalMethod !== "function") {
               return originalMethod;
@@ -73,133 +90,105 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
 
             return async (...args: any[]) => {
               const currentTenantId = explicitTenantId || getCurrentTenantId();
-              const [params = {}, ...rest] = args;
+              
+              // 🚨 حماية إضافية: إذا حاول مستخدم تمرير tenantId لمؤسسة أخرى
+              if (explicitTenantId && getCurrentTenantId() && explicitTenantId !== getCurrentTenantId()) {
+                throw new Error("SECURITY_VIOLATION: Cannot specify a different tenantId.");
+              }
 
-              // Read operations: inject tenantId into where filter with semantic awareness
+              const [params = {}, ...rest] = args;
+              const isSystemAllowed = SYSTEM_ALLOWED_MODELS.has(modelNameLower);
+
+              // 1. عمليات القراءة
               if (["findMany", "findFirst", "count", "aggregate", "groupBy"].includes(operation)) {
                 let scopedWhere = { ...(params.where || {}) };
-                if (modelNameLower === "customrole") {
+                
+                if (isSystemAllowed) {
                   scopedWhere = {
-                    AND: [
-                      scopedWhere,
-                      {
-                        OR: [
-                          { tenantId: currentTenantId },
-                          { isSystemRole: true }
-                        ]
-                      }
-                    ]
+                    AND: [scopedWhere, { OR: [{ tenantId: currentTenantId }, { isSystemRole: true }] }]
                   };
                 } else {
-                  scopedWhere = {
-                    ...scopedWhere,
-                    tenantId: currentTenantId
-                  };
+                  scopedWhere = { ...scopedWhere, tenantId: currentTenantId };
                 }
-                const scopedParams = {
-                  ...params,
-                  where: scopedWhere
-                };
-                return originalMethod.apply(modelTarget, [scopedParams, ...rest]);
+
+                return originalMethod.apply(modelTarget, [{ ...params, where: scopedWhere }, ...rest]);
               }
 
-              // findUnique: translate to findFirst with tenant isolation to prevent cross-tenant ID discovery
+              // 2. عمليات البحث الفريد
               if (operation === "findUnique" || operation === "findUniqueOrThrow") {
                 let scopedWhere = { ...(params.where || {}) };
-                if (modelNameLower === "customrole") {
+                
+                if (isSystemAllowed) {
                   scopedWhere = {
-                    AND: [
-                      scopedWhere,
-                      {
-                        OR: [
-                          { tenantId: currentTenantId },
-                          { isSystemRole: true }
-                        ]
-                      }
-                    ]
+                    AND: [scopedWhere, { OR: [{ tenantId: currentTenantId }, { isSystemRole: true }] }]
                   };
                 } else {
-                  scopedWhere = {
-                    ...scopedWhere,
-                    tenantId: currentTenantId
-                  };
+                  scopedWhere = { ...scopedWhere, tenantId: currentTenantId };
                 }
-                return (modelTarget.findFirst || originalMethod).apply(modelTarget, [{
-                  ...params,
-                  where: scopedWhere
-                }, ...rest]);
+
+                const result = await modelTarget.findFirst({ ...params, where: scopedWhere });
+                
+                // 🚨 إصلاح: رمي خطأ Prisma الصحيح بدلاً من Error عادي
+                if (operation === "findUniqueOrThrow" && !result) {
+                  throw new Prisma.PrismaClientKnownRequestError(
+                    `No ${propStr} found`,
+                    { code: 'P2025', clientVersion: Prisma.prismaVersion.client }
+                  );
+                }
+                
+                return result;
               }
 
-              // Create operations: inject tenantId into data
+              // 3. عمليات الإنشاء
               if (operation === "create") {
-                const data = params.data || {};
-                const scopedData = {
-                  ...data,
-                  tenantId: modelNameLower === "customrole" && data.isSystemRole ? null : (data.tenantId || currentTenantId)
-                };
+                const scopedData = injectTenantIdToData(params.data || {}, currentTenantId, modelNameLower);
                 return originalMethod.apply(modelTarget, [{ ...params, data: scopedData }, ...rest]);
               }
 
+              // 4. عمليات الإنشاء المتعدد
               if (operation === "createMany") {
                 const data = params.data;
                 const scopedData = Array.isArray(data)
-                  ? data.map((d: any) => ({ ...d, tenantId: d.isSystemRole ? null : (d.tenantId || currentTenantId) }))
+                  ? data.map((d: any) => injectTenantIdToData(d, currentTenantId, modelNameLower))
                   : data;
                 return originalMethod.apply(modelTarget, [{ ...params, data: scopedData }, ...rest]);
               }
 
-              // Upsert operations: inject tenantId into where, update, and create
+              // 5. عمليات التحديث أو الإنشاء
               if (operation === "upsert") {
                 let scopedWhere = { ...(params.where || {}) };
-                if (modelNameLower === "customrole") {
-                  scopedWhere = {
-                    AND: [
-                      scopedWhere,
-                      {
-                        OR: [
-                          { tenantId: currentTenantId },
-                          { isSystemRole: true }
-                        ]
-                      }
-                    ]
-                  };
+                if (isSystemAllowed) {
+                  scopedWhere = { AND: [scopedWhere, { OR: [{ tenantId: currentTenantId }, { isSystemRole: true }] }] };
                 } else {
-                  scopedWhere = {
-                    ...scopedWhere,
-                    tenantId: currentTenantId
-                  };
+                  scopedWhere = { ...scopedWhere, tenantId: currentTenantId };
                 }
-                const scopedCreate = {
-                  ...(params.create || {}),
-                  tenantId: params.create?.tenantId || currentTenantId
-                };
+
+                const scopedCreate = injectTenantIdToData(params.create || {}, currentTenantId, modelNameLower);
+                const scopedUpdate = injectTenantIdToData(params.update || {}, currentTenantId, modelNameLower);
+                
                 return originalMethod.apply(modelTarget, [{
                   ...params,
                   where: scopedWhere,
-                  create: scopedCreate
+                  create: scopedCreate,
+                  update: scopedUpdate
                 }, ...rest]);
               }
 
-              // Update / Delete operations: enforce tenantId in where clause and prevent modifying system roles
+              // 6. عمليات التحديث والحذف
               if (["update", "updateMany", "delete", "deleteMany"].includes(operation)) {
                 let scopedWhere = { ...(params.where || {}) };
-                if (modelNameLower === "customrole") {
-                  scopedWhere = {
-                    ...scopedWhere,
-                    tenantId: currentTenantId,
-                    isSystemRole: false
-                  };
+                
+                if (isSystemAllowed) {
+                  scopedWhere = { ...scopedWhere, tenantId: currentTenantId, isSystemRole: false };
                 } else {
-                  scopedWhere = {
-                    ...scopedWhere,
-                    tenantId: currentTenantId
-                  };
+                  scopedWhere = { ...scopedWhere, tenantId: currentTenantId };
                 }
-                const scopedParams = {
-                  ...params,
-                  where: scopedWhere
-                };
-                return originalMethod.apply(modelTarget, [scopedParams, ...rest]);
+
+                if (operation === "update" && params.data) {
+                   params.data = injectTenantIdToData(params.data, currentTenantId, modelNameLower);
+                }
+
+                return originalMethod.apply(modelTarget, [{ ...params, where: scopedWhere }, ...rest]);
               }
 
               return originalMethod.apply(modelTarget, args);
@@ -216,7 +205,7 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
 export const tenantPrisma = getTenantScopedPrisma();
 
 /**
- * Validates whether a given entity's tenantId matches the requesting tenant context.
+ * التحقق من صحة وصول المستأجر لسجل معين
  */
 export function validateTenantAccess(recordTenantId?: string | null, targetTenantId?: string): boolean {
   const current = targetTenantId || getCurrentTenantId();
@@ -227,4 +216,4 @@ export function validateTenantAccess(recordTenantId?: string | null, targetTenan
     return false;
   }
   return recordTenantId === current;
-}
+    }
