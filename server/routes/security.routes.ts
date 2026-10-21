@@ -174,7 +174,6 @@ const userId = authReq.user?.userId;
     }
 
     // Convert timestamp (epoch ms) to Date object, or fallback to current time
-    // Convert timestamp (epoch ms) to Date object, or fallback to current time
 const rawDate = timestamp ? new Date(timestamp) : new Date();
 const parsedDate = isNaN(rawDate.getTime()) ? new Date() : rawDate;
     const crashEntry = await prisma.crashLog.create({
