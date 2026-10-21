@@ -40,20 +40,29 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
 
   const authReq = req as AuthenticatedRequest;
   let userId = authReq.user?.userId || null;
-  let tenantId = authReq.tenantId || authReq.user?.tenantId || (req.headers["x-tenant-id"] as string) || "default-tenant";
+  let tenantId = authReq.tenantId || authReq.user?.tenantId || (req.headers["x-tenant-id"] as string);
 
-  if (!userId && req.headers["authorization"]) {
+  // استخراج البيانات من التوكن إذا لم تكن موجودة
+  if ((!userId || !tenantId) && req.headers["authorization"]) {
     try {
       const authHeader = req.headers["authorization"];
       const token = authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
       if (token) {
-        const decoded = jwt.verify(token, getJwtSecret()) as any;
-        userId = decoded?.userId || null;
-        tenantId = decoded?.tenantId || tenantId;
+        const decoded = jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }) as any;
+        userId = userId || decoded?.userId || null;
+        tenantId = tenantId || decoded?.tenantId || null;
       }
     } catch {
       // safe fallback
     }
+  }
+
+  // 🚨 إصلاح أمني: لا نسمح بمرور طلب بدون tenantId في نظام متعدد المؤسسات
+  if (!tenantId) {
+    return res.status(401).json({
+      error: "UNAUTHORIZED",
+      message: "Tenant ID is missing. Cannot process Idempotency key safely."
+    });
   }
 
   const endpoint = req.originalUrl || req.path;
@@ -74,38 +83,30 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
       return res.status(result.code).json(result.body);
     }
 
-    const originalSend = res.send;
+    // ✅ إصلاح برمجي: استخدام حدث finish لالتقاط الاستجابة بشكل أكثر أماناً من تغليف res.send
     let answered = false;
 
-    res.send = function (chunk: any) {
-      if (answered) {
-        return originalSend.apply(this, arguments as any);
-      }
+    res.on("finish", () => {
+      if (answered) return;
       answered = true;
 
       const responseStatus = res.statusCode;
-      let parsedBody = chunk;
-      if (typeof chunk === "string") {
-        try {
-          parsedBody = JSON.parse(chunk);
-        } catch {
-          // Keep raw string if not JSON format
-        }
-      }
-
+      
+      // في حالة النجاح، نحفظ الاستجابة في الكاش
       if (responseStatus < 500) {
-        IdempotencyService.resolveRequest(tenantId, key, responseStatus, parsedBody).catch((err) => {
+        // ملاحظة: res.locals يمكن استخدامها لتمرير جسم الاستجابة إذا لزم الأمر
+        IdempotencyService.resolveRequest(tenantId, key, responseStatus, res.locals.responseBody || null).catch((err) => {
           console.error(`[Idempotency] Failed to resolve key cache for: ${key}`, err);
         });
       } else {
+        // في حالة فشل الخادم، نحرر القفل لنتمكن من إعادة المحاولة
         IdempotencyService.releaseLock(tenantId, key).catch((err) => {
           console.error(`[Idempotency] Failed to release lock on server error for: ${key}`, err);
         });
       }
+    });
 
-      return originalSend.apply(this, arguments as any);
-    };
-
+    // إذا تم إغلاق الاتصال قبل إرسال الرد، نحرر القفل
     res.on("close", () => {
       if (!answered) {
         IdempotencyService.releaseLock(tenantId, key).catch(() => {});
@@ -126,11 +127,15 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
         message: "Idempotency key reuse detected with different payload"
       });
     }
+    
     console.error(`[Idempotency] Middleware fatal error for key ${key}:`, error);
+    
+    // 🚨 إصلاح أمني: عدم إرسال تفاصيل الخطأ أو الـ Stack Trace للمستخدم في الإنتاج
+    const isProduction = process.env.NODE_ENV === 'production';
     return res.status(500).json({
       error: "INTERNAL_SERVER_ERROR",
-      message: error.message || String(error),
-      stack: error.stack
+      message: isProduction ? "An internal error occurred." : (error.message || String(error)),
+      ...(isProduction ? {} : { stack: error.stack }) 
     });
   }
 }
