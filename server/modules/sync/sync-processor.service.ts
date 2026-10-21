@@ -327,66 +327,408 @@ export class SyncProcessorService {
     const { id: mutationId, entity, payload } = mutation;
     const data = payload || {};
     const entityId = mutation.entityId || data.id || mutationId;
+    const operation = (mutation.operation || "CREATE").toUpperCase();
 
-    if (entity === "INVOICE" || entity === "SALE") {
-      if (mutation.operation === "POST") {
-        try {
-          const postResult = await AtomicPostSaleService.executePostSaleCommand({
-            payload: data,
-            tenantId,
-            userId: params.userId,
-            ipAddress: "127.0.0.1",
-            tx
-          });
-          return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
-        } catch (err: any) {
-          return { id: mutationId, mutationId, status: "FAILED", success: false, errorCode: "BUSINESS_COMMAND_FAILED", message: err.message };
+    // Map entity to Prisma delegate model name and whether it has composite id_tenantId
+    const entityConfig = this.getEntityPrismaConfig(entity);
+    if (!entityConfig) {
+      return {
+        id: mutationId,
+        mutationId,
+        status: "REJECTED",
+        success: false,
+        errorCode: "UNSUPPORTED_ENTITY",
+        message: `Entity ${entity} has no registered persistence model`
+      };
+    }
+
+    const { modelName, hasCompositeUnique } = entityConfig;
+    const model = tx[modelName];
+
+    // Special Business Workflow: INVOICE / SALE POST Operation
+    if ((entity === "INVOICE" || entity === "SALE") && operation === "POST") {
+      try {
+        const postResult = await AtomicPostSaleService.executePostSaleCommand({
+          payload: { ...data, tenantId },
+          tenantId,
+          userId: params.userId,
+          ipAddress: "127.0.0.1",
+          tx
+        });
+        return {
+          id: mutationId,
+          mutationId,
+          status: "SUCCESS",
+          success: true,
+          serverVersion: version + 1,
+          processedAt: new Date().toISOString(),
+          details: postResult,
+          effects: postResult.effects
+        };
+      } catch (err: any) {
+        return {
+          id: mutationId,
+          mutationId,
+          status: "FAILED",
+          success: false,
+          errorCode: "BUSINESS_COMMAND_FAILED",
+          message: err.message
+        };
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 1. TRANSACTIONAL OWNERSHIP LOOKUP (Prevents TOCTOU & UUID Hijacking)
+    // -------------------------------------------------------------------------
+    let existingAny: any = null;
+    try {
+      if (typeof model?.findFirst === "function") {
+        existingAny = await model.findFirst({
+          where: { id: entityId }
+        }).catch(() => null);
+      } else if (typeof model?.findUnique === "function") {
+        existingAny = await model.findUnique({
+          where: { id: entityId }
+        }).catch(() => null);
+      }
+    } catch {
+      existingAny = null;
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. STRICT TENANT ISOLATION BARRIER: CROSS-TENANT MUTATION DETECTION
+    // -------------------------------------------------------------------------
+    // If the record exists in the database but belongs to a foreign tenant: DENY!
+    if (existingAny && existingAny.tenantId && existingAny.tenantId !== tenantId) {
+      await SyncAuditService.logEvent({
+        tenantId,
+        branchId,
+        userId: params.userId,
+        deviceId: params.deviceId,
+        operation: "CROSS_TENANT_MUTATION_BLOCKED",
+        result: "FAILURE",
+        error: `Cross-tenant violation: Entity [${entity}] with ID [${entityId}] belongs to tenant [${existingAny.tenantId}], requested by [${tenantId}]`,
+        metadata: {
+          mutationId,
+          entity,
+          entityId,
+          operation,
+          targetRecordTenant: existingAny.tenantId,
+          authenticatedTenant: tenantId
         }
-      }
-
-      const invoiceNumber = data.invoiceNumber || data.invoice_number || `INV-${Date.now()}`;
-      const existingRecord = await tx.invoice.findFirst({ where: { tenantId, OR: [{ id: entityId }, { invoiceNumber }] } }).catch(() => null);
-
-      if (existingRecord?.documentStatus === "POSTED" && mutation.operation === "UPDATE") {
-        return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "POSTED_INVOICE_IMMUTABLE", message: "Cannot update posted invoice via raw sync" };
-      }
-
-      const conflictCheck = SyncConflictService.evaluateConflict({ mutation, existingServerRecord: existingRecord, tenantId, branchId });
-      if (conflictCheck.hasConflict) {
-        return { id: mutationId, mutationId, status: "CONFLICT", success: false, errorCode: conflictCheck.category, conflict: { category: conflictCheck.category || "SAME_RECORD_CONFLICT", message: conflictCheck.message || "Conflict", serverRecord: existingRecord, clientRecord: data, resolutionStrategy: conflictCheck.resolutionStrategy } };
-      }
-
-      await tx.invoice.upsert({
-        where: { id: entityId },
-        update: { invoiceNumber, date: new Date(data.date || Date.now()), partnerId: data.partnerId || "", partnerType: data.partnerType || "CUSTOMER", type: data.type || "SALE", paymentStatus: data.paymentStatus || "PAID", documentStatus: data.documentStatus || "ACTIVE", branchId: data.branchId || branchId, isSynced: true, updatedAt: new Date() },
-        create: { id: entityId, invoiceNumber, date: new Date(data.date || Date.now()), partnerId: data.partnerId || "", partnerType: data.partnerType || "CUSTOMER", type: data.type || "SALE", paymentStatus: data.paymentStatus || "PAID", documentStatus: data.documentStatus || "ACTIVE", tenantId, branchId: data.branchId || branchId, isSynced: true }
       });
 
-      return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
+      return {
+        id: mutationId,
+        mutationId,
+        status: "UNAUTHORIZED",
+        success: false,
+        errorCode: "CROSS_TENANT_VIOLATION",
+        message: "انتهاك عزل المنشآت: لا يمكن إجراء عمليات أو تعديل أو حذف سجل ينتمي لمنشأة أخرى."
+      };
     }
 
-    if (entity === "PRODUCT") {
-      const existingRecord = await tx.product.findFirst({ where: { id: entityId, tenantId } }).catch(() => null);
-      const conflictCheck = SyncConflictService.evaluateConflict({ mutation, existingServerRecord: existingRecord, tenantId, branchId });
-      if (conflictCheck.hasConflict) {
-        return { id: mutationId, mutationId, status: "CONFLICT", success: false, errorCode: conflictCheck.category, conflict: { category: conflictCheck.category || "VERSION_CONFLICT", message: conflictCheck.message || "Product conflict", serverRecord: existingRecord, clientRecord: data, resolutionStrategy: conflictCheck.resolutionStrategy } };
+    // -------------------------------------------------------------------------
+    // 3. OPERATION ROUTING & ISOLATION ENFORCEMENT
+    // -------------------------------------------------------------------------
+
+    // CASE A: DELETE OPERATION
+    if (operation === "DELETE") {
+      if (!existingAny) {
+        return {
+          id: mutationId,
+          mutationId,
+          status: "REJECTED",
+          success: false,
+          errorCode: "ENTITY_NOT_FOUND",
+          message: "السجل المطلوب حذفه غير موجود."
+        };
       }
 
-      await tx.product.upsert({
-        where: { id: entityId },
-        update: { name: data.name || "Product", sku: data.sku || `SKU-${Date.now()}`, basePrice: data.basePrice || 0, costPrice: data.costPrice || 0, updatedAt: new Date() },
-        create: { id: entityId, name: data.name || "Product", sku: data.sku || `SKU-${Date.now()}`, basePrice: data.basePrice || 0, costPrice: data.costPrice || 0, tenantId }
-      });
+      if (hasCompositeUnique) {
+        await model.delete({
+          where: { id_tenantId: { id: entityId, tenantId } }
+        });
+      } else {
+        await model.delete({
+          where: { id: entityId }
+        });
+      }
 
-      return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
+      return {
+        id: mutationId,
+        mutationId,
+        status: "SUCCESS",
+        success: true,
+        serverVersion: version + 1,
+        processedAt: new Date().toISOString()
+      };
     }
 
-    if (entity === "PAYMENT" || entity === "VOUCHER") {
-      const paymentNumber = data.paymentNumber || data.payment_number || `PMT-${Date.now()}`;
-      await tx.payment.upsert({
-        where: { id: entityId },
-        update: {
-          paymentNumber,
+    // CASE B: UPDATE OPERATION
+    if (operation === "UPDATE") {
+      if (!existingAny) {
+        return {
+          id: mutationId,
+          mutationId,
+          status: "REJECTED",
+          success: false,
+          errorCode: "ENTITY_NOT_FOUND",
+          message: "السجل المطلوب تحديثه غير موجود."
+        };
+      }
+
+      // Check immutable posted invoices
+      if (entity === "INVOICE" && existingAny.documentStatus === "POSTED") {
+        return {
+          id: mutationId,
+          mutationId,
+          status: "REJECTED",
+          success: false,
+          errorCode: "POSTED_INVOICE_IMMUTABLE",
+          message: "Cannot update posted invoice via raw sync"
+        };
+      }
+
+      // Conflict Check
+      const conflictCheck = SyncConflictService.evaluateConflict({
+        mutation,
+        existingServerRecord: existingAny,
+        tenantId,
+        branchId
+      });
+      if (conflictCheck.hasConflict) {
+        return {
+          id: mutationId,
+          mutationId,
+          status: "CONFLICT",
+          success: false,
+          errorCode: conflictCheck.category,
+          conflict: {
+            category: conflictCheck.category || "SAME_RECORD_CONFLICT",
+            message: conflictCheck.message || "Conflict detected",
+            serverRecord: existingAny,
+            clientRecord: data,
+            resolutionStrategy: conflictCheck.resolutionStrategy
+          }
+        };
+      }
+
+      // Execute update strictly scoped
+      const updateData = this.buildEntityUpdateData(entity, data, branchId);
+      if (hasCompositeUnique) {
+        await model.update({
+          where: { id_tenantId: { id: entityId, tenantId } },
+          data: updateData
+        });
+      } else {
+        await model.update({
+          where: { id: entityId },
+          data: updateData
+        });
+      }
+
+      return {
+        id: mutationId,
+        mutationId,
+        status: "SUCCESS",
+        success: true,
+        serverVersion: version + 1,
+        processedAt: new Date().toISOString()
+      };
+    }
+
+    // CASE C: CREATE / UPSERT OPERATION
+    if (existingAny) {
+      // Record exists and belongs to the SAME tenant
+      if (entity === "INVOICE" && existingAny.documentStatus === "POSTED") {
+        return {
+          id: mutationId,
+          mutationId,
+          status: "REJECTED",
+          success: false,
+          errorCode: "POSTED_INVOICE_IMMUTABLE",
+          message: "Cannot update posted invoice via raw sync"
+        };
+      }
+
+      const conflictCheck = SyncConflictService.evaluateConflict({
+        mutation,
+        existingServerRecord: existingAny,
+        tenantId,
+        branchId
+      });
+      if (conflictCheck.hasConflict) {
+        return {
+          id: mutationId,
+          mutationId,
+          status: "CONFLICT",
+          success: false,
+          errorCode: conflictCheck.category,
+          conflict: {
+            category: conflictCheck.category || "SAME_RECORD_CONFLICT",
+            message: conflictCheck.message || "Conflict detected",
+            serverRecord: existingAny,
+            clientRecord: data,
+            resolutionStrategy: conflictCheck.resolutionStrategy
+          }
+        };
+      }
+
+      const updateData = this.buildEntityUpdateData(entity, data, branchId);
+      if (hasCompositeUnique) {
+        await model.update({
+          where: { id_tenantId: { id: entityId, tenantId } },
+          data: updateData
+        });
+      } else {
+        await model.update({
+          where: { id: entityId },
+          data: updateData
+        });
+      }
+    } else {
+      // Record does not exist anywhere -> CREATE cleanly under authenticated tenantId
+      const createData = this.buildEntityCreateData(entity, entityId, data, tenantId, branchId);
+      await model.create({
+        data: createData
+      });
+    }
+
+    return {
+      id: mutationId,
+      mutationId,
+      status: "SUCCESS",
+      success: true,
+      serverVersion: version + 1,
+      processedAt: new Date().toISOString()
+    };
+  }
+
+  private static getEntityPrismaConfig(entity: string): { modelName: string; hasCompositeUnique: boolean } | null {
+    switch (entity.toUpperCase()) {
+      case "INVOICE":
+      case "SALE":
+        return { modelName: "invoice", hasCompositeUnique: true };
+      case "PRODUCT":
+        return { modelName: "product", hasCompositeUnique: true };
+      case "JOURNAL_ENTRY":
+        return { modelName: "journalEntry", hasCompositeUnique: true };
+      case "INVENTORY_BATCH":
+        return { modelName: "inventoryBatch", hasCompositeUnique: true };
+      case "BRANCH_TRANSFER":
+      case "STOCK_TRANSFER":
+      case "TRANSFER":
+        return { modelName: "branchTransfer", hasCompositeUnique: true };
+      case "PAYMENT":
+      case "VOUCHER":
+        return { modelName: "payment", hasCompositeUnique: false };
+      case "CUSTOMER":
+        return { modelName: "customer", hasCompositeUnique: false };
+      case "SUPPLIER":
+        return { modelName: "supplier", hasCompositeUnique: false };
+      case "INVENTORY_MOVEMENT":
+      case "STOCK_ADJUSTMENT":
+        return { modelName: "inventoryMovement", hasCompositeUnique: false };
+      default:
+        return null;
+    }
+  }
+
+  private static buildEntityUpdateData(entity: string, data: any, branchId: string | null): any {
+    switch (entity.toUpperCase()) {
+      case "INVOICE":
+      case "SALE":
+        return {
+          invoiceNumber: data.invoiceNumber || data.invoice_number,
+          date: data.date ? new Date(data.date) : undefined,
+          partnerId: data.partnerId !== undefined ? data.partnerId : undefined,
+          partnerType: data.partnerType || undefined,
+          type: data.type || undefined,
+          paymentStatus: data.paymentStatus || undefined,
+          documentStatus: data.documentStatus || undefined,
+          branchId: data.branchId || branchId,
+          isSynced: true,
+          updatedAt: new Date()
+        };
+      case "PRODUCT":
+        return {
+          name: data.name || undefined,
+          sku: data.sku || undefined,
+          barcode: data.barcode || undefined,
+          price: data.basePrice !== undefined ? data.basePrice : (data.price !== undefined ? data.price : undefined),
+          cost: data.costPrice !== undefined ? data.costPrice : (data.cost !== undefined ? data.cost : undefined),
+          updatedAt: new Date()
+        };
+      case "PAYMENT":
+      case "VOUCHER":
+        return {
+          paymentNumber: data.paymentNumber || data.payment_number || undefined,
+          date: data.date ? new Date(data.date) : undefined,
+          amount: data.amount !== undefined ? data.amount : undefined,
+          partnerId: data.partnerId || data.supplier_id || data.customer_id || undefined,
+          partnerType: data.partnerType || (data.supplier_id ? "SUPPLIER" : (data.customer_id ? "CUSTOMER" : undefined)),
+          paymentMethod: data.paymentMethod || undefined,
+          notes: data.notes !== undefined ? data.notes : undefined,
+          branchId: data.branchId || branchId,
+          updatedAt: new Date()
+        };
+      case "CUSTOMER":
+        return {
+          name: data.name || undefined,
+          phone: data.phone || undefined,
+          email: data.email || undefined,
+          balance: data.balance !== undefined ? data.balance : undefined,
+          updatedAt: new Date()
+        };
+      case "SUPPLIER":
+        return {
+          name: data.name || undefined,
+          phone: data.phone || undefined,
+          email: data.email || undefined,
+          balance: data.balance !== undefined ? data.balance : undefined,
+          updatedAt: new Date()
+        };
+      default:
+        return {
+          updatedAt: new Date()
+        };
+    }
+  }
+
+  private static buildEntityCreateData(entity: string, entityId: string, data: any, tenantId: string, branchId: string | null): any {
+    switch (entity.toUpperCase()) {
+      case "INVOICE":
+      case "SALE":
+        return {
+          id: entityId,
+          invoiceNumber: data.invoiceNumber || data.invoice_number || `INV-${Date.now()}`,
+          date: new Date(data.date || Date.now()),
+          partnerId: data.partnerId || "",
+          partnerType: data.partnerType || "CUSTOMER",
+          type: data.type || "SALE",
+          paymentStatus: data.paymentStatus || "PAID",
+          documentStatus: data.documentStatus || "ACTIVE",
+          totalAmount: data.totalAmount || data.total || 0,
+          branchId: data.branchId || branchId,
+          tenantId,
+          isSynced: true
+        };
+      case "PRODUCT":
+        return {
+          id: entityId,
+          name: data.name || "Product",
+          sku: data.sku || `SKU-${Date.now()}`,
+          barcode: data.barcode || null,
+          price: data.basePrice !== undefined ? data.basePrice : (data.price !== undefined ? data.price : 0),
+          cost: data.costPrice !== undefined ? data.costPrice : (data.cost !== undefined ? data.cost : 0),
+          tenantId
+        };
+      case "PAYMENT":
+      case "VOUCHER":
+        return {
+          id: entityId,
+          paymentNumber: data.paymentNumber || data.payment_number || `PMT-${Date.now()}`,
           date: new Date(data.date || Date.now()),
           amount: data.amount || 0,
           partnerId: data.partnerId || data.supplier_id || data.customer_id || "",
@@ -394,26 +736,32 @@ export class SyncProcessorService {
           paymentMethod: data.paymentMethod || "CASH",
           notes: data.notes || null,
           branchId: data.branchId || branchId,
-          updatedAt: new Date()
-        },
-        create: {
+          tenantId
+        };
+      case "CUSTOMER":
+        return {
           id: entityId,
-          paymentNumber,
-          date: new Date(data.date || Date.now()),
-          amount: data.amount || 0,
-          partnerId: data.partnerId || data.supplier_id || data.customer_id || "",
-          partnerType: data.partnerType || (data.supplier_id ? "SUPPLIER" : "CUSTOMER"),
-          paymentMethod: data.paymentMethod || "CASH",
-          notes: data.notes || null,
-          tenantId,
-          branchId: data.branchId || branchId
-        }
-      });
-
-      return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
+          name: data.name || "Customer",
+          phone: data.phone || null,
+          email: data.email || null,
+          balance: data.balance || 0,
+          tenantId
+        };
+      case "SUPPLIER":
+        return {
+          id: entityId,
+          name: data.name || "Supplier",
+          phone: data.phone || null,
+          email: data.email || null,
+          balance: data.balance || 0,
+          tenantId
+        };
+      default:
+        return {
+          id: entityId,
+          tenantId
+        };
     }
-
-    return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
   }
 
   static async checkConflict(_entity: string, _entityId: string, _version: number, _tenantId: string, existingServerRecord: any, clientData: any) {

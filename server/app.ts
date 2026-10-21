@@ -128,8 +128,16 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   app.use("/api/rbac", rbacRouter);
   app.use("/api/reports", reportingRouter);
 
+  const isSaasDemoEnabled = (): boolean => {
+    // Disabled in production by default; only allowed if explicit feature flag ENABLE_SAAS_DEMO_ENDPOINTS === 'true'
+    if (process.env.NODE_ENV === "production") {
+      return process.env.ENABLE_SAAS_DEMO_ENDPOINTS === "true";
+    }
+    return process.env.ENABLE_SAAS_DEMO_ENDPOINTS !== "false";
+  };
+
   const validateSaasApiKey = (requiredScope: string) => {
-    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
         return res.status(401).json({
@@ -142,18 +150,42 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
         });
       }
       const token = authHeader.split(" ")[1];
-      const validKeys = [
-        {
+
+      // FAIL CLOSED: No static fallback secrets or demo keys in source code
+      const mouwasatKey = process.env.SAAS_KEY_MOUWASAT?.trim();
+      const cloudSyncKey = process.env.SAAS_KEY_CLOUD_SYNC?.trim();
+
+      const validKeys: Array<{ name: string; key: string; scopes: string[]; tenantId: string }> = [];
+
+      if (mouwasatKey) {
+        validKeys.push({
           name: "Mouwasat EHR Gateway",
-          key: process.env.SAAS_KEY_MOUWASAT || "pf_live_mouwasat_r4_interop_key_2026",
-          scopes: ["fhir.read", "fhir.write"]
-        },
-        {
+          key: mouwasatKey,
+          scopes: ["fhir.read", "fhir.write"],
+          tenantId: process.env.SAAS_MOUWASAT_TENANT_ID?.trim() || "TEN_MOUWASAT_PROD"
+        });
+      }
+
+      if (cloudSyncKey) {
+        validKeys.push({
           name: "Cloud Sync Ledger Gateway",
-          key: process.env.SAAS_KEY_CLOUD_SYNC || "pf_live_cloud_sync_ledger_secret_token",
-          scopes: ["financials.read", "inventory.write", "fhir.read"]
-        }
-      ];
+          key: cloudSyncKey,
+          scopes: ["financials.read", "inventory.write", "fhir.read"],
+          tenantId: process.env.SAAS_CLOUD_SYNC_TENANT_ID?.trim() || "TEN_CLOUD_SYNC_PROD"
+        });
+      }
+
+      // If no SaaS API keys configured in environment: FAIL CLOSED
+      if (validKeys.length === 0) {
+        return res.status(503).json({
+          resourceType: "OperationOutcome",
+          issue: [{
+            severity: "error",
+            code: "security",
+            diagnostics: "SaaS gateway authentication is not configured in this environment (FAIL CLOSED)."
+          }]
+        });
+      }
 
       const verified = validKeys.find(k => k.key === token);
       if (!verified) {
@@ -179,13 +211,24 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
       }
 
       (req as any).apiKeyName = verified.name;
-      (req as any).tenantId = "TEN_MAIN_DALLAH_09";
+      (req as any).tenantId = verified.tenantId;
       next();
       return;
     };
   };
 
   app.get("/api/v1/saas/fhir/Patient", validateSaasApiKey("fhir.read"), (_req, res) => {
+    if (!isSaasDemoEnabled()) {
+      return res.status(404).json({
+        resourceType: "OperationOutcome",
+        issue: [{
+          severity: "error",
+          code: "not-found",
+          diagnostics: "FHIR Patient prototype endpoint is disabled in this environment."
+        }]
+      });
+    }
+
     res.json({
       resourceType: "Bundle",
       id: "bundle-pat-dallah-2026",
@@ -223,6 +266,17 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   });
 
   app.post("/api/v1/saas/fhir/MedicationRequest", validateSaasApiKey("fhir.write"), (req, res) => {
+    if (!isSaasDemoEnabled()) {
+      return res.status(404).json({
+        resourceType: "OperationOutcome",
+        issue: [{
+          severity: "error",
+          code: "not-found",
+          diagnostics: "FHIR MedicationRequest prototype endpoint is disabled in this environment."
+        }]
+      });
+    }
+
     const resource = req.body;
     if (!resource || resource.resourceType !== "MedicationRequest") {
       return res.status(400).json({
@@ -257,16 +311,26 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   });
 
   app.post("/api/v1/saas/sync", validateSaasApiKey("financials.read"), (req, res) => {
-    const { ciphertext, tenantId } = req.body;
+    const { ciphertext, tenantId: bodyTenantId } = req.body;
     if (!ciphertext) {
       return res.status(400).json({ error: "Empty cryptographic packet. Ciphertext required." });
+    }
+
+    const authenticatedTenantId = (req as any).tenantId;
+
+    // Strict Tenant Isolation: Request body tenantId CANNOT override or hijack authenticated tenant context
+    if (bodyTenantId && bodyTenantId !== authenticatedTenantId) {
+      return res.status(403).json({
+        error: "TENANT_MISMATCH",
+        message: "Forbidden: Request body tenantId does not match authenticated credential context."
+      });
     }
 
     res.json({
       status: "SUCCESS",
       syncId: `sync-tx-${Math.random().toString(36).substring(3, 11)}`,
       timestamp: new Date().toISOString(),
-      tenantId: tenantId || "TEN_MAIN_DALLAH_09",
+      tenantId: authenticatedTenantId,
       hashCheck: "SHA-255-MATCH-OK",
       replicatedClusters: ["cloud-sql-primary", "gcs-backup-vault-sa"]
     });
