@@ -208,15 +208,18 @@ router.post('/crash', async (req: Request, res: Response) => {
  */
 router.post('/device/register', async (req: Request, res: Response) => {
   try {
-    const { deviceId, tenantId, branchId, deviceName, androidVersion, appVersion } = req.body;
+    // 🚨 SEC-07 FIX: Force tenantId from authenticated token
+const { deviceId, branchId, deviceName, androidVersion, appVersion } = req.body;
+const authReq = req as AuthenticatedRequest;
+const tenantId = authReq.user?.tenantId;
 
-    if (!deviceId || !tenantId || !branchId || !deviceName) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'REG_BAD_INPUT',
-        message: 'deviceId, tenantId, branchId, and deviceName are required properties.'
-      });
-    }
+if (!deviceId || !tenantId || !branchId || !deviceName) {
+  return res.status(400).json({
+    status: 'error',
+    code: 'REG_BAD_INPUT',
+    message: 'deviceId, branchId, and deviceName are required properties, and user must have a valid tenant.'
+  });
+}
 
     // Verify branch belongs to the registering tenant
     const branch = await prisma.branch.findFirst({
@@ -324,15 +327,17 @@ router.get('/device/status/:deviceId', async (req: Request, res: Response) => {
       });
     }
 
-    const authReq = req as any;
-    const requestedTenantId = authReq.user?.tenantId || (req.headers['x-tenant-id'] as string) || (req.query.tenantId as string);
-    if (requestedTenantId && device.tenantId !== requestedTenantId) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'CROSS_TENANT_ACCESS_DENIED',
-        message: 'Device registration details belong to another tenant.'
-      });
-    }
+    // 🚨 SEC-07 FIX: Remove query/header fallbacks, strictly use token
+const authReq = req as AuthenticatedRequest;
+const requestedTenantId = authReq.user?.tenantId;
+
+if (!requestedTenantId || device.tenantId !== requestedTenantId) {
+  return res.status(403).json({
+    status: 'error',
+    code: 'CROSS_TENANT_ACCESS_DENIED',
+    message: 'Device registration details belong to another tenant or missing context.'
+  });
+}
 
     return res.json({
       status: 'success',
@@ -352,14 +357,16 @@ router.get('/device/status/:deviceId', async (req: Request, res: Response) => {
  */
 router.get('/devices', async (req: Request, res: Response) => {
   try {
-    const tenantId = req.query.tenantId as string;
-    if (!tenantId) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'DEVICES_MISSING_TENANT',
-        message: 'tenantId query parameter is required.'
-      });
-    }
+    // 🚨 SEC-07 FIX: Read from authenticated token, not query string
+const authReq = req as AuthenticatedRequest;
+const tenantId = authReq.user?.tenantId;
+if (!tenantId) {
+  return res.status(401).json({
+    status: 'error',
+    code: 'DEVICES_MISSING_TENANT',
+    message: 'Authenticated tenant context is required.'
+  });
+}
 
     const devices = await prisma.deviceRegistration.findMany({
       where: { tenantId },
@@ -384,15 +391,18 @@ router.get('/devices', async (req: Request, res: Response) => {
  */
 router.post('/license/generate', async (req: Request, res: Response) => {
   try {
-    const { deviceFingerprint, tenantId, expiryDate } = req.body;
-    if (!deviceFingerprint || !tenantId || !expiryDate) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'LICENSE_GENERATE_BAD_INPUT',
-        message: 'deviceFingerprint, tenantId, and expiryDate are required.'
-      });
-    }
+    // 🚨 SEC-07 FIX: Force tenant from token
+const { deviceFingerprint, expiryDate } = req.body;
+const authReq = req as AuthenticatedRequest;
+const tenantId = authReq.user?.tenantId;
 
+if (!deviceFingerprint || !tenantId || !expiryDate) {
+  return res.status(400).json({
+    status: 'error',
+    code: 'LICENSE_GENERATE_BAD_INPUT',
+    message: 'deviceFingerprint, expiryDate, and authenticated tenant context are required.'
+  });
+}
     const crypto = await import('crypto');
     const secret = process.env.ENCRYPTION_KEY;
     if (!secret) {
@@ -416,14 +426,18 @@ router.post('/license/generate', async (req: Request, res: Response) => {
 
 router.post('/license/verify', async (req: Request, res: Response) => {
   try {
-    const { deviceFingerprint, tenantId, expiryDate, signature } = req.body;
-    if (!deviceFingerprint || !tenantId || !expiryDate || !signature) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'LICENSE_VERIFY_BAD_INPUT',
-        message: 'deviceFingerprint, tenantId, expiryDate, and signature are required.'
-      });
-    }
+    // 🚨 SEC-07 FIX: Force tenant from token
+const { deviceFingerprint, expiryDate, signature } = req.body;
+const authReq = req as AuthenticatedRequest;
+const tenantId = authReq.user?.tenantId;
+
+if (!deviceFingerprint || !tenantId || !expiryDate || !signature) {
+  return res.status(400).json({
+    status: 'error',
+    code: 'LICENSE_VERIFY_BAD_INPUT',
+    message: 'deviceFingerprint, expiryDate, signature, and authenticated tenant context are required.'
+  });
+}
 
     const crypto = await import('crypto');
     const secret = process.env.ENCRYPTION_KEY;
