@@ -20,6 +20,14 @@ const MAX_BUFFERED_BYTES = 1_000_000;       // لو العميل بطيء نقف
 const RATE_LIMIT_WINDOW_MS = 1_000;
 const RATE_LIMIT_MAX_MESSAGES = 50;
 
+/**
+ * المرحلة الانتقالية: عشان ما تسقط الأحداث أثناء ترقية الـ publisher.
+ *  - false (افتراضي): يسمح بأحداث بدون tenantId، مع تحذير في اللوق.
+ *  - true: يرفض أي event بدون tenantId (الأمان الكامل).
+ * فعّلها بـ ENFORCE_TENANT_ISOLATION=true بعد تحديث كل الـ publishers.
+ */
+const ENFORCE_TENANT_ISOLATION = process.env.ENFORCE_TENANT_ISOLATION === "true";
+
 const getJwtSecret = (): string => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -40,9 +48,6 @@ const AUTHORIZED_ROLES = new Set<string>([
   Role.PLATFORM_OWNER,
 ]);
 
-// الأدوار اللي مسموح لها تبدّل الفرع وقت الاتصال.
-// ⚠️ في الإنتاج لازم يكون في تحقق من الـ DB إن المستخدم فعلاً عضو في الفرع الهدف،
-// وإلا الأفضل تشيل أمر ChangeBranch بالكامل.
 const BRANCH_SWITCH_ALLOWED_ROLES = new Set<string>([
   Role.ADMIN,
   Role.TENANT_ADMIN,
@@ -50,7 +55,7 @@ const BRANCH_SWITCH_ALLOWED_ROLES = new Set<string>([
 ]);
 
 // ---------------------------------------------------------------------------
-// الأنواع (Types)
+// الأنواع
 // ---------------------------------------------------------------------------
 
 interface JwtPayload {
@@ -58,6 +63,8 @@ interface JwtPayload {
   role?: Role;
   branchId?: string;
   tenantId?: string;
+  exp?: number;
+  iat?: number;
   [key: string]: unknown;
 }
 
@@ -67,7 +74,6 @@ interface CustomWebSocket extends WebSocket {
   rateLimit?: { windowStart: number; count: number };
 }
 
-// الحقول الجديدة نقراها بشكل آمن حتى لو الـ types ما تحدّثت بعد
 type EnrichedReplicationEvent = ReplicationEvent & {
   originSessionId?: string;
   scope?: "SAME_BRANCH" | "ALL_BRANCHES";
@@ -80,12 +86,9 @@ type EnrichedReplicationEvent = ReplicationEvent & {
 export class ReplicationGateway {
   private static wss: WebSocketServer | null = null;
   private static heartbeatInterval: NodeJS.Timeout | null = null;
-  private static activeSockets = new Map<string, CustomWebSocket>(); // sessionId -> ws
-  private static sessionsByUser = new Map<string, Set<string>>();   // userId -> Set<sessionId>
+  private static activeSockets = new Map<string, CustomWebSocket>();
+  private static sessionsByUser = new Map<string, Set<string>>();
 
-  /**
-   * يبدأ الـ WebSocket Server ويربطه بسيرفر Express الموجود.
-   */
   static init(server: HttpServer): void {
     if (this.wss) {
       console.log("[REPLICATION_GATEWAY] Already initialized; skipping.");
@@ -96,30 +99,23 @@ export class ReplicationGateway {
 
     this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD_BYTES });
 
-    // ١. نربط الـ Subscriber بالـ WebSocket عشان الأحداث تجي من Redis وتوصل للعملاء
     ReplicationSubscriber.addMessageHandler((_channel, event) => {
       this.routeEventToClients(event);
     });
 
-    // ٢. نعترض طلبات الـ upgrade ونتحقق من الـ JWT قبل ما نفتح الاتصال
     server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
       this.handleUpgrade(request, socket, head);
     });
 
-    // ٣. دورة حياة الاتصال
     this.wss.on("connection", (ws: CustomWebSocket, session: ClientConnectionInfo) => {
       this.handleConnection(ws, session);
     });
 
-    // ٤. فحص الـ heartbeat الدوري
     this.heartbeatInterval = setInterval(() => this.sweepHeartbeat(), HEARTBEAT_INTERVAL_MS);
 
     console.log("[REPLICATION_GATEWAY] WebSocket replication server initialized: listening on /ws");
   }
 
-  /**
-   * إغلاق نظيف: نوقف الـ interval، نقفل السوكيتس، ونفضي المراجع.
-   */
   static close(): void {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
@@ -136,7 +132,7 @@ export class ReplicationGateway {
   }
 
   // -------------------------------------------------------------------------
-  // الـ Upgrade والتحقق من الهوية
+  // Upgrade + JWT Auth
   // -------------------------------------------------------------------------
 
   private static handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -155,10 +151,27 @@ export class ReplicationGateway {
 
       let decoded: JwtPayload;
       try {
-        decoded = jwt.verify(token, getJwtSecret()) as JwtPayload;
+        decoded = jwt.verify(token, getJwtSecret(), {
+          algorithms: ["HS256"], // يمنع algorithm confusion
+        }) as JwtPayload;
       } catch (err: any) {
-        // لا تسجل التوكن ولا محتواه أبداً هنا
         this.rejectUpgrade(socket, 403, "Forbidden", `Invalid JWT: ${err?.message ?? "unknown"}`);
+        return;
+      }
+
+      // التحقق من انتهاء JWT
+      if (typeof decoded.exp !== "number") {
+        this.rejectUpgrade(socket, 403, "Forbidden", "JWT missing exp claim");
+        return;
+      }
+      if (decoded.exp * 1000 <= Date.now()) {
+        this.rejectUpgrade(socket, 403, "Forbidden", "JWT expired");
+        return;
+      }
+
+      // إجبارية tenantId
+      if (!decoded.tenantId || typeof decoded.tenantId !== "string") {
+        this.rejectUpgrade(socket, 403, "Forbidden", "JWT missing tenantId");
         return;
       }
 
@@ -167,15 +180,15 @@ export class ReplicationGateway {
         return;
       }
 
-      // الفرع يُستخرج من التوكن الموقّع فقط.
-      // نتجاهل ?branchId= من الـ query عمداً لمنع تسريب بيانات فروع ثانية.
       const branchId = decoded.branchId || "GENERIC";
       const role = decoded.role;
+      const tenantId = decoded.tenantId;
 
       this.wss?.handleUpgrade(request, socket, head, (ws: CustomWebSocket) => {
         const session: ClientConnectionInfo = {
           sessionId: randomUUID(),
           userId: decoded.userId || "unknown",
+          tenantId,
           branchId,
           role,
           connectedAt: new Date().toISOString(),
@@ -188,21 +201,14 @@ export class ReplicationGateway {
     }
   }
 
-  private static rejectUpgrade(
-    socket: Duplex,
-    status: number,
-    reason: string,
-    detail: string,
-  ): void {
+  private static rejectUpgrade(socket: Duplex, status: number, reason: string, detail: string): void {
     console.warn(`[REPLICATION_GATEWAY] Upgrade rejected (${status} ${reason}): ${detail}`);
-    try {
-      socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
-    } catch { /* noop */ }
+    try { socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`); } catch { /* noop */ }
     try { socket.destroy(); } catch { /* noop */ }
   }
 
   // -------------------------------------------------------------------------
-  // دورة حياة الاتصال
+  // Connection lifecycle
   // -------------------------------------------------------------------------
 
   private static handleConnection(ws: CustomWebSocket, session: ClientConnectionInfo): void {
@@ -211,14 +217,11 @@ export class ReplicationGateway {
     ws.rateLimit = { windowStart: Date.now(), count: 0 };
 
     this.activeSockets.set(session.sessionId, ws);
-
     const userSessions = this.sessionsByUser.get(session.userId) ?? new Set<string>();
     userSessions.add(session.sessionId);
     this.sessionsByUser.set(session.userId, userSessions);
 
-    console.log(
-      `🔌 [REPLICATION_GATEWAY] Client connected: user=${session.userId}, role=${session.role}, branch=${session.branchId} (sess: ${session.sessionId})`,
-    );
+    console.log(`🔌 [REPLICATION_GATEWAY] Client connected: user=${session.userId}, tenant=${session.tenantId}, role=${session.role}, branch=${session.branchId}`);
 
     try {
       ws.send(JSON.stringify({
@@ -226,15 +229,9 @@ export class ReplicationGateway {
         message: "Successfully connected to PharmaFlow Pro real-time replication gateway.",
         session,
       }));
-    } catch (err: any) {
-      console.warn(
-        `[REPLICATION_GATEWAY] Failed to send handshake ack (sess=${session.sessionId}):`,
-        err?.message ?? err,
-      );
-    }
+    } catch { /* noop */ }
 
     ws.on("pong", () => { ws.isAlive = true; });
-
     ws.on("message", (raw) => this.handleMessage(ws, raw));
 
     ws.on("close", () => {
@@ -244,14 +241,10 @@ export class ReplicationGateway {
         set.delete(session.sessionId);
         if (set.size === 0) this.sessionsByUser.delete(session.userId);
       }
-      console.log(`🔌 [REPLICATION_GATEWAY] Client disconnected: sess=${session.sessionId}`);
     });
 
     ws.on("error", (err) => {
-      console.error(
-        `[REPLICATION_GATEWAY] Socket error (sess=${session.sessionId}):`,
-        err?.message ?? err,
-      );
+      console.error(`[REPLICATION_GATEWAY] Socket error:`, err?.message ?? err);
       try { ws.terminate(); } catch { /* noop */ }
     });
   }
@@ -260,99 +253,45 @@ export class ReplicationGateway {
     const session = ws.session;
     if (!session) return;
 
-    // ---- Rate limiting لكل اتصال ----
     const now = Date.now();
     const rl = ws.rateLimit ?? { windowStart: now, count: 0 };
-    if (now - rl.windowStart > RATE_LIMIT_WINDOW_MS) {
-      rl.windowStart = now;
-      rl.count = 0;
-    }
+    if (now - rl.windowStart > RATE_LIMIT_WINDOW_MS) { rl.windowStart = now; rl.count = 0; }
     rl.count += 1;
     ws.rateLimit = rl;
     if (rl.count > RATE_LIMIT_MAX_MESSAGES) {
-      console.warn(
-        `[REPLICATION_GATEWAY] Rate limit exceeded (sess=${session.sessionId}); closing.`,
-      );
       try { ws.close(1008, "Rate limit exceeded"); } catch { /* noop */ }
       return;
     }
 
-    // ---- تحويل آمن للرسالة إلى نص ----
     let text: string;
     try {
       if (typeof raw === "string") text = raw;
       else if (Buffer.isBuffer(raw)) text = raw.toString("utf8");
       else if (Array.isArray(raw)) text = Buffer.concat(raw).toString("utf8");
       else text = Buffer.from(raw as ArrayBuffer).toString("utf8");
-    } catch {
-      console.warn(`[REPLICATION_GATEWAY] Non-text frame (sess=${session.sessionId}); ignoring.`);
-      return;
-    }
+    } catch { return; }
 
     let msg: any;
-    try {
-      msg = JSON.parse(text);
-    } catch {
-      console.warn(
-        `[REPLICATION_GATEWAY] Malformed JSON (sess=${session.sessionId}); ignoring.`,
-      );
-      return;
-    }
+    try { msg = JSON.parse(text); } catch { return; }
 
     switch (msg?.type) {
-      case "Heartbeat": {
-        try {
-          ws.send(JSON.stringify({ type: "HeartbeatAck", timestamp: Date.now() }));
-        } catch { /* noop */ }
+      case "Heartbeat":
+        try { ws.send(JSON.stringify({ type: "HeartbeatAck", timestamp: Date.now() })); } catch { /* noop */ }
         return;
-      }
-
-      case "ChangeBranch": {
-        if (!BRANCH_SWITCH_ALLOWED_ROLES.has(session.role)) {
-          try {
-            ws.send(JSON.stringify({
-              type: "Error",
-              code: "FORBIDDEN",
-              message: "Not authorized to change branch.",
-            }));
-          } catch { /* noop */ }
-          return;
-        }
-
+      case "ChangeBranch":
+        if (!BRANCH_SWITCH_ALLOWED_ROLES.has(session.role)) return;
         const targetBranch = typeof msg.branchId === "string" ? msg.branchId.trim() : null;
-        if (!targetBranch) {
-          try {
-            ws.send(JSON.stringify({
-              type: "Error",
-              code: "BAD_REQUEST",
-              message: "Missing branchId.",
-            }));
-          } catch { /* noop */ }
-          return;
-        }
-
-        const old = session.branchId;
+        if (!targetBranch) return;
         session.branchId = targetBranch;
-        console.log(
-          `[REPLICATION_GATEWAY] Session ${session.sessionId} switched branch ${old} -> ${targetBranch} (user=${session.userId})`,
-        );
-        try {
-          ws.send(JSON.stringify({ type: "BranchChanged", branchId: targetBranch }));
-        } catch { /* noop */ }
+        try { ws.send(JSON.stringify({ type: "BranchChanged", branchId: targetBranch })); } catch { /* noop */ }
         return;
-      }
-
-      default:
-        return;
+      default: return;
     }
   }
 
   private static sweepHeartbeat(): void {
     this.wss?.clients.forEach((ws: CustomWebSocket) => {
       if (ws.isAlive === false) {
-        console.warn(
-          `[REPLICATION_GATEWAY] Client dormant; terminating sess=${ws.session?.sessionId ?? "?"}`,
-        );
         try { ws.terminate(); } catch { /* noop */ }
         return;
       }
@@ -362,11 +301,19 @@ export class ReplicationGateway {
   }
 
   // -------------------------------------------------------------------------
-  // توجيه الأحداث للعملاء
+  // توجيه الأحداث — مع عزل الـ tenant + anti-loopback + scope
   // -------------------------------------------------------------------------
 
   private static routeEventToClients(event: ReplicationEvent): void {
     if (!event || !event.id) return;
+
+    if (!event.tenantId) {
+      if (ENFORCE_TENANT_ISOLATION) {
+        console.error(`[REPLICATION_GATEWAY] Dropped event ${event.id}: missing tenantId.`);
+        return;
+      }
+      console.warn(`[REPLICATION_GATEWAY] Event ${event.id} missing tenantId.`);
+    }
 
     const enriched = event as EnrichedReplicationEvent;
     const originSessionId = enriched.originSessionId;
@@ -375,97 +322,62 @@ export class ReplicationGateway {
     this.activeSockets.forEach((ws) => {
       if (!ws.session || ws.readyState !== WebSocket.OPEN) return;
 
-      // ✅ منع الـ loopback: نتخطى العميل اللي أنتج الـ event بس.
-      // هذا يحافظ على الـ multi-tab / multi-user sync داخل نفس الفرع.
+      // عزل المؤسسات
+      if (event.tenantId && ws.session.tenantId !== event.tenantId) return;
+
+      // Anti-loopback
       if (originSessionId && ws.session.sessionId === originSessionId) return;
 
-      // ✅ فلترة النطاق: لو SAME_BRANCH، نبعتها لعملاء نفس الفرع فقط.
-      // ALL_BRANCHES أو بدون قيمة = بث للجميع.
+      // Scope filter
       if (scope === "SAME_BRANCH" && ws.session.branchId !== event.branchId) return;
 
-      // ✅ backpressure: لو العميل بطيء نقفله بدل ما نكدّس بلا نهاية
+      // Backpressure
       if (ws.bufferedAmount > MAX_BUFFERED_BYTES) {
-        console.warn(
-          `[REPLICATION_GATEWAY] Slow consumer (sess=${ws.session.sessionId}, buffered=${ws.bufferedAmount}); terminating.`,
-        );
         try { ws.terminate(); } catch { /* noop */ }
         return;
       }
 
       try {
         ws.send(JSON.stringify({ type: "ReplicationEvent", event }));
-      } catch (err: any) {
-        console.warn(
-          `[REPLICATION_GATEWAY] Failed to send event to sess=${ws.session.sessionId}:`,
-          err?.message ?? err,
-        );
-      }
+      } catch { /* noop */ }
     });
   }
 
   // -------------------------------------------------------------------------
-  // الدوال العامة (Helpers)
+  // Helpers
   // -------------------------------------------------------------------------
 
   static getActiveSessions(): ClientConnectionInfo[] {
-    const list: ClientConnectionInfo[] = [];
-    this.activeSockets.forEach((ws) => {
-      if (ws.session) list.push({ ...ws.session });
-    });
-    return list;
+    return Array.from(this.activeSockets.values()).filter(ws => ws.session).map(ws => ({ ...ws.session! }));
   }
 
   static getSessionsForUser(userId: string): ClientConnectionInfo[] {
     const ids = this.sessionsByUser.get(userId);
     if (!ids) return [];
-    const out: ClientConnectionInfo[] = [];
-    ids.forEach((sid) => {
-      const ws = this.activeSockets.get(sid);
-      if (ws?.session) out.push({ ...ws.session });
-    });
-    return out;
+    return Array.from(ids).map(sid => this.activeSockets.get(sid)?.session).filter(Boolean) as ClientConnectionInfo[];
   }
 
-  /**
-   * يفصل كل سوكيتس مستخدم معيّن (مثلاً عند logout أو تغيير الباسورد).
-   */
   static disconnectUser(userId: string, code = 1000, reason = "Logged out"): number {
     const ids = this.sessionsByUser.get(userId);
     if (!ids) return 0;
     let closed = 0;
     ids.forEach((sid) => {
       const ws = this.activeSockets.get(sid);
-      if (ws) {
-        try { ws.close(code, reason); closed += 1; } catch { /* noop */ }
-      }
+      if (ws) { try { ws.close(code, reason); closed += 1; } catch { /* noop */ } }
     });
     return closed;
   }
 
-  // -------------------------------------------------------------------------
-  // أدوات مساعدة
-  // -------------------------------------------------------------------------
-
-  /**
-   * يستخرج كوكي `token` بأمان حتى لو القيمة فيها `=`.
-   */
   private static extractTokenFromCookies(cookieString?: string): string | null {
     if (!cookieString) return null;
     for (const raw of cookieString.split(";")) {
       const cookie = raw.trim();
-      if (!cookie) continue;
       const eqIdx = cookie.indexOf("=");
       if (eqIdx === -1) continue;
-      const name = cookie.slice(0, eqIdx).trim();
-      if (name !== "token") continue;
+      if (cookie.slice(0, eqIdx).trim() !== "token") continue;
       const value = cookie.slice(eqIdx + 1).trim();
-      if (!value) return null;
-      try {
-        return decodeURIComponent(value);
-      } catch {
-        return value;
-      }
+      return value ? decodeURIComponent(value) : null;
     }
     return null;
   }
-  }
+        }
