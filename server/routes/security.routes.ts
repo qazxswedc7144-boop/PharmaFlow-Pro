@@ -515,7 +515,7 @@ router.post('/backup/upload', authenticateToken, requireRoles([Role.PLATFORM_OWN
       });
     }
 
-    const baseDir = path.resolve(process.cwd(), 'backups_cloud_simulated');
+    const baseDir = path.join('/tmp', 'backups_cloud_simulated');
     const folderPath = path.resolve(baseDir, safeTenantId);
     const filePath = path.resolve(folderPath, safeFilename);
 
@@ -589,7 +589,7 @@ router.get('/backup/list', authenticateToken, requireRoles([Role.PLATFORM_OWNER,
     }
 
     const safeTenantId = path.basename(String(tenantId).trim());
-    const baseDir = path.resolve(process.cwd(), 'backups_cloud_simulated');
+    const baseDir = path.join('/tmp', 'backups_cloud_simulated');
     const folderPath = path.resolve(baseDir, safeTenantId);
 
     if (!folderPath.startsWith(baseDir)) {
@@ -657,7 +657,7 @@ router.get('/backup/download', authenticateToken, requireRoles([Role.PLATFORM_OW
 
     const safeTenantId = path.basename(String(tenantId).trim());
     const safeFilename = path.basename(String(filename).trim());
-    const baseDir = path.resolve(process.cwd(), 'backups_cloud_simulated');
+    const baseDir = path.join('/tmp', 'backups_cloud_simulated');
     const folderPath = path.resolve(baseDir, safeTenantId);
     const filePath = path.resolve(folderPath, safeFilename);
 
@@ -721,7 +721,7 @@ router.get('/backup/verify', authenticateToken, requireRoles([Role.PLATFORM_OWNE
 
     const safeTenantId = path.basename(String(tenantId).trim());
     const safeFilename = path.basename(String(filename).trim());
-    const baseDir = path.resolve(process.cwd(), 'backups_cloud_simulated');
+    const baseDir = path.join('/tmp', 'backups_cloud_simulated');
     const filePath = path.resolve(baseDir, safeTenantId, safeFilename);
 
     if (!filePath.startsWith(baseDir)) {
