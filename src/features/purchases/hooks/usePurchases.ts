@@ -893,6 +893,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 let finalizedItems = [...items];
 for (let i = 0; i < finalizedItems.length; i++) {
     const item = finalizedItems[i];
+    if (!item) continue;
     if (item.product_id?.startsWith('manual-')) {
         const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
         await db.products.put({
@@ -906,7 +907,7 @@ for (let i = 0; i < finalizedItems.length; i++) {
           Is_Active: 1,
           created_at: new Date().toISOString()
         });
-        finalizedItems[i] = { ...item, product_id: newProdId, productId: newProdId };
+        finalizedItems[i] = { ...item, product_id: newProdId, productId: newProdId, id: item.id || newProdId };
     }
 }
 

@@ -239,7 +239,7 @@ private static async executeEntityMutation(params: {
 
       const conflictCheck = SyncConflictService.evaluateConflict({ mutation, existingServerRecord: existingAny, tenantId, branchId });
       if (conflictCheck.hasConflict) {
-        return { id: mutationId, mutationId, status: "CONFLICT", success: false, errorCode: conflictCheck.category, conflict: { category: conflictCheck.category, message: conflictCheck.message, serverRecord: existingAny, clientRecord: data, resolutionStrategy: conflictCheck.resolutionStrategy } };
+        return { id: mutationId, mutationId, status: "CONFLICT", success: false, errorCode: conflictCheck.category!, conflict: { category: conflictCheck.category!, message: conflictCheck.message!, serverRecord: existingAny, clientRecord: data, resolutionStrategy: conflictCheck.resolutionStrategy } };
       }
 
       const updateData = this.buildEntityUpdateData(entity, data, branchId);
@@ -254,7 +254,7 @@ private static async executeEntityMutation(params: {
 
       const conflictCheck = SyncConflictService.evaluateConflict({ mutation, existingServerRecord: existingAny, tenantId, branchId });
       if (conflictCheck.hasConflict) {
-        return { id: mutationId, mutationId, status: "CONFLICT", success: false, errorCode: conflictCheck.category, conflict: { category: conflictCheck.category, message: conflictCheck.message, serverRecord: existingAny, clientRecord: data, resolutionStrategy: conflictCheck.resolutionStrategy } };
+        return { id: mutationId, mutationId, status: "CONFLICT", success: false, errorCode: conflictCheck.category!, conflict: { category: conflictCheck.category!, message: conflictCheck.message!, serverRecord: existingAny, clientRecord: data, resolutionStrategy: conflictCheck.resolutionStrategy } };
       }
 
       const updateData = this.buildEntityUpdateData(entity, data, branchId);

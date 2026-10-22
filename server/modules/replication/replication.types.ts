@@ -19,6 +19,7 @@ export type AuditReplicationAction =
 export interface ReplicationEvent {
   id: string; // unique UUID
   type: BusinessEventType;
+  tenantId?: string; // tenant isolating this replication event
   branchId: string; // branch that originated the event
   timestamp: string; // ISO date string
   payload: any; // payload details (e.g. qty changes, invoice details, etc.)
@@ -46,6 +47,7 @@ export interface ReplicationEvent {
 export interface ClientConnectionInfo {
   sessionId: string;
   userId: string;
+  tenantId: string;
   branchId: string;
   role: string;
   connectedAt: string;

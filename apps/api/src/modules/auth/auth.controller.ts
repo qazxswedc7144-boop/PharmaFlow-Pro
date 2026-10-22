@@ -164,7 +164,7 @@ export class AuthController {
       if (req.user) {
         // ✅ إصلاح: القيمة الصحيحة من الـ Enum + إضافة tenantId و ip
         await AuditService.log({
-          tenantId: req.user.tenantId || "SYSTEM",
+          tenantId: (req.user as any).tenantId || "SYSTEM",
           userId: req.user.userId,
           action: "USER_LOGIN", // نستخدم USER_LOGIN لأن الـ Schema لا يحتوي على USER_LOGOUT
           entity: "User",
@@ -197,7 +197,7 @@ export class AuthController {
         id: req.user.userId,
         username: req.user.username,
         role: req.user.role,
-        tenantId: req.user.tenantId, // ✅ إضافة مهمة جداً للـ frontend
+        tenantId: (req.user as any).tenantId, // ✅ إضافة مهمة جداً للـ frontend
       }
     });
   }

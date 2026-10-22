@@ -117,10 +117,11 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
     return (req: express.Request, res: express.Response, next: express.NextFunction): void => {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return res.status(401).json({
+        res.status(401).json({
           resourceType: "OperationOutcome",
           issue: [{ severity: "error", code: "security", diagnostics: "Missing or invalid Authorization header. Expected Bearer token." }]
         });
+        return;
       }
       const token = authHeader.split(" ")[1];
 
@@ -151,25 +152,28 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
       }
 
       if (validKeys.length === 0) {
-        return res.status(503).json({
+        res.status(503).json({
           resourceType: "OperationOutcome",
           issue: [{ severity: "error", code: "security", diagnostics: "SaaS gateway authentication is not configured (FAIL CLOSED)." }]
         });
+        return;
       }
 
       const verified = validKeys.find(k => k.key === token);
       if (!verified) {
-        return res.status(403).json({
+        res.status(403).json({
           resourceType: "OperationOutcome",
           issue: [{ severity: "error", code: "forbidden", diagnostics: "Provided API key is invalid, expired or revoked." }]
         });
+        return;
       }
 
       if (!verified.scopes.includes(requiredScope)) {
-        return res.status(403).json({
+        res.status(403).json({
           resourceType: "OperationOutcome",
           issue: [{ severity: "error", code: "forbidden", diagnostics: `Insufficient scopes. Required scope: [${requiredScope}]` }]
         });
+        return;
       }
 
       (req as any).apiKeyName = verified.name;
@@ -187,7 +191,7 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
       });
     }
     // ... Demo payload remains the same ...
-    res.json({ resourceType: "Bundle", id: "bundle-pat-dallah-2026", type: "searchset", meta: { lastUpdated: new Date().toISOString() }, total: 2, entry: [] });
+    return res.json({ resourceType: "Bundle", id: "bundle-pat-dallah-2026", type: "searchset", meta: { lastUpdated: new Date().toISOString() }, total: 2, entry: [] });
   });
 
   app.post("/api/v1/saas/sync", validateSaasApiKey("financials.read"), (req, res) => {
@@ -200,7 +204,7 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
       return res.status(403).json({ error: "TENANT_MISMATCH", message: "Forbidden: Request body tenantId does not match authenticated credential context." });
     }
 
-    res.json({ status: "SUCCESS", syncId: `sync-tx-${Math.random().toString(36).substring(3, 11)}`, timestamp: new Date().toISOString(), tenantId: authenticatedTenantId });
+    return res.json({ status: "SUCCESS", syncId: `sync-tx-${Math.random().toString(36).substring(3, 11)}`, timestamp: new Date().toISOString(), tenantId: authenticatedTenantId });
   });
 
   // =========================================================================

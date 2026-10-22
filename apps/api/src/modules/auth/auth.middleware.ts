@@ -54,7 +54,7 @@ export function requirePermission(permission: Permission) {
     if (!authorized) {
       AuditService.log({
         userId: req.user.userId,
-        action: "FORBIDDEN_ATTEMPT",
+        action: "FORBIDDEN_ATTEMPT" as any,
         entity: "PermissionGuard",
         entityId: permission,
         after: `User role [${req.user.role}] failed validating permission [${permission}]`,

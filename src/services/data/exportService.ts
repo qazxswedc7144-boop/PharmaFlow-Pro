@@ -139,7 +139,7 @@ ${headers.map(h => `    <Cell ss:StyleID="Header"><Data ss:Type="String">${escap
   /**
    * تصدير PDF للعناصر الرسومية
    */
-  exportToPDFFile: async (titleOrElement: string | HTMLElement, columnsOrFilename: string[] | string, rowsOrUndefined?: any[][], maybeFilename?: string) => {
+  exportToPDFFile: async (titleOrElement: string | HTMLElement, columnsOrFilename: string[] | string, _rowsOrUndefined?: any[][], _maybeFilename?: string) => {
     try {
       // استخدام html2canvas للحصول على دعم كامل للغة العربية بدلاً من autoTable
       if (

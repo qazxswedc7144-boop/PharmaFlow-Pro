@@ -33,8 +33,14 @@ function injectTenantIdToData(data: any, currentTenantId: string, modelName: str
   if (!data || typeof data !== "object") return data;
 
   const isSystemAllowed = SYSTEM_ALLOWED_MODELS.has(modelName.toLowerCase());
-  const targetTenantId = isSystemAllowed && data.isSystemRole ? null : (data.tenantId || currentTenantId);
 
+  if (data.tenantId !== undefined && data.tenantId !== null && data.tenantId !== currentTenantId) {
+    if (!isSystemAllowed || !data.isSystemRole) {
+      throw new Error("SECURITY_VIOLATION: Cannot override tenantId from client data.");
+    }
+  }
+
+  const targetTenantId = isSystemAllowed && data.isSystemRole ? null : currentTenantId;
   const newData = { ...data, tenantId: targetTenantId };
 
   // معالجة العلاقات المتداخلة
@@ -99,6 +105,14 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
               }
 
               const [params = {}, ...rest] = args;
+
+              // 🚨 فحص صارم لمنع العميل من فرض tenantId مخالف في where
+              if (params.where && typeof params.where === "object") {
+                if (params.where.tenantId !== undefined && params.where.tenantId !== null && params.where.tenantId !== currentTenantId) {
+                  throw new Error("SECURITY_VIOLATION: Cannot query or mutate a different tenantId via where clause.");
+                }
+              }
+
               const isSystemAllowed = SYSTEM_ALLOWED_MODELS.has(modelNameLower);
 
               // 1. عمليات القراءة
