@@ -255,30 +255,18 @@ if (!deviceId || !tenantId || !branchId || !deviceName) {
     }
 
     // Determine limit
-    const subscription = await prisma.tenantSubscription.findFirst({
-      where: { tenantId, isActive: true },
-      orderBy: { createdAt: 'desc' }
-    });
+    // 🚀 تحسين الأداء: دمج استعلام الاشتراك مع استعلام الخطة في خطوة واحدة
+const subscription = await prisma.tenantSubscription.findFirst({
+  where: { tenantId, isActive: true },
+  orderBy: { createdAt: 'desc' },
+  include: { plan: true }
+});
 
-    let maxDevices = 3; // default fallback (e.g. TRIAL/BASIC)
-    if (subscription) {
-      // Find plan code if possible
-      const plan = await prisma.subscriptionPlan.findUnique({
-        where: { id: subscription.planId }
-      });
-      if (plan) {
-        if (plan.code === 'BUSINESS') maxDevices = 6;
-        else if (plan.code === 'ENTERPRISE') maxDevices = 999; // Unlimited
-      }
-    }
-
-    if (count >= maxDevices && !existingDevice) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'DEVICE_COUNT_EXCEEDED',
-        message: `تم الوصول للحد الأقصى المسموح به للأجهزة المعتمدة في باقتك الحالية (${maxDevices} أجهزة).`
-      });
-    }
+let maxDevices = 3; // default fallback
+if (subscription && subscription.plan) {
+  if (subscription.plan.code === 'BUSINESS') maxDevices = 6;
+  else if (subscription.plan.code === 'ENTERPRISE') maxDevices = 999; // Unlimited
+}
 
     const registered = await prisma.deviceRegistration.upsert({
       where: { deviceId },
@@ -506,7 +494,9 @@ router.post('/backup/upload', authenticateToken, requireRoles([Role.PLATFORM_OWN
       });
     }
 
-    if (typeof payload === 'string' && payload.length > 50 * 1024 * 1024) {
+    // 🚀 تحسين الأداء: استخدام Buffer بدلاً من String لتوفير الذاكرة
+const payloadBuffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+if (payloadBuffer.length > 50 * 1024 * 1024) {
       return res.status(400).json({
         status: 'error',
         code: 'FILE_SIZE_LIMIT_EXCEEDED',
@@ -528,7 +518,7 @@ router.post('/backup/upload', authenticateToken, requireRoles([Role.PLATFORM_OWN
 
     // Optional Checksum Verification on Upload
     const clientChecksum = (req.headers['x-backup-checksum'] as string) || req.body?.checksum;
-    const computedChecksum = crypto.createHash('sha256').update(payload).digest('hex');
+    const computedChecksum = crypto.createHash('sha256').update(payloadBuffer).digest('hex');
     if (clientChecksum && clientChecksum.toLowerCase() !== computedChecksum.toLowerCase()) {
       return res.status(400).json({
         status: 'error',
@@ -538,8 +528,7 @@ router.post('/backup/upload', authenticateToken, requireRoles([Role.PLATFORM_OWN
     }
 
     await fs.mkdir(folderPath, { recursive: true });
-    await fs.writeFile(filePath, payload, 'utf8');
-
+    await fs.writeFile(filePath, payloadBuffer);
     // Audit log persistence
     await prisma.auditLog.create({
       data: {
