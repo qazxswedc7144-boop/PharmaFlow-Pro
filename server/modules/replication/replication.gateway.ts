@@ -9,6 +9,7 @@ import { randomUUID } from "crypto";
 import { Role } from "@prisma/client";
 import { ReplicationSubscriber } from "./replication.subscriber.js";
 import { ReplicationEvent, ClientConnectionInfo } from "./replication.types.js";
+import { tenantPrisma } from "../../database/tenantPrisma.js";
 
 // ---------------------------------------------------------------------------
 // الإعدادات (Config)
@@ -276,8 +277,22 @@ export class ReplicationGateway {
         if (!BRANCH_SWITCH_ALLOWED_ROLES.has(session.role)) return;
         const targetBranch = typeof msg.branchId === "string" ? msg.branchId.trim() : null;
         if (!targetBranch) return;
-        session.branchId = targetBranch;
-        try { ws.send(JSON.stringify({ type: "BranchChanged", branchId: targetBranch })); } catch { /* noop */ }
+
+        (async () => {
+          try {
+            const branchRecord = await tenantPrisma.branch.findFirst({
+              where: { id: targetBranch, tenantId: session.tenantId }
+            });
+            if (!branchRecord) {
+              try { ws.send(JSON.stringify({ type: "Error", message: "Unauthorized branch switch: branch does not exist or belongs to another tenant" })); } catch {}
+              return;
+            }
+            session.branchId = targetBranch;
+            try { ws.send(JSON.stringify({ type: "BranchChanged", branchId: targetBranch })); } catch { /* noop */ }
+          } catch {
+            try { ws.send(JSON.stringify({ type: "Error", message: "Branch verification failed" })); } catch {}
+          }
+        })();
         return;
       default: return;
     }

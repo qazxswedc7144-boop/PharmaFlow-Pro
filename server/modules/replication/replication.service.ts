@@ -1,6 +1,6 @@
 // server/modules/replication/replication.service.ts
 
-import { prisma } from "../../database/prisma.js";
+import { tenantPrisma } from "../../database/tenantPrisma.js";
 import { ReplicationEvent, BusinessEventType, SyncRecoveryRequest, SyncRecoveryResponse } from "./replication.types.js";
 import { RedisConnectionManager } from "../../database/redis.js";
 
@@ -16,8 +16,7 @@ export class ReplicationService {
 
     try {
       // Find all SyncEvents in DB with sequence ID greater than lastKnownSequence
-      // Since sequence is a BigInt, we can filter elements where sequence > BigInt(lastKnownSequence)
-      const rawEvents = await prisma.syncEvent.findMany({
+      const rawEvents = await tenantPrisma.syncEvent.findMany({
         where: {
           sequence: {
             gt: BigInt(lastKnownSequence)
@@ -52,7 +51,7 @@ export class ReplicationService {
 
       // Log immutable audit event for recovery
       if (recoveredEvents.length > 0) {
-        await prisma.auditLog.create({
+        await tenantPrisma.auditLog.create({
           data: {
             action: "REPLICATION_RECOVERED",
             entity: "Branch",
@@ -103,7 +102,7 @@ export class ReplicationService {
         parentWhere.eventType = type;
       }
 
-      const rawEvents = await prisma.syncEvent.findMany({
+      const rawEvents = await tenantPrisma.syncEvent.findMany({
         where: parentWhere,
         orderBy: {
           sequence: "desc"
@@ -123,7 +122,7 @@ export class ReplicationService {
       })).reverse();
 
       // Log auditing record for system replay
-      await prisma.auditLog.create({
+      await tenantPrisma.auditLog.create({
         data: {
           action: "REPLICATION_REPLAYED",
           entity: "System",

@@ -1,7 +1,7 @@
 import { prisma } from "../../database/prisma.js";
 import { RedisConnectionManager } from "../../database/redis.js";
 import { ReplicationEvent, BusinessEventType } from "./replication.types.js";
-import { getCurrentTenantId } from "../../context/tenantContext.js";
+import { getCurrentTenantId, tenantStorage } from "../../context/tenantContext.js";
 import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
 
@@ -26,7 +26,18 @@ export class ReplicationPublisher {
     const eventId = randomUUID();
     const timestamp = new Date().toISOString();
 
-    const tenantId = params.tenantId || getCurrentTenantId();
+    const store = tenantStorage.getStore();
+    const activeTenantId = store?.tenantId;
+
+    if (process.env.NODE_ENV === "production" && !activeTenantId) {
+      throw new Error("SECURITY_VIOLATION: Trusted tenant context is mandatory to publish replication events in production.");
+    }
+
+    if (activeTenantId && params.tenantId && params.tenantId !== activeTenantId) {
+      throw new Error("SECURITY_VIOLATION: Replication event tenantId conflicts with trusted tenant context.");
+    }
+
+    const tenantId = activeTenantId || params.tenantId || getCurrentTenantId();
     if (!tenantId || tenantId === "default-tenant") {
       if (process.env.NODE_ENV === "production") {
         throw new Error("SECURITY_VIOLATION: tenantId is required to publish replication events.");

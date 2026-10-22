@@ -98,12 +98,12 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
               const store = tenantStorage.getStore();
               const activeTenantId = store?.tenantId;
 
-              if (process.env.NODE_ENV === "production" && !activeTenantId && !explicitTenantId) {
-                throw new Error("SECURITY_VIOLATION: Trusted tenant context is mandatory in production.");
+              if (process.env.NODE_ENV === "production" && (!activeTenantId || (explicitTenantId && explicitTenantId !== activeTenantId))) {
+                throw new Error("SECURITY_VIOLATION: Trusted tenant context is mandatory in production, and explicitTenantId cannot override active context.");
               }
 
-              if (explicitTenantId && activeTenantId && explicitTenantId !== activeTenantId) {
-                throw new Error("SECURITY_VIOLATION: Cannot specify a different tenantId.");
+              if (activeTenantId && explicitTenantId && explicitTenantId !== activeTenantId) {
+                throw new Error("SECURITY_VIOLATION: explicitTenantId conflicts with active trusted tenant context.");
               }
 
               const currentTenantId = activeTenantId || explicitTenantId || getCurrentTenantId();
@@ -211,7 +211,17 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
                 return originalMethod.apply(modelTarget, [{ ...params, where: scopedWhere }, ...rest]);
               }
 
-              return originalMethod.apply(modelTarget, args);
+              // Default fallback for any other/unhandled operation: securely scope where and data
+              let scopedWhere = params.where && typeof params.where === "object" ? { ...params.where, tenantId: currentTenantId } : undefined;
+              let scopedData = params.data && typeof params.data === "object" ? injectTenantIdToData(params.data, currentTenantId, modelNameLower) : undefined;
+              
+              const newParams = {
+                ...params,
+                ...(scopedWhere ? { where: scopedWhere } : {}),
+                ...(scopedData ? { data: scopedData } : {}),
+              };
+
+              return originalMethod.apply(modelTarget, [newParams, ...rest]);
             };
           }
         });
