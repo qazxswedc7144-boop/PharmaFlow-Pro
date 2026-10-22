@@ -201,7 +201,7 @@ private static async executeEntityMutation(params: {
   let existingAny: any = null;
   try {
     if (typeof model?.findFirst === "function") {
-      existingAny = await model.findFirst({ where: { id: entityId, tenantId } }).catch(() => null);
+      existingAny = await model.findFirst({ where: { id: entityId } }).catch(() => null);
     } else if (typeof model?.findUnique === "function") {
       existingAny = await model.findUnique({ where: { id: entityId } }).catch(() => null);
       if (existingAny && existingAny.tenantId !== tenantId) {

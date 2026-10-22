@@ -1,6 +1,6 @@
 // server/database/tenantPrisma.ts
 import { prisma } from "./prisma.js";
-import { getCurrentTenantId } from "../context/tenantContext.js";
+import { getCurrentTenantId, tenantStorage } from "../context/tenantContext.js";
 import { Prisma } from "@prisma/client";
 
 export const TENANT_OWNED_MODELS = [
@@ -91,8 +91,10 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
             return async (...args: any[]) => {
               const currentTenantId = explicitTenantId || getCurrentTenantId();
               
+              const store = tenantStorage.getStore();
+              const activeTenantId = store?.tenantId;
               // 🚨 حماية إضافية: إذا حاول مستخدم تمرير tenantId لمؤسسة أخرى
-              if (explicitTenantId && getCurrentTenantId() && explicitTenantId !== getCurrentTenantId()) {
+              if (explicitTenantId && activeTenantId && explicitTenantId !== activeTenantId) {
                 throw new Error("SECURITY_VIOLATION: Cannot specify a different tenantId.");
               }
 

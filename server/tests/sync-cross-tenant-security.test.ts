@@ -244,10 +244,8 @@ describe("P0 Security Hardening: Cross-Tenant Isolation & SaaS Security Test Sui
       expect(mockTx.product.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            id_tenantId: {
-              id: "prod-tenant-a-001",
-              tenantId: tenantA
-            }
+            id: "prod-tenant-a-001",
+            tenantId: tenantA
           }
         })
       );
@@ -360,7 +358,9 @@ describe("P0 Security Hardening: Cross-Tenant Isolation & SaaS Security Test Sui
       await startTestServer({
         NODE_ENV: "production",
         SAAS_KEY_MOUWASAT: "real_production_mouwasat_key_secret_12345",
-        SAAS_KEY_CLOUD_SYNC: "real_production_cloud_sync_key_secret_67890"
+        SAAS_KEY_CLOUD_SYNC: "real_production_cloud_sync_key_secret_67890",
+        SAAS_MOUWASAT_TENANT_ID: "TENANT_MOUWASAT_01",
+        SAAS_CLOUD_SYNC_TENANT_ID: "TENANT_CLOUD_SYNC_01"
       });
 
       try {
@@ -382,6 +382,7 @@ describe("P0 Security Hardening: Cross-Tenant Isolation & SaaS Security Test Sui
       await startTestServer({
         NODE_ENV: "production",
         SAAS_KEY_MOUWASAT: "key_mouwasat_secure_test",
+        SAAS_MOUWASAT_TENANT_ID: "TENANT_MOUWASAT_01",
         ENABLE_SAAS_DEMO_ENDPOINTS: undefined
       });
 

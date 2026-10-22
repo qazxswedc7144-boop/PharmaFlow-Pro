@@ -336,9 +336,11 @@ router.get('/backup/list', authenticateToken, requireRoles([Role.PLATFORM_OWNER,
 });
 
 router.get('/backup/download', authenticateToken, heavyOperationLimiter, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
+  let tenantId = '';
+  let filename = '';
   try {
-    const tenantId = (req.query.tenantId as string) || req.user?.tenantId;
-    const filename = req.query.filename as string;
+    tenantId = (req.query.tenantId as string) || req.user?.tenantId || '';
+    filename = req.query.filename as string || '';
 
     if (!tenantId || !filename) return res.status(400).json({ status: 'error', code: 'BACKUP_DOWNLOAD_BAD_INPUT', message: 'Missing parameters.' });
 
@@ -376,9 +378,11 @@ router.get('/backup/download', authenticateToken, heavyOperationLimiter, require
 });
 
 router.get('/backup/verify', authenticateToken, heavyOperationLimiter, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
+  let tenantId = '';
+  let filename = '';
   try {
-    const tenantId = (req.query.tenantId as string) || req.user?.tenantId;
-    const filename = req.query.filename as string;
+    tenantId = (req.query.tenantId as string) || req.user?.tenantId || '';
+    filename = req.query.filename as string || '';
     const expectedChecksum = (req.query.checksum as string) || '';
 
     if (!tenantId || !filename) return res.status(400).json({ status: 'error', code: 'BACKUP_VERIFY_BAD_INPUT', message: 'Missing parameters.' });
