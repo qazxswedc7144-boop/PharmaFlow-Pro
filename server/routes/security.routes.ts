@@ -10,35 +10,37 @@ import { Role } from '@prisma/client';
 
 const router = Router();
 
-const securityRateLimiter = rateLimit({
+// 🛡️ 1. Rate Limiting قياسي لمعظم المسارات
+const standardRateLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   validate: { default: false },
-  message: {
-    status: 'error',
-    code: 'SEC_RATE_LIMIT_EXCEEDED',
-    message: 'Cryptographic request threshold breached. Access has been temporarily restricted.'
-  }
+  message: { status: 'error', code: 'SEC_RATE_LIMIT_EXCEEDED', message: 'تم تجاوز الحد المسموح للطلبات.' }
 });
 
-router.use(securityRateLimiter);
+// 🚀 2. Rate Limiting صارم للعمليات الثقيلة (CPU/IO)
+const heavyOperationLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { default: false },
+  message: { status: 'error', code: 'SEC_HEAVY_RATE_LIMIT_EXCEEDED', message: 'عدد كبير من العمليات الثقيلة. يرجى الانتظار.' }
+});
+
+router.use(standardRateLimiter);
 
 const validateRawPayload = (req: Request, res: Response, next: NextFunction): void => {
   const { text } = req.body;
   if (!text || typeof text !== 'string') {
-    res.status(400).json({
-      status: 'error',
-      code: 'SEC_BAD_INPUT',
-      message: 'Body template validation error: A "text" string property is required.'
-    });
+    res.status(400).json({ status: 'error', code: 'SEC_BAD_INPUT', message: 'A "text" string property is required.' });
     return;
   }
   next();
 };
 
-// ✅ إضافة authenticateToken للمسارات الحساسة (Defense in Depth)
 router.post('/encrypt', authenticateToken, validateRawPayload, (req: Request, res: Response) => {
   try {
     const { text } = req.body;
@@ -62,7 +64,7 @@ router.post('/decrypt', authenticateToken, (req: Request, res: Response) => {
   }
 });
 
-router.post('/encrypt-backup', authenticateToken, validateRawPayload, (req: Request, res: Response) => {
+router.post('/encrypt-backup', authenticateToken, heavyOperationLimiter, validateRawPayload, (req: Request, res: Response) => {
   try {
     const { text, password } = req.body;
     const encrypted = EncryptionService.encryptBackup(text, password);
@@ -72,7 +74,7 @@ router.post('/encrypt-backup', authenticateToken, validateRawPayload, (req: Requ
   }
 });
 
-router.post('/decrypt-backup', authenticateToken, (req: Request, res: Response) => {
+router.post('/decrypt-backup', authenticateToken, heavyOperationLimiter, (req: Request, res: Response) => {
   try {
     const { salt, iv, encrypted_data, password } = req.body;
     if (!salt || !iv || !encrypted_data) {
@@ -100,20 +102,15 @@ router.post('/crash', authenticateToken, async (req: AuthenticatedRequest, res: 
 
     const crashEntry = await prisma.crashLog.create({
       data: {
-        tenantId: tenantId || null,
-        branchId: branchId || null,
-        userId: userId || null,
-        route,
-        deviceFingerprint: deviceFingerprint || null,
-        appVersion: appVersion || null,
-        stackTrace: stackTrace || null,
-        errorMessage,
-        timestamp: parsedDate
+        tenantId: tenantId || null, branchId: branchId || null, userId: userId || null, route,
+        deviceFingerprint: deviceFingerprint || null, appVersion: appVersion || null,
+        stackTrace: stackTrace || null, errorMessage, timestamp: parsedDate
       }
     });
 
     return res.status(201).json({ status: 'success', data: crashEntry });
   } catch (error: any) {
+    console.error("⚠️ Failed to write crash log entry:", error.message);
     return res.status(500).json({ status: 'error', code: 'CRASH_LOG_CORE_FAILURE', message: 'Failed to record crash trace.' });
   }
 });
@@ -132,34 +129,43 @@ router.post('/device/register', authenticateToken, async (req: AuthenticatedRequ
       return res.status(400).json({ status: 'error', code: 'BRANCH_TENANT_MISMATCH', message: 'الفرع المحدد لا ينتمي إلى هذه المؤسسة.' });
     }
 
-    const count = await prisma.deviceRegistration.count({ where: { tenantId } });
-    const existingDevice = await prisma.deviceRegistration.findFirst({ where: { deviceId, tenantId } });
-
-    if (existingDevice && existingDevice.tenantId !== tenantId) {
+    const globalDevice = await prisma.deviceRegistration.findUnique({ where: { deviceId } });
+    if (globalDevice && globalDevice.tenantId !== tenantId) {
       return res.status(403).json({ status: 'error', code: 'CROSS_TENANT_DEVICE_FORBIDDEN', message: 'هذا الجهاز مسجل لمؤسسة أخرى.' });
     }
+    const isExisting = !!globalDevice;
 
-    const subscription = await prisma.tenantSubscription.findFirst({
-      where: { tenantId, isActive: true },
-      orderBy: { createdAt: 'desc' },
-      include: { plan: true }
-    });
+    let registered;
+    try {
+      registered = await prisma.$transaction(async (tx) => {
+        const count = await tx.deviceRegistration.count({ where: { tenantId } });
+        const subscription = await tx.tenantSubscription.findFirst({
+          where: { tenantId, isActive: true }, orderBy: { createdAt: 'desc' }, include: { plan: true }
+        });
 
-    let maxDevices = 3;
-    if (subscription && subscription.plan) {
-      if (subscription.plan.code === 'BUSINESS') maxDevices = 6;
-      else if (subscription.plan.code === 'ENTERPRISE') maxDevices = 999;
+        let maxDevices = 3;
+        if (subscription && subscription.plan) {
+          if (subscription.plan.code === 'BUSINESS') maxDevices = 6;
+          else if (subscription.plan.code === 'ENTERPRISE') maxDevices = 999;
+        }
+
+        if (count >= maxDevices && !isExisting) {
+          throw new Error(`DEVICE_COUNT_EXCEEDED:${maxDevices}`);
+        }
+
+        return tx.deviceRegistration.upsert({
+          where: { deviceId },
+          update: { deviceName, androidVersion, appVersion, lastSync: new Date() },
+          create: { deviceId, tenantId, branchId, deviceName, androidVersion, appVersion, lastSync: new Date() }
+        });
+      });
+    } catch (txError: any) {
+      if (txError.message && txError.message.startsWith('DEVICE_COUNT_EXCEEDED:')) {
+        const max = txError.message.split(':')[1];
+        return res.status(403).json({ status: 'error', code: 'DEVICE_COUNT_EXCEEDED', message: `الحد الأقصى للأجهزة (${max}).` });
+      }
+      throw txError;
     }
-
-    if (count >= maxDevices && !existingDevice) {
-      return res.status(403).json({ status: 'error', code: 'DEVICE_COUNT_EXCEEDED', message: `الحد الأقصى للأجهزة (${maxDevices}).` });
-    }
-
-    const registered = await prisma.deviceRegistration.upsert({
-      where: { deviceId },
-      update: { deviceName, androidVersion, appVersion, lastSync: new Date() },
-      create: { deviceId, tenantId, branchId, deviceName, androidVersion, appVersion, lastSync: new Date() }
-    });
 
     return res.json({ status: 'success', data: registered });
   } catch (error: any) {
@@ -171,13 +177,11 @@ router.get('/device/status/:deviceId', authenticateToken, async (req: Authentica
   try {
     const { deviceId } = req.params;
     const tenantId = req.user!.tenantId;
-
     const device = await prisma.deviceRegistration.findFirst({ where: { deviceId, tenantId } });
 
     if (!device) {
       return res.status(404).json({ status: 'error', code: 'DEVICE_NOT_FOUND', message: 'Device not found.' });
     }
-
     return res.json({ status: 'success', data: device });
   } catch (error: any) {
     return res.status(500).json({ status: 'error', code: 'DEVICE_STATUS_FAILURE', message: 'Failed to retrieve device status.' });
@@ -214,7 +218,6 @@ router.post('/license/generate', authenticateToken, async (req: AuthenticatedReq
     return res.status(500).json({ status: 'error', code: 'LICENSE_GENERATE_FAIL', message: 'Failed to generate signature.' });
   }
 });
-
 router.post('/license/verify', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { deviceFingerprint, expiryDate, signature } = req.body;
@@ -240,7 +243,7 @@ router.post('/license/verify', authenticateToken, async (req: AuthenticatedReque
   }
 });
 
-router.post('/backup/upload', authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
+router.post('/backup/upload', authenticateToken, heavyOperationLimiter, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { tenantId, filename, payload } = req.body;
     if (!tenantId || !filename || !payload) {
@@ -260,7 +263,6 @@ router.post('/backup/upload', authenticateToken, requireRoles([Role.PLATFORM_OWN
       return res.status(400).json({ status: 'error', code: 'INVALID_FILE_EXTENSION', message: 'Extension not allowed.' });
     }
 
-    // 🚀 التعامل مع الملفات النصية والثنائية
     const isBase64 = safeFilename.endsWith('.zip') || safeFilename.endsWith('.pfb');
     const payloadBuffer = Buffer.from(payload, isBase64 ? 'base64' : 'utf8');
 
@@ -333,7 +335,7 @@ router.get('/backup/list', authenticateToken, requireRoles([Role.PLATFORM_OWNER,
   }
 });
 
-router.get('/backup/download', authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
+router.get('/backup/download', authenticateToken, heavyOperationLimiter, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tenantId = (req.query.tenantId as string) || req.user?.tenantId;
     const filename = req.query.filename as string;
@@ -360,16 +362,20 @@ router.get('/backup/download', authenticateToken, requireRoles([Role.PLATFORM_OW
       }
     }).catch(() => {});
 
-    // ✅ الحل الجذري للتلف: إرسال Buffer بدلاً من JSON
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
     return res.send(contentBuffer);
+
   } catch (error: any) {
-    return res.status(404).json({ status: 'error', code: 'BACKUP_FILE_NOT_FOUND', message: 'File not found.' });
+    console.error(`[Backup Download Error] Tenant: ${tenantId}, File: ${filename}, Err: ${error.message}`);
+    if (error.code === 'ENOENT') {
+       return res.status(404).json({ status: 'error', code: 'BACKUP_FILE_NOT_FOUND', message: 'File not found.' });
+    }
+    return res.status(500).json({ status: 'error', code: 'BACKUP_SERVER_ERROR', message: 'Internal server error.' });
   }
 });
 
-router.get('/backup/verify', authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
+router.get('/backup/verify', authenticateToken, heavyOperationLimiter, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tenantId = (req.query.tenantId as string) || req.user?.tenantId;
     const filename = req.query.filename as string;
@@ -400,7 +406,11 @@ router.get('/backup/verify', authenticateToken, requireRoles([Role.PLATFORM_OWNE
       checksumMatched, verifiedAt: new Date().toISOString()
     });
   } catch (error: any) {
-    return res.status(404).json({ status: 'error', code: 'BACKUP_NOT_FOUND', message: 'Cloud backup file could not be verified.' });
+    console.error(`[Backup Verify Error] Tenant: ${tenantId}, File: ${filename}, Err: ${error.message}`);
+    if (error.code === 'ENOENT') {
+       return res.status(404).json({ status: 'error', code: 'BACKUP_FILE_NOT_FOUND', message: 'Cloud backup file could not be verified.' });
+    }
+    return res.status(500).json({ status: 'error', code: 'BACKUP_SERVER_ERROR', message: 'Internal server error during verification.' });
   }
 });
 
