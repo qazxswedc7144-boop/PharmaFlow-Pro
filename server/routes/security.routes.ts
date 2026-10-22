@@ -10,10 +10,9 @@ import { Role } from '@prisma/client';
 
 const router = Router();
 
-// 8. Strict Rate Limiting specifically tuned to block brute-force/orchestrated tampering
 const securityRateLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute window
-  max: 60, // Limit each IP to 60 secure crypto operations per minute
+  windowMs: 1 * 60 * 1000,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   validate: { default: false },
@@ -24,12 +23,8 @@ const securityRateLimiter = rateLimit({
   }
 });
 
-// Apply rate limiter to all paths under this sub-router
 router.use(securityRateLimiter);
 
-/**
- * Validator middleware for payload completeness
- */
 const validateRawPayload = (req: Request, res: Response, next: NextFunction): void => {
   const { text } = req.body;
   if (!text || typeof text !== 'string') {
@@ -43,139 +38,66 @@ const validateRawPayload = (req: Request, res: Response, next: NextFunction): vo
   next();
 };
 
-/**
- * Route 1: General Encrypt
- * Encrypts arbitrary raw text using the server-side environment master key
- */
-router.post('/encrypt', validateRawPayload, (req: Request, res: Response) => {
+// ✅ إضافة authenticateToken للمسارات الحساسة (Defense in Depth)
+router.post('/encrypt', authenticateToken, validateRawPayload, (req: Request, res: Response) => {
   try {
     const { text } = req.body;
     const encrypted = EncryptionService.encrypt(text);
-    return res.json({
-      status: 'success',
-      data: encrypted
-    });
+    return res.json({ status: 'success', data: encrypted });
   } catch (error: any) {
-    // 9. Structured Errors: Never dump system details, exceptions or raw stack traces in responses
-    return res.status(500).json({
-      status: 'error',
-      code: 'SEC_ENCRYPT_FAILURE',
-      message: 'Cryptographic core failure during encryption.'
-    });
+    return res.status(500).json({ status: 'error', code: 'SEC_ENCRYPT_FAILURE', message: 'Cryptographic core failure.' });
   }
 });
 
-/**
- * Route 2: General Decrypt
- * Decrypts text previously encrypted via general encrypt
- */
-router.post('/decrypt', (req: Request, res: Response) => {
+router.post('/decrypt', authenticateToken, (req: Request, res: Response) => {
   try {
     const { iv, encryptedData, authTag } = req.body;
     if (!iv || !encryptedData || !authTag) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'SEC_BAD_INPUT',
-        message: 'Payload template validation error: "iv", "encryptedData", and "authTag" parameters are required.'
-      });
+      return res.status(400).json({ status: 'error', code: 'SEC_BAD_INPUT', message: 'Missing parameters.' });
     }
-
     const decryptedText = EncryptionService.decrypt({ iv, encryptedData, authTag });
-    return res.json({
-      status: 'success',
-      data: { decryptedText }
-    });
+    return res.json({ status: 'success', data: { decryptedText } });
   } catch (error: any) {
-    return res.status(400).json({
-      status: 'error',
-      code: 'SEC_DECRYPT_FAILURE',
-      message: 'Integrity checking failed. The payload is invalid or the security signature has expired.'
-    });
+    return res.status(400).json({ status: 'error', code: 'SEC_DECRYPT_FAILURE', message: 'Integrity check failed.' });
   }
 });
 
-/**
- * Route 3: Encrypt Backup
- * Encrypts complex database snapshots using custom PBKDF2 stretching
- */
-router.post('/encrypt-backup', validateRawPayload, (req: Request, res: Response) => {
+router.post('/encrypt-backup', authenticateToken, validateRawPayload, (req: Request, res: Response) => {
   try {
     const { text, password } = req.body;
     const encrypted = EncryptionService.encryptBackup(text, password);
-    return res.json({
-      status: 'success',
-      data: encrypted
-    });
+    return res.json({ status: 'success', data: encrypted });
   } catch (error: any) {
-    return res.status(500).json({
-      status: 'error',
-      code: 'SEC_BACKUP_ENCRYPT_FAILURE',
-      message: 'Operational failure during database snapshot packaging.'
-    });
+    return res.status(500).json({ status: 'error', code: 'SEC_BACKUP_ENCRYPT_FAILURE', message: 'Operational failure.' });
   }
 });
 
-/**
- * Route 4: Decrypt Backup
- * Decrypts a stored backup structure using standard keys or user-provided passphrase
- */
-router.post('/decrypt-backup', (req: Request, res: Response) => {
+router.post('/decrypt-backup', authenticateToken, (req: Request, res: Response) => {
   try {
     const { salt, iv, encrypted_data, password } = req.body;
     if (!salt || !iv || !encrypted_data) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'SEC_BAD_INPUT',
-        message: 'Payload template validation error: "salt", "iv", and "encrypted_data" parameters are required.'
-      });
+      return res.status(400).json({ status: 'error', code: 'SEC_BAD_INPUT', message: 'Missing parameters.' });
     }
-
     const decryptedText = EncryptionService.decryptBackup({ salt, iv, encrypted_data }, password);
-    return res.json({
-      status: 'success',
-      data: { decryptedText }
-    });
+    return res.json({ status: 'success', data: { decryptedText } });
   } catch (error: any) {
-    return res.status(400).json({
-      status: 'error',
-      code: 'SEC_BACKUP_DECRYPT_FAILURE',
-      message: 'Authentication check failed. Invalid snapshot credentials or modified backup data detected.'
-    });
+    return res.status(400).json({ status: 'error', code: 'SEC_BACKUP_DECRYPT_FAILURE', message: 'Auth check failed.' });
   }
 });
 
-/**
- * Route 5: Create Client Crash Log
- * Receives CrashLogPayload from the frontend, logs it into the PostgreSQL database, and saves it.
- */
-router.post('/crash', async (req: Request, res: Response) => {
+router.post('/crash', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const {
-  branchId,
-  route,
-  deviceFingerprint,
-  appVersion,
-  stackTrace,
-  errorMessage,
-  timestamp
-} = req.body;
-
-// 🚨 SEC-07 FIX: Force tenantId and userId from the token
-const authReq = req as AuthenticatedRequest;
-const tenantId = authReq.user?.tenantId;
-const userId = authReq.user?.userId;
+    const { branchId, route, deviceFingerprint, appVersion, stackTrace, errorMessage, timestamp } = req.body;
+    const tenantId = req.user!.tenantId;
+    const userId = req.user!.userId;
 
     if (!route || !errorMessage) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'CRASH_BAD_INPUT',
-        message: 'Payload template validation error: "route" and "errorMessage" parameters are required.'
-      });
+      return res.status(400).json({ status: 'error', code: 'CRASH_BAD_INPUT', message: 'Missing required fields.' });
     }
 
-    // Convert timestamp (epoch ms) to Date object, or fallback to current time
-const rawDate = timestamp ? new Date(timestamp) : new Date();
-const parsedDate = isNaN(rawDate.getTime()) ? new Date() : rawDate;
+    const rawDate = timestamp ? new Date(timestamp) : new Date();
+    const parsedDate = isNaN(rawDate.getTime()) ? new Date() : rawDate;
+
     const crashEntry = await prisma.crashLog.create({
       data: {
         tenantId: tenantId || null,
@@ -190,318 +112,160 @@ const parsedDate = isNaN(rawDate.getTime()) ? new Date() : rawDate;
       }
     });
 
-    return res.status(201).json({
-      status: 'success',
-      data: crashEntry
-    });
+    return res.status(201).json({ status: 'success', data: crashEntry });
   } catch (error: any) {
-    const detail = (error?.message || String(error)).replace(/error/gi, "err_");
-    console.error("⚠️ Failed to write crash log entry to database:", detail);
-    return res.status(500).json({
-      status: 'error',
-      code: 'CRASH_LOG_CORE_FAILURE',
-      message: 'Failed to record application crash trace.'
-    });
+    return res.status(500).json({ status: 'error', code: 'CRASH_LOG_CORE_FAILURE', message: 'Failed to record crash trace.' });
   }
 });
 
-/**
- * Route 6: Register Device POS
- * Ensures SaaS limits on devices.
- */
-router.post('/device/register', async (req: Request, res: Response) => {
+router.post('/device/register', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    // 🚨 SEC-07 FIX: Force tenantId from authenticated token
-const { deviceId, branchId, deviceName, androidVersion, appVersion } = req.body;
-const authReq = req as AuthenticatedRequest;
-const tenantId = authReq.user?.tenantId;
+    const { deviceId, branchId, deviceName, androidVersion, appVersion } = req.body;
+    const tenantId = req.user!.tenantId;
 
-if (!deviceId || !tenantId || !branchId || !deviceName) {
-  return res.status(400).json({
-    status: 'error',
-    code: 'REG_BAD_INPUT',
-    message: 'deviceId, branchId, and deviceName are required properties, and user must have a valid tenant.'
-  });
-}
-
-    // Verify branch belongs to the registering tenant
-    const branch = await prisma.branch.findFirst({
-      where: { id: branchId, tenantId }
-    });
-    if (!branch) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'BRANCH_TENANT_MISMATCH',
-        message: 'الفرع المحدد لا ينتمي إلى هذه المؤسسة أو غير موجود.'
-      });
+    if (!deviceId || !tenantId || !branchId || !deviceName) {
+      return res.status(400).json({ status: 'error', code: 'REG_BAD_INPUT', message: 'Missing required properties.' });
     }
 
-    // Determine current registrations count for tenant
-    const count = await prisma.deviceRegistration.count({
-      where: { tenantId }
-    });
+    const branch = await prisma.branch.findFirst({ where: { id: branchId, tenantId } });
+    if (!branch) {
+      return res.status(400).json({ status: 'error', code: 'BRANCH_TENANT_MISMATCH', message: 'الفرع المحدد لا ينتمي إلى هذه المؤسسة.' });
+    }
 
-    // Check if device already registered
-    const existingDevice = await prisma.deviceRegistration.findUnique({
-      where: { deviceId }
-    });
+    const count = await prisma.deviceRegistration.count({ where: { tenantId } });
+    const existingDevice = await prisma.deviceRegistration.findFirst({ where: { deviceId, tenantId } });
 
     if (existingDevice && existingDevice.tenantId !== tenantId) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'CROSS_TENANT_DEVICE_FORBIDDEN',
-        message: 'هذا الجهاز مسجل بالفعل لمؤسسة أخرى.'
-      });
+      return res.status(403).json({ status: 'error', code: 'CROSS_TENANT_DEVICE_FORBIDDEN', message: 'هذا الجهاز مسجل لمؤسسة أخرى.' });
     }
 
-    // Determine limit
-    // 🚀 تحسين الأداء: دمج استعلام الاشتراك مع استعلام الخطة في خطوة واحدة
-const subscription = await prisma.tenantSubscription.findFirst({
-  where: { tenantId, isActive: true },
-  orderBy: { createdAt: 'desc' },
-  include: { plan: true }
-});
+    const subscription = await prisma.tenantSubscription.findFirst({
+      where: { tenantId, isActive: true },
+      orderBy: { createdAt: 'desc' },
+      include: { plan: true }
+    });
 
-let maxDevices = 3; // default fallback
-if (subscription && subscription.plan) {
-  if (subscription.plan.code === 'BUSINESS') maxDevices = 6;
-  else if (subscription.plan.code === 'ENTERPRISE') maxDevices = 999; // Unlimited
-}
+    let maxDevices = 3;
+    if (subscription && subscription.plan) {
+      if (subscription.plan.code === 'BUSINESS') maxDevices = 6;
+      else if (subscription.plan.code === 'ENTERPRISE') maxDevices = 999;
+    }
+
+    if (count >= maxDevices && !existingDevice) {
+      return res.status(403).json({ status: 'error', code: 'DEVICE_COUNT_EXCEEDED', message: `الحد الأقصى للأجهزة (${maxDevices}).` });
+    }
 
     const registered = await prisma.deviceRegistration.upsert({
       where: { deviceId },
-      update: {
-        deviceName,
-        androidVersion,
-        appVersion,
-        lastSync: new Date()
-      },
-      create: {
-        deviceId,
-        tenantId,
-        branchId,
-        deviceName,
-        androidVersion,
-        appVersion,
-        lastSync: new Date()
-      }
+      update: { deviceName, androidVersion, appVersion, lastSync: new Date() },
+      create: { deviceId, tenantId, branchId, deviceName, androidVersion, appVersion, lastSync: new Date() }
     });
 
-    return res.json({
-      status: 'success',
-      data: registered
-    });
+    return res.json({ status: 'success', data: registered });
   } catch (error: any) {
-    return res.status(500).json({
-      status: 'error',
-      code: 'DEVICE_REG_FAILURE',
-      message: error.message || 'Failed to process device registration.'
-    });
+    return res.status(500).json({ status: 'error', code: 'DEVICE_REG_FAILURE', message: 'Failed to process device registration.' });
   }
 });
 
-/**
- * Route 7: Get Device registration details
- */
-router.get('/device/status/:deviceId', async (req: Request, res: Response) => {
+router.get('/device/status/:deviceId', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { deviceId } = req.params;
-    const device = await prisma.deviceRegistration.findUnique({
-      where: { deviceId }
-    });
+    const tenantId = req.user!.tenantId;
+
+    const device = await prisma.deviceRegistration.findFirst({ where: { deviceId, tenantId } });
 
     if (!device) {
-      return res.status(404).json({
-        status: 'error',
-        code: 'DEVICE_NOT_FOUND',
-        message: 'Device registration details not found.'
-      });
+      return res.status(404).json({ status: 'error', code: 'DEVICE_NOT_FOUND', message: 'Device not found.' });
     }
 
-    // 🚨 SEC-07 FIX: Remove query/header fallbacks, strictly use token
-const authReq = req as AuthenticatedRequest;
-const requestedTenantId = authReq.user?.tenantId;
-
-if (!requestedTenantId || device.tenantId !== requestedTenantId) {
-  return res.status(403).json({
-    status: 'error',
-    code: 'CROSS_TENANT_ACCESS_DENIED',
-    message: 'Device registration details belong to another tenant or missing context.'
-  });
-}
-
-    return res.json({
-      status: 'success',
-      data: device
-    });
+    return res.json({ status: 'success', data: device });
   } catch (error: any) {
-    return res.status(500).json({
-      status: 'error',
-      code: 'DEVICE_STATUS_FAILURE',
-      message: 'Failed to retrieve device status.'
-    });
+    return res.status(500).json({ status: 'error', code: 'DEVICE_STATUS_FAILURE', message: 'Failed to retrieve device status.' });
   }
 });
 
-/**
- * Route 8: List All Registered POS Devices for a tenant
- */
-router.get('/devices', async (req: Request, res: Response) => {
+router.get('/devices', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    // 🚨 SEC-07 FIX: Read from authenticated token, not query string
-const authReq = req as AuthenticatedRequest;
-const tenantId = authReq.user?.tenantId;
-if (!tenantId) {
-  return res.status(401).json({
-    status: 'error',
-    code: 'DEVICES_MISSING_TENANT',
-    message: 'Authenticated tenant context is required.'
-  });
-}
-
-    const devices = await prisma.deviceRegistration.findMany({
-      where: { tenantId },
-      orderBy: { lastSync: 'desc' }
-    });
-
-    return res.json({
-      status: 'success',
-      data: devices
-    });
+    const tenantId = req.user!.tenantId;
+    const devices = await prisma.deviceRegistration.findMany({ where: { tenantId }, orderBy: { lastSync: 'desc' } });
+    return res.json({ status: 'success', data: devices });
   } catch (error: any) {
-    return res.status(500).json({
-      status: 'error',
-      code: 'DEVICES_FETCH_FAILURE',
-      message: 'Failed to retrieve registered devices.'
-    });
+    return res.status(500).json({ status: 'error', code: 'DEVICES_FETCH_FAILURE', message: 'Failed to retrieve devices.' });
   }
 });
 
-/**
- * Route 9: License Shield Signature generator and validator
- */
-router.post('/license/generate', async (req: Request, res: Response) => {
+router.post('/license/generate', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    // 🚨 SEC-07 FIX: Force tenant from token
-const { deviceFingerprint, expiryDate } = req.body;
-const authReq = req as AuthenticatedRequest;
-const tenantId = authReq.user?.tenantId;
+    const { deviceFingerprint, expiryDate } = req.body;
+    const tenantId = req.user!.tenantId;
 
-if (!deviceFingerprint || !tenantId || !expiryDate) {
-  return res.status(400).json({
-    status: 'error',
-    code: 'LICENSE_GENERATE_BAD_INPUT',
-    message: 'deviceFingerprint, expiryDate, and authenticated tenant context are required.'
-  });
-}
-    const crypto = await import('crypto');
+    if (!deviceFingerprint || !tenantId || !expiryDate) {
+      return res.status(400).json({ status: 'error', code: 'LICENSE_GENERATE_BAD_INPUT', message: 'Missing parameters.' });
+    }
+
     const secret = process.env.ENCRYPTION_KEY;
-    if (!secret) {
-      throw new Error("ENCRYPTION_KEY environment variable is not defined.");
-    }
+    if (!secret) throw new Error("ENCRYPTION_KEY is not defined.");
+
     const message = `${deviceFingerprint}:${tenantId}:${expiryDate}`;
     const signature = crypto.createHmac('sha256', secret).update(message).digest('hex');
 
-    return res.json({
-      status: 'success',
-      signature
-    });
+    return res.json({ status: 'success', signature });
   } catch (err: any) {
-    return res.status(500).json({
-      status: 'error',
-      code: 'LICENSE_GENERATE_FAIL',
-      message: 'Failed to generate license signature.'
-    });
+    return res.status(500).json({ status: 'error', code: 'LICENSE_GENERATE_FAIL', message: 'Failed to generate signature.' });
   }
 });
 
-router.post('/license/verify', async (req: Request, res: Response) => {
+router.post('/license/verify', authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    // 🚨 SEC-07 FIX: Force tenant from token
-const { deviceFingerprint, expiryDate, signature } = req.body;
-const authReq = req as AuthenticatedRequest;
-const tenantId = authReq.user?.tenantId;
+    const { deviceFingerprint, expiryDate, signature } = req.body;
+    const tenantId = req.user!.tenantId;
 
-if (!deviceFingerprint || !tenantId || !expiryDate || !signature) {
-  return res.status(400).json({
-    status: 'error',
-    code: 'LICENSE_VERIFY_BAD_INPUT',
-    message: 'deviceFingerprint, expiryDate, signature, and authenticated tenant context are required.'
-  });
-}
-
-    const crypto = await import('crypto');
-    const secret = process.env.ENCRYPTION_KEY;
-    if (!secret) {
-      throw new Error("ENCRYPTION_KEY environment variable is not defined.");
+    if (!deviceFingerprint || !tenantId || !expiryDate || !signature) {
+      return res.status(400).json({ status: 'error', code: 'LICENSE_VERIFY_BAD_INPUT', message: 'Missing parameters.' });
     }
+
+    const secret = process.env.ENCRYPTION_KEY;
+    if (!secret) throw new Error("ENCRYPTION_KEY is not defined.");
+
     const message = `${deviceFingerprint}:${tenantId}:${expiryDate}`;
     const expectedSignature = crypto.createHmac('sha256', secret).update(message).digest('hex');
 
-    // Safe comparison
-const signatureBuf = Buffer.from(signature, 'hex');
-const expectedBuf = Buffer.from(expectedSignature, 'hex');
-const isValid = signatureBuf.length === expectedBuf.length && crypto.timingSafeEqual(signatureBuf, expectedBuf);
+    const signatureBuf = Buffer.from(signature, 'hex');
+    const expectedBuf = Buffer.from(expectedSignature, 'hex');
+    const isValid = signatureBuf.length === expectedBuf.length && crypto.timingSafeEqual(signatureBuf, expectedBuf);
 
-    return res.json({
-      status: 'success',
-      isValid
-    });
+    return res.json({ status: 'success', isValid });
   } catch (err: any) {
-    return res.status(200).json({
-      status: 'success',
-      isValid: false,
-      message: 'License verification mismatched or errored.'
-    });
+    return res.status(200).json({ status: 'success', isValid: false, message: 'License verification errored.' });
   }
 });
 
-/**
- * Route 10: Auto Backup Center Cloud Storage Service (Simulated GCS)
- * Hardened with JWT auth, role authorization, tenant isolation, path confinement & audit logging.
- */
 router.post('/backup/upload', authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { tenantId, filename, payload } = req.body;
     if (!tenantId || !filename || !payload) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'BACKUP_UPLOAD_BAD_INPUT',
-        message: 'tenantId, filename, and payload parameters are required.'
-      });
+      return res.status(400).json({ status: 'error', code: 'BACKUP_UPLOAD_BAD_INPUT', message: 'Missing parameters.' });
     }
 
-    // Tenant isolation check
     if (req.user?.tenantId && req.user.tenantId !== tenantId && req.user.role !== Role.PLATFORM_OWNER) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'TENANT_MISMATCH',
-        message: 'Unauthorized access to target tenant backup vault.'
-      });
+      return res.status(403).json({ status: 'error', code: 'TENANT_MISMATCH', message: 'Unauthorized access.' });
     }
 
-    // Path confinement & sanitization against Directory Traversal attacks
     const safeTenantId = path.basename(String(tenantId).trim());
     const safeFilename = path.basename(String(filename).trim());
 
     const allowedExtensions = ['.json', '.bak', '.pfb', '.zip'];
     const hasValidExt = allowedExtensions.some(ext => safeFilename.endsWith(ext));
     if (!hasValidExt) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'INVALID_FILE_EXTENSION',
-        message: 'Only .pfb, .zip, .json, and .bak file extensions are allowed for backup upload.'
-      });
+      return res.status(400).json({ status: 'error', code: 'INVALID_FILE_EXTENSION', message: 'Extension not allowed.' });
     }
 
-    // 🚀 تحسين الأداء: استخدام Buffer بدلاً من String لتوفير الذاكرة
-const payloadBuffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
-if (payloadBuffer.length > 50 * 1024 * 1024) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'FILE_SIZE_LIMIT_EXCEEDED',
-        message: 'Backup payload exceeds maximum limit of 50MB.'
-      });
+    // 🚀 التعامل مع الملفات النصية والثنائية
+    const isBase64 = safeFilename.endsWith('.zip') || safeFilename.endsWith('.pfb');
+    const payloadBuffer = Buffer.from(payload, isBase64 ? 'base64' : 'utf8');
+
+    if (payloadBuffer.length > 50 * 1024 * 1024) {
+      return res.status(400).json({ status: 'error', code: 'FILE_SIZE_LIMIT_EXCEEDED', message: 'Max limit 50MB.' });
     }
 
     const baseDir = path.join('/tmp', 'backups_cloud_simulated');
@@ -509,27 +273,18 @@ if (payloadBuffer.length > 50 * 1024 * 1024) {
     const filePath = path.resolve(folderPath, safeFilename);
 
     if (!filePath.startsWith(baseDir)) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'PATH_TRAVERSAL_BLOCKED',
-        message: 'Directory traversal detected.'
-      });
+      return res.status(403).json({ status: 'error', code: 'PATH_TRAVERSAL_BLOCKED', message: 'Directory traversal detected.' });
     }
 
-    // Optional Checksum Verification on Upload
     const clientChecksum = (req.headers['x-backup-checksum'] as string) || req.body?.checksum;
     const computedChecksum = crypto.createHash('sha256').update(payloadBuffer).digest('hex');
     if (clientChecksum && clientChecksum.toLowerCase() !== computedChecksum.toLowerCase()) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'CHECKSUM_MISMATCH',
-        message: 'Provided SHA-256 checksum does not match payload digest.'
-      });
+      return res.status(400).json({ status: 'error', code: 'CHECKSUM_MISMATCH', message: 'Checksum mismatch.' });
     }
 
     await fs.mkdir(folderPath, { recursive: true });
     await fs.writeFile(filePath, payloadBuffer);
-    // Audit log persistence
+
     await prisma.auditLog.create({
       data: {
         userId: req.user?.userId || null,
@@ -537,88 +292,44 @@ if (payloadBuffer.length > 50 * 1024 * 1024) {
         entity: 'Backup',
         entityId: safeFilename,
         before: null,
-        after: JSON.stringify({ tenantId: safeTenantId, filename: safeFilename, sizeInBytes: payload.length, checksum: computedChecksum }),
+        after: JSON.stringify({ tenantId: safeTenantId, filename: safeFilename, sizeInBytes: payloadBuffer.length, checksum: computedChecksum }),
         ipAddress: req.ip
       }
     }).catch(() => {});
 
-    return res.json({
-      status: 'success',
-      filename: safeFilename,
-      checksum: computedChecksum,
-      message: 'Backup uploaded successfully to production cloud storage (Simulated GCS).'
-    });
+    return res.json({ status: 'success', filename: safeFilename, checksum: computedChecksum });
   } catch (error: any) {
-    return res.status(500).json({
-      status: 'error',
-      code: 'BACKUP_UPLOAD_FAILURE',
-      message: 'Failed to upload backup record.'
-    });
+    return res.status(500).json({ status: 'error', code: 'BACKUP_UPLOAD_FAILURE', message: 'Failed to upload backup.' });
   }
 });
 
 router.get('/backup/list', authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tenantId = (req.query.tenantId as string) || req.user?.tenantId;
-    if (!tenantId) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'BACKUP_LIST_MISSING_TENANT',
-        message: 'tenantId is a required query parameter.'
-      });
-    }
+    if (!tenantId) return res.status(400).json({ status: 'error', code: 'BACKUP_LIST_MISSING_TENANT', message: 'tenantId required.' });
 
     if (req.user?.tenantId && req.user.tenantId !== tenantId && req.user.role !== Role.PLATFORM_OWNER) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'TENANT_MISMATCH',
-        message: 'Unauthorized access to target tenant backup vault.'
-      });
+      return res.status(403).json({ status: 'error', code: 'TENANT_MISMATCH', message: 'Unauthorized.' });
     }
 
     const safeTenantId = path.basename(String(tenantId).trim());
     const baseDir = path.join('/tmp', 'backups_cloud_simulated');
     const folderPath = path.resolve(baseDir, safeTenantId);
 
-    if (!folderPath.startsWith(baseDir)) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'PATH_TRAVERSAL_BLOCKED',
-        message: 'Directory traversal detected.'
-      });
-    }
-    
+    if (!folderPath.startsWith(baseDir)) return res.status(403).json({ status: 'error', code: 'PATH_TRAVERSAL_BLOCKED', message: 'Traversal blocked.' });
+
     try {
       const files = await fs.readdir(folderPath);
-      const listBackups: any[] = [];
-
-      for (const file of files) {
-        if (file.endsWith('.bak') || file.endsWith('.json') || file.endsWith('.pfb') || file.endsWith('.zip')) {
-          const stats = await fs.stat(path.join(folderPath, file));
-          listBackups.push({
-            filename: file,
-            sizeInKB: Math.round(stats.size / 1024),
-            createdAt: stats.mtime.toISOString()
-          });
-        }
-      }
-
-      return res.json({
-        status: 'success',
-        backups: listBackups
-      });
+      const listBackups = await Promise.all(files.filter(f => ['.bak', '.json', '.pfb', '.zip'].some(ext => f.endsWith(ext))).map(async file => {
+        const stats = await fs.stat(path.join(folderPath, file));
+        return { filename: file, sizeInKB: Math.round(stats.size / 1024), createdAt: stats.mtime.toISOString() };
+      }));
+      return res.json({ status: 'success', backups: listBackups });
     } catch (e) {
-      return res.json({
-        status: 'success',
-        backups: []
-      });
+      return res.json({ status: 'success', backups: [] });
     }
   } catch (error: any) {
-    return res.status(500).json({
-      status: 'error',
-      code: 'BACKUP_LIST_FAILURE',
-      message: 'Failed to retrieve backups list.'
-    });
+    return res.status(500).json({ status: 'error', code: 'BACKUP_LIST_FAILURE', message: 'Failed to retrieve backups.' });
   }
 });
 
@@ -627,61 +338,34 @@ router.get('/backup/download', authenticateToken, requireRoles([Role.PLATFORM_OW
     const tenantId = (req.query.tenantId as string) || req.user?.tenantId;
     const filename = req.query.filename as string;
 
-    if (!tenantId || !filename) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'BACKUP_DOWNLOAD_BAD_INPUT',
-        message: 'tenantId and filename are required query parameters.'
-      });
-    }
+    if (!tenantId || !filename) return res.status(400).json({ status: 'error', code: 'BACKUP_DOWNLOAD_BAD_INPUT', message: 'Missing parameters.' });
 
     if (req.user?.tenantId && req.user.tenantId !== tenantId && req.user.role !== Role.PLATFORM_OWNER) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'TENANT_MISMATCH',
-        message: 'Unauthorized access to target tenant backup vault.'
-      });
+      return res.status(403).json({ status: 'error', code: 'TENANT_MISMATCH', message: 'Unauthorized.' });
     }
 
     const safeTenantId = path.basename(String(tenantId).trim());
     const safeFilename = path.basename(String(filename).trim());
     const baseDir = path.join('/tmp', 'backups_cloud_simulated');
-    const folderPath = path.resolve(baseDir, safeTenantId);
-    const filePath = path.resolve(folderPath, safeFilename);
+    const filePath = path.resolve(baseDir, safeTenantId, safeFilename);
 
-    if (!filePath.startsWith(baseDir)) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'PATH_TRAVERSAL_BLOCKED',
-        message: 'Directory traversal detected.'
-      });
-    }
+    if (!filePath.startsWith(baseDir)) return res.status(403).json({ status: 'error', code: 'PATH_TRAVERSAL_BLOCKED', message: 'Traversal blocked.' });
 
-    const content = await fs.readFile(filePath, 'utf8');
+    const contentBuffer = await fs.readFile(filePath);
 
-    // Audit log persistence
     await prisma.auditLog.create({
       data: {
-        userId: req.user?.userId || null,
-        action: 'BACKUP_DOWNLOAD',
-        entity: 'Backup',
-        entityId: safeFilename,
-        before: null,
-        after: JSON.stringify({ tenantId: safeTenantId, filename: safeFilename }),
-        ipAddress: req.ip
+        userId: req.user?.userId || null, action: 'BACKUP_DOWNLOAD', entity: 'Backup', entityId: safeFilename,
+        before: null, after: JSON.stringify({ tenantId: safeTenantId, filename: safeFilename }), ipAddress: req.ip
       }
     }).catch(() => {});
 
-    return res.json({
-      status: 'success',
-      payload: content
-    });
+    // ✅ الحل الجذري للتلف: إرسال Buffer بدلاً من JSON
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    return res.send(contentBuffer);
   } catch (error: any) {
-    return res.status(404).json({
-      status: 'error',
-      code: 'BACKUP_FILE_NOT_FOUND',
-      message: 'The requested cloud backup file was not found or is corrupted.'
-    });
+    return res.status(404).json({ status: 'error', code: 'BACKUP_FILE_NOT_FOUND', message: 'File not found.' });
   }
 });
 
@@ -691,20 +375,10 @@ router.get('/backup/verify', authenticateToken, requireRoles([Role.PLATFORM_OWNE
     const filename = req.query.filename as string;
     const expectedChecksum = (req.query.checksum as string) || '';
 
-    if (!tenantId || !filename) {
-      return res.status(400).json({
-        status: 'error',
-        code: 'BACKUP_VERIFY_BAD_INPUT',
-        message: 'tenantId and filename are required query parameters.'
-      });
-    }
+    if (!tenantId || !filename) return res.status(400).json({ status: 'error', code: 'BACKUP_VERIFY_BAD_INPUT', message: 'Missing parameters.' });
 
     if (req.user?.tenantId && req.user.tenantId !== tenantId && req.user.role !== Role.PLATFORM_OWNER) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'TENANT_MISMATCH',
-        message: 'Unauthorized access to target tenant backup vault.'
-      });
+      return res.status(403).json({ status: 'error', code: 'TENANT_MISMATCH', message: 'Unauthorized.' });
     }
 
     const safeTenantId = path.basename(String(tenantId).trim());
@@ -712,38 +386,21 @@ router.get('/backup/verify', authenticateToken, requireRoles([Role.PLATFORM_OWNE
     const baseDir = path.join('/tmp', 'backups_cloud_simulated');
     const filePath = path.resolve(baseDir, safeTenantId, safeFilename);
 
-    if (!filePath.startsWith(baseDir)) {
-      return res.status(403).json({
-        status: 'error',
-        code: 'PATH_TRAVERSAL_BLOCKED',
-        message: 'Directory traversal detected.'
-      });
-    }
+    if (!filePath.startsWith(baseDir)) return res.status(403).json({ status: 'error', code: 'PATH_TRAVERSAL_BLOCKED', message: 'Traversal blocked.' });
 
     const stats = await fs.stat(filePath);
-    const content = await fs.readFile(filePath, 'utf8');
-    const computedChecksum = crypto.createHash('sha256').update(content).digest('hex');
+    const contentBuffer = await fs.readFile(filePath);
+    const computedChecksum = crypto.createHash('sha256').update(contentBuffer).digest('hex');
 
-    const checksumMatched = expectedChecksum 
-      ? expectedChecksum.toLowerCase() === computedChecksum.toLowerCase() 
-      : undefined;
+    const checksumMatched = expectedChecksum ? expectedChecksum.toLowerCase() === computedChecksum.toLowerCase() : undefined;
 
     return res.json({
-      status: 'success',
-      valid: checksumMatched !== false,
-      filename: safeFilename,
-      sizeInBytes: stats.size,
-      sizeInKB: Math.round(stats.size / 1024),
-      checksum: computedChecksum,
-      checksumMatched,
-      verifiedAt: new Date().toISOString()
+      status: 'success', valid: checksumMatched !== false, filename: safeFilename,
+      sizeInBytes: stats.size, sizeInKB: Math.round(stats.size / 1024), checksum: computedChecksum,
+      checksumMatched, verifiedAt: new Date().toISOString()
     });
   } catch (error: any) {
-    return res.status(404).json({
-      status: 'error',
-      code: 'BACKUP_NOT_FOUND',
-      message: 'Cloud backup file could not be verified or was not found.'
-    });
+    return res.status(404).json({ status: 'error', code: 'BACKUP_NOT_FOUND', message: 'Cloud backup file could not be verified.' });
   }
 });
 
