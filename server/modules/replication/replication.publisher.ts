@@ -1,8 +1,7 @@
-// server/modules/replication/replication.publisher.ts
-
 import { prisma } from "../../database/prisma.js";
 import { RedisConnectionManager } from "../../database/redis.js";
 import { ReplicationEvent, BusinessEventType } from "./replication.types.js";
+import { getCurrentTenantId } from "../../context/tenantContext.js";
 import { randomUUID } from "crypto";
 import { EventEmitter } from "events";
 
@@ -20,11 +19,19 @@ export class ReplicationPublisher {
     branchId: string;
     payload: any;
     userId?: string;
+    tenantId?: string;
     targetBranchId?: string; // If specified, Single Branch Broadcast. If undefined, Global Broadcast.
     targetBranchIds?: string[]; // If specified, Multi-Branch Broadcast.
   }): Promise<ReplicationEvent> {
     const eventId = randomUUID();
     const timestamp = new Date().toISOString();
+
+    const tenantId = params.tenantId || getCurrentTenantId();
+    if (!tenantId || tenantId === "default-tenant") {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error("SECURITY_VIOLATION: tenantId is required to publish replication events.");
+      }
+    }
 
     // 1. Maintain microsecond/sequence accuracy
     const sequence = ++this.sequenceCounter;
@@ -41,6 +48,7 @@ export class ReplicationPublisher {
     const event: ReplicationEvent = {
       id: eventId,
       type: params.type,
+      tenantId,
       branchId: params.branchId,
       timestamp,
       payload: params.payload,
@@ -53,6 +61,7 @@ export class ReplicationPublisher {
       // 3. Save to Prisma SyncEvent table to provide full replay and recovery guarantees
       await prisma.syncEvent.create({
         data: {
+          tenantId,
           eventId: event.id,
           eventType: event.type,
           entityType: "REPLICATION",

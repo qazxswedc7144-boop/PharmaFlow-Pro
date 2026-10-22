@@ -95,14 +95,18 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
             }
 
             return async (...args: any[]) => {
-              const currentTenantId = explicitTenantId || getCurrentTenantId();
-              
               const store = tenantStorage.getStore();
               const activeTenantId = store?.tenantId;
-              // 🚨 حماية إضافية: إذا حاول مستخدم تمرير tenantId لمؤسسة أخرى
+
+              if (process.env.NODE_ENV === "production" && !activeTenantId && !explicitTenantId) {
+                throw new Error("SECURITY_VIOLATION: Trusted tenant context is mandatory in production.");
+              }
+
               if (explicitTenantId && activeTenantId && explicitTenantId !== activeTenantId) {
                 throw new Error("SECURITY_VIOLATION: Cannot specify a different tenantId.");
               }
+
+              const currentTenantId = activeTenantId || explicitTenantId || getCurrentTenantId();
 
               const [params = {}, ...rest] = args;
 

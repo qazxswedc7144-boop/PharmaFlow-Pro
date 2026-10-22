@@ -165,6 +165,7 @@ invoiceRouter.post("/post", authenticateToken, requireRoles([Role.PLATFORM_OWNER
             type,
             branchId: invoice.branchId || "BRH-MAIN-001",
             userId: req.user?.userId || "SYSTEM",
+            tenantId: invoice.tenantId || req.user?.tenantId,
             payload: {
               invoiceId: invoice.id,
               invoiceNumber: invoice.invoiceNumber,

@@ -20,13 +20,7 @@ const MAX_BUFFERED_BYTES = 1_000_000;       // لو العميل بطيء نقف
 const RATE_LIMIT_WINDOW_MS = 1_000;
 const RATE_LIMIT_MAX_MESSAGES = 50;
 
-/**
- * المرحلة الانتقالية: عشان ما تسقط الأحداث أثناء ترقية الـ publisher.
- *  - false (افتراضي): يسمح بأحداث بدون tenantId، مع تحذير في اللوق.
- *  - true: يرفض أي event بدون tenantId (الأمان الكامل).
- * فعّلها بـ ENFORCE_TENANT_ISOLATION=true بعد تحديث كل الـ publishers.
- */
-const ENFORCE_TENANT_ISOLATION = process.env.ENFORCE_TENANT_ISOLATION === "true";
+
 
 const getJwtSecret = (): string => {
   const secret = process.env.JWT_SECRET;
@@ -308,11 +302,8 @@ export class ReplicationGateway {
     if (!event || !event.id) return;
 
     if (!event.tenantId) {
-      if (ENFORCE_TENANT_ISOLATION) {
-        console.error(`[REPLICATION_GATEWAY] Dropped event ${event.id}: missing tenantId.`);
-        return;
-      }
-      console.warn(`[REPLICATION_GATEWAY] Event ${event.id} missing tenantId.`);
+      console.error(`[REPLICATION_GATEWAY] Dropped event ${event.id}: missing tenantId.`);
+      return;
     }
 
     const enriched = event as EnrichedReplicationEvent;

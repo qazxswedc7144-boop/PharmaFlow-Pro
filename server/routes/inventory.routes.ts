@@ -88,6 +88,7 @@ inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWN
         type: "InventoryUpdated",
         branchId,
         userId,
+        tenantId: (req as any).tenantId || req.user?.tenantId,
         payload: {
           productId: data.productId,
           qty: data.qty,
