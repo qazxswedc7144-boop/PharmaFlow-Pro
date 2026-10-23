@@ -562,30 +562,34 @@ export class DistributedSyncEngine {
           }
 
           if (data.delta) {
-            const { products, invoices } = data.delta;
-            
-            if (Array.isArray(products) && products.length > 0 && (this.db as any).products) {
-              await (this.db as any).products.bulkPut(products.map((p: any) => ({
-                ...p,
-                tenantId: p.tenantId || session.tenantId,
-                is_synced: 1,
-                isSynced: true,
-                syncStatus: 'SYNCED',
-                updatedAt: p.updatedAt || new Date().toISOString()
-              }))).catch((err: any) => console.warn('[DistributedSyncEngine] Product pull update warning:', err));
-            }
+  const { products, invoices } = data.delta;
+  
+  // 🚨 SECURITY FIX: Filter delta by Tenant ID before writing to DB
+  const validProducts = Array.isArray(products) ? products.filter(p => p.tenantId === session.tenantId) : [];
+  const validInvoices = Array.isArray(invoices) ? invoices.filter(inv => inv.tenantId === session.tenantId) : [];
 
-            if (Array.isArray(invoices) && invoices.length > 0 && (this.db as any).invoices) {
-              await (this.db as any).invoices.bulkPut(invoices.map((inv: any) => ({
-                ...inv,
-                tenantId: inv.tenantId || session.tenantId,
-                branchId: inv.branchId || session.branchId,
-                is_synced: 1,
-                isSynced: true,
-                syncStatus: 'SYNCED',
-                updatedAt: inv.updatedAt || new Date().toISOString()
-              }))).catch((err: any) => console.warn('[DistributedSyncEngine] Invoice pull update warning:', err));
-            }
+  if (validProducts.length > 0 && (this.db as any).products) {
+    await (this.db as any).products.bulkPut(validProducts.map((p: any) => ({
+      ...p,
+      tenantId: session.tenantId,
+      is_synced: 1,
+      isSynced: true,
+      syncStatus: 'SYNCED',
+      updatedAt: p.updatedAt || new Date().toISOString()
+    }))).catch((err: any) => console.warn('[DistributedSyncEngine] Product pull update warning:', err));
+  }
+
+  if (validInvoices.length > 0 && (this.db as any).invoices) {
+    await (this.db as any).invoices.bulkPut(validInvoices.map((inv: any) => ({
+      ...inv,
+      tenantId: session.tenantId,
+      branchId: inv.branchId || session.branchId,
+      is_synced: 1,
+      isSynced: true,
+      syncStatus: 'SYNCED',
+      updatedAt: inv.updatedAt || new Date().toISOString()
+    }))).catch((err: any) => console.warn('[DistributedSyncEngine] Invoice pull update warning:', err));
+  }
           }
         }
       }
@@ -598,46 +602,66 @@ export class DistributedSyncEngine {
    * Applies an individual downstream change record to the local Dexie database.
    */
   private async applyServerChange(change: any): Promise<void> {
-    try {
-      const entity = change.entity?.toUpperCase();
-      const payload = change.payload || {};
-      const entityId = change.entityId;
-
-      if (!entityId) return;
-
-      if (entity === "PRODUCT" && (this.db as any).products) {
-        if (change.operation === "DELETE") {
-          await (this.db as any).products.delete(entityId).catch(() => {});
-        } else {
-          await (this.db as any).products.put({
-            ...payload,
-            id: entityId,
-            tenantId: change.tenantId,
-            is_synced: 1,
-            isSynced: true,
-            syncStatus: "SYNCED",
-            updatedAt: change.createdAt
-          }).catch(() => {});
-        }
-      } else if ((entity === "INVOICE" || entity === "SALE") && (this.db as any).invoices) {
-        if (change.operation === "DELETE") {
-          await (this.db as any).invoices.delete(entityId).catch(() => {});
-        } else {
-          await (this.db as any).invoices.put({
-            ...payload,
-            id: entityId,
-            tenantId: change.tenantId,
-            branchId: change.branchId,
-            is_synced: 1,
-            isSynced: true,
-            syncStatus: "SYNCED",
-            updatedAt: change.createdAt
-          }).catch(() => {});
-        }
-      }
-    } catch (err) {
-      console.warn("[DistributedSyncEngine] Failed applying downstream server change:", err);
+  try {
+    // 🚨 SECURITY FIX: Strict Tenant Isolation for downstream changes
+    const session = getCurrentUserSession();
+    if (!session || !session.tenantId) {
+      console.warn("[DistributedSyncEngine] Aborting applyServerChange: No active session.");
+      return;
     }
+
+    if (!change.tenantId || change.tenantId !== session.tenantId) {
+      console.warn(`[DistributedSyncEngine] Security Block: Ignored cross-tenant change. Expected: ${session.tenantId}, Got: ${change.tenantId}`);
+      return;
+    }
+
+    const entity = change.entity?.toUpperCase();
+    const payload = change.payload || {};
+    const entityId = change.entityId;
+
+    if (!entityId) return;
+
+    if (entity === "PRODUCT" && (this.db as any).products) {
+      if (change.operation === "DELETE") {
+        // 🚨 SECURITY FIX: Check if local record exists and belongs to same tenant
+        const existing = await (this.db as any).products.get(entityId).catch(() => null);
+        if (existing && existing.tenantId === session.tenantId) {
+          await (this.db as any).products.delete(entityId).catch(() => {});
+        }
+      } else {
+        await (this.db as any).products.put({
+          ...payload,
+          id: entityId,
+          tenantId: session.tenantId, // Force current tenant
+          is_synced: 1,
+          isSynced: true,
+          syncStatus: "SYNCED",
+          updatedAt: change.createdAt
+        }).catch(() => {});
+      }
+    } else if ((entity === "INVOICE" || entity === "SALE") && (this.db as any).invoices) {
+      if (change.operation === "DELETE") {
+        // 🚨 SECURITY FIX: Check if local record exists and belongs to same tenant
+        const existing = await (this.db as any).invoices.get(entityId).catch(() => null);
+        if (existing && existing.tenantId === session.tenantId) {
+          await (this.db as any).invoices.delete(entityId).catch(() => {});
+        }
+      } else {
+        await (this.db as any).invoices.put({
+          ...payload,
+          id: entityId,
+          tenantId: session.tenantId, // Force current tenant
+          branchId: change.branchId || session.branchId,
+          is_synced: 1,
+          isSynced: true,
+          syncStatus: "SYNCED",
+          updatedAt: change.createdAt
+        }).catch(() => {});
+      }
+    }
+  } catch (err) {
+    console.warn("[DistributedSyncEngine] Failed applying downstream server change:", err);
+  }
   }
 
   /**
