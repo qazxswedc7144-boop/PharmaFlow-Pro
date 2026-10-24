@@ -211,17 +211,8 @@ export function getTenantScopedPrisma(explicitTenantId?: string) {
                 return originalMethod.apply(modelTarget, [{ ...params, where: scopedWhere }, ...rest]);
               }
 
-              // Default fallback for any other/unhandled operation: securely scope where and data
-              let scopedWhere = params.where && typeof params.where === "object" ? { ...params.where, tenantId: currentTenantId } : undefined;
-              let scopedData = params.data && typeof params.data === "object" ? injectTenantIdToData(params.data, currentTenantId, modelNameLower) : undefined;
-              
-              const newParams = {
-                ...params,
-                ...(scopedWhere ? { where: scopedWhere } : {}),
-                ...(scopedData ? { data: scopedData } : {}),
-              };
-
-              return originalMethod.apply(modelTarget, [newParams, ...rest]);
+              // Fail closed for any unhandled or unsupported operation on tenant-owned models
+              throw new Error(`SECURITY_VIOLATION: Unsupported or unsafe operation '${operation}' on tenant-owned model '${propStr}'.`);
             };
           }
         });

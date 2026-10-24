@@ -2,9 +2,41 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SyncProcessorService } from "../modules/sync/sync-processor.service.js";
 import { ReplicationService } from "../modules/replication/replication.service.js";
 import { runWithTenantContext } from "../context/tenantContext.js";
+import { tenantPrisma } from "../database/tenantPrisma.js";
 import { buildApp } from "../app.js";
 import axios from "axios";
 import { Server } from "http";
+
+vi.mock("../database/prisma.js", () => {
+  const syncEventsStore = [
+    { tenantId: "TENANT_AL_NOOR_01" },
+    { tenantId: "TENANT_AL_NOOR_01" },
+    { tenantId: "TENANT_AL_SHIFA_02" }
+  ];
+  const auditLogsStore = [
+    { tenantId: "TENANT_AL_NOOR_01", action: "REPLICATION_PUBLISHED" },
+    { tenantId: "TENANT_AL_NOOR_01", action: "REPLICATION_RECEIVED" },
+    { tenantId: "TENANT_AL_SHIFA_02", action: "REPLICATION_PUBLISHED" }
+  ];
+
+  return {
+    prisma: {
+      syncEvent: {
+        count: vi.fn(async (params: any) => {
+          const tId = params?.where?.tenantId;
+          return syncEventsStore.filter(e => e.tenantId === tId).length;
+        })
+      },
+      auditLog: {
+        count: vi.fn(async (params: any) => {
+          const tId = params?.where?.tenantId;
+          const actions = params?.where?.action?.in || [];
+          return auditLogsStore.filter(e => e.tenantId === tId && actions.includes(e.action)).length;
+        })
+      }
+    }
+  };
+});
 
 describe("P0 Security Hardening: Cross-Tenant Isolation & SaaS Security Test Suite", () => {
   beforeEach(() => {
@@ -439,32 +471,20 @@ describe("P0 Security Hardening: Cross-Tenant Isolation & SaaS Security Test Sui
   });
 
   describe("Replication Metrics Tenant Isolation", () => {
-    it("getReplicationMetrics is strictly isolated between Tenant A and Tenant B", async () => {
-      (globalThis as any).__mockReplicationMetrics = (tenantId: string, redisConnected: boolean) => {
-        if (tenantId === "TENANT_AL_NOOR_01") {
-          return { redisConnected, syncEventsCount: 15, auditLogsEventsCount: 8 };
-        }
-        if (tenantId === "TENANT_AL_SHIFA_02") {
-          return { redisConnected, syncEventsCount: 5, auditLogsEventsCount: 2 };
-        }
-        return { redisConnected, syncEventsCount: 0, auditLogsEventsCount: 0 };
-      };
-
+    it("getReplicationMetrics enforces strict tenant isolation via tenantPrisma", async () => {
       const metricsA = await runWithTenantContext({ tenantId: "TENANT_AL_NOOR_01" }, async () => {
         return ReplicationService.getReplicationMetrics();
       });
 
-      expect(metricsA.syncEventsCount).toBe(15);
-      expect(metricsA.auditLogsEventsCount).toBe(8);
+      expect(metricsA.syncEventsCount).toBe(2);
+      expect(metricsA.auditLogsEventsCount).toBe(2);
 
       const metricsB = await runWithTenantContext({ tenantId: "TENANT_AL_SHIFA_02" }, async () => {
         return ReplicationService.getReplicationMetrics();
       });
 
-      expect(metricsB.syncEventsCount).toBe(5);
-      expect(metricsB.auditLogsEventsCount).toBe(2);
-
-      delete (globalThis as any).__mockReplicationMetrics;
+      expect(metricsB.syncEventsCount).toBe(1);
+      expect(metricsB.auditLogsEventsCount).toBe(1);
     });
   });
 });

@@ -3,6 +3,22 @@ import { ProductRepository } from './ProductRepository';
 import { Product, MedicineBatch, MedicineAlert } from '@/types';
 import { db } from '@/core/db';
 import { unifiedInventoryMutationEngine } from './UnifiedInventoryMutationEngine';
+import { TokenProvider } from '@/services/auth/tokenProvider';
+
+function getTrustedContext() {
+  const session = TokenProvider.getCurrentSession();
+  const tenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+  const branchId = session.branchId || session.user?.branchId || session.user?.branch_id;
+
+  if (!tenantId || tenantId === 'TEN-DEV-001' || tenantId === 'tenant_default' || tenantId === 'default' || tenantId === 'default-tenant') {
+    throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available in InventoryService.');
+  }
+  if (!branchId || branchId === 'BR-MAIN' || branchId === 'branch_default') {
+    throw new Error('TRUSTED_BRANCH_CONTEXT_REQUIRED: No valid trusted branch context available in InventoryService.');
+  }
+
+  return { tenantId, branchId };
+}
 
 export class InventoryService {
   /**
@@ -65,6 +81,7 @@ export class InventoryService {
         return await db.products.get(productId);
       }
 
+      const { tenantId, branchId } = getTrustedContext();
       const warehouseId = options?.warehouseId || 'WH-MAIN';
       const userId = options?.userId || 'system';
       const transactionUuid = options?.transactionUuid || `TX-STK-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -77,8 +94,8 @@ export class InventoryService {
         docId: `STK-UPD-${Date.now()}`,
         movementType: quantityChange > 0 ? 'ADJUSTMENT' : 'DAMAGE',
         userId,
-        tenantId: 'TEN-DEV-001',
-        branchId: 'BR-MAIN',
+        tenantId,
+        branchId,
         transactionUuid,
         notes: options?.notes || `تعديل مخزون عبر خدمة المخزون: ${quantityChange}`
       });

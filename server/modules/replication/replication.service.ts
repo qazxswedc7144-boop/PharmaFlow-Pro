@@ -1,7 +1,6 @@
 // server/modules/replication/replication.service.ts
 
 import { tenantPrisma } from "../../database/tenantPrisma.js";
-import { getCurrentTenantId } from "../../context/tenantContext.js";
 import { ReplicationEvent, BusinessEventType, SyncRecoveryRequest, SyncRecoveryResponse } from "./replication.types.js";
 import { RedisConnectionManager } from "../../database/redis.js";
 
@@ -156,10 +155,6 @@ export class ReplicationService {
     let auditLogsEventsCount = 0;
     
     try {
-      if ((globalThis as any).__mockReplicationMetrics) {
-        return (globalThis as any).__mockReplicationMetrics(getCurrentTenantId(), redisConnected);
-      }
-
       syncEventsCount = await tenantPrisma.syncEvent.count();
       auditLogsEventsCount = await tenantPrisma.auditLog.count({
         where: {
