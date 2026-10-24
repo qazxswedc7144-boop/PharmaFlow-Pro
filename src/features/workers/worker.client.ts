@@ -32,7 +32,13 @@ export const WorkerClient = {
 
     // Main thread fallback implementation to guarantee robustness in any sandbox
     const fallbackImplementation = () => {
-      const items = invoice.items || [];
+  // 🚨 SECURITY FIX (INVENTORY-01): Extract real tenantId to prevent cross-tenant pollution
+  const currentTenantId = invoice.tenantId || invoice.tenant_id;
+  if (!currentTenantId) {
+    throw new Error('TENANT_ID_REQUIRED: Cannot process FIFO without a valid tenantId in the invoice payload.');
+  }
+
+  const items = invoice.items || [];
       const invoiceId = invoice.invoiceId || invoice.id;
       const type = invoice.type || (invoice.customerId ? 'SALE' : 'PURCHASE');
       const isReturn = invoice.isReturn || invoice.invoiceType === 'مرتجع';
@@ -95,38 +101,19 @@ export const WorkerClient = {
               unit_cost: layer.unit_cost,
               consumed_at: new Date().toISOString(),
               lastModified: new Date().toISOString(),
-              tenant_id: 'TEN-DEV-001'
+              tenant_id: currentTenantId
             });
           }
 
           if (remainingToConsume > 0) {
-            // Auto seed layer to prevent "Insufficient stock" errors when offline data is unmatched
-            const syntheticLayer = {
-              id: `LAY-${Date.now()}-${Math.random().toString(36).substr(2, 5)}-synthetic`,
-              item_id: itemId,
-              unit_cost: item.price || 10,
-              quantity: remainingToConsume,
-              quantity_remaining: 0,
-              created_at: new Date().toISOString(),
-              lastModified: new Date().toISOString(),
-              reference_id: invoiceId,
-              type: 'purchase',
-              tenant_id: 'TEN-DEV-001'
-            };
-            updatedLayers.push(syntheticLayer);
-            itemTotalCost += remainingToConsume * (item.price || 10);
-            consumptionLogs.push({
-              id: `LOG-${Date.now()}-synthetic`,
-              sale_id: invoiceId,
-              item_id: itemId,
-              layer_id: syntheticLayer.id,
-              quantity_consumed: remainingToConsume,
-              unit_cost: item.price || 10,
-              consumed_at: new Date().toISOString(),
-              lastModified: new Date().toISOString(),
-              tenant_id: 'TEN-DEV-001'
-            });
-            remainingToConsume = 0;
+  // 🚨 SECURITY FIX (INVENTORY-04): No synthetic layers.
+  // FIFO must fail hard when stock is insufficient to maintain accurate COGS.
+  // Creating fake layers corrupts inventory valuation, profit reports, and tax calculations.
+  throw new Error(
+    `INSUFFICIENT_FIFO_STOCK: Product ${itemId} requires ${remainingToConsume} additional units. ` +
+    `Available FIFO layers are insufficient to complete this transaction. ` +
+    `Please review inventory before proceeding.`
+  );
           }
 
           itemCosts[itemId] = itemTotalCost;
@@ -146,7 +133,7 @@ export const WorkerClient = {
             created_at: new Date().toISOString(),
             reference_id: invoiceId,
             lastModified: new Date().toISOString(),
-            tenant_id: 'TEN-DEV-001'
+            tenant_id: currentTenantId
           };
 
           updatedLayers.push(newLayer);
