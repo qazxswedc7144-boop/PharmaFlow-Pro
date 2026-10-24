@@ -9,6 +9,7 @@ import { CurrencyService } from '@/services/localization/CurrencyService';
 import { db } from '@/core/db';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { configurationService } from '@/services/config/configurationService';
+import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 
 export interface PurchaseWorkflowInput {
   supplierId?: string;
@@ -57,8 +58,17 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
   }
 
   public async validateBusinessRules(input: PurchaseWorkflowInput, ctx: WorkflowContext): Promise<void> {
-    if (ctx && (!ctx.tenantId || ctx.tenantId === 'default' || ctx.tenantId === 'default-tenant')) {
+    if (!ctx || !ctx.tenantId || ctx.tenantId === 'default' || ctx.tenantId === 'default-tenant' || ctx.tenantId === 'TEN-DEV-001' || ctx.tenantId === 'tenant_default') {
       throw new Error('FAIL_CLOSED: يتطلب تنفيذ فاتورة المشتريات وجود سياق مؤسسة موثوق (Trusted Tenant Context Required).');
+    }
+
+    // Ensure input has an ID so validation, uniqueness checks, and execution share the exact same ID
+    if (!input.id) {
+      input.id = db.generateId('PUR');
+    }
+
+    if (!input.supplierId && input.isCash) {
+      input.supplierId = 'مورد نقدي';
     }
 
     // 1. Cross-Tenant Supplier Validation
@@ -87,16 +97,32 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     }
 
     // 3. Cross-Tenant Existing Invoice Validation
-    if (input.id) {
+    if (input.isEdit && input.id) {
       const existing = await db.invoices.get(input.id);
       if (existing && ctx?.tenantId && existing.tenantId && existing.tenantId !== ctx.tenantId) {
         throw new Error(`CROSS_TENANT_INVOICE_FORBIDDEN: فاتورة المشتريات [${input.id}] تابعة لمؤسسة أخرى.`);
       }
     }
 
-    await validationService.validateInvoice(input, 'PURCHASE');
+    // 4. Strict Invoice Validation Enforcement
+    const validationResult = await validationService.validateInvoice(input, 'PURCHASE');
+    if (!validationResult.valid) {
+      throw new Error(`INVOICE_VALIDATION_FAILED: ${validationResult.errors.join(', ')}`);
+    }
+
+    // 5. Strict Invoice ID Uniqueness Enforcement
     if (!input.isEdit && input.id) {
-      await validationService.validateInvoiceIdUniqueness(input.id, 'purchases', db.db);
+      const isIdempotentReplay = ctx?.idempotencyKey && await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId);
+      if (!isIdempotentReplay) {
+        const isUnique = await validationService.validateInvoiceIdUniqueness(
+          input.id,
+          input.isReturn ? 'RETURN' : 'PURCHASE',
+          db
+        );
+        if (!isUnique) {
+          throw new Error(`DUPLICATE_INVOICE_ID: معرف الفاتورة [${input.id}] مسجل مسبقاً.`);
+        }
+      }
     }
   }
 
@@ -197,7 +223,10 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       // 3. Delegate Inventory Mutation Exclusively to UnifiedInventoryMutationEngine
       if (inventoryItems.length > 0) {
         const engine = UnifiedInventoryMutationEngine.getInstance();
-        const tenantId = ctx.tenantId || 'TEN-DEV-001';
+        const tenantId = ctx.tenantId;
+        if (!tenantId || tenantId === 'TEN-DEV-001' || tenantId === 'tenant_default' || tenantId === 'default' || tenantId === 'default-tenant') {
+          throw new Error('FAIL_CLOSED: يتطلب تنفيذ حركة المخزون وجود سياق مؤسسة موثوق.');
+        }
         const userId = ctx.userId || 'system';
         const branchId = ctx.branchId || 'BR-MAIN';
         const transactionUuid = ctx.idempotencyKey;

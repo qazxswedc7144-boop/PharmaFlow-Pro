@@ -24,7 +24,7 @@ export class FIFOEngine {
   /**
    * ON PURCHASE: Create new layer directly in inventory_layers
    */
-  static async addPurchaseLayer(item_id: string, quantity: number, unit_cost: number, reference_id: string): Promise<void> {
+  static async addPurchaseLayer(item_id: string, quantity: number, unit_cost: number, reference_id: string, tenantId?: string): Promise<void> {
     const layerId = db.generateId('LYR');
     await db.inventory_layers.add({
       id: layerId,
@@ -36,17 +36,24 @@ export class FIFOEngine {
       reference_id: reference_id,
       purchase_id: reference_id,
       created_at: new Date().toISOString(),
-      lastModified: new Date().toISOString()
+      lastModified: new Date().toISOString(),
+      ...(tenantId ? { tenant_id: tenantId, tenantId } : {})
     });
   }
 
   /**
    * FIFO CONSUMPTION directly on inventory_layers and logging to fifo_consumption_log
    */
-  static async consumeFIFO(sale_id: string, item_id: string, quantity: number): Promise<{ totalCost: number, unitCost: number }> {
+  static async consumeFIFO(sale_id: string, item_id: string, quantity: number, tenantId?: string): Promise<{ totalCost: number, unitCost: number }> {
     const absQty = Math.abs(quantity);
     const layers = await db.inventory_layers
-      .filter((l: any) => (l.item_id === item_id || l.product_id === item_id) && Number(l.quantity_remaining || 0) > 0)
+      .filter((l: any) => {
+        const match = (l.item_id === item_id || l.product_id === item_id) && Number(l.quantity_remaining || 0) > 0;
+        if (!match) return false;
+        if (tenantId && l.tenant_id && l.tenant_id !== tenantId) return false;
+        if (tenantId && l.tenantId && l.tenantId !== tenantId) return false;
+        return true;
+      })
       .toArray();
 
     // Sort by creation date (FIFO)
@@ -82,7 +89,8 @@ export class FIFOEngine {
         item_id: item_id,
         quantity_consumed: consumeQty,
         unit_cost: layerCost,
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
+        ...(tenantId ? { tenant_id: tenantId, tenantId } : {})
       });
     }
 

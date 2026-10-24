@@ -34,8 +34,8 @@ export const WorkerClient = {
     const fallbackImplementation = () => {
   // 🚨 SECURITY FIX (INVENTORY-01): Extract real tenantId to prevent cross-tenant pollution
   const currentTenantId = invoice.tenantId || invoice.tenant_id;
-  if (!currentTenantId) {
-    throw new Error('TENANT_ID_REQUIRED: Cannot process FIFO without a valid tenantId in the invoice payload.');
+  if (!currentTenantId || currentTenantId === 'TEN-DEV-001' || currentTenantId === 'tenant_default' || currentTenantId === 'default' || currentTenantId === 'default-tenant') {
+    throw new Error('TENANT_ID_REQUIRED: Cannot process FIFO without a valid trusted tenantId in the invoice payload.');
   }
 
   const items = invoice.items || [];

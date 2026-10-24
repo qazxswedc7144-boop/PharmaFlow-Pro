@@ -1,4 +1,5 @@
 // src/services/integrity/ValidationService.ts
+import { db } from '@/core/db';
 
 export interface ValidationResult {
   valid: boolean;
@@ -186,15 +187,15 @@ export class ValidationService {
    * Notes:
    * - Returns TRUE if unique (safe to insert).
    * - Returns FALSE if duplicate exists (block the insert).
-   * - Fails SAFE (returns TRUE) if DB query throws, to avoid
-   *   blocking legitimate transactions due to transient DB issues.
+   * - Fails CLOSED (throws error) if DB query throws or table is unavailable,
+   *   to guarantee transaction integrity and avoid silent duplicate inserts.
    * - Allows duplicate IDs for RETURN types (they reference originals).
    * ============================================================
    */
   static async validateInvoiceIdUniqueness(
     id: string,
     type: string,
-    db?: any
+    dbArg?: any
   ): Promise<boolean> {
     if (!id || typeof id !== 'string' || id.trim() === '') {
       return false;
@@ -206,31 +207,52 @@ export class ValidationService {
     }
 
     try {
-      // Lazy import to avoid circular dependencies
-      const database = db || (await import('@/core/db')).db;
+      const database = dbArg || db;
 
       if (!database || !database.invoices) {
-        console.warn('[ValidationService] No invoices table available; skipping uniqueness check.');
-        return true;
+        console.error('[ValidationService] Invoices table is unavailable for uniqueness verification (failing closed).');
+        throw new Error('DATABASE_CHECK_FAILED: جدول الفواتير غير متاح للتحقق من الفرادة.');
       }
 
-      // Check both 'id' and 'invoiceId' fields for robustness
-      const byId = await database.invoices.where('id').equals(id).count().catch(() => 0);
-      if (byId > 0) return false;
+      // Check primary key 'id'
+      if (typeof database.invoices.get === 'function') {
+        const existing = await database.invoices.get(id);
+        if (existing) return false;
+      }
 
-      // Some schemas store as invoiceId instead of id
-      if (database.invoices.schema?.indexes?.some((i: any) => 
-        (typeof i === 'string' ? i : i.name) === 'invoiceId'
-      )) {
-        const byInvoiceId = await database.invoices.where('invoiceId').equals(id).count().catch(() => 0);
-        if (byInvoiceId > 0) return false;
+      // Check indexed queries if where() is supported
+      if (typeof database.invoices.where === 'function') {
+        const byId = await database.invoices.where('id').equals(id).count();
+        if (byId > 0) return false;
+
+        // Some schemas store as invoiceId instead of id
+        if (database.invoices.schema?.indexes?.some((i: any) => 
+          (typeof i === 'string' ? i : i.name) === 'invoiceId'
+        )) {
+          const byInvoiceId = await database.invoices.where('invoiceId').equals(id).count();
+          if (byInvoiceId > 0) return false;
+        }
+
+        if (database.invoices.schema?.indexes?.some((i: any) => 
+          (typeof i === 'string' ? i : i.name) === 'invoiceNumber'
+        )) {
+          const byInvoiceNumber = await database.invoices.where('invoiceNumber').equals(id).count();
+          if (byInvoiceNumber > 0) return false;
+        }
+
+        if (database.invoices.schema?.indexes?.some((i: any) => 
+          (typeof i === 'string' ? i : i.name) === 'invoice_number'
+        )) {
+          const byInvoiceNumber = await database.invoices.where('invoice_number').equals(id).count();
+          if (byInvoiceNumber > 0) return false;
+        }
       }
 
       return true;
     } catch (error: any) {
-      console.warn('[ValidationService] Uniqueness check failed (failing safe):', error?.message);
-      // Fail-safe: allow transaction to proceed if we can't check
-      return true;
+      console.error('[ValidationService] Uniqueness check failed (failing closed):', error?.message);
+      // Fail-closed: reject transaction on DB error, never fail safe
+      throw new Error(`DATABASE_CHECK_FAILED: فشل التحقق من فرادة الفاتورة بسبب خطأ في قاعدة البيانات (${error?.message || 'Database query error'})`);
     }
   }
 

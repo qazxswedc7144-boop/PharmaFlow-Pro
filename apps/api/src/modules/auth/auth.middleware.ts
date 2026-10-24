@@ -9,6 +9,7 @@ export interface AuthenticatedRequest extends Request {
     userId: string;
     username: string;
     role: string;
+    tenantId?: string;
   };
 }
 
@@ -31,7 +32,8 @@ export function authMiddleware(req: AuthenticatedRequest, res: Response, next: N
     req.user = {
       userId: decoded.userId,
       username: decoded.username,
-      role: decoded.role
+      role: decoded.role,
+      tenantId: (decoded as any).tenantId
     };
 
     next();
@@ -54,6 +56,7 @@ export function requirePermission(permission: Permission) {
     if (!authorized) {
       AuditService.log({
         userId: req.user.userId,
+        tenantId: req.user.tenantId || "UNKNOWN",
         action: "FORBIDDEN_ATTEMPT" as any,
         entity: "PermissionGuard",
         entityId: permission,

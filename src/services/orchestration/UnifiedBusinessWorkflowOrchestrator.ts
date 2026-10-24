@@ -35,6 +35,7 @@ export interface WorkflowSalePayload {
   notes?: string;
   attachment?: string;
   transactionUuid?: string;
+  isEdit?: boolean;
 }
 
 export interface WorkflowPurchasePayload {
@@ -46,6 +47,7 @@ export interface WorkflowPurchasePayload {
   notes?: string;
   attachment?: string;
   transactionUuid?: string;
+  isEdit?: boolean;
 }
 
 export interface WorkflowInvoiceOptions {
@@ -56,6 +58,7 @@ export interface WorkflowInvoiceOptions {
   currency?: string;
   paymentStatus?: 'Cash' | 'Credit';
   date?: string;
+  isEdit?: boolean;
 }
 
 export interface WorkflowVoucherParams {
@@ -229,6 +232,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
   ): Promise<{ success: boolean; refId: string }> {
     const transactionUuid = payload.transactionUuid || generateTransactionUuid('PURCHASE');
     payload.transactionUuid = transactionUuid;
+    if (!payload.id) {
+      payload.id = `PUR-${transactionUuid}`;
+    }
 
     const result = await WorkflowOrchestrator.execute(
       purchaseWorkflow,
@@ -244,7 +250,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
         isReturn: options?.isReturn,
         invoiceStatus: options?.invoiceStatus,
         currency: options?.currency,
-        isEdit: !!payload.id
+        isEdit: Boolean(options?.isEdit ?? payload.isEdit ?? false)
       },
       { idempotencyKey: transactionUuid }
     );
@@ -268,6 +274,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
   ): Promise<{ success: boolean; refId: string }> {
     const transactionUuid = payload.transactionUuid || generateTransactionUuid('SALE');
     payload.transactionUuid = transactionUuid;
+    if (!payload.id) {
+      payload.id = `SALE-${transactionUuid}`;
+    }
 
     const result = await WorkflowOrchestrator.execute(
       salesWorkflow,
@@ -283,7 +292,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
         isReturn: options?.isReturn,
         invoiceStatus: options?.invoiceStatus,
         currency: options?.currency,
-        isEdit: !!payload.id
+        isEdit: Boolean(options?.isEdit ?? payload.isEdit ?? false)
       },
       { idempotencyKey: transactionUuid }
     );

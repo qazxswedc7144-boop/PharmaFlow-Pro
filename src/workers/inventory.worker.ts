@@ -61,6 +61,12 @@ function sendError(id: string, error: string, startTime: number) {
  * processFIFO: Allocates stock using First-In-First-Out algorithm on layers
  */
 function processFIFO(invoice: any, allLayers: any[]) {
+  // 🚨 SECURITY FIX (INVENTORY-01): Extract real tenantId to prevent cross-tenant pollution
+  const currentTenantId = invoice.tenantId || invoice.tenant_id;
+  if (!currentTenantId || currentTenantId === 'TEN-DEV-001' || currentTenantId === 'tenant_default' || currentTenantId === 'default' || currentTenantId === 'default-tenant') {
+    throw new Error('FAIL_CLOSED: Trusted tenant context required for FIFO calculations.');
+  }
+
   const items = invoice.items || [];
   const invoiceId = invoice.invoiceId || invoice.id;
   const type = invoice.type || (invoice.customerId ? 'SALE' : 'PURCHASE');
@@ -130,38 +136,15 @@ function processFIFO(invoice: any, allLayers: any[]) {
           unit_cost: layer.unit_cost,
           consumed_at: new Date().toISOString(),
           lastModified: new Date().toISOString(),
-          tenant_id: 'TEN-DEV-001'
+          tenant_id: currentTenantId
         });
       }
 
       if (remainingToConsume > 0) {
-        // Auto seed layer to prevent "Insufficient stock" errors in worker threads
-        const syntheticLayer = {
-          id: `LAY-${Date.now()}-${Math.random().toString(36).substr(2, 5)}-synthetic`,
-          item_id: itemId,
-          unit_cost: item.price || 10,
-          quantity: remainingToConsume,
-          quantity_remaining: 0,
-          created_at: new Date().toISOString(),
-          lastModified: new Date().toISOString(),
-          reference_id: invoiceId,
-          type: 'purchase',
-          tenant_id: 'TEN-DEV-001'
-        };
-        updatedLayers.push(syntheticLayer);
-        itemTotalCost += remainingToConsume * (item.price || 10);
-        consumptionLogs.push({
-          id: `LOG-${Date.now()}-synthetic`,
-          sale_id: invoiceId,
-          item_id: itemId,
-          layer_id: syntheticLayer.id,
-          quantity_consumed: remainingToConsume,
-          unit_cost: item.price || 10,
-          consumed_at: new Date().toISOString(),
-          lastModified: new Date().toISOString(),
-          tenant_id: 'TEN-DEV-001'
-        });
-        remainingToConsume = 0;
+        // 🚨 SECURITY FIX: Fail hard when stock is insufficient. No synthetic layers or fake logs.
+        throw new Error(
+          `INSUFFICIENT_FIFO_STOCK: Product ${itemId} requires ${remainingToConsume} additional units. Available FIFO layers are insufficient to complete this transaction.`
+        );
       }
 
       itemCosts[itemId] = itemTotalCost;
@@ -182,7 +165,7 @@ function processFIFO(invoice: any, allLayers: any[]) {
         created_at: new Date().toISOString(),
         reference_id: invoiceId,
         lastModified: new Date().toISOString(),
-        tenant_id: 'TEN-DEV-001'
+        tenant_id: currentTenantId
       };
 
       updatedLayers.push(newLayer);

@@ -149,7 +149,7 @@ replicationRouter.post(
         branchId,
         payload,
         userId: req.user?.userId,
-        tenantId: req.user?.tenantId,
+        tenantId: req.user?.tenantId ?? undefined,
         targetBranchId,
       });
 

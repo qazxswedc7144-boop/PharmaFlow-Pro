@@ -678,13 +678,13 @@ export class UnifiedInventoryMutationEngine {
 
     if (isInward) {
       try {
-        await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId);
+        await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId);
       } catch (fifoErr) {
         console.warn('[UnifiedEngine] FIFO layer addition notice:', fifoErr);
       }
     } else if (isOutward) {
       try {
-        const fifoConsumption = await FIFOEngine.consumeFIFO(docId, productId, Math.abs(delta));
+        const fifoConsumption = await FIFOEngine.consumeFIFO(docId, productId, Math.abs(delta), tenantId);
         if (fifoConsumption && fifoConsumption.unitCost > 0) {
           resolvedUnitCost = fifoConsumption.unitCost;
         }
