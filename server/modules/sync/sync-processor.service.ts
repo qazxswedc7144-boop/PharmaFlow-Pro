@@ -58,12 +58,35 @@ export class SyncProcessorService {
     const tenantId = authenticatedTenantId;
     const targetBranchId = envelope.branchId || null;
 
-    if (targetBranchId && userAllowedBranches && userAllowedBranches.length > 0) {
-      const isAllowedBranch = userAllowedBranches.includes(targetBranchId) || ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN"].includes(authenticatedUserRole || "");
-      if (!isAllowedBranch) {
-        return this.buildRejectResponse("BRANCH_ACCESS_DENIED", `غير مصرح للجهاز بإرسال مزامنة للفرع [${targetBranchId}].`, tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
-      }
+    // 🚨 SECURITY FIX: ALWAYS verify branch belongs to tenant (DB check, no bypass)
+if (targetBranchId) {
+  const branchInTenant = await prisma.branch.findFirst({
+    where: { id: targetBranchId, tenantId },
+    select: { id: true }
+  });
+  if (!branchInTenant) {
+    await SyncAuditService.logEvent({
+      tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+      operation: "BRANCH_NOT_IN_TENANT", result: "FAILURE",
+      error: "Branch does not belong to authenticated tenant",
+      metadata: { requestedBranch: targetBranchId }
+    });
+    return this.buildRejectResponse(
+      "BRANCH_NOT_IN_TENANT",
+      `الفرع [${targetBranchId}] لا ينتمي لهذه المؤسسة.`,
+      tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary
+    );
+  }
+
+  // Defense in depth: per-user branch restriction (if provided)
+  if (userAllowedBranches && userAllowedBranches.length > 0) {
+    const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN"].includes((authenticatedUserRole || "").toUpperCase());
+    const isAllowedBranch = isPrivileged || userAllowedBranches.includes(targetBranchId);
+    if (!isAllowedBranch) {
+      return this.buildRejectResponse("BRANCH_ACCESS_DENIED", `غير مصرح بإرسال مزامنة للفرع [${targetBranchId}].`, tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
     }
+  }
+}
 
     const deviceVerification = await DeviceService.verifyDevice(tenantId, envelope.deviceId);
     if (!deviceVerification.allowed) {
