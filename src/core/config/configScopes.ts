@@ -41,9 +41,9 @@ export function getCurrentContext(overrideContext?: ConfigurationContext): Confi
   let deviceId = session.deviceId || 'default-device';
 
   const defaultContext: ConfigurationContext = {
-    tenantId: session.tenantId || user?.tenant_id || user?.tenantId || 'default-tenant',
+    tenantId: session.tenantId || user?.tenant_id || user?.tenantId,
     branchId: user?.branch_id || user?.branchId || undefined,
-    userId: user?.id || user?.user_id || 'default-user',
+    userId: user?.id || user?.user_id,
     deviceId
   };
 

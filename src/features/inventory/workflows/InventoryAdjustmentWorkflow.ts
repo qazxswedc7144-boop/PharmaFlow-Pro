@@ -51,6 +51,19 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
     const adjustmentId = `ADJ-${Date.now()}`;
     const transactionUuid = ctx.idempotencyKey || `TX-ADJ-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
+    const tenantId = ctx.tenantId;
+    const branchId = ctx.branchId;
+
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
+
+    if (!tenantId || forbiddenTenants.includes(tenantId)) {
+      throw new Error('FAIL_CLOSED: TRUSTED_TENANT_CONTEXT_REQUIRED: يتطلب تنفيذ تسوية المخزون وجود سياق مؤسسة موثوق.');
+    }
+    if (!branchId || forbiddenBranches.includes(branchId)) {
+      throw new Error('FAIL_CLOSED: TRUSTED_BRANCH_CONTEXT_REQUIRED: يتطلب تنفيذ تسوية المخزون وجود سياق فرع موثوق.');
+    }
+
     const mutationResult = await unifiedInventoryMutationEngine.executeAdjustment({
       adjustmentId,
       productId: input.productId,
@@ -58,8 +71,8 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
       actualQuantity: input.actualQty,
       reason: input.notes || 'تسوية جردية مخزنية',
       userId: input.userId || ctx.userId || 'system',
-      tenantId: ctx.tenantId || 'TEN-DEV-001',
-      branchId: ctx.branchId || 'BR-MAIN',
+      tenantId,
+      branchId,
       transactionUuid
     });
 

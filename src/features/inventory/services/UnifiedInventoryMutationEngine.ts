@@ -728,10 +728,10 @@ export class UnifiedInventoryMutationEngine {
       product_id: productId,
       warehouseId,
       warehouse_id: warehouseId,
-      branchId: branchId || 'BR-MAIN',
-      branch_id: branchId || 'BR-MAIN',
-      tenantId: tenantId || 'TEN-DEV-001',
-      tenant_id: tenantId || 'TEN-DEV-001',
+      branchId: branchId,
+      branch_id: branchId,
+      tenantId: tenantId,
+      tenant_id: tenantId,
       SourceDocumentType: docType,
       sourceDocType: docType,
       SourceDocumentID: docId,
@@ -785,13 +785,16 @@ export class UnifiedInventoryMutationEngine {
         quantity: afterWarehouseQty,
         lastUpdated: timestamp,
         lastModified: timestamp,
-        tenantId: tenantId || 'TEN-DEV-001',
-        branchId: branchId || 'BR-MAIN'
+        tenantId: tenantId,
+        branchId: branchId
       });
     }
 
     // 13. Update Branch Inventory Projection (branchInventory[branchId+productId].stockQuantity)
-    const activeBranchId = branchId || 'BR-MAIN';
+    const activeBranchId = branchId;
+    if (!activeBranchId) {
+       throw new Error(`[UnifiedEngine] activeBranchId is missing for branchInventory projection update for product ${productId}`);
+    }
     const brInv = await db.branchInventory
       .where('[branchId+productId]')
       .equals([activeBranchId, productId])
@@ -813,7 +816,7 @@ export class UnifiedInventoryMutationEngine {
         reorderQuantity: 50,
         createdAt: timestamp,
         updatedAt: timestamp,
-        tenantId: tenantId || 'TEN-DEV-001'
+        tenantId: tenantId
       });
     }
 
@@ -945,8 +948,8 @@ export class UnifiedInventoryMutationEngine {
             cost: unitCost || 0,
             sourceInvoiceId: docId,
             reference_id: docId,
-            tenantId: tenantId || 'TEN-DEV-001',
-            branchId: branchId || 'BR-MAIN',
+            tenantId: tenantId,
+            branchId: branchId,
             created_at: timestamp,
             updated_at: timestamp,
             lastModified: timestamp
@@ -1018,8 +1021,13 @@ export class UnifiedInventoryMutationEngine {
     if (!command) {
       throw new Error(`[UnifiedEngine] Invalid command provided to ${opName}.`);
     }
-    if (!command.tenantId) {
-      throw new Error(`[UnifiedEngine] tenantId is required for ${opName}.`);
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!command.tenantId || forbiddenTenants.includes(command.tenantId)) {
+      throw new Error(`[UnifiedEngine] TRUSTED_TENANT_CONTEXT_REQUIRED: Valid tenantId is required for ${opName}. Got: ${command.tenantId}`);
+    }
+    const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
+    if (!command.branchId || forbiddenBranches.includes(command.branchId)) {
+      throw new Error(`[UnifiedEngine] TRUSTED_BRANCH_CONTEXT_REQUIRED: Valid branchId is required for ${opName}. Got: ${command.branchId}`);
     }
     if (!command.userId) {
       throw new Error(`[UnifiedEngine] userId is required for ${opName}.`);

@@ -38,7 +38,12 @@ export class FifoService {
     }
 
     const mainProduct = lockedProducts[0];
-    const tenantId = mainProduct.tenantId || "default-tenant";
+    const tenantId = mainProduct.tenantId;
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+
+    if (!tenantId || forbiddenTenants.includes(tenantId)) {
+      throw new Error(`TRUSTED_TENANT_CONTEXT_REQUIRED: Product ${productId} has invalid or missing tenant context for depletion.`);
+    }
 
     if (mainProduct.stockQuantity < quantityToDeplete) {
       throw new Error(
@@ -149,7 +154,11 @@ export class FifoService {
     const lockedProducts = await tx.$queryRaw<any[]>(
       Prisma.sql`SELECT id, "tenantId" FROM products WHERE id = ${productId} FOR UPDATE`
     );
-    const tenantId = lockedProducts[0]?.tenantId || "default-tenant";
+    const tenantId = lockedProducts[0]?.tenantId;
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!tenantId || forbiddenTenants.includes(tenantId)) {
+      throw new Error(`TRUSTED_TENANT_CONTEXT_REQUIRED: Product ${productId} has invalid or missing tenant context for addition.`);
+    }
 
     // 2. Add or upsert inventory batch layer
     const existingBatch = await tx.inventoryBatch.findUnique({

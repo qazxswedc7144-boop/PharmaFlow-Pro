@@ -99,6 +99,12 @@ export class InventoryTransferWorkflow implements BusinessWorkflow<InventoryTran
         (input.targetBranchId.startsWith('WH-') ? input.targetBranchId : `WH-${input.targetBranchId}`);
 
       for (const item of input.items) {
+        const tenantId = ctx.tenantId;
+        const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+        if (!tenantId || forbiddenTenants.includes(tenantId)) {
+          throw new Error('FAIL_CLOSED: TRUSTED_TENANT_CONTEXT_REQUIRED: يتطلب تنفيذ التحويل المخزني وجود سياق مؤسسة موثوق.');
+        }
+
         await unifiedInventoryMutationEngine.executeTransfer({
           transferId,
           fromWarehouseId: srcWarehouse,
@@ -108,7 +114,7 @@ export class InventoryTransferWorkflow implements BusinessWorkflow<InventoryTran
           batchNumber: item.batchNumber,
           expiryDate: item.expiryDate,
           userId: ctx.userId || 'system',
-          tenantId: ctx.tenantId || 'TEN-DEV-001',
+          tenantId,
           branchId: input.sourceBranchId,
           transactionUuid: `${transferId}-${item.productId}`,
           notes: input.notes || `تحويل مخزني فوري من ${input.sourceBranchId} إلى ${input.targetBranchId}`

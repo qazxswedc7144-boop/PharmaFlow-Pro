@@ -80,18 +80,18 @@ export function getCurrentUserSession() {
     const session = TokenProvider.getCurrentSession();
     if (session?.user) {
       return {
-        tenantId: session.tenantId || session.user.tenantId || session.user.tenant_id || 'default-tenant',
-        branchId: session.branchId || session.user.branchId || session.user.branch_id || null,
-        userId: session.user?.id || (session.user as any)?.user_id || 'default-user'
+        tenantId: session.tenantId || session.user.tenantId || session.user.tenant_id,
+        branchId: session.branchId || session.user.branchId || session.user.branch_id,
+        userId: session.user?.id || (session.user as any)?.user_id
       };
     }
   } catch (e) {
     console.error('[DB] Error reading user session from TokenProvider:', e);
   }
   return {
-    tenantId: 'default-tenant',
-    branchId: null,
-    userId: 'default-user'
+    tenantId: undefined,
+    branchId: undefined,
+    userId: undefined
   };
 }
 import { 

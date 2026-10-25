@@ -117,6 +117,7 @@ export class InventoryService {
     }
     
     try {
+      const { tenantId, branchId } = getTrustedContext();
       const adjustmentId = `ADJ-RST-${Date.now()}`;
       const transactionUuid = `TX-RST-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -127,8 +128,8 @@ export class InventoryService {
         actualQuantity: 0,
         reason: 'تصفير رصيد المخزون',
         userId,
-        tenantId: 'TEN-DEV-001',
-        branchId: 'BR-MAIN',
+        tenantId,
+        branchId,
         transactionUuid
       });
       console.log(`InventoryService: Stock reset to 0 for product ${productId}`);
@@ -286,6 +287,7 @@ export class InventoryService {
 
       if (movement.quantity === 0) return;
 
+      const { tenantId, branchId } = getTrustedContext();
       const docId = movement.sourceDocId || movement.sourceId || `MOV-${Date.now()}`;
       const docType: 'SALE' | 'PURCHASE' | 'TRANSFER' | 'ADJUSTMENT' | 'RETURN' | 'CORRECTION' = 
         movement.type === 'SALE' ? 'SALE' :
@@ -314,8 +316,8 @@ export class InventoryService {
         batchNumber: movement.batchNumber,
         expiryDate: movement.expiryDate,
         userId: movement.userId || 'system',
-        tenantId: 'TEN-DEV-001',
-        branchId: 'BR-MAIN',
+        tenantId,
+        branchId,
         transactionUuid,
         notes: movement.notes
       });
@@ -360,6 +362,7 @@ export class InventoryService {
     const prod = await db.products.get(params.productId);
     if (!prod) throw new Error(`Product ${params.productId} not found`);
 
+    const { tenantId, branchId } = getTrustedContext();
     const adjustmentId = `ADJ-${Date.now()}`;
     const transactionUuid = params.transactionUuid || `TX-ADJ-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -370,8 +373,8 @@ export class InventoryService {
       actualQuantity: params.newQty,
       reason: params.reason || 'تسوية مخزنية',
       userId: params.userId || 'system',
-      tenantId: 'TEN-DEV-001',
-      branchId: 'BR-MAIN',
+      tenantId,
+      branchId,
       transactionUuid
     });
   }

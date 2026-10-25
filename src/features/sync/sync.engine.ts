@@ -233,8 +233,18 @@ export class DistributedSyncEngine {
     const timestamp = new Date().toISOString();
     const session = getCurrentUserSession();
     
-    const tenantId = options?.tenantId || session.tenantId || 'tenant_default';
-    const branchId = options?.branchId || session.branchId || 'branch_default';
+    const tenantId = options?.tenantId || session.tenantId;
+    const branchId = options?.branchId || session.branchId;
+
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
+
+    if (!tenantId || forbiddenTenants.includes(tenantId)) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for sync enqueue.');
+    }
+    if (!branchId || forbiddenBranches.includes(branchId)) {
+      throw new Error('TRUSTED_BRANCH_CONTEXT_REQUIRED: No valid trusted branch context available for sync enqueue.');
+    }
     const version = (payload?.version as number) || 1;
     const entityId = (payload?.id as string) || 'unknown';
     
@@ -329,8 +339,18 @@ export class DistributedSyncEngine {
     const timestamp = new Date().toISOString();
     const session = getCurrentUserSession();
     
-    const tenantId = options?.tenantId || session.tenantId || 'tenant_default';
-    const branchId = options?.branchId || session.branchId || 'branch_default';
+    const tenantId = options?.tenantId || session.tenantId;
+    const branchId = options?.branchId || session.branchId;
+
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
+
+    if (!tenantId || forbiddenTenants.includes(tenantId)) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for transactional sync enqueue.');
+    }
+    if (!branchId || forbiddenBranches.includes(branchId)) {
+      throw new Error('TRUSTED_BRANCH_CONTEXT_REQUIRED: No valid trusted branch context available for transactional sync enqueue.');
+    }
     const version = (payload?.version as number) || 1;
     const entityId = (payload?.id as string) || 'unknown';
     

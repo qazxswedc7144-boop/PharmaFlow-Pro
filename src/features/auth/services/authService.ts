@@ -16,8 +16,8 @@ export const authService = {
         User_Email: session.user.email || session.user.User_Email || `${session.user.username || 'user'}@local.host`,
         Role: session.user.role || session.user.Role || 'CASHIER',
         User_Name: session.user.fullName || session.user.User_Name || session.user.username || 'User',
-        tenantId: session.tenantId || (session.user as any).tenantId || 'TEN-DEV-001',
-        branchId: session.branchId || (session.user as any).branchId || 'BR-MAIN'
+        tenantId: session.tenantId || (session.user as any).tenantId,
+        branchId: session.branchId || (session.user as any).branchId
       };
     }
     return null;

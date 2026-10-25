@@ -4,6 +4,7 @@ import { InvoiceRepository } from '@/database/repositories/invoice.repository';
 import { AccountingEngine } from '@features/accounting/services/AccountingEngine';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { AccountingEntry, InvoiceItem, Sale, Purchase, InvoiceStatus, PaymentStatus } from '@/types';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 
 /**
  * AutoJournalMapper
@@ -44,6 +45,15 @@ export const AutoJournalMapper = {
     const currency = options?.currency || CurrencyService.getCurrentCurrencyCode();
     const paymentStatus: PaymentStatus = (options?.paymentStatus === 'Credit' ? 'UNPAID' : 'PAID') as PaymentStatus;
     
+    const session = TokenProvider.getCurrentSession();
+    const tenantId = session.tenantId || session.user?.tenantId;
+    const branchId = session.branchId || session.user?.branchId;
+
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!tenantId || forbiddenTenants.includes(tenantId)) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available in AutoJournalMapper.');
+    }
+
     const invoiceId = payload.id || db.generateId(type === 'SALE' ? 'SAL' : 'PUR');
     const enrichedPayload = { ...payload, id: invoiceId };
 
@@ -67,7 +77,7 @@ export const AutoJournalMapper = {
             const inventoryItems = enrichedPayload.items.map(i => ({
               productId: i.product_id || i.productId || '',
               quantity: Number(i.qty || i.quantity || 0),
-              unitCost: Number(i.price || i.unitPrice || 0),
+              unitPrice: Number(i.price || i.unitPrice || 0),
               batchId: i.batchId
             }));
 
@@ -80,7 +90,8 @@ export const AutoJournalMapper = {
                   items: inventoryItems,
                   transactionUuid: `FIN-${invoiceId}`,
                   userId: 'system-financial-mapper',
-                  tenantId: 'TEN-DEV-001'
+                  tenantId,
+                  branchId
                 });
               } else {
                 mutationResults = await engine.executeIssueSale({
@@ -89,7 +100,8 @@ export const AutoJournalMapper = {
                   items: inventoryItems,
                   transactionUuid: `FIN-${invoiceId}`,
                   userId: 'system-financial-mapper',
-                  tenantId: 'TEN-DEV-001'
+                  tenantId,
+                  branchId
                 });
               }
             } else {
@@ -100,7 +112,8 @@ export const AutoJournalMapper = {
                   items: inventoryItems,
                   transactionUuid: `FIN-${invoiceId}`,
                   userId: 'system-financial-mapper',
-                  tenantId: 'TEN-DEV-001'
+                  tenantId,
+                  branchId
                 });
               } else {
                 mutationResults = await engine.executeReceivePurchase({
@@ -109,7 +122,8 @@ export const AutoJournalMapper = {
                   items: inventoryItems,
                   transactionUuid: `FIN-${invoiceId}`,
                   userId: 'system-financial-mapper',
-                  tenantId: 'TEN-DEV-001'
+                  tenantId,
+                  branchId
                 });
               }
             }

@@ -28,7 +28,11 @@ syncRouter.use(tenantContextMiddleware);
 syncRouter.get("/status", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
+    if (!tenantId || tenantId === "default-tenant" || tenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const currentCursor = SyncChangelogService.getCurrentCursor();
     const openConflicts = SyncConflictService.getConflicts(tenantId).length;
     const metrics = SyncMetricsService.getMetrics(tenantId);
@@ -84,7 +88,11 @@ syncRouter.get("/metrics", async (req: Request, res: Response): Promise<void> =>
 syncRouter.post("/push", async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
   const authReq = req as AuthenticatedRequest;
-  const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+  const authenticatedTenantId = authReq.user?.tenantId;
+  if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+     res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+     return;
+  }
   const authenticatedUserId = authReq.user?.userId || "system";
   const authenticatedUserRole = authReq.user?.role as string | undefined;
 
@@ -95,7 +103,7 @@ syncRouter.post("/push", async (req: Request, res: Response): Promise<void> => {
     // Normalize into SyncEnvelope structure
     const envelope: SyncEnvelope = {
       tenantId: rawBody.tenantId || req.headers["x-tenant-id"] || authenticatedTenantId,
-      branchId: rawBody.branchId || req.headers["x-branch-id"] || "default-branch",
+      branchId: rawBody.branchId || req.headers["x-branch-id"],
       userId: rawBody.userId || authenticatedUserId,
       deviceId: rawBody.deviceId || (req.headers["x-device-id"] as string) || "unidentified-device",
       idempotencyKey: rawBody.idempotencyKey || (req.headers["idempotency-key"] as string),
@@ -153,7 +161,11 @@ syncRouter.post("/push", async (req: Request, res: Response): Promise<void> => {
 const handlePull = async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
   const authReq = req as AuthenticatedRequest;
-  const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+  const authenticatedTenantId = authReq.user?.tenantId;
+  if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+     res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+     return;
+  }
 
   try {
     const bodyOrQuery = req.method === "GET" ? req.query : req.body;
@@ -182,15 +194,8 @@ const handlePull = async (req: Request, res: Response): Promise<void> => {
     if (prisma.isConnected && prisma.isConnected()) {
       const sinceTime = pullRequest.lastSyncTimestamp ? new Date(pullRequest.lastSyncTimestamp) : new Date(0);
 
-      const productWhere: any = { updatedAt: { gt: sinceTime } };
-      if (authenticatedTenantId !== "default-tenant") {
-        productWhere.tenantId = authenticatedTenantId;
-      }
-
-      const invoiceWhere: any = { createdAt: { gt: sinceTime } };
-      if (authenticatedTenantId !== "default-tenant") {
-        invoiceWhere.tenantId = authenticatedTenantId;
-      }
+      const productWhere: any = { updatedAt: { gt: sinceTime }, tenantId: authenticatedTenantId };
+      const invoiceWhere: any = { createdAt: { gt: sinceTime }, tenantId: authenticatedTenantId };
       if (pullRequest.branchId) {
         invoiceWhere.branchId = pullRequest.branchId;
       }
@@ -263,7 +268,11 @@ syncRouter.get("/pull", handlePull);
 syncRouter.post("/device/register", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const authenticatedUserId = authReq.user?.userId || "system";
 
     const { deviceId, deviceName, branchId, appVersion, schemaVersion } = req.body;
@@ -277,7 +286,7 @@ syncRouter.post("/device/register", async (req: Request, res: Response): Promise
       deviceId,
       deviceName: deviceName || "POS Terminal",
       tenantId: authenticatedTenantId,
-      branchId: branchId || "default-branch",
+      branchId: branchId,
       userId: authenticatedUserId,
       appVersion: appVersion || "8.3.0",
       schemaVersion: schemaVersion || SYNC_PROTOCOL_VERSION
@@ -309,7 +318,11 @@ syncRouter.post("/device/register", async (req: Request, res: Response): Promise
 syncRouter.post("/device/revoke", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const { deviceId, reason } = req.body;
 
     if (!deviceId) {
@@ -351,7 +364,11 @@ syncRouter.post("/device/revoke", async (req: Request, res: Response): Promise<v
 syncRouter.get("/device/:deviceId/status", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const deviceId = req.params.deviceId || "";
 
     const verification = await DeviceService.verifyDevice(authenticatedTenantId, deviceId);
@@ -371,7 +388,11 @@ syncRouter.get("/device/:deviceId/status", async (req: Request, res: Response): 
 syncRouter.post("/device/:deviceId/status", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const deviceId = req.params.deviceId || "";
     const { status, reason } = req.body;
 
@@ -408,7 +429,11 @@ syncRouter.post("/device/:deviceId/status", async (req: Request, res: Response):
 syncRouter.get("/conflicts", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
+    if (!tenantId || tenantId === "default-tenant" || tenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
 
     const conflicts = SyncConflictService.getConflicts(tenantId, branchId);
@@ -458,7 +483,11 @@ syncRouter.post("/conflicts/:conflictId/resolve", async (req: Request, res: Resp
 syncRouter.get("/audit-logs", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
+    if (!tenantId || tenantId === "default-tenant" || tenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const limit = req.query.limit ? parseInt(String(req.query.limit), 10) : 100;
 
@@ -479,7 +508,11 @@ syncRouter.get("/audit-logs", async (req: Request, res: Response): Promise<void>
 syncRouter.post("/ack", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const { ackId, deviceId, sequence } = req.body;
 
     if (deviceId && sequence !== undefined) {
@@ -502,7 +535,11 @@ syncRouter.post("/ack", async (req: Request, res: Response): Promise<void> => {
 syncRouter.get("/devices", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const devices = DeviceService.getTenantDevices(authenticatedTenantId);
 
     res.status(200).json({
@@ -521,7 +558,11 @@ syncRouter.get("/devices", async (req: Request, res: Response): Promise<void> =>
 syncRouter.post("/device/:deviceId/sequence", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const deviceId = String(req.params.deviceId || "");
     const { syncedSequence, ackSequence, versionVector } = req.body;
 
@@ -558,7 +599,11 @@ syncRouter.post("/device/:deviceId/sequence", async (req: Request, res: Response
 syncRouter.post("/integrity-check", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const branchId = req.body.branchId || undefined;
 
     const report = await SyncFinancialIntegrityService.verifyTenantIntegrity(
@@ -582,7 +627,11 @@ syncRouter.post("/integrity-check", async (req: Request, res: Response): Promise
 syncRouter.post("/compensating-transaction", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const authenticatedTenantId = authReq.user?.tenantId || "default-tenant";
+    const authenticatedTenantId = authReq.user?.tenantId;
+    if (!authenticatedTenantId || authenticatedTenantId === "default-tenant" || authenticatedTenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const authenticatedUserId = authReq.user?.userId || "system";
     const { type, payload } = req.body;
 

@@ -108,8 +108,13 @@ export class InventoryCorrectionService {
     }
 
     const session = getCurrentUserSession();
-    const tenantId = context?.tenantId || audit.tenantId || session.tenantId || 'default-tenant';
-    const branchId = context?.branchId ?? audit.branchId ?? session.branchId ?? null;
+    const tenantId = context?.tenantId || audit.tenantId || session.tenantId;
+    const branchId = context?.branchId ?? audit.branchId ?? session.branchId;
+
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!tenantId || forbiddenTenants.includes(tenantId)) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for discrepancy registration.');
+    }
 
     const createdCases: InventoryCorrectionCase[] = [];
 
@@ -422,8 +427,13 @@ export class InventoryCorrectionService {
       throw new MandatoryFieldMissingError('Missing proposed action details on approved case.');
     }
 
-    const tenantId = currentCase.tenantId || executor.tenantId || 'default-tenant';
-    const branchId = currentCase.branchId || executor.branchId || null;
+    const tenantId = currentCase.tenantId || executor.tenantId;
+    const branchId = currentCase.branchId || executor.branchId;
+
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!tenantId || forbiddenTenants.includes(tenantId)) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for correction execution.');
+    }
     const refId = `CORR-REF-${Date.now()}`;
     const now = new Date().toISOString();
 

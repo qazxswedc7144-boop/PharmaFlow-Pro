@@ -224,11 +224,19 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       if (inventoryItems.length > 0) {
         const engine = UnifiedInventoryMutationEngine.getInstance();
         const tenantId = ctx.tenantId;
-        if (!tenantId || tenantId === 'TEN-DEV-001' || tenantId === 'tenant_default' || tenantId === 'default' || tenantId === 'default-tenant') {
-          throw new Error('FAIL_CLOSED: يتطلب تنفيذ حركة المخزون وجود سياق مؤسسة موثوق.');
+        const branchId = ctx.branchId;
+
+        const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+        const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
+
+        if (!tenantId || forbiddenTenants.includes(tenantId)) {
+          throw new Error('FAIL_CLOSED: TRUSTED_TENANT_CONTEXT_REQUIRED: يتطلب تنفيذ حركة المخزون وجود سياق مؤسسة موثوق.');
         }
+        if (!branchId || forbiddenBranches.includes(branchId)) {
+          throw new Error('FAIL_CLOSED: TRUSTED_BRANCH_CONTEXT_REQUIRED: يتطلب تنفيذ حركة المخزون وجود سياق فرع موثوق.');
+        }
+
         const userId = ctx.userId || 'system';
-        const branchId = ctx.branchId || 'BR-MAIN';
         const transactionUuid = ctx.idempotencyKey;
 
         if (isReturn) {

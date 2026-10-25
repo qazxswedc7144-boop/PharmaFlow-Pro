@@ -1,4 +1,5 @@
 import { db } from '@/core/db';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { InvoiceItem, InvoiceStatus, Receipt, Payment, TransferStatus, JournalLine } from '@/types';
 import { TransactionService } from '@/services/transactions/TransactionService';
 import { FaultService } from '@/services/integrity/FaultService';
@@ -25,6 +26,18 @@ import { inventoryAdjustmentWorkflow } from '@features/inventory/workflows/Inven
 import { inventoryTransferWorkflow } from '@features/inventory/workflows/InventoryTransferWorkflow';
 import { voucherWorkflow } from '@features/accounting/workflows/VoucherWorkflow';
 import { unifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
+
+function getTrustedContext() {
+  const session = TokenProvider.getCurrentSession();
+  const tenantId = session.tenantId || (session.user as any)?.tenantId || (session.user as any)?.tenant_id;
+  const branchId = session.branchId || (session.user as any)?.branchId || (session.user as any)?.branch_id;
+
+  if (!tenantId || tenantId === 'TEN-DEV-001' || tenantId === 'tenant_default' || tenantId === 'default' || tenantId === 'default-tenant') {
+    throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available in Orchestrator.');
+  }
+
+  return { tenantId, branchId };
+}
 
 export interface WorkflowSalePayload {
   customerId?: string;
@@ -481,7 +494,11 @@ export class UnifiedBusinessWorkflowOrchestrator {
 
     if (rawTransfer.status === newStatus) return { success: true };
 
-    const branchId = rawTransfer.sourceBranchId || "BRH-MAIN-001";
+    const { tenantId: trustedTenantId } = getTrustedContext();
+    const branchId = rawTransfer.sourceBranchId;
+    if (!branchId || branchId === 'BRH-MAIN-001' || branchId === 'BR-MAIN') {
+      throw new Error('TRUSTED_BRANCH_CONTEXT_REQUIRED: Valid branchId required for stock transfer status update.');
+    }
     const lockKey = `transfer:${transferId}`;
 
     return await LockService.withLock(
@@ -513,7 +530,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
                 batchNumber: item.batchNumber,
                 expiryDate: item.expiryDate,
                 userId: updatedBy,
-                tenantId: (rawTransfer as any).tenantId || 'TEN-DEV-001',
+                tenantId: trustedTenantId,
                 branchId: rawTransfer.sourceBranchId,
                 transactionUuid: `${transferId}-${item.productId}-OUT`,
                 notes: `شحن تحويل مخزني من الفرع ${rawTransfer.sourceBranchId} إلى الفرع ${rawTransfer.targetBranchId}`
@@ -545,7 +562,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
                 batchNumber: item.batchNumber,
                 expiryDate: item.expiryDate,
                 userId: updatedBy,
-                tenantId: (rawTransfer as any).tenantId || 'TEN-DEV-001',
+                tenantId: trustedTenantId,
                 branchId: rawTransfer.targetBranchId,
                 transactionUuid: `${transferId}-${item.productId}-IN`,
                 notes: `استلام تحويل مخزني بالفرع ${rawTransfer.targetBranchId} من الفرع ${rawTransfer.sourceBranchId}`
@@ -569,7 +586,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
                   batchNumber: item.batchNumber,
                   expiryDate: item.expiryDate,
                   userId: updatedBy,
-                  tenantId: (rawTransfer as any).tenantId || 'TEN-DEV-001',
+                  tenantId: trustedTenantId,
                   branchId: rawTransfer.sourceBranchId,
                   transactionUuid: `${transferId}-${item.productId}-CANCEL`,
                   notes: `إلغاء تحويل مخزني واستعادة الكمية للفرع ${rawTransfer.sourceBranchId}`
@@ -633,7 +650,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
           originalDocumentType: type === 'SALE' ? 'SALE' : 'PURCHASE',
           reason: `إلغاء ترحيل الفاتورة رقم ${invoiceId}`,
           userId: user?.id || 'admin',
-          tenantId: user?.tenantId || 'TEN-DEV-001',
+          tenantId: user?.tenantId,
           transactionUuid: `UNPOST-${invoiceId}-${Date.now()}`
         });
 
