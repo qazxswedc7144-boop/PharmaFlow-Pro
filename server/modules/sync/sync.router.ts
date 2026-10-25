@@ -97,7 +97,15 @@ syncRouter.post("/push", async (req: Request, res: Response): Promise<void> => {
      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
      return;
   }
-  const authenticatedUserId = authReq.user?.userId || "system";
+  const authenticatedUserId = authReq.user?.userId;
+
+if (!authenticatedUserId) {
+  res.status(403).json({
+    success: false,
+    error: "TRUSTED_USER_CONTEXT_REQUIRED"
+  });
+  return;
+}
   const authenticatedUserRole = authReq.user?.role as string | undefined;
 
   try {
@@ -107,7 +115,12 @@ syncRouter.post("/push", async (req: Request, res: Response): Promise<void> => {
     // Normalize into SyncEnvelope structure
     const envelope: SyncEnvelope = {
       tenantId: authenticatedTenantId,
-      branchId: rawBody.branchId || req.headers["x-branch-id"],
+      branchId:
+      typeof rawBody.branchId === "string" && rawBody.branchId.trim()
+    ? rawBody.branchId.trim()
+    : typeof req.headers["x-branch-id"] === "string"
+      ? req.headers["x-branch-id"].trim() || undefined
+      : undefined,
       userId: authenticatedUserId,
       deviceId: rawBody.deviceId || (req.headers["x-device-id"] as string) || "unidentified-device",
       idempotencyKey: rawBody.idempotencyKey || (req.headers["idempotency-key"] as string),
