@@ -105,8 +105,10 @@ syncRouter.post("/push", async (req: Request, res: Response): Promise<void> => {
     const rawBytes = JSON.stringify(rawBody).length;
 
     // Normalize into SyncEnvelope structure
-const envelope: SyncEnvelope = {
-  tenantId: authenticatedTenantId,
+    const envelope: SyncEnvelope = {
+      tenantId: authenticatedTenantId,
+      branchId: rawBody.branchId || req.headers["x-branch-id"],
+      userId: authenticatedUserId,
       deviceId: rawBody.deviceId || (req.headers["x-device-id"] as string) || "unidentified-device",
       idempotencyKey: rawBody.idempotencyKey || (req.headers["idempotency-key"] as string),
       timestamp: rawBody.timestamp || Date.now(),
