@@ -75,9 +75,9 @@ export class DeviceManager {
       deviceId: newDeviceId,
       installationId: `INST-${newDeviceId}`,
       deviceName,
-      tenantId: session.tenantId || "default-tenant",
-      branchId: session.branchId || "default-branch",
-      userId: session.userId || "default-user",
+      tenantId: session.tenantId || "",
+      branchId: session.branchId || "",
+      userId: session.userId || "",
       status: "ACTIVE",
       syncHealth: "HEALTHY",
       lastSyncedSequence: 0,
@@ -147,7 +147,7 @@ export class DeviceManager {
       const response = await unifiedTransport.post<any>("/api/v1/sync/device/register", {
         deviceId: identity.deviceId,
         deviceName: identity.deviceName,
-        branchId: session.branchId || "default-branch",
+        branchId: session.branchId || "",
         appVersion: "8.3.0",
         schemaVersion: SYNC_PROTOCOL_VERSION
       }, {

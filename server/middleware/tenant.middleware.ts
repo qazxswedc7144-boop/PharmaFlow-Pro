@@ -98,8 +98,12 @@ export async function tenantContextMiddleware(
     }
   }
 
-  // Safe fallback for local/unauthenticated development
-  const finalTenantId = extractedTenantId || "default-tenant";
+  // Multi-tenant isolation: No default fallback in production.
+  const finalTenantId = extractedTenantId;
+  
+  if (!finalTenantId && process.env.NODE_ENV === 'production') {
+    throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: Tenant identification missing from request.');
+  }
 
   // 2. Validate tenant & subscription in database (graceful offline fallback)
   let tenantName = "PharmaFlow Enterprise";

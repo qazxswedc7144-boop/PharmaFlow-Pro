@@ -1,5 +1,5 @@
 
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { 
   AIInsight, 
   FinancialHealthSnapshot
@@ -238,7 +238,7 @@ export class AIInsightsEngine {
       message,
       severity,
       timestamp: now,
-      tenant_id: 'TEN-DEV-001',
+      tenant_id: getCurrentUserSession()?.tenantId || '',
       lastModified: now
     };
   }

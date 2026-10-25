@@ -66,7 +66,7 @@ export const useAuthStore = create<AuthState>()(
         user,
         token,
         refreshToken: refreshToken !== undefined ? refreshToken : state.refreshToken,
-        tenantId: context?.tenantId || user?.tenantId || user?.tenant_id || 'default-tenant',
+        tenantId: context?.tenantId || user?.tenantId || user?.tenant_id || null,
         branchId: context?.branchId || user?.branchId || user?.branch_id || null,
         roles: context?.roles || (user as any)?.roles || (user?.role ? [user.role] : ['CASHIER']),
         permissions: context?.permissions || user?.permissions || [],

@@ -69,7 +69,11 @@ syncRouter.get("/status", async (req: Request, res: Response): Promise<void> => 
 syncRouter.get("/metrics", async (req: Request, res: Response): Promise<void> => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
+    if (!tenantId || tenantId === "default-tenant" || tenantId === "TEN-DEV-001") {
+       res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+       return;
+    }
     const snapshot = SyncMetricsService.getMetrics(tenantId);
 
     res.status(200).json({

@@ -36,7 +36,7 @@ export class UsageMeterService {
    * Calculates detailed multi-vector transactional metrics for the specified tenant.
    */
   static async getTenantUsageMetrics(tenantId?: string): Promise<TenantUsageMetrics> {
-    const activeTenant = tenantId || getCurrentUserSession()?.tenantId || 'default-tenant';
+    const activeTenant = tenantId || getCurrentUserSession()?.tenantId;
     const now = Date.now();
 
     // Check memory cache
@@ -54,7 +54,7 @@ export class UsageMeterService {
       let returnsCount = 0;
 
       for (const inv of invoices) {
-        const invTenant = inv.tenantId || (inv as any).tenant_id || 'default-tenant';
+        const invTenant = inv.tenantId || (inv as any).tenant_id;
         if (activeTenant !== 'ALL' && invTenant !== activeTenant && invTenant !== 'default-tenant') {
           continue;
         }
@@ -81,7 +81,7 @@ export class UsageMeterService {
       try {
         const transfers = await db.branchTransfers.toArray().catch(() => []);
         transfersCount = transfers.filter(t => {
-          const tTenant = t.tenantId || t.tenant_id || 'default-tenant';
+          const tTenant = t.tenantId || t.tenant_id;
           return activeTenant === 'ALL' || tTenant === activeTenant || tTenant === 'default-tenant';
         }).length;
       } catch {
@@ -93,7 +93,7 @@ export class UsageMeterService {
       try {
         const txs = await db.inventoryTransactions.toArray().catch(() => []);
         adjustmentsCount = txs.filter(tx => {
-          const txTenant = tx.tenantId || tx.tenant_id || 'default-tenant';
+          const txTenant = tx.tenantId || tx.tenant_id;
           const type = String(tx.transaction_type || tx.type || '').toUpperCase();
           return (type === 'ADJUSTMENT' || type === 'INVENTORY_COUNT') &&
             (activeTenant === 'ALL' || txTenant === activeTenant || txTenant === 'default-tenant');

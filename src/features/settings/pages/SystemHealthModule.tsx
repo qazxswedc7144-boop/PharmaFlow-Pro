@@ -78,7 +78,7 @@ const SystemHealthModule: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
   const [backupSchedule, setBackupSchedule] = useState('daily'); // daily, weekly, monthly
   const [cloudBackupsList, setCloudBackupsList] = useState<SimulatedCloudBackup[]>([]);
   const [cloudBackupsLoading, setCloudBackupsLoading] = useState(false);
-  const [bkPassword, setBkPassword] = useState('pharma-safe-123');
+  const [bkPassword, setBkPassword] = useState('');
   const [backupActionLoading, setBackupActionLoading] = useState(false);
   const [backupStatusMessage, setBackupStatusMessage] = useState('');
 

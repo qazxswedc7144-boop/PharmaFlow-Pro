@@ -40,7 +40,7 @@ export const OrganizationModule: React.FC = () => {
               </span>
             </div>
             <p className="text-xs text-slate-400 font-medium mt-0.5">
-              معرف المؤسسة الحالي: <span className="font-mono text-slate-600 font-bold">{tenantId || 'default-tenant'}</span> | المستخدم: <span className="font-bold text-slate-700">{user?.username || user?.role || 'المشرف'}</span>
+              معرف المؤسسة الحالي: <span className="font-mono text-slate-600 font-bold">{tenantId || 'غير معرف'}</span> | المستخدم: <span className="font-bold text-slate-700">{user?.username || user?.role || 'المشرف'}</span>
             </p>
           </div>
         </div>

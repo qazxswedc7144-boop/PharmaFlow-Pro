@@ -34,12 +34,11 @@ const BackupManagement: React.FC = () => {
   const [gdriveFiles, setGdriveFiles] = useState<any[]>([]);
   const [gdriveLoading, setGdriveLoading] = useState(false);
 
-  // Scheduling Integration States
   const [scheduleConfig, setScheduleConfig] = useState<BackupScheduleConfig>({
     enabled: false,
     frequency: 'daily',
     destination: 'local',
-    password: 'pharma-safe-123'
+    password: ''
   });
   const [savingSchedule, setSavingSchedule] = useState(false);
 

@@ -126,8 +126,8 @@ export class IntegritySweepService {
             actualQuantity: calculatedStock,
             reason: `تصحيح آلي لنزاهة البيانات - الفرق: ${calculatedStock - currentStock}`,
             userId: 'system-repair',
-            tenantId: 'TEN-DEV-001',
-            branchId: 'BR-MAIN',
+            tenantId: getCurrentUserSession()?.tenantId || '',
+            branchId: getCurrentUserSession()?.branchId || '',
             transactionUuid: `REPAIR-${p.id}-${Date.now()}`
           }).catch(err => {
             console.error(`FAILED AUTO_FIX for ${p.id}:`, err);

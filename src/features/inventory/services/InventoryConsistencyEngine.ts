@@ -1,4 +1,4 @@
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { logger } from '@/services/loggerService';
 
 export interface StockReconciliationItem {
@@ -391,7 +391,7 @@ export class InventoryConsistencyEngine {
                 unit_cost: price,
                 total_cost: qty * price,
                 reference_id: invoiceId,
-                tenant_id: 'TEN-DEV-001',
+                tenant_id: getCurrentUserSession()?.tenantId || '',
                 created_at: new Date().toISOString()
               });
 

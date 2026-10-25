@@ -54,7 +54,7 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
         Prisma.sql`SELECT id FROM accounts WHERE id IN (${Prisma.join(accountIds)}) FOR UPDATE`
       );
 
-      const tenantId = (req as any).tenantId || req.user?.tenantId || "default-tenant";
+      const tenantId = (req as any).tenantId || req.user?.tenantId;
 
       // Create main entry
       const entry = await tx.journalEntry.create({

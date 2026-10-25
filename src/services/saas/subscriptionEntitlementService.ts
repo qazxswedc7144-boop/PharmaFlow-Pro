@@ -62,7 +62,10 @@ export class SubscriptionEntitlementService {
    * This is calculated directly from ledger transactions and verified license storage.
    */
   static async getAuthoritativeEntitlement(tenantId?: string): Promise<SubscriptionEntitlement> {
-    const activeTenant = tenantId || getCurrentUserSession()?.tenantId || 'default-tenant';
+    const activeTenant = tenantId || getCurrentUserSession()?.tenantId;
+    if (!activeTenant) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: Cannot retrieve entitlement without a valid tenant context.');
+    }
     
     // 1. Fetch persistent, tamper-proof usage metrics
     const currentUsage = await UsageMeterService.getAuthoritativeUsageCount(activeTenant);
@@ -230,13 +233,15 @@ export class SubscriptionEntitlementService {
   private static _sessionDismissedMap: Record<string, boolean> = {};
 
   static hasDismissedInCurrentSession(tenantId?: string): boolean {
-    const activeTenant = tenantId || getCurrentUserSession()?.tenantId || 'default-tenant';
-    return !!this._sessionDismissedMap[activeTenant];
+    const activeTenant = tenantId || getCurrentUserSession()?.tenantId;
+    return activeTenant ? !!this._sessionDismissedMap[activeTenant] : false;
   }
 
   static markDismissedForCurrentSession(tenantId?: string): void {
-    const activeTenant = tenantId || getCurrentUserSession()?.tenantId || 'default-tenant';
-    this._sessionDismissedMap[activeTenant] = true;
+    const activeTenant = tenantId || getCurrentUserSession()?.tenantId;
+    if (activeTenant) {
+      this._sessionDismissedMap[activeTenant] = true;
+    }
   }
 
   /**

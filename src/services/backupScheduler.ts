@@ -19,7 +19,7 @@ class BackupScheduler {
       enabled: false,
       frequency: 'daily',
       destination: 'local',
-      password: 'pharma-safe-123'
+      password: undefined
     };
   }
 
@@ -38,7 +38,10 @@ class BackupScheduler {
    */
   async runUnifiedBackup(config?: BackupScheduleConfig): Promise<string> {
     const activeConfig = config || await this.getConfig();
-    const password = activeConfig.password || 'pharma-safe-123';
+    const password = activeConfig.password;
+    if (!password) {
+      throw new Error('BACKUP_PASSWORD_REQUIRED: No password provided for encrypted backup.');
+    }
     
     const frequencyLabel = activeConfig.frequency === 'daily' ? 'يومي' : activeConfig.frequency === 'weekly' ? 'أسبوعي' : 'شهري';
     const destinationLabel = activeConfig.destination === 'gdrive' ? 'جوجل درايف' : activeConfig.destination === 'device' ? 'تخزين الجهاز المحلي' : 'محلي';

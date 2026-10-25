@@ -20,7 +20,7 @@ router.use(tenantContextMiddleware);
 router.get("/dashboard", requirePermission("organization.view"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
 
     const roles = await RoleService.getRoles(tenantId);
     
@@ -83,7 +83,7 @@ router.get("/dashboard", requirePermission("organization.view"), async (req, res
 router.get("/users", requirePermission("users.view"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
 
     let usersList: any[] = [];
 
@@ -141,7 +141,7 @@ router.get("/users", requirePermission("users.view"), async (req, res: Response)
 router.post("/users", requirePermission("users.create"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
     const { username, role = "CASHIER", branchId, isActive = true } = req.body;
 
     if (!username || !username.trim()) {
@@ -191,7 +191,7 @@ router.post("/users", requirePermission("users.create"), async (req, res: Respon
 router.put("/users/:id/status", requirePermission("users.update"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
     const { id } = req.params;
     const { isActive } = req.body;
 
@@ -236,7 +236,7 @@ router.put("/users/:id/status", requirePermission("users.update"), async (req, r
 router.post("/users/:id/roles", requirePermission("users.roles.manage"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId || "default-tenant";
+    const tenantId = authReq.user?.tenantId;
     const { id } = req.params;
     const { roleIds, branchId } = req.body;
 

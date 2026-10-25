@@ -241,7 +241,7 @@ export class DeviceService {
         deviceId,
         deviceName: "POS Device",
         tenantId,
-        branchId: "default-branch",
+        branchId: "",
         userId: "admin",
         lastSeenAt: new Date().toISOString(),
         appVersion: "8.3.0",
