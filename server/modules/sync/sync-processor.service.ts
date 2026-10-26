@@ -183,7 +183,7 @@ try {
       }
 
       const requiredPermission = this.getRequiredPermission(entity, operation);
-      const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "PHARMACIST_IN_CHARGE", "SUPER_ADMIN"].includes(authenticatedUserRole || "");
+      const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"].includes(authenticatedUserRole || "");
       if (requiredPermission && !isPrivileged && !effectivePermissions.has(requiredPermission)) {
         results.push({ id: mutationId, mutationId, status: "UNAUTHORIZED", success: false, errorCode: "PERMISSION_DENIED", message: "Unauthorized" });
         summary.unauthorized.push(mutationId);
