@@ -57,13 +57,11 @@ export class SyncProcessorService {
     const tenantId = authenticatedTenantId;
     const targetBranchId = envelope.branchId || null;
 
-    // 🚨 SECURITY FIX (P0-PHASE-1): Robust server-side branch membership verification.
-    // We no longer trust userAllowedBranches from the caller; we fetch validity from the DB.
-    const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN", "PHARMACIST_IN_CHARGE"].includes((authenticatedUserRole || "").toUpperCase());
+    // 🚨 SECURITY FIX: PHARMACIST_IN_CHARGE removed from branch bypass
+    const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"].includes((authenticatedUserRole || "").toUpperCase());
 
     try {
       if (targetBranchId) {
-        // 1. Verify branch strictly belongs to the authenticated tenant
         const branchInTenant = await prisma.branch.findFirst({
           where: { id: targetBranchId, tenantId },
           select: { id: true }
@@ -83,9 +81,7 @@ export class SyncProcessorService {
           );
         }
 
-        // 2. Verify user branch authorization (membership or privileged role)
         if (!isPrivileged) {
-          // Query both BranchUser membership and UserRole branch assignment
           const [hasBranchMembership, hasBranchRoleAssignment] = await Promise.all([
             prisma.branchUser.findFirst({
               where: { userId: authenticatedUserId, branchId: targetBranchId, tenantId },
@@ -112,9 +108,6 @@ export class SyncProcessorService {
           }
         }
       } else {
-        // 3. Tenant-wide sync requested (null branch)
-        // Non-privileged users must specify a branch if they are assigned to any, 
-        // or are denied if they have no branch/tenant-wide access.
         if (!isPrivileged) {
           const [userBranchesCount, userBranchRolesCount] = await Promise.all([
             prisma.branchUser.count({ where: { userId: authenticatedUserId, tenantId } }),
@@ -129,7 +122,6 @@ export class SyncProcessorService {
             );
           }
 
-          // If no assignments and no privilege, deny tenant-wide sync by default
           return this.buildRejectResponse(
             "BRANCH_ACCESS_DENIED",
             "غير مصرح بإجراء مزامنة على مستوى المنشأة.",
@@ -154,16 +146,16 @@ export class SyncProcessorService {
     DeviceService.touchDevice(tenantId, envelope.deviceId);
 
     let effectivePermissions = new Set<string>();
-try {
-  effectivePermissions = await AuthorizationService.getUserEffectivePermissions(tenantId, authenticatedUserId, authenticatedUserRole);
-} catch (err: any) {
-  console.error(`[SyncProcessor] Failed to fetch permissions for user ${authenticatedUserId}:`, err);
-  await SyncAuditService.logEvent({
-    tenantId, userId: authenticatedUserId, deviceId: envelope.deviceId,
-    operation: "PERMISSION_DENIED", result: "FAILURE", error: err.message
-  });
-  return this.buildRejectResponse("PERMISSION_FETCH_FAILED", "تعذر التحقق من صلاحيات المستخدم. تم رفض الطلب للأمان.", tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
-}
+    try {
+      effectivePermissions = await AuthorizationService.getUserEffectivePermissions(tenantId, authenticatedUserId, authenticatedUserRole);
+    } catch (err: any) {
+      console.error(`[SyncProcessor] Failed to fetch permissions for user ${authenticatedUserId}:`, err);
+      await SyncAuditService.logEvent({
+        tenantId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+        operation: "PERMISSION_DENIED", result: "FAILURE", error: err.message
+      });
+      return this.buildRejectResponse("PERMISSION_FETCH_FAILED", "تعذر التحقق من صلاحيات المستخدم. تم رفض الطلب للأمان.", tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
+    }
 
     const mutations = Array.isArray(envelope.mutations) ? envelope.mutations : [];
 
@@ -183,8 +175,8 @@ try {
       }
 
       const requiredPermission = this.getRequiredPermission(entity, operation);
-      const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"].includes(authenticatedUserRole || "");
-      if (requiredPermission && !isPrivileged && !effectivePermissions.has(requiredPermission)) {
+      const isPrivilegedForOp = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"].includes((authenticatedUserRole || "").toUpperCase());
+      if (requiredPermission && !isPrivilegedForOp && !effectivePermissions.has(requiredPermission)) {
         results.push({ id: mutationId, mutationId, status: "UNAUTHORIZED", success: false, errorCode: "PERMISSION_DENIED", message: "Unauthorized" });
         summary.unauthorized.push(mutationId);
         continue;
@@ -239,81 +231,101 @@ try {
       success: summary.rejected.length === 0 && summary.unauthorized.length === 0,
       tenantId, branchId: targetBranchId, serverTimestamp, processedCount: results.length, results, summary
     };
-  }
-  private static buildRejectResponse(code: string, msg: string, tenantId: string, branchId: string | null, serverTimestamp: number, mutations: SyncMutation[] | undefined, summary: any): SyncPushResponse {
-  return {
-    success: false, errorCode: code, error: msg, tenantId, branchId, serverTimestamp, processedCount: (mutations || []).length,
-    results: (mutations || []).map((m) => ({ id: m.id, mutationId: m.id, status: "REJECTED", success: false, errorCode: code, message: msg })),
-    summary
-  };
-}
-
-private static getRequiredPermission(entity: string, operation: string): string | null {
-  switch (entity.toUpperCase()) {
-    case "INVOICE": case "SALE": return operation === "CREATE" || operation === "POST" ? "sales.invoice.create" : "sales.invoice.update";
-    case "PRODUCT": return "inventory.products.manage";
-    case "PAYMENT": case "VOUCHER": return "accounting.voucher.create";
-    case "JOURNAL_ENTRY": return "accounting.journal.post";
-    default: return null;
-  }
-}
-
-private static async executeEntityMutation(params: {
-  mutation: SyncMutation; tenantId: string; branchId: string | null; userId: string; deviceId: string; version: number; tx: any;
-}): Promise<PerMutationResult> {
-  const { mutation, tenantId, branchId, version, tx } = params;
-  const { id: mutationId, entity, payload } = mutation;
-  const data = payload || {};
-  const entityId = mutation.entityId || data.id || mutationId;
-  const operation = (mutation.operation || "CREATE").toUpperCase();
-
-  const entityConfig = this.getEntityPrismaConfig(entity);
-  if (!entityConfig) {
-    return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "UNSUPPORTED_ENTITY", message: `Entity ${entity} has no registered persistence model` };
+        }
+    private static buildRejectResponse(code: string, msg: string, tenantId: string, branchId: string | null, serverTimestamp: number, mutations: SyncMutation[] | undefined, summary: any): SyncPushResponse {
+    return {
+      success: false, errorCode: code, error: msg, tenantId, branchId, serverTimestamp, processedCount: (mutations || []).length,
+      results: (mutations || []).map((m) => ({ id: m.id, mutationId: m.id, status: "REJECTED", success: false, errorCode: code, message: msg })),
+      summary
+    };
   }
 
-  const { modelName } = entityConfig;
-  const model = tx[modelName];
-
-  if ((entity === "INVOICE" || entity === "SALE") && operation === "POST") {
-    try {
-      const postResult = await AtomicPostSaleService.executePostSaleCommand({
-        payload: { ...data, tenantId }, tenantId, userId: params.userId, ipAddress: "127.0.0.1", tx
-      });
-      return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
-    } catch (err: any) {
-      return { id: mutationId, mutationId, status: "FAILED", success: false, errorCode: "BUSINESS_COMMAND_FAILED", message: err.message };
+  private static getRequiredPermission(entity: string, operation: string): string | null {
+    switch (entity.toUpperCase()) {
+      case "INVOICE": case "SALE": 
+        return operation === "CREATE" || operation === "POST" ? "sales.invoice.create" : "sales.invoice.update";
+      case "PRODUCT": 
+        return "inventory.products.manage";
+      case "PAYMENT": case "VOUCHER": 
+        return "accounting.voucher.create";
+      case "JOURNAL_ENTRY": 
+        return "accounting.journal.post";
+      case "CUSTOMER": 
+        return "crm.customers.manage";
+      case "SUPPLIER": 
+        return "crm.suppliers.manage";
+      case "INVENTORY_BATCH": case "INVENTORY_MOVEMENT": case "STOCK_ADJUSTMENT": 
+        return "inventory.stock.manage";
+      case "BRANCH_TRANSFER": case "STOCK_TRANSFER": case "TRANSFER": 
+        return "inventory.transfers.manage";
+      case "SETTINGS": 
+        return "system.settings.manage";
+      case "DEVICE": 
+        return "system.devices.manage";
+      default: 
+        return "system.data.mutate";
     }
   }
 
-  let existingAny: any = null;
-  try {
-    if (typeof model?.findFirst === "function") {
-      existingAny = await model.findFirst({ where: { id: entityId } }).catch(() => null);
-    } else if (typeof model?.findUnique === "function") {
-      existingAny = await model.findUnique({ where: { id: entityId } }).catch(() => null);
-      if (existingAny && existingAny.tenantId !== tenantId) {
-        existingAny = null;
-        throw new Error("CROSS_TENANT_VIOLATION");
+  private static async executeEntityMutation(params: {
+    mutation: SyncMutation; tenantId: string; branchId: string | null; userId: string; deviceId: string; version: number; tx: any;
+  }): Promise<PerMutationResult> {
+    const { mutation, tenantId, branchId, version, tx } = params;
+    const { id: mutationId, entity, payload } = mutation;
+    const data = payload || {};
+    const entityId = mutation.entityId || data.id || mutationId;
+    const operation = (mutation.operation || "CREATE").toUpperCase();
+    const upperEntity = entity.toUpperCase();
+
+    const entityConfig = this.getEntityPrismaConfig(upperEntity);
+    if (!entityConfig) {
+      return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "UNSUPPORTED_ENTITY", message: `Entity ${entity} has no registered persistence model` };
+    }
+
+    const { modelName } = entityConfig;
+    const model = tx[modelName];
+
+    // 🚨 SECURITY FIX: Case-insensitive POST detection
+    if ((upperEntity === "INVOICE" || upperEntity === "SALE") && operation === "POST") {
+      try {
+        const postResult = await AtomicPostSaleService.executePostSaleCommand({
+          payload: { ...data, tenantId }, tenantId, userId: params.userId, ipAddress: "127.0.0.1", tx
+        });
+        return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
+      } catch (err: any) {
+        return { id: mutationId, mutationId, status: "FAILED", success: false, errorCode: "BUSINESS_COMMAND_FAILED", message: err.message };
       }
     }
-  } catch (e: any) {
-    if (e.message === "CROSS_TENANT_VIOLATION") {
-       await SyncAuditService.logEvent({ tenantId, branchId, userId: params.userId, deviceId: params.deviceId, operation: "CROSS_TENANT_MUTATION_BLOCKED", result: "FAILURE", error: `Cross-tenant violation`, metadata: { mutationId, entity, entityId } });
-       return { id: mutationId, mutationId, status: "UNAUTHORIZED", success: false, errorCode: "CROSS_TENANT_VIOLATION", message: "انتهاك عزل المنشآت: لا يمكن إجراء عمليات على سجل ينتمي لمنشأة أخرى." };
+
+    let existingAny: any = null;
+    try {
+      if (typeof model?.findFirst === "function") {
+        existingAny = await model.findFirst({ where: { id: entityId } }).catch(() => null);
+      } else if (typeof model?.findUnique === "function") {
+        existingAny = await model.findUnique({ where: { id: entityId } }).catch(() => null);
+        if (existingAny && existingAny.tenantId !== tenantId) {
+          existingAny = null;
+          throw new Error("CROSS_TENANT_VIOLATION");
+        }
+      }
+    } catch (e: any) {
+      if (e.message === "CROSS_TENANT_VIOLATION") {
+        await SyncAuditService.logEvent({ tenantId, branchId, userId: params.userId, deviceId: params.deviceId, operation: "CROSS_TENANT_MUTATION_BLOCKED", result: "FAILURE", error: `Cross-tenant violation`, metadata: { mutationId, entity, entityId } });
+        return { id: mutationId, mutationId, status: "UNAUTHORIZED", success: false, errorCode: "CROSS_TENANT_VIOLATION", message: "انتهاك عزل المنشآت: لا يمكن إجراء عمليات على سجل ينتمي لمنشأة أخرى." };
+      }
+      existingAny = null;
     }
-    existingAny = null;
-  }
 
-  if (existingAny && existingAny.tenantId !== tenantId) {
-    await SyncAuditService.logEvent({ tenantId, branchId, userId: params.userId, deviceId: params.deviceId, operation: "CROSS_TENANT_MUTATION_BLOCKED", result: "FAILURE", error: `Cross-tenant violation`, metadata: { mutationId, entity, entityId } });
-    return { id: mutationId, mutationId, status: "UNAUTHORIZED", success: false, errorCode: "CROSS_TENANT_VIOLATION", message: "انتهاك عزل المنشآت: لا يمكن إجراء عمليات على سجل ينتمي لمنشأة أخرى." };
-  }
+    if (existingAny && existingAny.tenantId !== tenantId) {
+      await SyncAuditService.logEvent({ tenantId, branchId, userId: params.userId, deviceId: params.deviceId, operation: "CROSS_TENANT_MUTATION_BLOCKED", result: "FAILURE", error: `Cross-tenant violation`, metadata: { mutationId, entity, entityId } });
+      return { id: mutationId, mutationId, status: "UNAUTHORIZED", success: false, errorCode: "CROSS_TENANT_VIOLATION", message: "انتهاك عزل المنشآت: لا يمكن إجراء عمليات على سجل ينتمي لمنشأة أخرى." };
+    }
 
-  if (entity === "PRODUCT" && existingAny?.deletedAt) {
-    return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "ENTITY_SOFT_DELETED", message: "لا يمكن تعديل سجل محذوف." };
-  }
-      if (operation === "DELETE") {
+    if (upperEntity === "PRODUCT" && existingAny?.deletedAt) {
+      return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "ENTITY_SOFT_DELETED", message: "لا يمكن تعديل سجل محذوف." };
+    }
+
+    if (operation === "DELETE") {
       if (!existingAny) return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "ENTITY_NOT_FOUND", message: "السجل المطلوب حذفه غير موجود." };
       await model.delete({ where: { id: entityId, tenantId } });
       return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
@@ -321,7 +333,7 @@ private static async executeEntityMutation(params: {
 
     if (operation === "UPDATE") {
       if (!existingAny) return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "ENTITY_NOT_FOUND", message: "السجل المطلوب تحديثه غير موجود." };
-      if (entity === "INVOICE" && existingAny.documentStatus === "POSTED") {
+      if (upperEntity === "INVOICE" && existingAny.documentStatus === "POSTED") {
         return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "POSTED_INVOICE_IMMUTABLE", message: "Cannot update posted invoice via raw sync" };
       }
 
@@ -330,13 +342,13 @@ private static async executeEntityMutation(params: {
         return { id: mutationId, mutationId, status: "CONFLICT", success: false, errorCode: conflictCheck.category!, conflict: { category: conflictCheck.category!, message: conflictCheck.message!, serverRecord: existingAny, clientRecord: data, resolutionStrategy: conflictCheck.resolutionStrategy } };
       }
 
-      const updateData = this.buildEntityUpdateData(entity, data, branchId);
+      const updateData = this.buildEntityUpdateData(upperEntity, data, branchId);
       await model.update({ where: { id: entityId, tenantId }, data: updateData });
       return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
     }
 
     if (existingAny) {
-      if (entity === "INVOICE" && existingAny.documentStatus === "POSTED") {
+      if (upperEntity === "INVOICE" && existingAny.documentStatus === "POSTED") {
         return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "POSTED_INVOICE_IMMUTABLE", message: "Cannot update posted invoice via raw sync" };
       }
 
@@ -345,10 +357,10 @@ private static async executeEntityMutation(params: {
         return { id: mutationId, mutationId, status: "CONFLICT", success: false, errorCode: conflictCheck.category!, conflict: { category: conflictCheck.category!, message: conflictCheck.message!, serverRecord: existingAny, clientRecord: data, resolutionStrategy: conflictCheck.resolutionStrategy } };
       }
 
-      const updateData = this.buildEntityUpdateData(entity, data, branchId);
+      const updateData = this.buildEntityUpdateData(upperEntity, data, branchId);
       await model.update({ where: { id: entityId, tenantId }, data: updateData });
     } else {
-      const createData = this.buildEntityCreateData(entity, entityId, data, tenantId, branchId);
+      const createData = this.buildEntityCreateData(upperEntity, entityId, data, tenantId, branchId);
       await model.create({ data: createData });
     }
 
@@ -375,14 +387,15 @@ private static async executeEntityMutation(params: {
     delete safeData.tenantId;
     delete safeData.createdAt;
     delete safeData.id;
+    delete safeData.branchId;
 
     switch (entity.toUpperCase()) {
       case "INVOICE": case "SALE":
-        return { invoiceNumber: safeData.invoiceNumber || safeData.invoice_number, date: safeData.date ? new Date(safeData.date) : undefined, partnerId: safeData.partnerId !== undefined ? safeData.partnerId : undefined, partnerType: safeData.partnerType || undefined, type: safeData.type || undefined, paymentStatus: safeData.paymentStatus || undefined, documentStatus: safeData.documentStatus || undefined, branchId: safeData.branchId || branchId, isSynced: true, updatedAt: new Date() };
+        return { invoiceNumber: safeData.invoiceNumber || safeData.invoice_number, date: safeData.date ? new Date(safeData.date) : undefined, partnerId: safeData.partnerId !== undefined ? safeData.partnerId : undefined, partnerType: safeData.partnerType || undefined, type: safeData.type || undefined, paymentStatus: safeData.paymentStatus || undefined, documentStatus: safeData.documentStatus || undefined, branchId: branchId, isSynced: true, updatedAt: new Date() };
       case "PRODUCT":
         return { name: safeData.name || undefined, sku: safeData.sku || undefined, barcode: safeData.barcode || undefined, price: safeData.basePrice !== undefined ? safeData.basePrice : (safeData.price !== undefined ? safeData.price : undefined), cost: safeData.costPrice !== undefined ? safeData.costPrice : (safeData.cost !== undefined ? safeData.cost : undefined), updatedAt: new Date() };
       case "PAYMENT": case "VOUCHER":
-        return { paymentNumber: safeData.paymentNumber || safeData.payment_number || undefined, date: safeData.date ? new Date(safeData.date) : undefined, amount: safeData.amount !== undefined ? safeData.amount : undefined, partnerId: safeData.partnerId || safeData.supplier_id || safeData.customer_id || undefined, partnerType: safeData.partnerType || (safeData.supplier_id ? "SUPPLIER" : (safeData.customer_id ? "CUSTOMER" : undefined)), paymentMethod: safeData.paymentMethod || undefined, notes: safeData.notes !== undefined ? safeData.notes : undefined, branchId: safeData.branchId || branchId, updatedAt: new Date() };
+        return { paymentNumber: safeData.paymentNumber || safeData.payment_number || undefined, date: safeData.date ? new Date(safeData.date) : undefined, amount: safeData.amount !== undefined ? safeData.amount : undefined, partnerId: safeData.partnerId || safeData.supplier_id || safeData.customer_id || undefined, partnerType: safeData.partnerType || (safeData.supplier_id ? "SUPPLIER" : (safeData.customer_id ? "CUSTOMER" : undefined)), paymentMethod: safeData.paymentMethod || undefined, notes: safeData.notes !== undefined ? safeData.notes : undefined, branchId: branchId, updatedAt: new Date() };
       case "CUSTOMER": case "SUPPLIER":
         return { name: safeData.name || undefined, phone: safeData.phone || undefined, email: safeData.email || undefined, balance: safeData.balance !== undefined ? safeData.balance : undefined, updatedAt: new Date() };
       default:
@@ -393,11 +406,11 @@ private static async executeEntityMutation(params: {
   private static buildEntityCreateData(entity: string, entityId: string, data: any, tenantId: string, branchId: string | null): any {
     switch (entity.toUpperCase()) {
       case "INVOICE": case "SALE":
-        return { id: entityId, invoiceNumber: data.invoiceNumber || data.invoice_number || `INV-${Date.now()}`, date: new Date(data.date || Date.now()), partnerId: data.partnerId || "", partnerType: data.partnerType || "CUSTOMER", type: data.type || "SALE", paymentStatus: data.paymentStatus || "PAID", documentStatus: data.documentStatus || "ACTIVE", totalAmount: data.totalAmount || data.total || 0, branchId: data.branchId || branchId, tenantId, isSynced: true };
+        return { id: entityId, invoiceNumber: data.invoiceNumber || data.invoice_number || `INV-${Date.now()}`, date: new Date(data.date || Date.now()), partnerId: data.partnerId || "", partnerType: data.partnerType || "CUSTOMER", type: data.type || "SALE", paymentStatus: data.paymentStatus || "PAID", documentStatus: data.documentStatus || "ACTIVE", totalAmount: data.totalAmount || data.total || 0, branchId: branchId, tenantId, isSynced: true };
       case "PRODUCT":
         return { id: entityId, name: data.name || "Product", sku: data.sku || `SKU-${Date.now()}`, barcode: data.barcode || null, price: data.basePrice !== undefined ? data.basePrice : (data.price !== undefined ? data.price : 0), cost: data.costPrice !== undefined ? data.costPrice : (data.cost !== undefined ? data.cost : 0), tenantId };
       case "PAYMENT": case "VOUCHER":
-        return { id: entityId, paymentNumber: data.paymentNumber || data.payment_number || `PMT-${Date.now()}`, date: new Date(data.date || Date.now()), amount: data.amount || 0, partnerId: data.partnerId || data.supplier_id || data.customer_id || "", partnerType: data.partnerType || (data.supplier_id ? "SUPPLIER" : "CUSTOMER"), paymentMethod: data.paymentMethod || "CASH", notes: data.notes || null, branchId: data.branchId || branchId, tenantId };
+        return { id: entityId, paymentNumber: data.paymentNumber || data.payment_number || `PMT-${Date.now()}`, date: new Date(data.date || Date.now()), amount: data.amount || 0, partnerId: data.partnerId || data.supplier_id || data.customer_id || "", partnerType: data.partnerType || (data.supplier_id ? "SUPPLIER" : "CUSTOMER"), paymentMethod: data.paymentMethod || "CASH", notes: data.notes || null, branchId: branchId, tenantId };
       case "CUSTOMER": case "SUPPLIER":
         return { id: entityId, name: data.name || "Entity", phone: data.phone || null, email: data.email || null, balance: data.balance || 0, tenantId };
       default:
@@ -420,4 +433,4 @@ private static async executeEntityMutation(params: {
   static async processSingleMutation(mutation: any, _tenantId: string) {
     return { status: "SUCCESS" as any, serverVersion: (mutation.version || 1) + 1 };
   }
-}
+        }
