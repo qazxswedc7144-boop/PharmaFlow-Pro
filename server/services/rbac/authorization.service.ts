@@ -128,7 +128,7 @@ export class AuthorizationService {
     }
 
     // 5. Check user-level overrides first
-    const overrides = await RoleService.getUserPermissionOverrides(tenantId!, user.userId);
+    const overrides = await RoleService.getUserPermissionOverrides(tenantId, user.userId);
     const specificOverride = overrides.find(o => o.permissionKey === permissionKey);
     if (specificOverride) {
       if (specificOverride.effect === 'DENY') {
@@ -147,7 +147,7 @@ export class AuthorizationService {
     }
 
     // 7. Compute effective permissions from roles
-    const effective = await this.getUserEffectivePermissions(tenantId!, user.userId, user.role);
+    const effective = await this.getUserEffectivePermissions(tenantId, user.userId, user.role);
     if (effective.has('*') || effective.has(permissionKey)) {
       return { allowed: true, reason: `Permission granted via role matrix for ${permissionKey}` };
     }

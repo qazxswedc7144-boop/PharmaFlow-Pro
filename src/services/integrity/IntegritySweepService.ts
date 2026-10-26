@@ -1,5 +1,5 @@
 
-import { db, getCurrentUserSession } from '@/core/db';
+import { db } from '@/core/db';
 import { SystemAlert } from '@/types';
 import { LoadTestService } from '@/services/system/LoadTestService';
 import { unifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';

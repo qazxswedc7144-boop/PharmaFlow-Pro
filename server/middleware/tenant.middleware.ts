@@ -98,16 +98,12 @@ export async function tenantContextMiddleware(
     }
   }
 
-  // Multi-tenant isolation: No default fallback.
-  if (!extractedTenantId) {
-    if (process.env.NODE_ENV === 'production') {
-       throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: Tenant identification missing from request.');
-    }
-    _res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
-    return;
+  // Multi-tenant isolation: No default fallback in production.
+  const finalTenantId = extractedTenantId;
+  
+  if (!finalTenantId && process.env.NODE_ENV === 'production') {
+    throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: Tenant identification missing from request.');
   }
-
-  const finalTenantId: string = extractedTenantId;
 
   // 2. Validate tenant & subscription in database (graceful offline fallback)
   let tenantName = "PharmaFlow Enterprise";

@@ -21,10 +21,6 @@ router.get("/dashboard", requirePermission("organization.view"), async (req, res
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
-    if (!tenantId) {
-      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
-      return;
-    }
 
     const roles = await RoleService.getRoles(tenantId);
     
@@ -88,10 +84,6 @@ router.get("/users", requirePermission("users.view"), async (req, res: Response)
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
-    if (!tenantId) {
-      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
-      return;
-    }
 
     let usersList: any[] = [];
 
@@ -150,10 +142,6 @@ router.post("/users", requirePermission("users.create"), async (req, res: Respon
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
-    if (!tenantId) {
-      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
-      return;
-    }
     const { username, role = "CASHIER", branchId, isActive = true } = req.body;
 
     if (!username || !username.trim()) {
@@ -204,10 +192,6 @@ router.put("/users/:id/status", requirePermission("users.update"), async (req, r
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
-    if (!tenantId) {
-      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
-      return;
-    }
     const { id } = req.params;
     const { isActive } = req.body;
 
@@ -253,10 +237,6 @@ router.post("/users/:id/roles", requirePermission("users.roles.manage"), async (
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
-    if (!tenantId) {
-      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
-      return;
-    }
     const { id } = req.params;
     const { roleIds, branchId } = req.body;
 
