@@ -28,9 +28,8 @@ export class SyncProcessorService {
     authenticatedTenantId: string;
     authenticatedUserId: string;
     authenticatedUserRole?: string;
-    userAllowedBranches?: string[];
   }): Promise<SyncPushResponse> {
-    const { envelope, authenticatedTenantId, authenticatedUserId, authenticatedUserRole, userAllowedBranches } = params;
+    const { envelope, authenticatedTenantId, authenticatedUserId, authenticatedUserRole } = params;
     const serverTimestamp = Date.now();
     const results: PerMutationResult[] = [];
 
@@ -58,35 +57,94 @@ export class SyncProcessorService {
     const tenantId = authenticatedTenantId;
     const targetBranchId = envelope.branchId || null;
 
-    // 🚨 SECURITY FIX: ALWAYS verify branch belongs to tenant (DB check, no bypass)
-if (targetBranchId) {
-  const branchInTenant = await prisma.branch.findFirst({
-    where: { id: targetBranchId, tenantId },
-    select: { id: true }
-  });
-  if (!branchInTenant) {
-    await SyncAuditService.logEvent({
-      tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId,
-      operation: "BRANCH_NOT_IN_TENANT", result: "FAILURE",
-      error: "Branch does not belong to authenticated tenant",
-      metadata: { requestedBranch: targetBranchId }
-    });
-    return this.buildRejectResponse(
-      "BRANCH_NOT_IN_TENANT",
-      `الفرع [${targetBranchId}] لا ينتمي لهذه المؤسسة.`,
-      tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary
-    );
-  }
+    // 🚨 SECURITY FIX (P0-PHASE-1): Robust server-side branch membership verification.
+    // We no longer trust userAllowedBranches from the caller; we fetch validity from the DB.
+    const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN", "PHARMACIST_IN_CHARGE"].includes((authenticatedUserRole || "").toUpperCase());
 
-  // Defense in depth: per-user branch restriction (if provided)
-  if (userAllowedBranches && userAllowedBranches.length > 0) {
-    const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN"].includes((authenticatedUserRole || "").toUpperCase());
-    const isAllowedBranch = isPrivileged || userAllowedBranches.includes(targetBranchId);
-    if (!isAllowedBranch) {
-      return this.buildRejectResponse("BRANCH_ACCESS_DENIED", `غير مصرح بإرسال مزامنة للفرع [${targetBranchId}].`, tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
+    try {
+      if (targetBranchId) {
+        // 1. Verify branch strictly belongs to the authenticated tenant
+        const branchInTenant = await prisma.branch.findFirst({
+          where: { id: targetBranchId, tenantId },
+          select: { id: true }
+        });
+
+        if (!branchInTenant) {
+          await SyncAuditService.logEvent({
+            tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+            operation: "BRANCH_MISMATCH", result: "FAILURE",
+            error: "Requested branch does not belong to the authenticated tenant context",
+            metadata: { requestedBranch: targetBranchId }
+          });
+          return this.buildRejectResponse(
+            "BRANCH_NOT_IN_TENANT",
+            `انتهاك أمني: الفرع [${targetBranchId}] لا ينتمي لهذه المنشأة.`,
+            tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary
+          );
+        }
+
+        // 2. Verify user branch authorization (membership or privileged role)
+        if (!isPrivileged) {
+          // Query both BranchUser membership and UserRole branch assignment
+          const [hasBranchMembership, hasBranchRoleAssignment] = await Promise.all([
+            prisma.branchUser.findFirst({
+              where: { userId: authenticatedUserId, branchId: targetBranchId, tenantId },
+              select: { id: true }
+            }),
+            prisma.userRole.findFirst({
+              where: { userId: authenticatedUserId, branchId: targetBranchId, tenantId },
+              select: { id: true }
+            })
+          ]);
+
+          if (!hasBranchMembership && !hasBranchRoleAssignment) {
+            await SyncAuditService.logEvent({
+              tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+              operation: "PERMISSION_DENIED", result: "FAILURE",
+              error: "User attempted to sync a branch without membership or explicit role assignment",
+              metadata: { requestedBranch: targetBranchId }
+            });
+            return this.buildRejectResponse(
+              "BRANCH_ACCESS_DENIED",
+              `غير مصرح لك بالوصول إلى بيانات الفرع [${targetBranchId}]. يرجى التواصل مع الإدارة.`,
+              tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary
+            );
+          }
+        }
+      } else {
+        // 3. Tenant-wide sync requested (null branch)
+        // Non-privileged users must specify a branch if they are assigned to any, 
+        // or are denied if they have no branch/tenant-wide access.
+        if (!isPrivileged) {
+          const [userBranchesCount, userBranchRolesCount] = await Promise.all([
+            prisma.branchUser.count({ where: { userId: authenticatedUserId, tenantId } }),
+            prisma.userRole.count({ where: { userId: authenticatedUserId, tenantId, NOT: { branchId: null } } })
+          ]);
+
+          if (userBranchesCount > 0 || userBranchRolesCount > 0) {
+            return this.buildRejectResponse(
+              "BRANCH_REQUIRED",
+              "يجب تحديد معرف الفرع للمزامنة (أنت مقيد بصلاحيات فروع محددة).",
+              tenantId, null, serverTimestamp, envelope.mutations, summary
+            );
+          }
+
+          // If no assignments and no privilege, deny tenant-wide sync by default
+          return this.buildRejectResponse(
+            "BRANCH_ACCESS_DENIED",
+            "غير مصرح بإجراء مزامنة على مستوى المنشأة.",
+            tenantId, null, serverTimestamp, envelope.mutations, summary
+          );
+        }
+      }
+    } catch (err: any) {
+      console.error(`[SyncProcessor] Branch verification failed:`, err);
+      await SyncAuditService.logEvent({
+        tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+        operation: "SYNC_REJECTED", result: "FAILURE", error: err.message
+      });
+      return this.buildRejectResponse("SECURITY_VERIFICATION_FAILED", "فشل التحقق من صلاحيات الوصول. تم رفض الطلب للأمان.", tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
     }
-  }
-}
 
     const deviceVerification = await DeviceService.verifyDevice(tenantId, envelope.deviceId);
     if (!deviceVerification.allowed) {
@@ -102,7 +160,7 @@ try {
   console.error(`[SyncProcessor] Failed to fetch permissions for user ${authenticatedUserId}:`, err);
   await SyncAuditService.logEvent({
     tenantId, userId: authenticatedUserId, deviceId: envelope.deviceId,
-    operation: "PERMISSION_FETCH_FAILED", result: "FAILURE", error: err.message
+    operation: "PERMISSION_DENIED", result: "FAILURE", error: err.message
   });
   return this.buildRejectResponse("PERMISSION_FETCH_FAILED", "تعذر التحقق من صلاحيات المستخدم. تم رفض الطلب للأمان.", tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
 }
