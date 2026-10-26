@@ -40,6 +40,10 @@ router.get("/roles", requirePermission("users.roles.manage"), async (req, res: R
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
     const roles = await RoleService.getRoles(tenantId);
     res.json({ success: true, data: roles });
   } catch (error: any) {
@@ -55,6 +59,10 @@ router.post("/roles", requirePermission("users.roles.manage"), async (req, res: 
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
     const { name, description, permissions = [] } = req.body;
 
     if (!name || !name.trim()) {
@@ -86,6 +94,10 @@ router.put("/roles/:id", requirePermission("users.roles.manage"), async (req, re
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
     const { id } = req.params;
     const { name, description, permissions } = req.body;
 
@@ -118,6 +130,10 @@ router.post("/roles/:id/duplicate", requirePermission("users.roles.manage"), asy
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
     const { id } = req.params;
     const { name } = req.body;
 
@@ -150,6 +166,10 @@ router.delete("/roles/:id", requirePermission("users.roles.manage"), async (req,
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
     const { id } = req.params;
     if (!id) {
       res.status(400).json({ success: false, error: "معرف الدور مطلوب" });
@@ -179,6 +199,10 @@ router.get("/matrix", requirePermission("users.roles.manage"), async (req, res: 
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
 
     const permissions = PermissionService.getAllPermissions();
     const roles = await RoleService.getRoles(tenantId);
@@ -214,6 +238,10 @@ router.post("/users/:id/overrides", requirePermission("users.permissions.overrid
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
     const { id } = req.params;
     const { permissionKey, effect } = req.body;
 
@@ -241,6 +269,10 @@ router.delete("/users/:id/overrides/:permissionKey", requirePermission("users.pe
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
     const { id, permissionKey } = req.params;
 
     if (!id || !permissionKey) {
@@ -267,6 +299,10 @@ router.get("/users/:id/effective-permissions", async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
     const tenantId = authReq.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+      return;
+    }
     const { id } = req.params;
 
     const permissions = await AuthorizationService.getUserEffectivePermissions(

@@ -529,9 +529,9 @@ export class DistributedSyncEngine {
           profile: 'SYNC',
           raw: true,
           headers: { 
-            'X-Tenant-ID': session.tenantId,
+            'X-Tenant-ID': session.tenantId || 'unknown',
             'X-Branch-ID': session.branchId || '',
-            'X-User-ID': session.userId,
+            'X-User-ID': session.userId || 'unknown',
             'X-Device-ID': device.deviceId
           },
           body: { 
@@ -820,9 +820,9 @@ export class DistributedSyncEngine {
         profile: 'SYNC',
         raw: true,
         headers: {
-          'X-Tenant-ID': mutation.tenantId || session.tenantId,
+          'X-Tenant-ID': mutation.tenantId || session.tenantId || 'unknown',
           'X-Branch-ID': mutation.branchId || session.branchId || '',
-          'X-User-ID': session.userId,
+          'X-User-ID': session.userId || 'unknown',
           'X-Device-ID': device.deviceId,
           'X-Session-ID': (mutation as any).sessionId || 'local-session',
           'X-Correlation-ID': mutation.correlationId || 'local-correlation',

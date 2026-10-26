@@ -40,7 +40,7 @@ export class UsageMeterService {
     const now = Date.now();
 
     // Check memory cache
-    const cached = this.cachedUsage[activeTenant];
+    const cached = activeTenant ? this.cachedUsage[activeTenant] : null;
     if (cached && (now - cached.timestamp < this.CACHE_TTL_MS)) {
       return cached.metrics;
     }
@@ -114,7 +114,7 @@ export class UsageMeterService {
       const finalUsage = Math.max(0, totalActualUsage + simOffset);
 
       const metrics: TenantUsageMetrics = {
-        tenantId: activeTenant,
+        tenantId: activeTenant || 'unknown',
         salesCount,
         purchasesCount,
         returnsCount,
@@ -124,17 +124,19 @@ export class UsageMeterService {
         calculatedAt: new Date().toISOString()
       };
 
-      this.cachedUsage[activeTenant] = {
-        count: finalUsage,
-        metrics,
-        timestamp: now
-      };
+      if (activeTenant) {
+        this.cachedUsage[activeTenant] = {
+          count: finalUsage,
+          metrics,
+          timestamp: now
+        };
+      }
 
       return metrics;
     } catch (err) {
       console.warn("[UsageMeterService] Error calculating authoritative metrics:", err);
       const fallback: TenantUsageMetrics = {
-        tenantId: activeTenant,
+        tenantId: activeTenant || 'unknown',
         salesCount: 0,
         purchasesCount: 0,
         returnsCount: 0,
