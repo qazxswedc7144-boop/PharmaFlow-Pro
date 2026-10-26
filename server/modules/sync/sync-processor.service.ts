@@ -96,9 +96,16 @@ if (targetBranchId) {
     DeviceService.touchDevice(tenantId, envelope.deviceId);
 
     let effectivePermissions = new Set<string>();
-    try {
-      effectivePermissions = await AuthorizationService.getUserEffectivePermissions(tenantId, authenticatedUserId, authenticatedUserRole);
-    } catch (err) { /* fallback */ }
+try {
+  effectivePermissions = await AuthorizationService.getUserEffectivePermissions(tenantId, authenticatedUserId, authenticatedUserRole);
+} catch (err: any) {
+  console.error(`[SyncProcessor] Failed to fetch permissions for user ${authenticatedUserId}:`, err);
+  await SyncAuditService.logEvent({
+    tenantId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+    operation: "PERMISSION_FETCH_FAILED", result: "FAILURE", error: err.message
+  });
+  return this.buildRejectResponse("PERMISSION_FETCH_FAILED", "تعذر التحقق من صلاحيات المستخدم. تم رفض الطلب للأمان.", tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
+}
 
     const mutations = Array.isArray(envelope.mutations) ? envelope.mutations : [];
 
