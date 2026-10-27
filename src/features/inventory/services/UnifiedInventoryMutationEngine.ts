@@ -931,24 +931,25 @@ export class UnifiedInventoryMutationEngine {
     }
     if (!idempotencyKey) return null;
 
-    const tx = await db.inventoryTransactions
+    const matchingTxs = await db.inventoryTransactions
       .filter((t: any) => 
         t.idempotencyKey === idempotencyKey ||
         (t.SourceDocumentID === docId && t.SourceDocumentType === docType && t.productId === productId && t.idempotencyKey === idempotencyKey)
       )
-      .first();
+      .toArray();
 
-    if (tx) {
+    for (const tx of matchingTxs) {
       const txTenant = (tx as any).tenantId || (tx as any).tenant_id;
       if (!txTenant) {
-        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Transaction '${tx.id}' lacks tenant binding.`);
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Transaction '${tx.id || tx.TransactionID}' lacks tenant binding.`);
       }
-      if (txTenant !== tenantId) {
-        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Transaction '${tx.id}' belongs to tenant '${txTenant}', not authoritative tenant '${tenantId}'.`);
+      if (txTenant === tenantId) {
+        return tx;
       }
+      // If txTenant !== tenantId, ignore cross-tenant transaction.
     }
 
-    return tx || null;
+    return null;
   }
 
   private async mutateMedicineBatch(params: {
