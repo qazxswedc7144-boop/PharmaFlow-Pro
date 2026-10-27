@@ -186,6 +186,12 @@ function processFIFO(invoice: any, allLayers: any[]) {
  * processFEFO: First Expired First Out batch depletion (essential for pharmaceuticals)
  */
 function processFEFO(invoice: any, allBatches: any[]) {
+  // 🚨 SECURITY FIX: Enforce tenant isolation for FEFO exactly like FIFO
+  const currentTenantId = invoice.tenantId || invoice.tenant_id;
+  if (!currentTenantId || currentTenantId === 'TEN-DEV-001' || currentTenantId === 'tenant_default' || currentTenantId === 'default' || currentTenantId === 'default-tenant') {
+    throw new Error('FAIL_CLOSED: Trusted tenant context required for FEFO calculations.');
+  }
+
   const items = invoice.items || [];
   const invoiceId = invoice.invoiceId || invoice.id;
   const type = invoice.type || (invoice.customerId ? 'SALE' : 'PURCHASE');
@@ -265,7 +271,8 @@ function processFEFO(invoice: any, allBatches: any[]) {
           productId: prodId,
           batchId: batch.id,
           quantity: consumed,
-          createdAt: new Date().toISOString()
+          createdAt: new Date().toISOString(),
+          tenant_id: currentTenantId // ✅ Added: Tenant isolation for FEFO logs
         });
 
         // Use batch unit cost if available, otherwise fallback to item price
