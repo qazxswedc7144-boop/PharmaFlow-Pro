@@ -193,9 +193,5 @@ class BackupScheduler {
 } catch (e: any) {
   // Log but don't crash the interval
   console.error('[BackupScheduler] Background loop check failed:', e?.message || e);
-    }
-    }
-  }
-}
 
 export const backupService = new BackupScheduler();
