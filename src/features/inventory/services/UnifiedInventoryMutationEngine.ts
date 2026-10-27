@@ -249,7 +249,7 @@ export class UnifiedInventoryMutationEngine {
     this.validateCommandBasics(command, 'ExecuteAdjustment');
     const timestamp = command.timestamp || new Date().toISOString();
 
-    const existingTx = await this.checkExistingIdempotentTransaction(command.transactionUuid, command.adjustmentId, 'ADJUSTMENT', command.productId);
+    const existingTx = await this.checkExistingIdempotentTransaction(command.transactionUuid, command.adjustmentId, 'ADJUSTMENT', command.productId, command.tenantId);
     if (existingTx) {
       return {
         success: true,
@@ -265,7 +265,7 @@ export class UnifiedInventoryMutationEngine {
     }
 
     return await this.executeAtomicTransaction(async () => {
-      const ws = await this.readWarehouseStock(command.warehouseId, command.productId);
+      const ws = await this.readWarehouseStock(command.warehouseId, command.productId, command.tenantId);
       const currentWarehouseQty = ws ? ws.quantity : 0;
       const delta = command.actualQuantity - currentWarehouseQty;
 
@@ -300,12 +300,12 @@ export class UnifiedInventoryMutationEngine {
     const sourceKey = `${command.transactionUuid}-SOURCE`;
     const targetKey = `${command.transactionUuid}-TARGET`;
 
-    // Idempotency check
+    // Idempotency check (tenant scoped)
     const existingSource = await db.inventoryTransactions
-      .filter((tx: any) => tx.idempotencyKey === sourceKey)
+      .filter((tx: any) => tx.idempotencyKey === sourceKey && ((tx.tenantId || tx.tenant_id) === command.tenantId))
       .first();
     const existingTarget = await db.inventoryTransactions
-      .filter((tx: any) => tx.idempotencyKey === targetKey)
+      .filter((tx: any) => tx.idempotencyKey === targetKey && ((tx.tenantId || tx.tenant_id) === command.tenantId))
       .first();
 
     if (existingSource && existingTarget) {
@@ -341,13 +341,18 @@ export class UnifiedInventoryMutationEngine {
       let resolvedExpiry = command.expiryDate;
       let resolvedCost = command.unitCost;
 
-      if (command.batchId && (!resolvedBatchNum || !resolvedExpiry)) {
+      if (command.batchId) {
         const srcBatch = await db.medicineBatches.get(command.batchId).catch(() => null);
-        if (srcBatch) {
-          resolvedBatchNum = resolvedBatchNum || srcBatch.batchNumber || srcBatch.batchId;
-          resolvedExpiry = resolvedExpiry || srcBatch.expiryDate;
-          resolvedCost = resolvedCost ?? srcBatch.unitCost ?? srcBatch.cost;
+        if (!srcBatch) {
+          throw new Error(`[UnifiedEngine] BATCH_NOT_FOUND: Source batch '${command.batchId}' was not found for transfer.`);
         }
+        const batchTenant = (srcBatch as any).tenantId || (srcBatch as any).tenant_id;
+        if (!batchTenant || batchTenant !== command.tenantId) {
+          throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Source batch '${command.batchId}' does not belong to authoritative tenant '${command.tenantId}' or lacks valid tenant binding.`);
+        }
+        resolvedBatchNum = resolvedBatchNum || srcBatch.batchNumber || srcBatch.batchId;
+        resolvedExpiry = resolvedExpiry || srcBatch.expiryDate;
+        resolvedCost = resolvedCost ?? srcBatch.unitCost ?? srcBatch.cost;
       }
 
       // 1. Deduct from source warehouse (does not alter global product stock because + and - cancel out)
@@ -402,16 +407,20 @@ export class UnifiedInventoryMutationEngine {
     const timestamp = command.timestamp || new Date().toISOString();
 
     return await this.executeAtomicTransaction(async () => {
-      // Find all original movements for this document
+      // Find all original movements for this document belonging to authoritative tenant
       const originalMovements = await db.inventoryTransactions
         .where('source_doc_id')
         .equals(command.originalDocumentId)
+        .filter((t: any) => ((t.tenantId || t.tenant_id) === command.tenantId))
         .toArray();
 
       const movementsToReverse = originalMovements.length > 0 
         ? originalMovements 
         : await db.inventoryTransactions
-            .filter((t: any) => t.SourceDocumentID === command.originalDocumentId)
+            .filter((t: any) => 
+              t.SourceDocumentID === command.originalDocumentId &&
+              ((t.tenantId || t.tenant_id) === command.tenantId)
+            )
             .toArray();
 
       if (movementsToReverse.length === 0) {
@@ -456,7 +465,7 @@ export class UnifiedInventoryMutationEngine {
     this.validateCommandBasics(command, 'ExecuteApprovedCorrection');
     const timestamp = command.timestamp || new Date().toISOString();
 
-    const existingTx = await this.checkExistingIdempotentTransaction(command.transactionUuid, command.caseId, 'CORRECTION', command.productId);
+    const existingTx = await this.checkExistingIdempotentTransaction(command.transactionUuid, command.caseId, 'CORRECTION', command.productId, command.tenantId);
     if (existingTx) {
       return {
         success: true,
@@ -472,7 +481,7 @@ export class UnifiedInventoryMutationEngine {
     }
 
     return await this.executeAtomicTransaction(async () => {
-      const ws = await this.readWarehouseStock(command.warehouseId, command.productId);
+      const ws = await this.readWarehouseStock(command.warehouseId, command.productId, command.tenantId);
       const currentWarehouseQty = ws ? ws.quantity : 0;
       const delta = command.proposedQty - currentWarehouseQty;
 
@@ -590,8 +599,8 @@ export class UnifiedInventoryMutationEngine {
       timestamp
     } = params;
 
-    // 1. Idempotency Check
-    const existingTx = await this.checkExistingIdempotentTransaction(idempotencyKey, docId, docType, productId);
+    // 1. Idempotency Check (tenant scoped)
+    const existingTx = await this.checkExistingIdempotentTransaction(idempotencyKey, docId, docType, productId, tenantId);
     if (existingTx) {
       return {
         success: true,
@@ -606,10 +615,14 @@ export class UnifiedInventoryMutationEngine {
       };
     }
 
-    // 2. Validate Product Existence & Active Status
+    // 2. Validate Product Existence, Active Status & Strict Tenant Binding
     const product = await db.products.get(productId);
     if (!product) {
       throw new ProductNotFoundError(productId);
+    }
+    const productTenant = (product as any).tenantId || (product as any).tenant_id;
+    if (!productTenant || productTenant !== tenantId) {
+      throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Product '${productId}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
     }
     const isInactive = product.is_active === false || product.isActive === false || product.Is_Active === false;
     if (isInactive) {
@@ -628,7 +641,7 @@ export class UnifiedInventoryMutationEngine {
     }
 
     // 5. Read Existing Balances (Snapshot Before)
-    const ws = await this.readWarehouseStock(warehouseId, productId);
+    const ws = await this.readWarehouseStock(warehouseId, productId, tenantId);
     const beforeWarehouseQty = ws ? Number(ws.quantity || 0) : 0;
     
     // Product Master stock: canonical is 'stock'
@@ -639,9 +652,12 @@ export class UnifiedInventoryMutationEngine {
     // 6. Calculate New Balances (Snapshot After)
     const afterWarehouseQty = beforeWarehouseQty + delta;
 
-    // Maintain Product Projection Invariant: products.stock = SUM(warehouseStock.quantity)
+    // Maintain Product Projection Invariant: products.stock = SUM(warehouseStock.quantity) within authoritative tenant
     const allWhs = await db.warehouseStock
-      .filter((w: any) => (w.productId === productId || w.product_id === productId))
+      .filter((w: any) => 
+        (w.productId === productId || w.product_id === productId) &&
+        ((w.tenantId || w.tenant_id) === tenantId)
+      )
       .toArray();
 
     let afterProductStock: number;
@@ -772,6 +788,10 @@ export class UnifiedInventoryMutationEngine {
 
     // 12. Update Warehouse Balance Projection (warehouseStock[warehouseId+productId].quantity)
     if (ws) {
+      const wsTenant = (ws as any).tenantId || (ws as any).tenant_id;
+      if (!wsTenant || wsTenant !== tenantId) {
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${ws.id}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
+      }
       await db.warehouseStock.update(ws.id, {
         quantity: afterWarehouseQty,
         lastUpdated: timestamp,
@@ -786,6 +806,7 @@ export class UnifiedInventoryMutationEngine {
         lastUpdated: timestamp,
         lastModified: timestamp,
         tenantId: tenantId,
+        tenant_id: tenantId,
         branchId: branchId
       });
     }
@@ -801,7 +822,11 @@ export class UnifiedInventoryMutationEngine {
       .first();
 
     if (brInv) {
-      const newBrQty = Math.max(0, (brInv.stockQuantity || 0) + delta);
+      const brTenant = (brInv as any).tenantId || (brInv as any).tenant_id;
+      if (!brTenant || brTenant !== tenantId) {
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Branch inventory record '${brInv.id}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
+      }
+      const newBrQty = (brInv.stockQuantity || 0) + delta;
       await db.branchInventory.update(brInv.id, {
         stockQuantity: newBrQty,
         updatedAt: timestamp
@@ -811,12 +836,13 @@ export class UnifiedInventoryMutationEngine {
         id: `INV-${activeBranchId}-${productId}`,
         branchId: activeBranchId,
         productId,
-        stockQuantity: Math.max(0, delta),
+        stockQuantity: delta,
         reorderPoint: 10,
         reorderQuantity: 50,
         createdAt: timestamp,
         updatedAt: timestamp,
-        tenantId: tenantId
+        tenantId: tenantId,
+        tenant_id: tenantId
       });
     }
 
@@ -857,13 +883,22 @@ export class UnifiedInventoryMutationEngine {
     });
   }
 
-  private async readWarehouseStock(warehouseId: string, productId: string): Promise<any | null> {
+  private async readWarehouseStock(warehouseId: string, productId: string, tenantId?: string): Promise<any | null> {
     try {
       const byCompound = await db.warehouseStock
         .where('[warehouseId+productId]')
         .equals([warehouseId, productId])
         .first();
-      if (byCompound) return byCompound;
+      if (byCompound) {
+        if (tenantId) {
+          const wsTenant = (byCompound as any).tenantId || (byCompound as any).tenant_id;
+          if (wsTenant && wsTenant !== tenantId) {
+            // Belongs to another tenant; do not return
+            return null;
+          }
+        }
+        return byCompound;
+      }
     } catch {
       // Fallback in case compound index is not directly accessible
     }
@@ -871,7 +906,8 @@ export class UnifiedInventoryMutationEngine {
     const byFilter = await db.warehouseStock
       .filter((ws: any) => 
         (ws.warehouseId === warehouseId || ws.warehouse_id === warehouseId) &&
-        (ws.productId === productId || ws.product_id === productId)
+        (ws.productId === productId || ws.product_id === productId) &&
+        (!tenantId || ((ws.tenantId || ws.tenant_id) === tenantId))
       )
       .first();
 
@@ -882,14 +918,16 @@ export class UnifiedInventoryMutationEngine {
     idempotencyKey: string,
     docId: string,
     docType: string,
-    productId: string
+    productId: string,
+    tenantId?: string
   ): Promise<any | null> {
     if (!idempotencyKey) return null;
 
     return await db.inventoryTransactions
       .filter((tx: any) => 
-        tx.idempotencyKey === idempotencyKey ||
-        (tx.SourceDocumentID === docId && tx.SourceDocumentType === docType && tx.productId === productId && tx.idempotencyKey === idempotencyKey)
+        (!tenantId || ((tx.tenantId || tx.tenant_id) === tenantId)) &&
+        (tx.idempotencyKey === idempotencyKey ||
+        (tx.SourceDocumentID === docId && tx.SourceDocumentType === docType && tx.productId === productId && tx.idempotencyKey === idempotencyKey))
       )
       .first();
   }
@@ -915,12 +953,13 @@ export class UnifiedInventoryMutationEngine {
       if (batchNumber || expiryDate || batchId) {
         const resolvedBatchNum = String(batchNumber || batchId || `B-${Date.now().toString().slice(-6)}`);
         
-        // Search if matching batch already exists in this warehouse
+        // Search if matching batch already exists in this warehouse for the authoritative tenant
         const existingBatch = await db.medicineBatches
           .filter((b: any) => 
             (b.productId === productId || b.product_id === productId) &&
             (b.batchNumber === resolvedBatchNum || b.batchId === resolvedBatchNum) &&
-            (!b.warehouseId || b.warehouseId === warehouseId)
+            (!b.warehouseId || b.warehouseId === warehouseId) &&
+            ((b.tenantId || b.tenant_id) === tenantId)
           )
           .first();
 
@@ -949,6 +988,7 @@ export class UnifiedInventoryMutationEngine {
             sourceInvoiceId: docId,
             reference_id: docId,
             tenantId: tenantId,
+            tenant_id: tenantId,
             branchId: branchId,
             created_at: timestamp,
             updated_at: timestamp,
@@ -959,46 +999,112 @@ export class UnifiedInventoryMutationEngine {
     } else if (delta < 0) {
       // 2. Outward movements (SALE, TRANSFER_OUT, negative ADJUSTMENT, negative CORRECTION, DAMAGE, negative REVERSAL)
       const deductQty = Math.abs(delta);
+
       if (batchId) {
         const batch = await db.medicineBatches.get(batchId).catch(() => null);
-        if (batch) {
-          const updatedQty = Math.max(0, (Number(batch.quantity || 0) - deductQty));
-          await db.medicineBatches.update(batch.id, {
-            quantity: updatedQty,
-            updated_at: timestamp,
-            lastModified: timestamp
+        if (!batch) {
+          throw new Error(`[UnifiedEngine] BATCH_NOT_FOUND: Specified batchId '${batchId}' does not exist for deduction.`);
+        }
+        const bTenant = (batch as any).tenantId || (batch as any).tenant_id;
+        if (!bTenant || bTenant !== tenantId) {
+          throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Batch '${batchId}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
+        }
+        const currentQty = Number(batch.quantity || 0);
+        if (currentQty < deductQty) {
+          throw new InsufficientStockError({
+            message: `Insufficient quantity in batch '${batch.batchNumber || batchId}'. Available: ${currentQty}, Requested: ${deductQty}.`,
+            arabicMessage: `الكمية غير متوفرة في التشغيلة "${batch.batchNumber || batchId}". المتوفر: ${currentQty}، المطلوب: ${deductQty}.`,
+            module: 'INVENTORY',
+            metadata: { productId, warehouseId, batchId, currentQty, deductQty }
           });
         }
+        await db.medicineBatches.update(batch.id, {
+          quantity: currentQty - deductQty,
+          updated_at: timestamp,
+          lastModified: timestamp
+        });
       } else if (batchNumber) {
         const batch = await db.medicineBatches
           .filter((b: any) => 
             (b.productId === productId || b.product_id === productId) &&
             (b.batchNumber === batchNumber || b.batchId === batchNumber) &&
-            (!b.warehouseId || b.warehouseId === warehouseId)
+            (!b.warehouseId || b.warehouseId === warehouseId) &&
+            ((b.tenantId || b.tenant_id) === tenantId)
           )
           .first();
-        if (batch) {
-          const updatedQty = Math.max(0, (Number(batch.quantity || 0) - deductQty));
-          await db.medicineBatches.update(batch.id, {
-            quantity: updatedQty,
-            updated_at: timestamp,
-            lastModified: timestamp
+        if (!batch) {
+          throw new Error(`[UnifiedEngine] BATCH_NOT_FOUND: Specified batchNumber '${batchNumber}' does not exist in warehouse '${warehouseId}' for tenant '${tenantId}'.`);
+        }
+        const bTenant = (batch as any).tenantId || (batch as any).tenant_id;
+        if (!bTenant || bTenant !== tenantId) {
+          throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Batch '${batch.id}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
+        }
+        const currentQty = Number(batch.quantity || 0);
+        if (currentQty < deductQty) {
+          throw new InsufficientStockError({
+            message: `Insufficient quantity in batch '${batchNumber}'. Available: ${currentQty}, Requested: ${deductQty}.`,
+            arabicMessage: `الكمية غير متوفرة في التشغيلة "${batchNumber}". المتوفر: ${currentQty}، المطلوب: ${deductQty}.`,
+            module: 'INVENTORY',
+            metadata: { productId, warehouseId, batchNumber, currentQty, deductQty }
           });
         }
+        await db.medicineBatches.update(batch.id, {
+          quantity: currentQty - deductQty,
+          updated_at: timestamp,
+          lastModified: timestamp
+        });
       } else {
-        // Deduct from earliest expiring batch (FEFO) in warehouse (or globally for product)
+        // Deduct from earliest expiring batch (FEFO) in warehouse (or globally for product) within authoritative tenant
         let batches = await db.medicineBatches
           .where('productId')
           .equals(productId)
-          .filter((b: any) => (b.quantity || 0) > 0 && (!b.warehouseId || b.warehouseId === warehouseId))
+          .filter((b: any) => 
+            ((b.tenantId || b.tenant_id) === tenantId) &&
+            Number(b.quantity || 0) > 0 &&
+            (!b.warehouseId || b.warehouseId === warehouseId)
+          )
           .sortBy('expiryDate');
 
         if (batches.length === 0) {
           batches = await db.medicineBatches
             .where('productId')
             .equals(productId)
-            .filter((b: any) => (b.quantity || 0) > 0)
+            .filter((b: any) => 
+              ((b.tenantId || b.tenant_id) === tenantId) &&
+              Number(b.quantity || 0) > 0
+            )
             .sortBy('expiryDate');
+        }
+
+        if (batches.length === 0) {
+          // Check if any batches exist for this product in this tenant
+          const anyBatchesCount = await db.medicineBatches
+            .where('productId')
+            .equals(productId)
+            .filter((b: any) => ((b.tenantId || b.tenant_id) === tenantId))
+            .count();
+
+          if (anyBatchesCount > 0) {
+            throw new InsufficientStockError({
+              message: `Insufficient batch stock for product '${productId}' under FEFO. Available in batches: 0, Requested deduction: ${deductQty}.`,
+              arabicMessage: `لا توجد كميات متوفرة في تشغيلات الصنف "${productId}" لتنفيذ خصم FEFO. المطلوب: ${deductQty}.`,
+              module: 'INVENTORY',
+              metadata: { productId, warehouseId, totalBatchQty: 0, deductQty }
+            });
+          }
+          // Non-batched product: allowed to proceed with product-level inventory mutation
+          return;
+        }
+
+        // Pre-flight check: ensure total available across batches covers the required deduction
+        const totalBatchQty = batches.reduce((sum: number, b: any) => sum + Number(b.quantity || 0), 0);
+        if (totalBatchQty < deductQty) {
+          throw new InsufficientStockError({
+            message: `Insufficient batch stock for product '${productId}' under FEFO. Available in batches: ${totalBatchQty}, Requested deduction: ${deductQty}.`,
+            arabicMessage: `الكمية المتوفرة في تشغيلات الصنف "${productId}" غير كافية لخصم FEFO. المتوفر بالتشغيلات: ${totalBatchQty}، المطلوب: ${deductQty}.`,
+            module: 'INVENTORY',
+            metadata: { productId, warehouseId, totalBatchQty, deductQty }
+          });
         }
 
         let remainingToDeduct = deductQty;
