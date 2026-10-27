@@ -129,36 +129,71 @@ class BackupScheduler {
       const config = await this.getConfig();
       if (!config.enabled) return;
 
-      const lastRunStr = await db.getSetting('last_scheduled_backup_run');
-      const now = new Date();
-      let shouldRun = false;
+        // 🚨 PRE-FLIGHT CHECK: Skip and notify if password is missing (fail-closed)
+  if (!config.password) {
+    console.error('[BackupScheduler] Auto-backup skipped: BACKUP_PASSWORD_REQUIRED. User must set a password in settings.');
+    try {
+      await db.saveSetting('backup_last_error', {
+        code: 'BACKUP_PASSWORD_REQUIRED',
+        message: 'النسخ الاحتياطي المجدول معطّل: لم يتم تعيين كلمة مرور.',
+        timestamp: new Date().toISOString()
+      });
+    } catch {
+      // Non-blocking
+    }
+    return;
+  }
 
-      if (!lastRunStr) {
-        // Run first one immediately
-        shouldRun = true;
-      } else {
-        const lastRun = new Date(lastRunStr);
-        const diffMs = now.getTime() - lastRun.getTime();
-        
-        const dayMs = 24 * 60 * 60 * 1000;
-        const weekMs = 7 * dayMs;
-        const monthMs = 30 * dayMs;
+  const lastRunStr = await db.getSetting('last_scheduled_backup_run');
+  const now = new Date();
+  let shouldRun = false;
 
-        if (config.frequency === 'daily' && diffMs >= dayMs) {
-          shouldRun = true;
-        } else if (config.frequency === 'weekly' && diffMs >= weekMs) {
-          shouldRun = true;
-        } else if (config.frequency === 'monthly' && diffMs >= monthMs) {
-          shouldRun = true;
-        }
+  if (!lastRunStr) {
+    // Run first one immediately
+    shouldRun = true;
+  } else {
+    const lastRun = new Date(lastRunStr);
+    const diffMs = now.getTime() - lastRun.getTime();
+    
+    const dayMs = 24 * 60 * 60 * 1000;
+    const weekMs = 7 * dayMs;
+    const monthMs = 30 * dayMs;
+
+    if (config.frequency === 'daily' && diffMs >= dayMs) {
+      shouldRun = true;
+    } else if (config.frequency === 'weekly' && diffMs >= weekMs) {
+      shouldRun = true;
+    } else if (config.frequency === 'monthly' && diffMs >= monthMs) {
+      shouldRun = true;
+    }
+  }
+
+  if (shouldRun) {
+    console.log(`[BackupScheduler] Performing automatic cron trigger...`);
+    try {
+      await this.runUnifiedBackup(config);
+      // Clear previous error marker on success
+      try { await db.saveSetting('backup_last_error', null); } catch { /* non-blocking */ }
+    } catch (backupErr: any) {
+      // 🚨 PERSIST FAILURE: Do NOT swallow silently
+      console.error('[BackupScheduler] Auto-backup FAILED:', backupErr?.message || backupErr);
+      try {
+        await db.saveSetting('backup_last_error', {
+          code: backupErr?.code || 'BACKUP_FAILED',
+          message: backupErr?.message || String(backupErr),
+          timestamp: new Date().toISOString()
+        });
+      } catch {
+        // Non-blocking
       }
-
-      if (shouldRun) {
-        console.log(`[BackupScheduler] Performing automatic cron trigger...`);
-        await this.runUnifiedBackup(config);
-      }
-    } catch (e) {
-      console.error('[BackupScheduler] Background loop check failed:', e);
+      // Re-throw so callers (e.g., UI health checks) can react
+      throw backupErr;
+    }
+  }
+} catch (e: any) {
+  // Log but don't crash the interval
+  console.error('[BackupScheduler] Background loop check failed:', e?.message || e);
+    }
     }
   }
 }
