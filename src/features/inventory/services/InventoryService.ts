@@ -26,8 +26,17 @@ export class InventoryService {
    */
   static async getProducts(): Promise<Product[]> {
     try {
+      const session = TokenProvider.getCurrentSession();
+      const tenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+      if (!tenantId || tenantId === 'TEN-DEV-001' || tenantId === 'tenant_default' || tenantId === 'default' || tenantId === 'default-tenant') {
+        return [];
+      }
+
       const products = await db.products.filter(p => !p.deletedAt).toArray();
-      return products || [];
+      return (products || []).filter((p: any) => {
+        const pTenant = p.tenantId || p.tenant_id;
+        return pTenant && pTenant === tenantId;
+      });
     } catch (error) {
       console.error('Error fetching products from Dexie:', error);
       return [];
@@ -38,10 +47,25 @@ export class InventoryService {
    * Saves a product to Dexie.
    */
   static async saveProduct(product: Product): Promise<string> {
+    const { tenantId, branchId } = getTrustedContext();
     const isNew = !product.id;
     const now = new Date().toISOString();
+
+    if (!isNew) {
+      const existing = await db.products.get(product.id);
+      if (existing) {
+        const existingTenant = (existing as any).tenantId || (existing as any).tenant_id;
+        if (!existingTenant || existingTenant !== tenantId) {
+          throw new Error(`[InventoryService] CROSS_TENANT_VIOLATION: Product '${product.id}' belongs to another tenant or lacks valid tenant binding.`);
+        }
+      }
+    }
+
     const productPayload: any = {
       ...product,
+      tenantId,
+      tenant_id: tenantId,
+      branchId: branchId || product.branchId,
       updated_at: now,
       updatedAt: now,
       lastModified: now
@@ -177,8 +201,17 @@ export class InventoryService {
    */
   static async getMedicineBatches(): Promise<MedicineBatch[]> {
     try {
+      const session = TokenProvider.getCurrentSession();
+      const tenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+      if (!tenantId || tenantId === 'TEN-DEV-001' || tenantId === 'tenant_default' || tenantId === 'default' || tenantId === 'default-tenant') {
+        return [];
+      }
+
       const batches = await db.medicineBatches.toArray();
-      return batches || [];
+      return (batches || []).filter((b: any) => {
+        const bTenant = b.tenantId || b.tenant_id;
+        return bTenant && bTenant === tenantId;
+      });
     } catch (error) {
        console.warn('Error fetching medicine batches from Dexie:', error);
        return [];
@@ -189,19 +222,32 @@ export class InventoryService {
    * Loads comprehensive data for a product.
    */
   static async getProductDetails(productId: string) {
+    const { tenantId } = getTrustedContext();
+
     const priceHist = await ProductRepository.getPriceHistory(productId);
     const purchHist = await ProductRepository.getPurchaseHistory(productId);
-    const moves = await db.inventoryTransactions
+    const allMoves = await db.inventoryTransactions
       .where('productId')
       .equals(productId)
       .reverse()
-      .limit(20)
       .toArray();
 
-    const stocks = await db.warehouseStock
+    const moves = allMoves
+      .filter((t: any) => {
+        const tTenant = t.tenantId || t.tenant_id;
+        return tTenant && tTenant === tenantId;
+      })
+      .slice(0, 20);
+
+    const allStocks = await db.warehouseStock
       .where('productId')
       .equals(productId)
       .toArray();
+
+    const stocks = allStocks.filter((s: any) => {
+      const sTenant = s.tenantId || s.tenant_id;
+      return sTenant && sTenant === tenantId;
+    });
       
     return {
       priceHist,
@@ -336,11 +382,25 @@ export class InventoryService {
     }
     
     try {
+      const session = TokenProvider.getCurrentSession();
+      const tenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+      if (!tenantId || tenantId === 'TEN-DEV-001' || tenantId === 'tenant_default' || tenantId === 'default' || tenantId === 'default-tenant') {
+        return 0;
+      }
+
       const stock = await db.warehouseStock
         .where('[warehouseId+productId]')
         .equals([warehouseId, productId])
         .first();
-      return stock ? stock.quantity : 0;
+
+      if (!stock) return 0;
+
+      const sTenant = (stock as any).tenantId || (stock as any).tenant_id;
+      if (!sTenant || sTenant !== tenantId) {
+        return 0;
+      }
+
+      return stock.quantity || 0;
     } catch (error) {
       console.error('Error fetching warehouse stock:', error);
       return 0;
