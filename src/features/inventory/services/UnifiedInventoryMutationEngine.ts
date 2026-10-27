@@ -693,29 +693,17 @@ export class UnifiedInventoryMutationEngine {
     const isOutward = delta < 0 && ['SALE', 'DISPATCH', 'TRANSFER_OUT', 'ADJUSTMENT', 'CORRECTION', 'DAMAGE', 'RETURN'].includes(movementType);
 
     if (isInward) {
-      try {
-        await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId);
-      } catch (fifoErr) {
-        console.warn('[UnifiedEngine] FIFO layer addition notice:', fifoErr);
-      }
+      await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId);
     } else if (isOutward) {
-      try {
-        const fifoConsumption = await FIFOEngine.consumeFIFO(docId, productId, Math.abs(delta), tenantId);
-        if (fifoConsumption && fifoConsumption.unitCost > 0) {
-          resolvedUnitCost = fifoConsumption.unitCost;
-        }
-      } catch (fifoErr) {
-        console.warn('[UnifiedEngine] FIFO consumption notice:', fifoErr);
+      const fifoConsumption = await FIFOEngine.consumeFIFO(docId, productId, Math.abs(delta), tenantId);
+      if (fifoConsumption && fifoConsumption.unitCost > 0) {
+        resolvedUnitCost = fifoConsumption.unitCost;
       }
     } else if (movementType === 'REVERSAL') {
-      try {
-        if (delta > 0) {
-          await FIFOEngine.reverseFIFO(docId);
-        } else if (delta < 0) {
-          await FIFOEngine.removePurchaseLayer(docId);
-        }
-      } catch (fifoErr) {
-        console.warn('[UnifiedEngine] FIFO reversal notice:', fifoErr);
+      if (delta > 0) {
+        await FIFOEngine.reverseFIFO(docId);
+      } else if (delta < 0) {
+        await FIFOEngine.removePurchaseLayer(docId);
       }
     }
 
@@ -883,35 +871,52 @@ export class UnifiedInventoryMutationEngine {
     });
   }
 
-  private async readWarehouseStock(warehouseId: string, productId: string, tenantId?: string): Promise<any | null> {
+  private async readWarehouseStock(warehouseId: string, productId: string, tenantId: string): Promise<any | null> {
+    if (!tenantId) {
+      throw new Error(`[UnifiedEngine] TRUSTED_TENANT_CONTEXT_REQUIRED: tenantId is required for readWarehouseStock.`);
+    }
+
     try {
       const byCompound = await db.warehouseStock
         .where('[warehouseId+productId]')
         .equals([warehouseId, productId])
         .first();
       if (byCompound) {
-        if (tenantId) {
-          const wsTenant = (byCompound as any).tenantId || (byCompound as any).tenant_id;
-          if (wsTenant && wsTenant !== tenantId) {
-            // Belongs to another tenant; do not return
-            return null;
-          }
+        const wsTenant = (byCompound as any).tenantId || (byCompound as any).tenant_id;
+        if (!wsTenant) {
+          throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${byCompound.id}' lacks tenant binding.`);
+        }
+        if (wsTenant !== tenantId) {
+          throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${byCompound.id}' belongs to tenant '${wsTenant}', not authoritative tenant '${tenantId}'.`);
         }
         return byCompound;
       }
-    } catch {
+    } catch (err: any) {
+      if (err?.message?.includes('CROSS_TENANT_VIOLATION')) {
+        throw err;
+      }
       // Fallback in case compound index is not directly accessible
     }
 
     const byFilter = await db.warehouseStock
       .filter((ws: any) => 
         (ws.warehouseId === warehouseId || ws.warehouse_id === warehouseId) &&
-        (ws.productId === productId || ws.product_id === productId) &&
-        (!tenantId || ((ws.tenantId || ws.tenant_id) === tenantId))
+        (ws.productId === productId || ws.product_id === productId)
       )
       .first();
 
-    return byFilter || null;
+    if (byFilter) {
+      const wsTenant = (byFilter as any).tenantId || (byFilter as any).tenant_id;
+      if (!wsTenant) {
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${byFilter.id}' lacks tenant binding.`);
+      }
+      if (wsTenant !== tenantId) {
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${byFilter.id}' belongs to tenant '${wsTenant}', not authoritative tenant '${tenantId}'.`);
+      }
+      return byFilter;
+    }
+
+    return null;
   }
 
   private async checkExistingIdempotentTransaction(
@@ -919,17 +924,31 @@ export class UnifiedInventoryMutationEngine {
     docId: string,
     docType: string,
     productId: string,
-    tenantId?: string
+    tenantId: string
   ): Promise<any | null> {
+    if (!tenantId) {
+      throw new Error(`[UnifiedEngine] TRUSTED_TENANT_CONTEXT_REQUIRED: tenantId is required for checkExistingIdempotentTransaction.`);
+    }
     if (!idempotencyKey) return null;
 
-    return await db.inventoryTransactions
-      .filter((tx: any) => 
-        (!tenantId || ((tx.tenantId || tx.tenant_id) === tenantId)) &&
-        (tx.idempotencyKey === idempotencyKey ||
-        (tx.SourceDocumentID === docId && tx.SourceDocumentType === docType && tx.productId === productId && tx.idempotencyKey === idempotencyKey))
+    const tx = await db.inventoryTransactions
+      .filter((t: any) => 
+        t.idempotencyKey === idempotencyKey ||
+        (t.SourceDocumentID === docId && t.SourceDocumentType === docType && t.productId === productId && t.idempotencyKey === idempotencyKey)
       )
       .first();
+
+    if (tx) {
+      const txTenant = (tx as any).tenantId || (tx as any).tenant_id;
+      if (!txTenant) {
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Transaction '${tx.id}' lacks tenant binding.`);
+      }
+      if (txTenant !== tenantId) {
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Transaction '${tx.id}' belongs to tenant '${txTenant}', not authoritative tenant '${tenantId}'.`);
+      }
+    }
+
+    return tx || null;
   }
 
   private async mutateMedicineBatch(params: {
