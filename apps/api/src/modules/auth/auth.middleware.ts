@@ -38,7 +38,10 @@ export function authMiddleware(req: AuthenticatedRequest, res: Response, next: N
 
     next();
   } catch (err: any) {
-    AuditService.logFailedAuth(req.ip || "unknown", `Verification error: ${err.message}`);
+    // 🚨 FIX: Catch async audit log errors to prevent unhandled promise rejections
+    AuditService.logFailedAuth(req.ip || "unknown", `Verification error: ${err.message}`)
+      .catch((auditErr) => console.error("[Auth Middleware] Audit Log Failed:", auditErr));
+      
     return res.status(401).json({ error: "UNAUTHORIZED", message: "جلسة العمل متهالكة أو منتهية. يرجى تسجيل الدخول مجدداً." });
   }
 }
@@ -54,15 +57,22 @@ export function requirePermission(permission: Permission) {
 
     const authorized = hasPermission(req.user.role, permission);
     if (!authorized) {
+      // 🚨 FIX: Catch async audit log errors + Format payload as a structured JSON string
       AuditService.log({
         userId: req.user.userId,
         tenantId: req.user.tenantId || "UNKNOWN",
-        action: "FORBIDDEN_ATTEMPT" as any,
+        action: "FORBIDDEN_ATTEMPT" as any, // Deferred: Requires Prisma Enum update
         entity: "PermissionGuard",
         entityId: permission,
-        after: `User role [${req.user.role}] failed validating permission [${permission}]`,
+        after: JSON.stringify({ 
+          event: "FORBIDDEN_ATTEMPT",
+          userRole: req.user.role, 
+          requiredPermission: permission,
+          message: `User role [${req.user.role}] failed validating permission [${permission}]`
+        }),
         ipAddress: req.ip
-      });
+      }).catch((auditErr) => console.error("[Auth Middleware] Audit Log Failed:", auditErr));
+
       return res.status(403).json({
         error: "FORBIDDEN",
         message: `عفواً، لا يملك حسابك الحالي الصلاحيات التقنية لتنفيذ العملية: [${permission}]`
