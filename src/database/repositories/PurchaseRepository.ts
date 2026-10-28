@@ -1,5 +1,6 @@
 
 import { db } from '@/core/db';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { Purchase } from '@/types';
 
 export const PurchaseRepository = {
@@ -67,12 +68,23 @@ export const PurchaseRepository = {
     return `PUR-${String(count + 1).padStart(5, '0')}`;
   },
 
-  getItemPurchaseHistory: async (productId: string, limit: number = 5): Promise<Purchase[]> => {
+  getItemPurchaseHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<Purchase[]> => {
+    if (!productId) return [];
+    const session = TokenProvider.getCurrentSession();
+    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
+      return [];
+    }
+
     const purchases = await db.invoices.where('type').equals('PURCHASE').toArray();
     purchases.sort((a, b) => new Date(b.date || b.createdAt || 0).getTime() - new Date(a.date || a.createdAt || 0).getTime());
 
     const matched: Purchase[] = [];
     for (const p of purchases) {
+      const pTenant = (p as any).tenantId || (p as any).tenant_id;
+      if (pTenant !== effectiveTenantId) continue;
+
       if (p.items && Array.isArray(p.items) && p.items.some(i => i && (i.product_id === productId || i.productId === productId || i.ProductID === productId))) {
         matched.push(p as unknown as Purchase);
         if (matched.length >= limit) break;

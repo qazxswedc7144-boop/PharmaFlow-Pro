@@ -3,6 +3,7 @@ import { InventoryService } from '@features/inventory/services/InventoryService'
 import { Product, PriceHistory, Purchase } from '@/types';
 import { authService } from '@features/auth/services/authService';
 import { useUIStore } from '@/store/useUIStore';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { PriceHistoryRepository } from '@/database/repositories/PriceHistoryRepository';
 import { PurchaseRepository } from '@/database/repositories/PurchaseRepository';
 
@@ -108,12 +109,44 @@ export const ProductRepository = {
     return txs.reduce((sum, tx) => sum + (tx.QuantityChange || 0), 0);
   },
 
-  getPriceHistory: async (productId: string, limit: number = 5): Promise<PriceHistory[]> => {
-    return await PriceHistoryRepository.getRecentInsights(productId, limit);
+  getPriceHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<PriceHistory[]> => {
+    if (!productId) return [];
+    const session = TokenProvider.getCurrentSession();
+    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
+      return [];
+    }
+
+    // Security: ProductId alone must NOT authorize access if the product belongs to another tenant
+    const product = await db.products.get(productId);
+    if (!product) return [];
+    const productTenant = (product as any).tenantId || (product as any).tenant_id;
+    if (productTenant && productTenant !== effectiveTenantId) {
+      return [];
+    }
+
+    return await PriceHistoryRepository.getRecentInsights(productId, limit, effectiveTenantId);
   },
 
-  getPurchaseHistory: async (productId: string, limit: number = 5): Promise<Purchase[]> => {
-    return await PurchaseRepository.getItemPurchaseHistory(productId, limit);
+  getPurchaseHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<Purchase[]> => {
+    if (!productId) return [];
+    const session = TokenProvider.getCurrentSession();
+    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
+      return [];
+    }
+
+    // Security: ProductId alone must NOT authorize access if the product belongs to another tenant
+    const product = await db.products.get(productId);
+    if (!product) return [];
+    const productTenant = (product as any).tenantId || (product as any).tenant_id;
+    if (productTenant && productTenant !== effectiveTenantId) {
+      return [];
+    }
+
+    return await PurchaseRepository.getItemPurchaseHistory(productId, limit, effectiveTenantId);
   },
 
   getItemAutoFillDetails: async (productId: string): Promise<{

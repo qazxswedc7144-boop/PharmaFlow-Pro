@@ -1,9 +1,12 @@
 
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { db } from '@/core/db';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 
 export const PriceHistoryRepository = {
-  record: async (productId: string, name: string, partnerId: string, price: number, date: string): Promise<void> => {
+  record: async (productId: string, name: string, partnerId: string, price: number, date: string, tenantId?: string): Promise<void> => {
+    const session = TokenProvider.getCurrentSession();
+    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
     await db.priceHistory.add({
       id: db.generateId('PH'),
       productId,
@@ -11,6 +14,8 @@ export const PriceHistoryRepository = {
       partnerId,
       Price: price,
       date,
+      tenantId: effectiveTenantId,
+      tenant_id: effectiveTenantId,
       lastModified: new Date().toISOString()
     });
   },
@@ -74,8 +79,27 @@ export const PriceHistoryRepository = {
     return sum / itemPrices.length;
   },
 
-  getRecentInsights: async (_productId: string, _limit: number = 5): Promise<any[]> => {
-     // Return dummy price history for now to satisfy types
-     return [];
+  getRecentInsights: async (productId: string, limit: number = 5, tenantId?: string): Promise<any[]> => {
+    if (!productId) return [];
+    const session = TokenProvider.getCurrentSession();
+    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
+      return [];
+    }
+
+    const records = await db.priceHistory
+      .where('productId')
+      .equals(productId)
+      .toArray();
+
+    records.sort((a, b) => new Date(b.date || b.Invoice_Date || 0).getTime() - new Date(a.date || a.Invoice_Date || 0).getTime());
+
+    return records
+      .filter((r: any) => {
+        const rTenant = r.tenantId || r.tenant_id;
+        return rTenant === effectiveTenantId;
+      })
+      .slice(0, limit);
   }
 };

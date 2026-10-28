@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { db } from '../../src/core/db';
 import { InventoryService } from '@/features/inventory/services/InventoryService';
+import { ProductRepository } from '@/features/inventory/services/ProductRepository';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 
 describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
@@ -365,6 +366,137 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
       const ws = await db.warehouseStock.get(`WHS-MAIN-${productId}`);
       expect(ws?.quantity).toBe(95);
+    });
+  });
+
+  describe('Targeted Tenant Read Isolation #3: ProductRepository History Isolation', () => {
+    const tenantA = 'TENANT-READ-A';
+    const tenantB = 'TENANT-READ-B';
+    const productA = 'PROD-READ-A';
+    const productB = 'PROD-READ-B';
+
+    beforeEach(async () => {
+      // Seed Product A for Tenant A
+      await db.products.put({
+        id: productA,
+        name: 'Product A',
+        price: 100,
+        stock: 50,
+        tenantId: tenantA,
+        isActive: true
+      } as any);
+
+      // Seed Product B for Tenant B
+      await db.products.put({
+        id: productB,
+        name: 'Product B',
+        price: 200,
+        stock: 40,
+        tenantId: tenantB,
+        isActive: true
+      } as any);
+
+      // Seed Price History for Product A (Tenant A)
+      await db.priceHistory.put({
+        id: 'PH-A-1',
+        productId: productA,
+        name: 'Product A',
+        partnerId: 'PARTNER-A',
+        Price: 95,
+        date: '2026-01-01',
+        tenantId: tenantA
+      } as any);
+
+      // Seed Price History for Product B (Tenant B)
+      await db.priceHistory.put({
+        id: 'PH-B-1',
+        productId: productB,
+        name: 'Product B',
+        partnerId: 'PARTNER-B',
+        Price: 195,
+        date: '2026-01-02',
+        tenantId: tenantB
+      } as any);
+
+      // Seed Purchase Invoice for Product A (Tenant A)
+      await db.invoices.put({
+        id: 'INV-PUR-A-1',
+        type: 'PURCHASE',
+        tenantId: tenantA,
+        date: '2026-01-10',
+        items: [{ productId: productA, unitPrice: 90, quantity: 10 }]
+      } as any);
+
+      // Seed Purchase Invoice for Product B (Tenant B)
+      await db.invoices.put({
+        id: 'INV-PUR-B-1',
+        type: 'PURCHASE',
+        tenantId: tenantB,
+        date: '2026-01-12',
+        items: [{ productId: productB, unitPrice: 180, quantity: 5 }]
+      } as any);
+    });
+
+    it('A. Tenant A requests history for Product A belonging to Tenant A => existing records are returned', async () => {
+      TokenProvider.setSession({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+
+      const priceHistory = await ProductRepository.getPriceHistory(productA);
+      expect(priceHistory.length).toBeGreaterThan(0);
+      expect((priceHistory[0] as any).Price).toBe(95);
+
+      const purchaseHistory = await ProductRepository.getPurchaseHistory(productA);
+      expect(purchaseHistory.length).toBeGreaterThan(0);
+      expect(purchaseHistory[0].id).toBe('INV-PUR-A-1');
+    });
+
+    it('B. Tenant A attempts to obtain history for Product B belonging to Tenant B => must not expose Tenant B data', async () => {
+      TokenProvider.setSession({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+
+      const priceHistory = await ProductRepository.getPriceHistory(productB);
+      expect(priceHistory).toEqual([]);
+
+      const purchaseHistory = await ProductRepository.getPurchaseHistory(productB);
+      expect(purchaseHistory).toEqual([]);
+    });
+
+    it('C. Tenant context missing or untrusted where required => returns safe empty array', async () => {
+      // 1. Missing tenant context
+      TokenProvider.setSession({ tenantId: undefined, branchId: undefined } as any, 'tok', 'ref');
+      expect(await ProductRepository.getPriceHistory(productA)).toEqual([]);
+      expect(await ProductRepository.getPurchaseHistory(productA)).toEqual([]);
+
+      // 2. Forbidden / untrusted tenant context
+      TokenProvider.setSession({ tenantId: 'TEN-DEV-001', branchId: 'BR-A' } as any, 'tok', 'ref');
+      expect(await ProductRepository.getPriceHistory(productA)).toEqual([]);
+      expect(await ProductRepository.getPurchaseHistory(productA)).toEqual([]);
+    });
+
+    it('D. Existing valid callers and behavior remain unchanged', async () => {
+      TokenProvider.setSession({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+
+      // Caller: InventoryService.getProductDetails
+      const details = await InventoryService.getProductDetails(productA);
+      expect(details).toBeDefined();
+      expect(details.priceHist).toBeDefined();
+      expect(details.purchHist).toBeDefined();
+      expect(details.priceHist.length).toBeGreaterThan(0);
+      expect(details.purchHist.length).toBeGreaterThan(0);
+    });
+
+    it('E. Cross-verify both getPriceHistory and getPurchaseHistory enforce tenant boundaries', async () => {
+      TokenProvider.setSession({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+
+      // Directly verify both methods for Product A (authorized)
+      const pricesA = await ProductRepository.getPriceHistory(productA, 10);
+      const purchasesA = await ProductRepository.getPurchaseHistory(productA, 10);
+      expect(pricesA.every(p => ((p as any).tenantId === tenantA))).toBe(true);
+      expect(purchasesA.every(p => ((p as any).tenantId === tenantA))).toBe(true);
+
+      // Directly verify both methods for Product B (unauthorized cross-tenant)
+      const pricesB = await ProductRepository.getPriceHistory(productB, 10);
+      const purchasesB = await ProductRepository.getPurchaseHistory(productB, 10);
+      expect(pricesB).toHaveLength(0);
+      expect(purchasesB).toHaveLength(0);
     });
   });
 });
