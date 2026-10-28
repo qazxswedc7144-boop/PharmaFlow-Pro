@@ -225,4 +225,146 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     const prod = await db.products.get(productId);
     expect(prod?.stock).toBe(90);
   });
+
+  describe('Central Tenant Isolation #2: Product & Warehouse Boundaries', () => {
+    it('A. tenant A + product A + warehouse A => mutation succeeds', async () => {
+      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      await db.branches.put({
+        id: 'BRANCH-A',
+        code: 'BRANCH-A',
+        name: 'Branch A',
+        tenantId: 'TENANT-A',
+        isActive: true
+      } as any);
+      await db.products.put({
+        id: 'PROD-A',
+        name: 'Product A',
+        stock: 50,
+        tenantId: 'TENANT-A',
+        branchId: 'BRANCH-A',
+        isActive: true
+      } as any);
+      await db.warehouseStock.put({
+        id: 'WHS-A-1',
+        warehouseId: 'WH-A',
+        productId: 'PROD-A',
+        quantity: 50,
+        tenantId: 'TENANT-A',
+        branchId: 'BRANCH-A'
+      } as any);
+      await db.branchInventory.put({
+        id: 'BINV-A-1',
+        branchId: 'BRANCH-A',
+        productId: 'PROD-A',
+        stockQuantity: 50,
+        tenantId: 'TENANT-A'
+      } as any);
+
+      const res = await InventoryService.updateStock('PROD-A', 10, { warehouseId: 'WH-A' });
+      expect(res?.stock).toBe(60);
+
+      const ws = await db.warehouseStock.get('WHS-A-1');
+      expect(ws?.quantity).toBe(60);
+    });
+
+    it('B. tenant A + product B belonging to tenant B => mutation is rejected with CROSS_TENANT_VIOLATION', async () => {
+      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      await db.products.put({
+        id: 'PROD-B-FOREIGN',
+        name: 'Product B Foreign',
+        stock: 50,
+        tenantId: 'TENANT-B',
+        branchId: 'BRANCH-B',
+        isActive: true
+      } as any);
+
+      await expect(
+        InventoryService.updateStock('PROD-B-FOREIGN', 10, { warehouseId: 'WH-A' })
+      ).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+    });
+
+    it('C. tenant A + warehouse context belonging to tenant B => mutation is rejected with CROSS_TENANT_VIOLATION', async () => {
+      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      await db.branches.put({
+        id: 'BRANCH-A',
+        code: 'BRANCH-A',
+        name: 'Branch A',
+        tenantId: 'TENANT-A',
+        isActive: true
+      } as any);
+      await db.products.put({
+        id: 'PROD-A',
+        name: 'Product A',
+        stock: 50,
+        tenantId: 'TENANT-A',
+        branchId: 'BRANCH-A',
+        isActive: true
+      } as any);
+
+      // Foreign warehouse belonging to TENANT-B
+      await db.warehouseStock.put({
+        id: 'WHS-FOREIGN-B',
+        warehouseId: 'WH-FOREIGN-B',
+        productId: 'PROD-B-FOREIGN',
+        quantity: 50,
+        tenantId: 'TENANT-B',
+        branchId: 'BRANCH-B'
+      } as any);
+
+      await expect(
+        InventoryService.updateStock('PROD-A', 10, { warehouseId: 'WH-FOREIGN-B' })
+      ).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+    });
+
+    it('D. unknown/unbound product or warehouse => fail closed', async () => {
+      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      await db.branches.put({
+        id: 'BRANCH-A',
+        code: 'BRANCH-A',
+        name: 'Branch A',
+        tenantId: 'TENANT-A',
+        isActive: true
+      } as any);
+      await db.products.put({
+        id: 'PROD-A',
+        name: 'Product A',
+        stock: 50,
+        tenantId: 'TENANT-A',
+        branchId: 'BRANCH-A',
+        isActive: true
+      } as any);
+
+      // 1. Unknown product fails closed in engine
+      const { unifiedInventoryMutationEngine } = await import('@/features/inventory/services/UnifiedInventoryMutationEngine');
+      await expect(
+        unifiedInventoryMutationEngine.executeMutation({
+          productId: 'UNKNOWN-PROD-999',
+          warehouseId: 'WH-MAIN',
+          delta: 10,
+          docType: 'ADJUSTMENT',
+          docId: 'ADJ-FAIL-01',
+          movementType: 'ADJUSTMENT',
+          userId: 'user-1',
+          tenantId: 'TENANT-A',
+          branchId: 'BRANCH-A',
+          transactionUuid: 'TX-FAIL-UNKNOWN-PROD'
+        })
+      ).rejects.toThrow();
+
+      // 2. Unknown / unbound warehouse fails closed
+      await expect(
+        InventoryService.updateStock('PROD-A', 10, { warehouseId: 'UNKNOWN-WH-999' })
+      ).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+    });
+
+    it('E. existing valid tenant/branch/product/warehouse mutation remains unchanged', async () => {
+      TokenProvider.setSession({ tenantId: validTenant, branchId: validBranch } as any, 'token', 'refresh');
+      await InventoryService.updateStock(productId, -5, { warehouseId: 'WH-MAIN' });
+      const prod = await db.products.get(productId);
+      expect(prod?.stock).toBe(95);
+
+      const ws = await db.warehouseStock.get(`WHS-MAIN-${productId}`);
+      expect(ws?.quantity).toBe(95);
+    });
+  });
 });

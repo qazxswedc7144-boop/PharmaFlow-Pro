@@ -680,7 +680,7 @@ export class UnifiedInventoryMutationEngine {
       throw new ProductInactiveError(productId, product.name || product.Name);
     }
 
-    // 3. Validate Warehouse
+    // 3. Validate Warehouse Existence & Format
     if (!warehouseId || typeof warehouseId !== 'string' || warehouseId.trim() === '') {
       throw new InvalidWarehouseError(warehouseId || 'EMPTY_WAREHOUSE_ID');
     }
@@ -693,6 +693,69 @@ export class UnifiedInventoryMutationEngine {
 
     // 5. Read Existing Balances (Snapshot Before)
     const ws = await this.readWarehouseStock(warehouseId, productId, tenantId);
+
+    // Fail-Closed Warehouse Context Validation
+    // If ws exists, warehouseId is already confirmed bound to tenantId (zero extra queries).
+    // If ws does not exist, verify that warehouseId belongs to this tenant/branch context before any mutation.
+    if (!ws) {
+      const allWhRecords = await db.warehouseStock
+        .where('warehouseId')
+        .equals(warehouseId)
+        .toArray()
+        .catch(async () => {
+          return await db.warehouseStock
+            .filter((w: any) => (w.warehouseId === warehouseId || w.warehouse_id === warehouseId))
+            .toArray()
+            .catch(() => []);
+        });
+
+      const tenantWhRecords = allWhRecords.filter(
+        (w: any) => ((w.tenantId || w.tenant_id) === tenantId)
+      );
+      const foreignWhRecords = allWhRecords.filter((w: any) => {
+        const t = w.tenantId || w.tenant_id;
+        return t && t !== tenantId;
+      });
+
+      const defaultWhId = configurationService.getSync<string>('inventory.defaultWarehouseId') || 'WH-MAIN';
+      const isDefaultWh = warehouseId === 'WH-MAIN' || warehouseId === defaultWhId;
+
+      if (!isDefaultWh && foreignWhRecords.length > 0 && tenantWhRecords.length === 0) {
+        throw new Error(
+          `[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse '${warehouseId}' belongs to another tenant and cannot be accessed by tenant '${tenantId}'.`
+        );
+      }
+
+      if (tenantWhRecords.length === 0) {
+        const isCurrentBranchWh = branchId && (
+          warehouseId === branchId ||
+          warehouseId === `WH-${branchId}`
+        );
+
+        let isRegisteredTenantBranch = false;
+        if (!isCurrentBranchWh) {
+          const matchedBranch = await db.branches.get(warehouseId).catch(() => null)
+            || await db.branches.where('code').equals(warehouseId).first().catch(() => null);
+
+          if (matchedBranch) {
+            const bTenant = (matchedBranch as any).tenantId || (matchedBranch as any).tenant_id;
+            if (bTenant === tenantId) {
+              isRegisteredTenantBranch = true;
+            } else {
+              throw new Error(
+                `[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse '${warehouseId}' belongs to another tenant branch and cannot be accessed by tenant '${tenantId}'.`
+              );
+            }
+          }
+        }
+
+        if (!isDefaultWh && !isCurrentBranchWh && !isRegisteredTenantBranch) {
+          throw new Error(
+            `[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse '${warehouseId}' is unknown or not bound to authoritative tenant '${tenantId}'.`
+          );
+        }
+      }
+    }
     const beforeWarehouseQty = ws ? Number(ws.quantity || 0) : 0;
     
     // Product Master stock: canonical is 'stock'
@@ -980,9 +1043,9 @@ const brInv = await db.branchInventory
 
   private async checkExistingIdempotentTransaction(
     idempotencyKey: string,
-    docId: string,
-    docType: string,
-    productId: string,
+    _docId: string,
+    _docType: string,
+    _productId: string,
     tenantId: string
   ): Promise<any | null> {
     if (!tenantId) {
