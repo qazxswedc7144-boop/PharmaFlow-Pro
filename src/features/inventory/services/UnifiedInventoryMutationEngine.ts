@@ -857,10 +857,14 @@ export class UnifiedInventoryMutationEngine {
     if (!activeBranchId) {
        throw new Error(`[UnifiedEngine] activeBranchId is missing for branchInventory projection update for product ${productId}`);
     }
-    const brInv = await db.branchInventory
-      .where('[branchId+productId]')
-      .equals([activeBranchId, productId])
-      .first();
+    // 🚨 SECURITY FIX (P0): Filter by tenant INSIDE the query (same DoS fix as readWarehouseStock).
+// A record belonging to another tenant with the same [branchId+productId] must NOT block
+// this tenant's legitimate operation — it is simply invisible to us.
+const brInv = await db.branchInventory
+  .where('[branchId+productId]')
+  .equals([activeBranchId, productId])
+  .filter((b: any) => ((b.tenantId || b.tenant_id) === tenantId))
+  .first();
 
     // Enforce negative stock policy at the branch projection level as well
     if (delta < 0) {
@@ -883,10 +887,6 @@ export class UnifiedInventoryMutationEngine {
     }
 
     if (brInv) {
-      const brTenant = (brInv as any).tenantId || (brInv as any).tenant_id;
-      if (!brTenant || brTenant !== tenantId) {
-        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Branch inventory record '${brInv.id}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
-      }
       const newBrQty = (brInv.stockQuantity || 0) + delta;
       await db.branchInventory.update(brInv.id, {
         stockQuantity: newBrQty,
@@ -945,51 +945,35 @@ export class UnifiedInventoryMutationEngine {
   }
 
   private async readWarehouseStock(warehouseId: string, productId: string, tenantId: string): Promise<any | null> {
-    if (!tenantId) {
-      throw new Error(`[UnifiedEngine] TRUSTED_TENANT_CONTEXT_REQUIRED: tenantId is required for readWarehouseStock.`);
-    }
+  if (!tenantId) {
+    throw new Error(`[UnifiedEngine] TRUSTED_TENANT_CONTEXT_REQUIRED: tenantId is required for readWarehouseStock.`);
+  }
 
-    try {
-      const byCompound = await db.warehouseStock
-        .where('[warehouseId+productId]')
-        .equals([warehouseId, productId])
-        .first();
-      if (byCompound) {
-        const wsTenant = (byCompound as any).tenantId || (byCompound as any).tenant_id;
-        if (!wsTenant) {
-          throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${byCompound.id}' lacks tenant binding.`);
-        }
-        if (wsTenant !== tenantId) {
-          throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${byCompound.id}' belongs to tenant '${wsTenant}', not authoritative tenant '${tenantId}'.`);
-        }
-        return byCompound;
-      }
-    } catch (err: any) {
-      if (err?.message?.includes('CROSS_TENANT_VIOLATION')) {
-        throw err;
-      }
-      // Fallback in case compound index is not directly accessible
-    }
-
-    const byFilter = await db.warehouseStock
-      .filter((ws: any) => 
-        (ws.warehouseId === warehouseId || ws.warehouse_id === warehouseId) &&
-        (ws.productId === productId || ws.product_id === productId)
-      )
+  // 🚨 SECURITY FIX (P0): Filter by tenant INSIDE the query — prevents DoS when
+  // another tenant has a record with the same [warehouseId+productId] compound key.
+  // This is a READ-ONLY function: it must return null for "no record for THIS tenant",
+  // not throw when another tenant's record exists.
+  try {
+    const byCompound = await db.warehouseStock
+      .where('[warehouseId+productId]')
+      .equals([warehouseId, productId])
+      .filter((ws: any) => ((ws.tenantId || ws.tenant_id) === tenantId))
       .first();
+    if (byCompound) return byCompound;
+  } catch {
+    // Fallback if compound index is not directly accessible
+  }
 
-    if (byFilter) {
-      const wsTenant = (byFilter as any).tenantId || (byFilter as any).tenant_id;
-      if (!wsTenant) {
-        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${byFilter.id}' lacks tenant binding.`);
-      }
-      if (wsTenant !== tenantId) {
-        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${byFilter.id}' belongs to tenant '${wsTenant}', not authoritative tenant '${tenantId}'.`);
-      }
-      return byFilter;
-    }
+  // 🚨 SECURITY FIX (P0): Apply the same tenant filter in the fallback path.
+  const byFilter = await db.warehouseStock
+    .filter((ws: any) =>
+      (ws.warehouseId === warehouseId || ws.warehouse_id === warehouseId) &&
+      (ws.productId === productId || ws.product_id === productId) &&
+      ((ws.tenantId || ws.tenant_id) === tenantId)
+    )
+    .first();
 
-    return null;
+  return byFilter || null;
   }
 
   private async checkExistingIdempotentTransaction(
