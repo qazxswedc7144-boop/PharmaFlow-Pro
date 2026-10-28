@@ -7,33 +7,84 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 import { PriceHistoryRepository } from '@/database/repositories/PriceHistoryRepository';
 import { PurchaseRepository } from '@/database/repositories/PurchaseRepository';
 
+/**
+ * Shared helper for Authoritative Tenant Resolution (Security Fix #6)
+ */
+const getAuthorizedTenant = (callerTenantId?: string): string | null => {
+  const session = TokenProvider.getCurrentSession();
+  const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+
+  if (sessionTenantId) {
+    if (callerTenantId && callerTenantId !== sessionTenantId) return null;
+    return sessionTenantId;
+  }
+  
+  // Fail-closed: No session tenant allowed to access anything
+  return null;
+};
+
+const FORBIDDEN_TENANTS = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+
 export const ProductRepository = {
-  getAll: async (options: { limit?: number; offset?: number; branchId?: string } = {}): Promise<Product[]> => {
-    const { limit = 20, offset = 0, branchId } = options;
-    const all = await db.getProducts();
+  getAll: async (options: { limit?: number; offset?: number; branchId?: string; tenantId?: string } = {}): Promise<Product[]> => {
+    const { limit = 20, offset = 0, branchId, tenantId } = options;
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
+    
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      return [];
+    }
+
+    // Performance & Security: Query using tenantId index instead of fetching all products
+    let query = db.products.where('tenantId').equals(effectiveTenantId);
+    
+    const all = await query.toArray();
     let filtered = all.filter(p => p.Is_Active !== false);
+    
     if (branchId) {
       filtered = filtered.filter(p => p.branchId === branchId || !p.branchId);
     }
     return filtered.slice(offset, offset + limit);
   },
 
-  getById: async (id: string): Promise<Product | undefined> => {
+  getById: async (id: string, tenantId?: string): Promise<Product | undefined> => {
     if (!id) return undefined;
-    const all = await db.getProducts();
-    return all.find(p => p.id === id);
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
+    
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      return undefined;
+    }
+
+    // Use compound index [tenantId+id] if available, or verify after fetch
+    // Version 27 has [tenantId+id]
+    const product = await db.products.where('[tenantId+id]').equals([effectiveTenantId, id]).first();
+    return product;
   },
 
-  getByBarcode: async (barcode: string): Promise<Product | undefined> => {
+  getByBarcode: async (barcode: string, tenantId?: string): Promise<Product | undefined> => {
     if (!barcode) return undefined;
-    const all = await db.getProducts();
-    return all.find(p => p.barcode === barcode);
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
+    
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      return undefined;
+    }
+
+    // Use compound index [tenantId+barcode] (Version 27)
+    return await db.products.where('[tenantId+barcode]').equals([effectiveTenantId, barcode]).first();
   },
 
-  search: async (term: string, limit: number = 50): Promise<Product[]> => {
+  search: async (term: string, limit: number = 50, tenantId?: string): Promise<Product[]> => {
     if (!term) return [];
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
+    
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      return [];
+    }
+
     const lowerTerm = term.toLowerCase();
-    const all = await db.getProducts();
+    
+    // Security: Filter by tenantId in the query
+    const all = await db.products.where('tenantId').equals(effectiveTenantId).toArray();
+    
     return all
       .filter(p => {
         if (p.Is_Active === false) return false;
@@ -89,8 +140,6 @@ export const ProductRepository = {
     }
 
     await db.saveProduct(product);
-    
-    // Auto-push removed (Offline Only)
   },
 
   delete: async (id: string): Promise<void> => {
@@ -103,95 +152,77 @@ export const ProductRepository = {
     useUIStore.getState().addToast('تم حذف الصنف بنجاح (حذف آمن)', 'success');
   },
 
-  calculateCurrentBalance: async (productId: string): Promise<number> => {
+  calculateCurrentBalance: async (productId: string, tenantId?: string): Promise<number> => {
     if (!productId) return 0;
-    const txs = await db.inventoryTransactions.where('productId').equals(productId).toArray();
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
+    
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      return 0;
+    }
+
+    // Security: Verify product ownership first
+    const product = await ProductRepository.getById(productId, effectiveTenantId);
+    if (!product) return 0;
+
+    const txs = await db.inventoryTransactions
+      .where('productId')
+      .equals(productId)
+      .filter((t: any) => (t.tenantId === effectiveTenantId || t.tenant_id === effectiveTenantId))
+      .toArray();
+
     return txs.reduce((sum, tx) => sum + (tx.QuantityChange || 0), 0);
   },
 
   getPriceHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<PriceHistory[]> => {
     if (!productId) return [];
-    const session = TokenProvider.getCurrentSession();
-    const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
 
-    // Authoritative Security Boundary (Security Fix #5)
-    if (sessionTenantId) {
-      if (tenantId && tenantId !== sessionTenantId) {
-        return []; // Conflict -> Fail Closed
-      }
-    } else if (tenantId) {
-      // A missing session tenant must not automatically authorize access
-      return []; // No session -> Fail Closed
-    }
-
-    const effectiveTenantId = sessionTenantId || tenantId;
-    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
-    if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
       return [];
     }
 
     // Security: ProductId alone must NOT authorize access if the product belongs to another tenant
-    const product = await db.products.get(productId);
+    const product = await ProductRepository.getById(productId, effectiveTenantId);
     if (!product) return [];
-    
-    const productTenant = (product as any).tenantId || (product as any).tenant_id;
-    
-    // Fail-closed for unbound products or cross-tenant access
-    if (!productTenant || productTenant !== effectiveTenantId) {
-      return [];
-    }
 
     return await PriceHistoryRepository.getRecentInsights(productId, limit, effectiveTenantId);
   },
 
   getPurchaseHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<Purchase[]> => {
     if (!productId) return [];
-    const session = TokenProvider.getCurrentSession();
-    const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
 
-    // Authoritative Security Boundary (Security Fix #5)
-    if (sessionTenantId) {
-      if (tenantId && tenantId !== sessionTenantId) {
-        return []; // Conflict -> Fail Closed
-      }
-    } else if (tenantId) {
-      // A missing session tenant must not automatically authorize access
-      return []; // No session -> Fail Closed
-    }
-
-    const effectiveTenantId = sessionTenantId || tenantId;
-    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
-    if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
       return [];
     }
 
     // Security: ProductId alone must NOT authorize access if the product belongs to another tenant
-    const product = await db.products.get(productId);
+    const product = await ProductRepository.getById(productId, effectiveTenantId);
     if (!product) return [];
-    
-    const productTenant = (product as any).tenantId || (product as any).tenant_id;
-    
-    // Fail-closed for unbound products or cross-tenant access
-    if (!productTenant || productTenant !== effectiveTenantId) {
-      return [];
-    }
 
     return await PurchaseRepository.getItemPurchaseHistory(productId, limit, effectiveTenantId);
   },
 
-  getItemAutoFillDetails: async (productId: string): Promise<{
+  getItemAutoFillDetails: async (productId: string, tenantId?: string): Promise<{
     lastPrice: number;
     category: string;
     supplierId: string;
     supplierName: string;
   } | null> => {
     if (!productId) return null;
-    const product = await ProductRepository.getById(productId);
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
+    
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      return null;
+    }
+
+    const product = await ProductRepository.getById(productId, effectiveTenantId);
     if (!product) return null;
 
     const lastPurchase = await db.purchasesByItem
       .where('productId')
       .equals(productId)
+      .filter((p: any) => (p.tenantId === effectiveTenantId || p.tenant_id === effectiveTenantId))
       .reverse()
       .first();
 
@@ -203,12 +234,18 @@ export const ProductRepository = {
     };
   },
 
-  getExpiringSoon: async (days: number = 30): Promise<Product[]> => {
+  getExpiringSoon: async (days: number = 30, tenantId?: string): Promise<Product[]> => {
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
+    
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      return [];
+    }
+
     const today = new Date();
     const limitDate = new Date();
     limitDate.setDate(today.getDate() + days);
 
-    const all = await db.getProducts();
+    const all = await db.products.where('tenantId').equals(effectiveTenantId).toArray();
     return all
       .filter(p => {
         if (!p.ExpiryDate) return false;
@@ -218,3 +255,4 @@ export const ProductRepository = {
       .sort((a, b) => new Date(a.ExpiryDate!).getTime() - new Date(b.ExpiryDate!).getTime());
   }
 };
+
