@@ -4,6 +4,12 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { Role } from "@prisma/client";
 
+// 🚨 FIX: Centralized constants to prevent expiration drift between JWT and DB records
+const ACCESS_TOKEN_EXPIRY_STR = "4h";
+const ACCESS_TOKEN_EXPIRY_MS = 4 * 60 * 60 * 1000;
+const REFRESH_TOKEN_EXPIRY_STR = "7d";
+const REFRESH_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
+
 const getJwtSecret = () => {
   const secret = process.env.JWT_SECRET;
   if (!secret) {
@@ -26,7 +32,6 @@ const getJwtRefreshSecret = () => {
   return secret;
 };
 
-// ✅ إصلاح 1: إضافة tenantId إلى واجهات الأنواع
 export interface DecodedAccessToken {
   userId: string;
   username: string;
@@ -56,31 +61,37 @@ export class AuthService {
   }
 
   /**
-   * Token generator representing valid authorization duration (e.g., 1 hour).
+   * Token generator representing valid authorization duration.
    */
-  // ✅ إصلاح 2: تمرير وحفظ tenantId داخل التوكن
-  static generateAccessToken(user: { id: string; username: string; role: Role; tenantId: string }): string {
+  // 🚨 FIX: Accept both `userId` and `id` to support the updated AuthController payload while maintaining backwards compatibility
+  static generateAccessToken(user: { id?: string; userId?: string; username: string; role: Role; tenantId: string }): string {
+    const finalUserId = user.userId || user.id;
+    if (!finalUserId) throw new Error("USER_ID_REQUIRED: Cannot generate token without user ID.");
+
     return jwt.sign(
       { 
-        userId: user.id, 
+        userId: finalUserId, 
         username: user.username, 
         role: user.role,
-        tenantId: user.tenantId // 👈 إجباري لعزل المؤسسات
+        tenantId: user.tenantId
       },
       getJwtSecret(),
-      { expiresIn: "4h", algorithm: "HS256" } // ✅ تحديد الخوارزمية
+      { expiresIn: ACCESS_TOKEN_EXPIRY_STR, algorithm: "HS256" }
     );
   }
 
   /**
-   * Refreshes JWT tokens allowing users to request a new session within 7 days.
+   * Refreshes JWT tokens allowing users to request a new session.
    */
-  // ✅ إصلاح 3: تمرير وحفظ tenantId داخل توكن التحديث
-  static generateRefreshToken(user: { id: string; tenantId: string }): string {
+  // 🚨 FIX: Accept both `userId` and `id`
+  static generateRefreshToken(user: { id?: string; userId?: string; tenantId: string }): string {
+    const finalUserId = user.userId || user.id;
+    if (!finalUserId) throw new Error("USER_ID_REQUIRED: Cannot generate refresh token without user ID.");
+
     return jwt.sign(
-      { userId: user.id, tenantId: user.tenantId }, 
+      { userId: finalUserId, tenantId: user.tenantId }, 
       getJwtRefreshSecret(),
-      { expiresIn: "7d", algorithm: "HS256" } // ✅ تحديد الخوارزمية
+      { expiresIn: REFRESH_TOKEN_EXPIRY_STR, algorithm: "HS256" }
     );
   }
 
@@ -88,7 +99,6 @@ export class AuthService {
    * Safe payload parsing for verification of access signatures.
    */
   static verifyAccessToken(token: string): DecodedAccessToken {
-    // ✅ إصلاح أمني: منع Algorithm Confusion
     return jwt.verify(token, getJwtSecret(), { algorithms: ["HS256"] }) as DecodedAccessToken;
   }
 
@@ -96,7 +106,6 @@ export class AuthService {
    * Safe payload parsing for verification of refresh signatures.
    */
   static verifyRefreshToken(token: string): DecodedRefreshToken {
-    // ✅ إصلاح أمني: منع Algorithm Confusion
     return jwt.verify(token, getJwtRefreshSecret(), { algorithms: ["HS256"] }) as DecodedRefreshToken;
   }
 
@@ -104,7 +113,7 @@ export class AuthService {
    * Generates or retrieves active server-side sessions.
    */
   static async createSession(userId: string, token: string, ip?: string, agent?: string) {
-    const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000); // 4 hours
+    const expiresAt = new Date(Date.now() + ACCESS_TOKEN_EXPIRY_MS);
     return prisma.session.create({
       data: {
         userId,
@@ -120,7 +129,7 @@ export class AuthService {
    * Refreshes access tokens when validated against the database refresh tokens.
    */
   static async createRefreshTokenRecord(userId: string, token: string) {
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_MS);
     return prisma.refreshToken.create({
       data: {
         userId,
@@ -138,8 +147,11 @@ export class AuthService {
       await prisma.session.delete({
         where: { token }
       });
-    } catch (e) {
-      // Already deleted or non-existent
+    } catch (e: any) {
+      // 🚨 FIX: Log unexpected errors instead of failing silently, but maintain idempotency
+      if (e.code !== 'P2025') {
+        console.warn("[AuthService] Unexpected error revoking session:", e.message);
+      }
     }
   }
 
@@ -149,8 +161,11 @@ export class AuthService {
         where: { token },
         data: { revoked: true }
       });
-    } catch (e) {
-      // Already revoked or non-existent
+    } catch (e: any) {
+      // 🚨 FIX: Log unexpected errors instead of failing silently
+      if (e.code !== 'P2025') {
+        console.warn("[AuthService] Unexpected error revoking refresh token:", e.message);
+      }
     }
   }
 }
