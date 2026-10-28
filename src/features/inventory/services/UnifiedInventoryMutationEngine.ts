@@ -62,6 +62,7 @@ export interface InternalItemMutationParams {
   idempotencyKey: string;
   notes?: string;
   timestamp: string;
+  reversedMovementId?: string;
 }
 
 export class UnifiedInventoryMutationEngine {
@@ -85,6 +86,9 @@ export class UnifiedInventoryMutationEngine {
    */
   public async executeIssueSale(command: IssueSaleStockCommand): Promise<InventoryMutationResult[]> {
     this.validateCommandBasics(command, 'IssueSale');
+    if (!Array.isArray(command.items) || command.items.length === 0) {
+      throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
+    }
     const timestamp = command.timestamp || new Date().toISOString();
 
     return await this.executeAtomicTransaction(async () => {
@@ -126,6 +130,9 @@ export class UnifiedInventoryMutationEngine {
    */
   public async executeReceivePurchase(command: ReceivePurchaseStockCommand): Promise<InventoryMutationResult[]> {
     this.validateCommandBasics(command, 'ReceivePurchase');
+    if (!Array.isArray(command.items) || command.items.length === 0) {
+      throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
+    }
     const timestamp = command.timestamp || new Date().toISOString();
 
     return await this.executeAtomicTransaction(async () => {
@@ -167,6 +174,9 @@ export class UnifiedInventoryMutationEngine {
    */
   public async executeSalesReturn(command: ProcessSalesReturnStockCommand): Promise<InventoryMutationResult[]> {
     this.validateCommandBasics(command, 'ProcessSalesReturn');
+    if (!Array.isArray(command.items) || command.items.length === 0) {
+      throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
+    }
     const timestamp = command.timestamp || new Date().toISOString();
 
     return await this.executeAtomicTransaction(async () => {
@@ -207,6 +217,9 @@ export class UnifiedInventoryMutationEngine {
    */
   public async executePurchaseReturn(command: ProcessPurchaseReturnStockCommand): Promise<InventoryMutationResult[]> {
     this.validateCommandBasics(command, 'ProcessPurchaseReturn');
+    if (!Array.isArray(command.items) || command.items.length === 0) {
+      throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
+    }
     const timestamp = command.timestamp || new Date().toISOString();
 
     return await this.executeAtomicTransaction(async () => {
@@ -408,39 +421,38 @@ export class UnifiedInventoryMutationEngine {
 
     return await this.executeAtomicTransaction(async () => {
       // Find all original movements for this document belonging to authoritative tenant.
-// STRICTLY EXCLUDE any prior REVERSAL entries to prevent double-reversal corruption.
-const allMovements = await db.inventoryTransactions
-  .where('source_doc_id')
-  .equals(command.originalDocumentId)
-  .filter((t: any) => ((t.tenantId || t.tenant_id) === command.tenantId))
-  .toArray();
+      // STRICTLY EXCLUDE any prior REVERSAL entries to prevent double-reversal corruption.
+      const allMovements = await db.inventoryTransactions
+        .where('source_doc_id')
+        .equals(command.originalDocumentId)
+        .filter((t: any) => ((t.tenantId || t.tenant_id) === command.tenantId))
+        .toArray();
 
-const baseMovements = allMovements.length > 0
-  ? allMovements
-  : await db.inventoryTransactions
-      .filter((t: any) =>
-        t.SourceDocumentID === command.originalDocumentId &&
-        ((t.tenantId || t.tenant_id) === command.tenantId)
-      )
-      .toArray();
+      const baseMovements = allMovements.length > 0
+        ? allMovements
+        : await db.inventoryTransactions
+            .filter((t: any) =>
+              t.SourceDocumentID === command.originalDocumentId &&
+              ((t.tenantId || t.tenant_id) === command.tenantId)
+            )
+            .toArray();
 
-// Exclude any transaction that is itself a REVERSAL (already compensating movement)
-const alreadyReversedIds = new Set<string>(
-  baseMovements
-    .filter((t: any) => {
-      const txType = t.TransactionType || t.transactionType || t.transaction_type;
-      return txType === 'REVERSAL' && (t.reversedMovementId || t.reversal_of_id);
-    })
-    .map((t: any) => String(t.reversedMovementId || t.reversal_of_id))
-);
+      const alreadyReversedIds = new Set<string>(
+        baseMovements
+          .filter((t: any) => {
+            const txType = t.TransactionType || t.transactionType || t.transaction_type;
+            return txType === 'REVERSAL' && (t.reversedMovementId || t.reversal_of_id);
+          })
+          .map((t: any) => String(t.reversedMovementId || t.reversal_of_id))
+      );
 
-const movementsToReverse = baseMovements.filter((t: any) => {
-  const txType = t.TransactionType || t.transactionType || t.transaction_type;
-  if (txType === 'REVERSAL') return false;               // لا تعكس العكس نفسه
-  const thisId = String(t.id || t.TransactionID);
-  if (alreadyReversedIds.has(thisId)) return false;      // عُكست مسبقًا
-  return true;
-});
+      const movementsToReverse = baseMovements.filter((t: any) => {
+        const txType = t.TransactionType || t.transactionType || t.transaction_type;
+        if (txType === 'REVERSAL') return false;
+        const thisId = String(t.id || t.TransactionID);
+        if (alreadyReversedIds.has(thisId)) return false;
+        return true;
+      });
 
       if (movementsToReverse.length === 0) {
         return [];
@@ -455,21 +467,21 @@ const movementsToReverse = baseMovements.filter((t: any) => {
         const revKey = `${command.transactionUuid}-REV-${orig.id || orig.TransactionID}-${i}`;
 
         const res = await this.mutateSingleItem({
-  productId: orig.productId || orig.product_id,
-  warehouseId: orig.warehouseId || orig.warehouse_id || 'WH-MAIN',
-  delta: reversedDelta,
-  docType: 'REVERSAL',
-  docId: command.originalDocumentId,
-  movementType: 'REVERSAL',
-  unitCost: orig.unit_cost,
-  userId: command.userId,
-  tenantId: command.tenantId,
-  branchId: command.branchId || orig.branchId,
-  idempotencyKey: revKey,
-  notes: `قيد عكسي تعويضي للمستند #${command.originalDocumentId}. السبب: ${command.reason}`,
-  timestamp,
-  reversedMovementId: String(orig.id || orig.TransactionID)   // ← جديد
-} as any);
+          productId: orig.productId || orig.product_id,
+          warehouseId: orig.warehouseId || orig.warehouse_id || 'WH-MAIN',
+          delta: reversedDelta,
+          docType: 'REVERSAL',
+          docId: command.originalDocumentId,
+          movementType: 'REVERSAL',
+          unitCost: orig.unit_cost,
+          userId: command.userId,
+          tenantId: command.tenantId,
+          branchId: command.branchId || orig.branchId,
+          idempotencyKey: revKey,
+          notes: `قيد عكسي تعويضي للمستند #${command.originalDocumentId}. السبب: ${command.reason}`,
+          timestamp,
+          reversedMovementId: String(orig.id || orig.TransactionID)
+        });
 
         results.push(res);
       }
@@ -484,6 +496,10 @@ const movementsToReverse = baseMovements.filter((t: any) => {
   public async executeCorrection(command: ExecuteApprovedCorrectionCommand): Promise<InventoryMutationResult> {
     this.validateCommandBasics(command, 'ExecuteApprovedCorrection');
     const timestamp = command.timestamp || new Date().toISOString();
+
+    if (!command.approverId || typeof command.approverId !== 'string' || command.approverId.trim() === '') {
+      throw new Error(`[UnifiedEngine] approverId is required for ExecuteApprovedCorrection (case #${command.caseId}).`);
+    }
 
     const existingTx = await this.checkExistingIdempotentTransaction(command.transactionUuid, command.caseId, 'CORRECTION', command.productId, command.tenantId);
     if (existingTx) {
@@ -635,6 +651,21 @@ const movementsToReverse = baseMovements.filter((t: any) => {
       };
     }
 
+    // No-op guard: do not create zero-quantity ledger entries or empty batches
+    if (delta === 0) {
+      return {
+        success: true,
+        transactionId: null as any,
+        productId,
+        warehouseId,
+        previousStock: 0,
+        newStock: 0,
+        delta: 0,
+        calculatedCost: 0,
+        timestamp
+      };
+    }
+
     // 2. Validate Product Existence, Active Status & Strict Tenant Binding
     const product = await db.products.get(productId);
     if (!product) {
@@ -780,7 +811,9 @@ const movementsToReverse = baseMovements.filter((t: any) => {
       created_at: timestamp,
       lastModified: timestamp,
       notes: notes || `[UnifiedEngine] ${movementType}: ${delta}`,
-      idempotencyKey: idempotencyKey || null
+      idempotencyKey: idempotencyKey || null,
+      reversedMovementId: params.reversedMovementId || null,
+      reversal_of_id: params.reversedMovementId || null
     };
 
     await db.inventoryTransactions.add(ledgerRecord);
@@ -828,6 +861,26 @@ const movementsToReverse = baseMovements.filter((t: any) => {
       .where('[branchId+productId]')
       .equals([activeBranchId, productId])
       .first();
+
+    // Enforce negative stock policy at the branch projection level as well
+    if (delta < 0) {
+      const currentBrQty = brInv ? Number(brInv.stockQuantity || 0) : 0;
+      const projectedBrQty = currentBrQty + delta;
+      if (projectedBrQty < 0) {
+        const allowNegative =
+          configurationService.getSync<boolean>('inventory.allowNegativeStock') ??
+          configurationService.getSync<boolean>('sales.allow_negative_stock') ??
+          false;
+        if (!allowNegative) {
+          throw new InsufficientStockError({
+            message: `Insufficient branch stock for product '${productId}' in branch '${activeBranchId}'. Available: ${currentBrQty}, Requested: ${Math.abs(delta)}.`,
+            arabicMessage: `الكمية غير متوفرة في الفرع "${activeBranchId}" للصنف "${productId}". المتوفر: ${currentBrQty}، المطلوب: ${Math.abs(delta)}.`,
+            module: 'INVENTORY',
+            metadata: { productId, branchId: activeBranchId, currentBrQty, delta, projectedBrQty }
+          });
+        }
+      }
+    }
 
     if (brInv) {
       const brTenant = (brInv as any).tenantId || (brInv as any).tenant_id;
@@ -952,10 +1005,7 @@ const movementsToReverse = baseMovements.filter((t: any) => {
     if (!idempotencyKey) return null;
 
     const matchingTxs = await db.inventoryTransactions
-      .filter((t: any) => 
-        t.idempotencyKey === idempotencyKey ||
-        (t.SourceDocumentID === docId && t.SourceDocumentType === docType && t.productId === productId && t.idempotencyKey === idempotencyKey)
-      )
+      .filter((t: any) => t.idempotencyKey === idempotencyKey)
       .toArray();
 
     for (const tx of matchingTxs) {
