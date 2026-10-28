@@ -853,11 +853,12 @@ export class UnifiedInventoryMutationEngine {
     }
 
     // 13. Update Branch Inventory Projection (branchInventory[branchId+productId].stockQuantity)
-    const activeBranchId = branchId;
-    if (!activeBranchId) {
-       throw new Error(`[UnifiedEngine] activeBranchId is missing for branchInventory projection update for product ${productId}`);
-    }
-    // 🚨 SECURITY FIX (P0): Filter by tenant INSIDE the query (same DoS fix as readWarehouseStock).
+const activeBranchId = branchId;
+if (!activeBranchId) {
+   throw new Error(`[UnifiedEngine] activeBranchId is missing for branchInventory projection update for product ${productId}`);
+}
+
+// 🚨 SECURITY FIX (P0): Filter by tenant INSIDE the query (same DoS fix as readWarehouseStock).
 // A record belonging to another tenant with the same [branchId+productId] must NOT block
 // this tenant's legitimate operation — it is simply invisible to us.
 const brInv = await db.branchInventory
