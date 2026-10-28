@@ -58,9 +58,16 @@ export class AuthController {
         return res.status(403).json({ error: "NO_ACTIVE_TENANT", message: "لا يوجد حساب مؤسسة نشط لهذا المستخدم." });
       }
 
-      // ملاحظة: AuthService يجب أن يستقبل activeTenantId ليضعه في التوكن
-      const accessToken = AuthService.generateAccessToken({ ...user, tenantId: activeTenantId });
-      const refreshToken = AuthService.generateRefreshToken({ ...user, tenantId: activeTenantId });
+      // 🚨 SECURITY FIX: Explicit payload to prevent passwordHash leakage into JWT
+      const tokenPayload = {
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        tenantId: activeTenantId
+      };
+
+      const accessToken = AuthService.generateAccessToken(tokenPayload);
+      const refreshToken = AuthService.generateRefreshToken(tokenPayload);
 
       // Persist active sessions
       await AuthService.createSession(user.id, accessToken, req.ip, req.headers["user-agent"]);
@@ -125,11 +132,19 @@ export class AuthController {
         return res.status(403).json({ error: "NO_ACTIVE_TENANT", message: "لا يوجد حساب مؤسسة نشط." });
       }
 
-      const newAccessToken = AuthService.generateAccessToken({ ...user, tenantId: activeTenantId });
+      // 🚨 SECURITY FIX: Explicit payload to prevent passwordHash leakage into JWT
+      const tokenPayload = {
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        tenantId: activeTenantId
+      };
+
+      const newAccessToken = AuthService.generateAccessToken(tokenPayload);
       
       // ✅ Refresh Token Rotation (إصلاح أمني: إلغاء القديم وإصدار جديد)
       await AuthService.revokeRefreshToken(refreshToken);
-      const newRefreshToken = AuthService.generateRefreshToken({ ...user, tenantId: activeTenantId });
+      const newRefreshToken = AuthService.generateRefreshToken(tokenPayload);
       await AuthService.createRefreshTokenRecord(user.id, newRefreshToken);
       await AuthService.createSession(user.id, newAccessToken, req.ip, req.headers["user-agent"]);
 
@@ -163,10 +178,11 @@ export class AuthController {
 
       if (req.user) {
         // ✅ إصلاح: القيمة الصحيحة من الـ Enum + إضافة tenantId و ip
+        // (ملاحظة: JSON.stringify و USER_LOGIN سيتم تعديلهما لاحقاً عند تحديث الـ Audit Schema)
         await AuditService.log({
           tenantId: (req.user as any).tenantId || "SYSTEM",
           userId: req.user.userId,
-          action: "USER_LOGIN", // نستخدم USER_LOGIN لأن الـ Schema لا يحتوي على USER_LOGOUT
+          action: "USER_LOGIN", 
           entity: "User",
           entityId: req.user.userId,
           after: JSON.stringify({ event: "LOGOUT", message: "Sessions invalidated cleanly" }),
