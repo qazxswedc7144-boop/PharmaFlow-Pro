@@ -407,21 +407,40 @@ export class UnifiedInventoryMutationEngine {
     const timestamp = command.timestamp || new Date().toISOString();
 
     return await this.executeAtomicTransaction(async () => {
-      // Find all original movements for this document belonging to authoritative tenant
-      const originalMovements = await db.inventoryTransactions
-        .where('source_doc_id')
-        .equals(command.originalDocumentId)
-        .filter((t: any) => ((t.tenantId || t.tenant_id) === command.tenantId))
-        .toArray();
+      // Find all original movements for this document belonging to authoritative tenant.
+// STRICTLY EXCLUDE any prior REVERSAL entries to prevent double-reversal corruption.
+const allMovements = await db.inventoryTransactions
+  .where('source_doc_id')
+  .equals(command.originalDocumentId)
+  .filter((t: any) => ((t.tenantId || t.tenant_id) === command.tenantId))
+  .toArray();
 
-      const movementsToReverse = originalMovements.length > 0 
-        ? originalMovements 
-        : await db.inventoryTransactions
-            .filter((t: any) => 
-              t.SourceDocumentID === command.originalDocumentId &&
-              ((t.tenantId || t.tenant_id) === command.tenantId)
-            )
-            .toArray();
+const baseMovements = allMovements.length > 0
+  ? allMovements
+  : await db.inventoryTransactions
+      .filter((t: any) =>
+        t.SourceDocumentID === command.originalDocumentId &&
+        ((t.tenantId || t.tenant_id) === command.tenantId)
+      )
+      .toArray();
+
+// Exclude any transaction that is itself a REVERSAL (already compensating movement)
+const alreadyReversedIds = new Set<string>(
+  baseMovements
+    .filter((t: any) => {
+      const txType = t.TransactionType || t.transactionType || t.transaction_type;
+      return txType === 'REVERSAL' && (t.reversedMovementId || t.reversal_of_id);
+    })
+    .map((t: any) => String(t.reversedMovementId || t.reversal_of_id))
+);
+
+const movementsToReverse = baseMovements.filter((t: any) => {
+  const txType = t.TransactionType || t.transactionType || t.transaction_type;
+  if (txType === 'REVERSAL') return false;               // لا تعكس العكس نفسه
+  const thisId = String(t.id || t.TransactionID);
+  if (alreadyReversedIds.has(thisId)) return false;      // عُكست مسبقًا
+  return true;
+});
 
       if (movementsToReverse.length === 0) {
         return [];
@@ -436,20 +455,21 @@ export class UnifiedInventoryMutationEngine {
         const revKey = `${command.transactionUuid}-REV-${orig.id || orig.TransactionID}-${i}`;
 
         const res = await this.mutateSingleItem({
-          productId: orig.productId || orig.product_id,
-          warehouseId: orig.warehouseId || orig.warehouse_id || 'WH-MAIN',
-          delta: reversedDelta,
-          docType: 'REVERSAL',
-          docId: command.originalDocumentId,
-          movementType: 'REVERSAL',
-          unitCost: orig.unit_cost,
-          userId: command.userId,
-          tenantId: command.tenantId,
-          branchId: command.branchId || orig.branchId,
-          idempotencyKey: revKey,
-          notes: `قيد عكسي تعويضي للمستند #${command.originalDocumentId}. السبب: ${command.reason}`,
-          timestamp
-        });
+  productId: orig.productId || orig.product_id,
+  warehouseId: orig.warehouseId || orig.warehouse_id || 'WH-MAIN',
+  delta: reversedDelta,
+  docType: 'REVERSAL',
+  docId: command.originalDocumentId,
+  movementType: 'REVERSAL',
+  unitCost: orig.unit_cost,
+  userId: command.userId,
+  tenantId: command.tenantId,
+  branchId: command.branchId || orig.branchId,
+  idempotencyKey: revKey,
+  notes: `قيد عكسي تعويضي للمستند #${command.originalDocumentId}. السبب: ${command.reason}`,
+  timestamp,
+  reversedMovementId: String(orig.id || orig.TransactionID)   // ← جديد
+} as any);
 
         results.push(res);
       }
