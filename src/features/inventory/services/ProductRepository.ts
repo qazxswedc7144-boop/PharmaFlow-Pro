@@ -112,7 +112,14 @@ export const ProductRepository = {
   getPriceHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<PriceHistory[]> => {
     if (!productId) return [];
     const session = TokenProvider.getCurrentSession();
-    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+
+    // Authoritative Security Boundary
+    if (tenantId && sessionTenantId && tenantId !== sessionTenantId) {
+      return [];
+    }
+
+    const effectiveTenantId = sessionTenantId || tenantId;
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
       return [];
@@ -121,8 +128,11 @@ export const ProductRepository = {
     // Security: ProductId alone must NOT authorize access if the product belongs to another tenant
     const product = await db.products.get(productId);
     if (!product) return [];
+    
     const productTenant = (product as any).tenantId || (product as any).tenant_id;
-    if (productTenant && productTenant !== effectiveTenantId) {
+    
+    // Fail-closed for unbound products or cross-tenant access
+    if (!productTenant || productTenant !== effectiveTenantId) {
       return [];
     }
 
@@ -132,7 +142,14 @@ export const ProductRepository = {
   getPurchaseHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<Purchase[]> => {
     if (!productId) return [];
     const session = TokenProvider.getCurrentSession();
-    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+
+    // Authoritative Security Boundary
+    if (tenantId && sessionTenantId && tenantId !== sessionTenantId) {
+      return [];
+    }
+
+    const effectiveTenantId = sessionTenantId || tenantId;
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
       return [];
@@ -141,8 +158,11 @@ export const ProductRepository = {
     // Security: ProductId alone must NOT authorize access if the product belongs to another tenant
     const product = await db.products.get(productId);
     if (!product) return [];
+    
     const productTenant = (product as any).tenantId || (product as any).tenant_id;
-    if (productTenant && productTenant !== effectiveTenantId) {
+    
+    // Fail-closed for unbound products or cross-tenant access
+    if (!productTenant || productTenant !== effectiveTenantId) {
       return [];
     }
 

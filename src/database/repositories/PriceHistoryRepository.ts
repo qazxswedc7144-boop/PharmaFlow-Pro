@@ -6,7 +6,20 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 export const PriceHistoryRepository = {
   record: async (productId: string, name: string, partnerId: string, price: number, date: string, tenantId?: string): Promise<void> => {
     const session = TokenProvider.getCurrentSession();
-    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    
+    // Authoritative Security Boundary
+    if (tenantId && sessionTenantId && tenantId !== sessionTenantId) {
+      throw new Error(`TENANT_CONFLICT: Authenticated session tenant [${sessionTenantId}] takes precedence over caller-supplied tenant [${tenantId}].`);
+    }
+    
+    const effectiveTenantId = sessionTenantId || tenantId;
+    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
+    
+    if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
+      return;
+    }
+
     await db.priceHistory.add({
       id: db.generateId('PH'),
       productId,
@@ -82,7 +95,14 @@ export const PriceHistoryRepository = {
   getRecentInsights: async (productId: string, limit: number = 5, tenantId?: string): Promise<any[]> => {
     if (!productId) return [];
     const session = TokenProvider.getCurrentSession();
-    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+
+    // Authoritative Security Boundary
+    if (tenantId && sessionTenantId && tenantId !== sessionTenantId) {
+      return [];
+    }
+
+    const effectiveTenantId = sessionTenantId || tenantId;
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
       return [];

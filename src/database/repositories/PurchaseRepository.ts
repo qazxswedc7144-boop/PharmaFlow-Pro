@@ -71,7 +71,14 @@ export const PurchaseRepository = {
   getItemPurchaseHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<Purchase[]> => {
     if (!productId) return [];
     const session = TokenProvider.getCurrentSession();
-    const effectiveTenantId = tenantId || session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+    const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
+
+    // Authoritative Security Boundary
+    if (tenantId && sessionTenantId && tenantId !== sessionTenantId) {
+      return [];
+    }
+
+    const effectiveTenantId = sessionTenantId || tenantId;
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     if (!effectiveTenantId || forbiddenTenants.includes(effectiveTenantId)) {
       return [];

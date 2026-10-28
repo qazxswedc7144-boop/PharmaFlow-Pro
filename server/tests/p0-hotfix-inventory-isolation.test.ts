@@ -4,6 +4,7 @@ import { db } from '../../src/core/db';
 import { InventoryService } from '@/features/inventory/services/InventoryService';
 import { ProductRepository } from '@/features/inventory/services/ProductRepository';
 import { TokenProvider } from '@/services/auth/tokenProvider';
+import { PriceHistoryRepository } from '@/database/repositories/PriceHistoryRepository';
 
 describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   const validTenant = 'REAL-TENANT-001';
@@ -497,6 +498,79 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       const purchasesB = await ProductRepository.getPurchaseHistory(productB, 10);
       expect(pricesB).toHaveLength(0);
       expect(purchasesB).toHaveLength(0);
+    });
+  });
+
+  describe('Security Fix #4: Authoritative Tenant Resolution', () => {
+    const tenantA = 'TENANT-SEC-A';
+    const tenantB = 'TENANT-SEC-B';
+    const productA = 'PROD-SEC-A';
+    const productUnbound = 'PROD-SEC-UNBOUND';
+
+    beforeEach(async () => {
+      await db.products.put({
+        id: productA,
+        name: 'Sec Product A',
+        tenantId: tenantA,
+        isActive: true
+      } as any);
+
+      await db.products.put({
+        id: productUnbound,
+        name: 'Sec Product Unbound',
+        // No tenantId
+        isActive: true
+      } as any);
+
+      await db.priceHistory.put({
+        id: 'PH-SEC-A-1',
+        productId: productA,
+        Price: 100,
+        date: '2026-01-01',
+        tenantId: tenantA
+      } as any);
+    });
+
+    it('A. Authoritative session resolution: Session tenant is used even if caller passes different tenantId', async () => {
+      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      // Caller passes tenantB, but session is tenantA. Should return tenantA data.
+      const history = await ProductRepository.getPriceHistory(productA, 5, tenantB);
+      expect(history).toEqual([]); // Should be rejected because tenantB (caller) != tenantA (session)
+    });
+
+    it('B. Tenant ID conflict (Session != Caller) => reject', async () => {
+      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      await expect(ProductRepository.getPriceHistory(productA, 5, tenantB)).resolves.toEqual([]);
+    });
+
+    it('C. Fail-closed for unbound products (product has no tenantId)', async () => {
+      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      const history = await ProductRepository.getPriceHistory(productUnbound);
+      expect(history).toEqual([]);
+    });
+
+    it('D. Fail-closed for cross-tenant product access', async () => {
+      TokenProvider.setSession({ tenantId: tenantB } as any, 'tok', 'ref');
+      const history = await ProductRepository.getPriceHistory(productA);
+      expect(history).toEqual([]);
+    });
+
+    it('E. Forbidden tenants are strictly rejected', async () => {
+      TokenProvider.setSession({ tenantId: 'TEN-DEV-001' } as any, 'tok', 'ref');
+      const history = await ProductRepository.getPriceHistory(productA);
+      expect(history).toEqual([]);
+    });
+
+    it('F. PriceHistoryRepository.record throws on conflict', async () => {
+      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      await expect(PriceHistoryRepository.record(productA, 'Test', 'P1', 10, '2026-01-01', tenantB))
+        .rejects.toThrow(/TENANT_CONFLICT/);
+    });
+
+    it('G. Backward compatibility: if session is empty, caller tenant is used', async () => {
+      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      const history = await ProductRepository.getPriceHistory(productA, 5, tenantA);
+      expect(history.length).toBeGreaterThan(0);
     });
   });
 });
