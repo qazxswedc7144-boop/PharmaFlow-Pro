@@ -8,9 +8,14 @@ export const PriceHistoryRepository = {
     const session = TokenProvider.getCurrentSession();
     const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
     
-    // Authoritative Security Boundary
-    if (tenantId && sessionTenantId && tenantId !== sessionTenantId) {
-      throw new Error(`TENANT_CONFLICT: Authenticated session tenant [${sessionTenantId}] takes precedence over caller-supplied tenant [${tenantId}].`);
+    // Authoritative Security Boundary (Security Fix #5)
+    if (sessionTenantId) {
+      if (tenantId && tenantId !== sessionTenantId) {
+        throw new Error(`TENANT_CONFLICT: Authenticated session tenant [${sessionTenantId}] takes precedence over caller-supplied tenant [${tenantId}].`);
+      }
+    } else if (tenantId) {
+      // A missing session tenant must not automatically authorize access merely because the caller supplied a tenant ID.
+      throw new Error(`SECURITY_VIOLATION: Trusted tenant context required. Write rejected for tenant [${tenantId}] because no authenticated session exists.`);
     }
     
     const effectiveTenantId = sessionTenantId || tenantId;
@@ -97,9 +102,14 @@ export const PriceHistoryRepository = {
     const session = TokenProvider.getCurrentSession();
     const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
 
-    // Authoritative Security Boundary
-    if (tenantId && sessionTenantId && tenantId !== sessionTenantId) {
-      return [];
+    // Authoritative Security Boundary (Security Fix #5)
+    if (sessionTenantId) {
+      if (tenantId && tenantId !== sessionTenantId) {
+        return []; // Conflict -> Fail Closed
+      }
+    } else if (tenantId) {
+      // A missing session tenant must not automatically authorize access
+      return []; // No session -> Fail Closed
     }
 
     const effectiveTenantId = sessionTenantId || tenantId;

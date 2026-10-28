@@ -73,9 +73,14 @@ export const PurchaseRepository = {
     const session = TokenProvider.getCurrentSession();
     const sessionTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id;
 
-    // Authoritative Security Boundary
-    if (tenantId && sessionTenantId && tenantId !== sessionTenantId) {
-      return [];
+    // Authoritative Security Boundary (Security Fix #5)
+    if (sessionTenantId) {
+      if (tenantId && tenantId !== sessionTenantId) {
+        return []; // Conflict -> Fail Closed
+      }
+    } else if (tenantId) {
+      // A missing session tenant must not automatically authorize access
+      return []; // No session -> Fail Closed
     }
 
     const effectiveTenantId = sessionTenantId || tenantId;

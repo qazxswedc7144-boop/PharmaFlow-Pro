@@ -569,7 +569,32 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
     it('G. Backward compatibility: if session is empty, caller tenant is used', async () => {
       TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      // Update: Security Fix #5 now rejects even if session is empty but tenantId is passed
+      await expect(ProductRepository.getPriceHistory(productA, 5, tenantA)).resolves.toEqual([]);
+    });
+
+    it('H. Security Fix #5: Missing session tenant with caller tenant => reject', async () => {
+      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
       const history = await ProductRepository.getPriceHistory(productA, 5, tenantA);
+      expect(history).toEqual([]);
+    });
+
+    it('I. Security Fix #5: Conflict handling (Session A, Caller B) => reject', async () => {
+      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      const history = await ProductRepository.getPriceHistory(productA, 5, tenantB);
+      expect(history).toEqual([]);
+    });
+
+    it('J. Security Fix #5: PriceHistoryRepository.record rejected when session is missing', async () => {
+      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      await expect(PriceHistoryRepository.record(productA, 'Test', 'P1', 10, '2026-01-01', tenantA))
+        .rejects.toThrow(/SECURITY_VIOLATION/);
+    });
+
+    it('K. Security Fix #5: Legitimate internal workflow (sets session) => accepted', async () => {
+      // Simulate internal script setting a session
+      TokenProvider.setSession({ tenantId: tenantA } as any, 'mock-tok', 'mock-ref');
+      const history = await ProductRepository.getPriceHistory(productA);
       expect(history.length).toBeGreaterThan(0);
     });
   });
