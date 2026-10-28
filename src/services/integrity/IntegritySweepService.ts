@@ -1,5 +1,5 @@
 
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { SystemAlert } from '@/types';
 import { LoadTestService } from '@/services/system/LoadTestService';
 import { unifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
@@ -117,6 +117,16 @@ export class IntegritySweepService {
       
       if (Math.abs(calculatedStock - currentStock) > 0.01) {
         if (autoFix && p.id) {
+          const session = getCurrentUserSession();
+          const targetTenant = (p as any).tenantId || (p as any).tenant_id || session?.tenantId;
+          const targetBranch = (p as any).branchId || (p as any).branch_id || session?.branchId;
+
+          if (!targetTenant || !targetBranch) {
+            console.warn(`[IntegritySweep] Skipping stock auto-fix for ${p.id}: missing tenant or branch context.`);
+            healthy = false;
+            continue;
+          }
+
           console.warn(`AUTO_FIX: Correcting stock for [${p.name || p.Name}] from ${currentStock} to ${calculatedStock} via canonical adjustment.`);
           // 🛡️ REPAIR: Use canonical adjustment instead of direct stock overwrite
           await unifiedInventoryMutationEngine.executeAdjustment({
@@ -126,8 +136,8 @@ export class IntegritySweepService {
             actualQuantity: calculatedStock,
             reason: `تصحيح آلي لنزاهة البيانات - الفرق: ${calculatedStock - currentStock}`,
             userId: 'system-repair',
-            tenantId: getCurrentUserSession()?.tenantId || '',
-            branchId: getCurrentUserSession()?.branchId || '',
+            tenantId: targetTenant,
+            branchId: targetBranch,
             transactionUuid: `REPAIR-${p.id}-${Date.now()}`
           }).catch(err => {
             console.error(`FAILED AUTO_FIX for ${p.id}:`, err);
