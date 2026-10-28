@@ -38,7 +38,7 @@ export const ProductRepository = {
     let query = db.products.where('tenantId').equals(effectiveTenantId);
     
     const all = await query.toArray();
-    let filtered = all.filter(p => p.Is_Active !== false);
+    let filtered = all.filter(p => p.Is_Active !== false && (p as any).is_active !== false && (p as any).isActive !== false);
     
     if (branchId) {
       filtered = filtered.filter(p => p.branchId === branchId || !p.branchId);
@@ -54,9 +54,14 @@ export const ProductRepository = {
       return undefined;
     }
 
-    // Use compound index [tenantId+id] if available, or verify after fetch
-    // Version 27 has [tenantId+id]
-    const product = await db.products.where('[tenantId+id]').equals([effectiveTenantId, id]).first();
+    // Use compound index [tenantId+id] if available, with fail-closed fallback
+    let product = await db.products.where('[tenantId+id]').equals([effectiveTenantId, id]).first().catch(() => undefined);
+    if (!product) {
+      const candidate = await db.products.get(id).catch(() => undefined);
+      if (candidate && ((candidate as any).tenantId === effectiveTenantId || (candidate as any).tenant_id === effectiveTenantId)) {
+        product = candidate;
+      }
+    }
     return product;
   },
 
@@ -68,8 +73,13 @@ export const ProductRepository = {
       return undefined;
     }
 
-    // Use compound index [tenantId+barcode] (Version 27)
-    return await db.products.where('[tenantId+barcode]').equals([effectiveTenantId, barcode]).first();
+    // Use compound index [tenantId+barcode] (Version 27) with fail-closed fallback
+    let product = await db.products.where('[tenantId+barcode]').equals([effectiveTenantId, barcode]).first().catch(() => undefined);
+    if (!product) {
+      const candidates = await db.products.where('barcode').equals(barcode).toArray().catch(() => []);
+      product = candidates.find(p => ((p as any).tenantId === effectiveTenantId || (p as any).tenant_id === effectiveTenantId));
+    }
+    return product;
   },
 
   search: async (term: string, limit: number = 50, tenantId?: string): Promise<Product[]> => {
@@ -87,7 +97,7 @@ export const ProductRepository = {
     
     return all
       .filter(p => {
-        if (p.Is_Active === false) return false;
+        if (p.Is_Active === false || (p as any).is_active === false || (p as any).isActive === false) return false;
         const name = (p.name || p.Name || '').toLowerCase();
         const id = (p.id || '').toLowerCase();
         const barcode = p.barcode || '';
@@ -116,18 +126,27 @@ export const ProductRepository = {
     });
   },
 
-  save: async (product: Product): Promise<void> => {
-    if (product.Is_Active === undefined) product.Is_Active = true;
+  save: async (product: Product, tenantId?: string): Promise<void> => {
+    if (!product) return;
+    const effectiveTenantId = getAuthorizedTenant(tenantId || (product as any).tenantId);
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      throw new Error(`[ProductRepository] CANNOT_SAVE: Missing or invalid authoritative tenant context.`);
+    }
+
+    if (product.Is_Active === undefined && (product as any).is_active === undefined) {
+      product.Is_Active = true;
+    }
     
     // Standardize fields before saving
     product.name = product.name || product.Name || '';
     product.price = product.price || product.UnitPrice || 0;
     product.stock = product.stock || product.StockQuantity || 0;
+    product.tenantId = effectiveTenantId;
     const now = new Date().toISOString();
     product.updated_at = now;
     product.lastModified = now;
 
-    const existing = await ProductRepository.getById(product.id);
+    const existing = await ProductRepository.getById(product.id, effectiveTenantId);
     if (existing) {
       const diff = (product.stock || 0) - (existing.stock || existing.StockQuantity || 0);
       if (Math.abs(diff) > 0.001) {
@@ -135,16 +154,22 @@ export const ProductRepository = {
       }
     } else {
       if ((product.stock || 0) > 0) {
+        await db.saveProduct(product);
         await ProductRepository.updateStock(product.id, product.stock!, 'ADJUSTMENT', 'INITIAL-SETUP', 'ADJUSTMENT');
+        return;
       }
     }
 
     await db.saveProduct(product);
   },
 
-  delete: async (id: string): Promise<void> => {
+  delete: async (id: string, tenantId?: string): Promise<void> => {
     if (!id) return;
-    const product = await ProductRepository.getById(id);
+    const effectiveTenantId = getAuthorizedTenant(tenantId);
+    if (!effectiveTenantId || FORBIDDEN_TENANTS.includes(effectiveTenantId)) {
+      return;
+    }
+    const product = await ProductRepository.getById(id, effectiveTenantId);
     if (!product) return;
 
     // We always use soft delete now for professional sync
@@ -170,7 +195,7 @@ export const ProductRepository = {
       .filter((t: any) => (t.tenantId === effectiveTenantId || t.tenant_id === effectiveTenantId))
       .toArray();
 
-    return txs.reduce((sum, tx) => sum + (tx.QuantityChange || 0), 0);
+    return txs.reduce((sum, tx) => sum + (tx.QuantityChange || (tx as any).quantityChange || (tx as any).delta || 0), 0);
   },
 
   getPriceHistory: async (productId: string, limit: number = 5, tenantId?: string): Promise<PriceHistory[]> => {
@@ -227,8 +252,8 @@ export const ProductRepository = {
       .first();
 
     return {
-      lastPrice: lastPurchase?.unitCost || product.price || product.UnitPrice || 0,
-      category: product.categoryName || 'General',
+      lastPrice: lastPurchase?.unitCost ?? (lastPurchase as any)?.costPrice ?? product.price ?? product.UnitPrice ?? 0,
+      category: product.categoryName || (product as any).category || 'General',
       supplierId: lastPurchase?.supplierId || product.supplierId || '',
       supplierName: lastPurchase?.supplierName || product.supplierName || ''
     };
@@ -248,11 +273,17 @@ export const ProductRepository = {
     const all = await db.products.where('tenantId').equals(effectiveTenantId).toArray();
     return all
       .filter(p => {
-        if (!p.ExpiryDate) return false;
-        const expiry = new Date(p.ExpiryDate);
+        if (p.Is_Active === false || (p as any).is_active === false || (p as any).isActive === false) return false;
+        const expiryDateStr = p.ExpiryDate || (p as any).expiryDate;
+        if (!expiryDateStr) return false;
+        const expiry = new Date(expiryDateStr);
         return expiry > today && expiry <= limitDate;
       })
-      .sort((a, b) => new Date(a.ExpiryDate!).getTime() - new Date(b.ExpiryDate!).getTime());
+      .sort((a, b) => {
+        const dateA = new Date(a.ExpiryDate || (a as any).expiryDate!).getTime();
+        const dateB = new Date(b.ExpiryDate || (b as any).expiryDate!).getTime();
+        return dateA - dateB;
+      });
   }
 };
 
