@@ -16,6 +16,23 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     await db.warehouseStock.clear();
     await db.branchInventory.clear();
     
+    await db.branches.clear();
+    await db.branches.add({
+      id: validBranch,
+      code: validBranch,
+      name: 'Test Branch',
+      tenantId: validTenant,
+      isActive: true
+    } as any);
+
+    await db.branchInventory.add({
+      id: `INV-${validBranch}-${productId}`,
+      branchId: validBranch,
+      productId,
+      stockQuantity: 100,
+      tenantId: validTenant
+    } as any);
+
     // Default valid session
     TokenProvider.setSession({
       id: 'user-1',
@@ -106,6 +123,14 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   it('11. Valid real tenant and branch allows mutation to succeed', async () => {
     TokenProvider.setSession({ tenantId: 'REAL-ACC-999', branchId: 'REAL-BR-999' } as any, 'token', 'refresh');
     
+    await db.branches.add({
+      id: 'REAL-BR-999',
+      code: 'REAL-BR-999',
+      name: 'Test Branch 999',
+      tenantId: 'REAL-ACC-999',
+      isActive: true
+    } as any);
+
     // Update product to match new tenant for test
     await db.products.update(productId, { tenantId: 'REAL-ACC-999', branchId: 'REAL-BR-999' });
     await db.warehouseStock.put({
@@ -116,6 +141,13 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       tenantId: 'REAL-ACC-999',
       branchId: 'REAL-BR-999'
     } as any);
+    await db.branchInventory.put({
+      id: `INV-REAL-BR-999-${productId}`,
+      branchId: 'REAL-BR-999',
+      productId,
+      stockQuantity: 100,
+      tenantId: 'REAL-ACC-999'
+    } as any);
 
     await InventoryService.updateStock(productId, -5);
     
@@ -125,5 +157,72 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     const tx = await db.inventoryTransactions.toArray();
     expect(tx[0].tenantId).toBe('REAL-ACC-999');
     expect(tx[0].branchId).toBe('REAL-BR-999');
+  });
+
+  it('A. tenant A + branch A => accepted', async () => {
+    TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+    await db.branches.put({
+      id: 'BRANCH-A',
+      code: 'BRANCH-A',
+      name: 'Branch A',
+      tenantId: 'TENANT-A',
+      isActive: true
+    } as any);
+    await db.products.put({
+      id: 'PROD-A',
+      name: 'Product A',
+      stock: 50,
+      tenantId: 'TENANT-A',
+      branchId: 'BRANCH-A',
+      isActive: true
+    } as any);
+    await db.warehouseStock.put({
+      id: 'WHS-A',
+      warehouseId: 'WH-MAIN',
+      productId: 'PROD-A',
+      quantity: 50,
+      tenantId: 'TENANT-A',
+      branchId: 'BRANCH-A'
+    } as any);
+    await db.branchInventory.put({
+      id: 'BINV-A',
+      branchId: 'BRANCH-A',
+      productId: 'PROD-A',
+      stockQuantity: 50,
+      tenantId: 'TENANT-A'
+    } as any);
+
+    const res = await InventoryService.updateStock('PROD-A', 10);
+    expect(res?.stock).toBe(60);
+  });
+
+  it('B. tenant A + branch B belonging to tenant B => rejected (CROSS_TENANT_VIOLATION)', async () => {
+    await db.branches.put({
+      id: 'BRANCH-B',
+      code: 'BRANCH-B',
+      name: 'Branch B',
+      tenantId: 'TENANT-B',
+      isActive: true
+    } as any);
+    TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-B' } as any, 'token', 'refresh');
+
+    await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+  });
+
+  it('C. missing branchId where required => rejected', async () => {
+    TokenProvider.setSession({ tenantId: validTenant, branchId: '' } as any, 'token', 'refresh');
+    await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/TRUSTED_BRANCH_CONTEXT_REQUIRED/);
+  });
+
+  it('D. unknown/unbound branch => rejected', async () => {
+    TokenProvider.setSession({ tenantId: validTenant, branchId: 'UNKNOWN-BRANCH-999' } as any, 'token', 'refresh');
+    await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+  });
+
+  it('E. existing valid inventory mutation behavior remains unchanged', async () => {
+    TokenProvider.setSession({ tenantId: validTenant, branchId: validBranch } as any, 'token', 'refresh');
+    await InventoryService.updateStock(productId, -10);
+    const prod = await db.products.get(productId);
+    expect(prod?.stock).toBe(90);
   });
 });

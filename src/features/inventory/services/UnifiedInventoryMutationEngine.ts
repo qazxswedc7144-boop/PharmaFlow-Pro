@@ -85,7 +85,7 @@ export class UnifiedInventoryMutationEngine {
    * 1. Issue Sale Stock (Deduction for sales)
    */
   public async executeIssueSale(command: IssueSaleStockCommand): Promise<InventoryMutationResult[]> {
-    this.validateCommandBasics(command, 'IssueSale');
+    await this.validateCommandBasics(command, 'IssueSale');
     if (!Array.isArray(command.items) || command.items.length === 0) {
       throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
     }
@@ -129,7 +129,7 @@ export class UnifiedInventoryMutationEngine {
    * 2. Receive Purchase Stock (Increase for purchases)
    */
   public async executeReceivePurchase(command: ReceivePurchaseStockCommand): Promise<InventoryMutationResult[]> {
-    this.validateCommandBasics(command, 'ReceivePurchase');
+    await this.validateCommandBasics(command, 'ReceivePurchase');
     if (!Array.isArray(command.items) || command.items.length === 0) {
       throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
     }
@@ -173,7 +173,7 @@ export class UnifiedInventoryMutationEngine {
    * 3. Process Sales Return (Customer return -> stock IN)
    */
   public async executeSalesReturn(command: ProcessSalesReturnStockCommand): Promise<InventoryMutationResult[]> {
-    this.validateCommandBasics(command, 'ProcessSalesReturn');
+    await this.validateCommandBasics(command, 'ProcessSalesReturn');
     if (!Array.isArray(command.items) || command.items.length === 0) {
       throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
     }
@@ -216,7 +216,7 @@ export class UnifiedInventoryMutationEngine {
    * 4. Process Purchase Return (Return to supplier -> stock OUT)
    */
   public async executePurchaseReturn(command: ProcessPurchaseReturnStockCommand): Promise<InventoryMutationResult[]> {
-    this.validateCommandBasics(command, 'ProcessPurchaseReturn');
+    await this.validateCommandBasics(command, 'ProcessPurchaseReturn');
     if (!Array.isArray(command.items) || command.items.length === 0) {
       throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
     }
@@ -259,7 +259,7 @@ export class UnifiedInventoryMutationEngine {
    * 5. Execute Inventory Adjustment (Physical count reconciliation)
    */
   public async executeAdjustment(command: ExecuteInventoryAdjustmentCommand): Promise<InventoryMutationResult> {
-    this.validateCommandBasics(command, 'ExecuteAdjustment');
+    await this.validateCommandBasics(command, 'ExecuteAdjustment');
     const timestamp = command.timestamp || new Date().toISOString();
 
     const existingTx = await this.checkExistingIdempotentTransaction(command.transactionUuid, command.adjustmentId, 'ADJUSTMENT', command.productId, command.tenantId);
@@ -305,7 +305,7 @@ export class UnifiedInventoryMutationEngine {
    * 6. Transfer Warehouse Stock (Inter-warehouse transfer)
    */
   public async executeTransfer(command: TransferWarehouseStockCommand): Promise<{ sourceResult: InventoryMutationResult; targetResult: InventoryMutationResult }> {
-    this.validateCommandBasics(command, 'TransferWarehouseStock');
+    await this.validateCommandBasics(command, 'TransferWarehouseStock');
     if (command.fromWarehouseId === command.toWarehouseId) {
       throw new InvalidWarehouseError(command.toWarehouseId, { message: 'Source and target warehouses cannot be identical.' });
     }
@@ -416,7 +416,7 @@ export class UnifiedInventoryMutationEngine {
    * 7. Reverse Document Stock (Compensating reversal movement - NO PHYSICAL DELETES)
    */
   public async executeReversal(command: ReverseDocumentStockCommand): Promise<InventoryMutationResult[]> {
-    this.validateCommandBasics(command, 'ReverseDocumentStock');
+    await this.validateCommandBasics(command, 'ReverseDocumentStock');
     const timestamp = command.timestamp || new Date().toISOString();
 
     return await this.executeAtomicTransaction(async () => {
@@ -494,7 +494,7 @@ export class UnifiedInventoryMutationEngine {
    * 8. Execute Approved Correction (Regulatory correction case)
    */
   public async executeCorrection(command: ExecuteApprovedCorrectionCommand): Promise<InventoryMutationResult> {
-    this.validateCommandBasics(command, 'ExecuteApprovedCorrection');
+    await this.validateCommandBasics(command, 'ExecuteApprovedCorrection');
     const timestamp = command.timestamp || new Date().toISOString();
 
     if (!command.approverId || typeof command.approverId !== 'string' || command.approverId.trim() === '') {
@@ -542,7 +542,7 @@ export class UnifiedInventoryMutationEngine {
    * 9. Execute Single Generic Mutation (Single Authorized Portal for legacy callers)
    */
   public async executeMutation(command: GenericMutationCommand): Promise<InventoryMutationResult> {
-    this.validateCommandBasics(command, 'ExecuteMutation');
+    await this.validateCommandBasics(command, 'ExecuteMutation');
     const timestamp = command.timestamp || new Date().toISOString();
 
     return await this.executeAtomicTransaction(async () => {
@@ -581,7 +581,7 @@ export class UnifiedInventoryMutationEngine {
       const results: InventoryMutationResult[] = [];
       for (let i = 0; i < commands.length; i++) {
         const cmd = commands[i]!;
-        this.validateCommandBasics(cmd, `ExecuteBatch[${i}]`);
+        await this.validateCommandBasics(cmd, `ExecuteBatch[${i}]`);
         const timestamp = cmd.timestamp || new Date().toISOString();
         const resolvedMovement = cmd.movementType || (cmd.delta >= 0 ? 'PURCHASE' : 'SALE');
 
@@ -931,6 +931,7 @@ const brInv = await db.branchInventory
       'inventoryTransactions',
       'warehouseStock',
       'branchInventory',
+      'branches',
       'inventory_layers',
       'fifo_consumption_log',
       'medicineBatches',
@@ -1198,7 +1199,7 @@ const brInv = await db.branchInventory
     }
   }
 
-  private validateCommandBasics(command: any, opName: string): void {
+  private async validateCommandBasics(command: any, opName: string): Promise<void> {
     if (!command) {
       throw new Error(`[UnifiedEngine] Invalid command provided to ${opName}.`);
     }
@@ -1215,6 +1216,32 @@ const brInv = await db.branchInventory
     }
     if (!command.transactionUuid) {
       throw new Error(`[UnifiedEngine] transactionUuid (Idempotency Key) is required for ${opName}.`);
+    }
+
+    const branch = await db.branches.get(command.branchId).catch(() => null)
+      || await db.branches.where('code').equals(command.branchId).first().catch(() => null);
+
+    if (!branch) {
+      throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Branch '${command.branchId}' is unknown or not registered.`);
+    }
+
+    const branchTenant = (branch as any).tenantId || (branch as any).tenant_id;
+    if (!branchTenant || branchTenant !== command.tenantId) {
+      throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Branch '${command.branchId}' does not belong to authoritative tenant '${command.tenantId}' or lacks valid tenant binding.`);
+    }
+
+    if (command.targetBranchId) {
+      const targetBranch = await db.branches.get(command.targetBranchId).catch(() => null)
+        || await db.branches.where('code').equals(command.targetBranchId).first().catch(() => null);
+
+      if (!targetBranch) {
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Target branch '${command.targetBranchId}' is unknown or not registered.`);
+      }
+
+      const targetTenant = (targetBranch as any).tenantId || (targetBranch as any).tenant_id;
+      if (!targetTenant || targetTenant !== command.tenantId) {
+        throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Target branch '${command.targetBranchId}' does not belong to authoritative tenant '${command.tenantId}' or lacks valid tenant binding.`);
+      }
     }
   }
 }
