@@ -1,14 +1,25 @@
-
 const CACHE_NAME = 'pharmaflow-v9-login-fix';
 
 self.addEventListener('install', (event) => {
+  // 🚨 FIX: Pre-cache the shell (index.html) to prevent white screen when offline
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(['/index.html']).catch(() => {
+        console.warn("[SW] Failed to pre-cache index.html");
+      });
+    })
+  );
   self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(
-      keys.map((key) => caches.delete(key))
+      keys.map((key) => {
+        if (key !== CACHE_NAME) {
+          return caches.delete(key);
+        }
+      })
     )).catch(err => console.error("[SW] Activate cleanup failed:", err))
   );
   self.clients.claim();
@@ -49,6 +60,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Cache-first for other assets (images, fonts, etc.)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       return cachedResponse || fetch(event.request);
