@@ -152,7 +152,7 @@ export class DeviceManager {
         schemaVersion: SYNC_PROTOCOL_VERSION
       }, {
         headers: {
-          "X-Tenant-ID": session.tenantId,
+          "X-Tenant-ID": session.tenantId || "",
           "X-Branch-ID": session.branchId || "",
           "X-Device-ID": identity.deviceId
         },

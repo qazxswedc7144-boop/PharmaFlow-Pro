@@ -36,7 +36,7 @@ export class UsageMeterService {
    * Calculates detailed multi-vector transactional metrics for the specified tenant.
    */
   static async getTenantUsageMetrics(tenantId?: string): Promise<TenantUsageMetrics> {
-    const activeTenant = tenantId || getCurrentUserSession()?.tenantId;
+    const activeTenant = tenantId || getCurrentUserSession()?.tenantId || 'default-tenant';
     const now = Date.now();
 
     // Check memory cache

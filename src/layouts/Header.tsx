@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '@/core/db';
-import defaultLogoImg from '@/assets/brand/logo.png'; 
+const defaultLogoImg = '/logo.png'; 
 import { HeartPulse, Menu } from 'lucide-react';
 import NotificationCenter from '@/components/shared/NotificationCenter';
 import { SidebarMenu } from './SidebarMenu';

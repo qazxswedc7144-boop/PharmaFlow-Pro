@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import pharmaLogo from '@/assets/brand/logo.png';
+const pharmaLogo = '/logo.png';
 
 export const Logo: React.FC<{ className?: string; size?: number; useImage?: boolean }> = ({ className = "", size = 40, useImage = true }) => {
   const [hasImageError, setHasImageError] = useState(false);

@@ -111,7 +111,7 @@ export class AuthorizationService {
     }
 
     // 3. Tenant Boundary & Membership Verification
-    const tenantId = context?.tenantId || user.tenantId;
+    const tenantId = (context?.tenantId || user.tenantId || 'default-tenant') as string;
     if (!context?.tenantId && !user.tenantId) {
       return { allowed: false, reason: "TENANT_REQUIRED: Tenant context is required for tenant operations" };
     }

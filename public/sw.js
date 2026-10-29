@@ -1,4 +1,4 @@
-const CACHE_NAME = 'pharmaflow-v9-login-fix';
+const CACHE_NAME = 'pharmaflow-v10-branding-fix';
 
 self.addEventListener('install', (event) => {
   // 🚨 FIX: Pre-cache the shell (index.html) to prevent white screen when offline

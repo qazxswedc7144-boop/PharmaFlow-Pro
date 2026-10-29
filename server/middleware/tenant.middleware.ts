@@ -146,8 +146,9 @@ export async function tenantContextMiddleware(
     }
   }
 
+  const safeTenantId = finalTenantId || 'default-tenant';
   const context: TenantContext = {
-    tenantId: finalTenantId,
+    tenantId: safeTenantId,
     tenantName,
     branchId: extractedBranchId,
     userId: extractedUserId,
@@ -159,7 +160,7 @@ export async function tenantContextMiddleware(
 
   // Attach context to request
   scopedReq.tenantContext = context;
-  scopedReq.tenantId = finalTenantId;
+  scopedReq.tenantId = safeTenantId;
 
   // Run downstream handlers inside AsyncLocalStorage context
   runWithTenantContext(context, () => {
