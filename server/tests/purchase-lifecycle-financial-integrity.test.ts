@@ -65,16 +65,6 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
       isAuthenticated: true
     });
 
-    await db.branches.put({
-      id: branchId,
-      code: branchId,
-      name: 'Main Branch',
-      tenantId,
-      tenant_id: tenantId,
-      isActive: true,
-      is_active: true
-    } as any);
-
     // Seed Supplier with initial balance of 0
     await db.suppliers.put({
       id: supplierId,

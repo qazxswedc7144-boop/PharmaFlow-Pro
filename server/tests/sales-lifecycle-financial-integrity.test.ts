@@ -68,16 +68,6 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
       isAuthenticated: true
     });
 
-    await db.branches.put({
-      id: branchId,
-      code: branchId,
-      name: 'Main Branch',
-      tenantId,
-      tenant_id: tenantId,
-      isActive: true,
-      is_active: true
-    } as any);
-
     // Seed Customer with initial balance of 0
     await db.customers.put({
       id: customerId,
