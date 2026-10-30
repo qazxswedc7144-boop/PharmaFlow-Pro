@@ -262,11 +262,15 @@ const newItem: InvoiceItem = {
       return;
     }
 
-    // Auto-Fix: Merge quantities for duplicate items
-    const existingItemIndex = items.findIndex(i => 
-      (i.product_id === newItem.product_id && i.product_id && !i.product_id.startsWith('manual-')) || 
-      (i.name === newItem.name && (!i.product_id || i.product_id.startsWith('manual-')))
-    );
+    // Auto-Fix: Merge ONLY if it's the exact same product AND exact same price
+const existingItemIndex = items.findIndex(i => 
+  // 👈 أضفنا هذا الشرط: لا تدمج إذا كان السعر مختلفاً
+  i.price === newItem.price && 
+  (
+    (i.product_id === newItem.product_id && i.product_id && !i.product_id.startsWith('manual-')) || 
+    (i.name === newItem.name && (!i.product_id || i.product_id.startsWith('manual-')))
+  )
+);
 
     if (existingItemIndex > -1) {
       const updatedItems = [...items];
