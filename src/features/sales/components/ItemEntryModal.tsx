@@ -92,8 +92,8 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const [isKeyboardUp, setIsKeyboardUp] = useState<boolean>(false);
 
   const { currency } = useAppStore();
-  const { success } = useToast();
-
+  const { success, error } = useToast();
+  
   const itemNameInputRef = useRef<HTMLInputElement>(null);
   const qtyInputRef = useRef<HTMLInputElement>(null);
   const priceInputRef = useRef<HTMLInputElement>(null);
@@ -304,10 +304,14 @@ let existing = await db.products.filter(p =>
   Is_Active: 1,
   created_at: new Date().toISOString()
 };
-          // نترك الحفظ في قاعدة البيانات يعمل في الخلفية (بدون await) لتسريع الواجهة
-    WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
-      .then(() => db.products.put(newProd as any))
-      .catch(err => console.error("Background save failed:", err));
+                // نترك الحفظ في قاعدة البيانات يعمل في الخلفية (بدون await) لتسريع الواجهة
+WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
+  .then(() => db.products.put(newProd as any))
+  .catch(err => {
+    console.error("Background save failed:", err);
+    // ✅ إظهار رسالة خطأ للمستخدم إذا فشل الحفظ في الخلفية
+    error("فشل حفظ الصنف في قاعدة البيانات، يرجى المحاولة مرة أخرى");
+  });
       
     finalProductId = newProd.id;
   }
@@ -350,10 +354,14 @@ ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 
       Is_Active: 1, 
       created_at: new Date().toISOString() 
     };
-    // حفظ في الخلفية (بدون await)
+        // حفظ في الخلفية (بدون await)
 WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
   .then(() => db.products.put(newProd as any))
-  .catch(err => console.error("Background save failed:", err));
+  .catch(err => {
+    console.error("Background save failed:", err);
+    // ✅ إظهار رسالة خطأ للمستخدم إذا فشل الحفظ في الخلفية
+    error("فشل حفظ الصنف في قاعدة البيانات، يرجى المحاولة مرة أخرى");
+  });
     onAdd({ 
       id: initialData?.id || Date.now().toString(), 
       productId: newProd.id, 
