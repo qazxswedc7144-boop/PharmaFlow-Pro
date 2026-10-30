@@ -132,6 +132,7 @@ const PurchasesInvoice: React.FC<{ onNavigate?: (view: string, params?: Record<s
   const { addToast, refreshGlobal } = useUI();
   const [isAddItemModalOpen, setIsAddItemModalOpen] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const attachmentInputRef = React.useRef<HTMLInputElement>(null);
   const [editingItem, setEditingItem] = React.useState<Partial<InvoiceItem> | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = React.useState<boolean>(false);
 
@@ -514,37 +515,58 @@ const newItem: InvoiceItem = {
                 onChange={(e) => setHeader({...header, notes: e.target.value})}
                 className="w-full h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 rounded-none text-black text-right placeholder-gray-400 resize-none pt-2 bg-transparent pr-2"
               />
-              <div className="absolute left-3 flex items-center gap-2">
-                {header.attachment && (
-                  <button 
-                    onClick={() => setIsViewerOpen(true)}
-                    className="w-6 h-6 rounded-md overflow-hidden border border-[#1E4D4D]/20 shadow-sm active:scale-95 transition-transform"
-                    title="عرض المستند"
-                  >
-                    <div className="w-full h-full bg-slate-50 flex items-center justify-center">
-                      <FileText size={12} className="text-[#1E4D4D]" />
-                    </div>
-                  </button>
-                )}
-                <button 
-                  onClick={() => setIsCameraOpen(true)}
-                  className="text-slate-300 hover:text-[#1E4D4D] transition-colors"
-                  title="تصوير كاميرا"
-                >
-                  <Camera size={16} />
-                </button>
-              </div>
-            </div>
-          </div>
-        </form>
+                      <div className="absolute left-3 flex items-center gap-2">
+          {/* حقل مخفي لرفع الملفات */}
+          <input
+            type="file"
+            ref={attachmentInputRef}
+            className="hidden"
+            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  setHeader({ ...header, attachment: reader.result as string });
+                };
+                reader.readAsDataURL(file);
+              }
+            }}
+          />
+
+          {/* الزر الديناميكي الموحد */}
+          {header.attachment ? (
+            <button
+              type="button"
+              onClick={() => setIsViewerOpen(true)}
+              className="w-7 h-7 rounded-md overflow-hidden border border-[#1E4D4D]/30 shadow-sm active:scale-95 transition-transform bg-emerald-50 flex items-center justify-center"
+              title="عرض المستند المرفق"
+            >
+              <FileText size={14} className="text-[#1E4D4D]" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => attachmentInputRef.current?.click()}
+              className="text-slate-400 hover:text-[#1E4D4D] transition-colors"
+              title="تصوير أو استيراد مستند"
+            >
+              <Camera size={18} />
+            </button>
+          )}
+        </div>
       </div>
+    </div>
+  </form>
+</div>
 
       <CameraModule 
         isOpen={isCameraOpen} 
         onClose={() => setIsCameraOpen(false)} 
-        onCapture={(base64) => handleAIImport(base64)}
-      />
-
+        onCapture={(base64) => {
+  setHeader({ ...header, attachment: base64 });
+  setIsCameraOpen(false);
+}} 
       {header.attachment && (
         <DocumentViewer 
           isOpen={isViewerOpen} 
