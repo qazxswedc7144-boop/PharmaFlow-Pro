@@ -261,21 +261,48 @@ if (mode === 'sale') {
 };
   useEffect(() => {
     const search = async () => {
-     if (manualItemName.length > 1) {
-  let results = await db.products.filter(p => {
-    const nameMatch = !!(p.Name && p.Name.toLowerCase().includes(manualItemName.toLowerCase()));
-    const barcodeMatch = !!(p.barcode && p.barcode.includes(manualItemName));
-    return nameMatch || barcodeMatch;
-  }).limit(20).toArray();
-  if (mode === 'sale') results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
-  
-  // ✅ إزالة الأصناف المكررة بناءً على الاسم
-  const uniqueResults = results.filter((product, index, self) =>
-    index === self.findIndex((p) => (p.Name || p.name || '').trim() === (product.Name || product.name || '').trim())
-  );
-  
-  setFilteredProducts(uniqueResults as ProductItem[]);
-} else { setFilteredProducts([]); } 
+      if (manualItemName.length > 1) {
+        const nameResults = await db.products
+          .where('Name')
+          .startsWithIgnoreCase(manualItemName)
+          .limit(20)
+          .toArray();
+
+        const barcodeResults = await db.products
+          .where('barcode')
+          .equals(manualItemName)
+          .limit(20)
+          .toArray();
+
+        const nameLowerResults = await db.products
+          .where('name')
+          .startsWithIgnoreCase(manualItemName)
+          .limit(20)
+          .toArray();
+
+        const combinedMap = new Map<string, any>();
+        [...nameResults, ...barcodeResults, ...nameLowerResults].forEach(p => {
+          if (p && (p.id || p.ProductID)) {
+            combinedMap.set(p.id || p.ProductID, p);
+          }
+        });
+        let results = Array.from(combinedMap.values());
+
+        if (mode === 'sale') {
+          results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
+        }
+
+        results = results.slice(0, 20);
+        
+        // ✅ إزالة الأصناف المكررة بناءً على الاسم
+        const uniqueResults = results.filter((product, index, self) =>
+          index === self.findIndex((p) => (p.Name || p.name || '').trim() === (product.Name || product.name || '').trim())
+        );
+        
+        setFilteredProducts(uniqueResults as ProductItem[]);
+      } else { 
+        setFilteredProducts([]); 
+      } 
     };
     search();
   }, [manualItemName, mode]);
