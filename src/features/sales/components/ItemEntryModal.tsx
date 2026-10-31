@@ -6,7 +6,7 @@ import { productApplicationWorkflow } from '@features/catalog/workflows/ProductA
 import { Package, Lock, TrendingUp, Box } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppStore } from '@/hooks/useAppStore';
-import { normalizeToISODate, getExpiryStatus } from '@/utils/expiryUtils';
+import { normalizeToISODate, getExpiryStatus, formatDateDisplay } from '@/utils/expiryUtils';
 import { priceIntelligenceService } from '@/features/inventory/services/priceIntelligenceService';
 import { useToast } from '@/hooks/useToast';
 
@@ -54,20 +54,6 @@ interface ItemEntryModalProps {
   } | null;
 }
 
-// 👈 نترك سطر فارغ هنا (اضغط Enter)
-const formatDateDisplay = (dateStr: string) => {
-  if (!dateStr) return '';
-  const parts = dateStr.includes('-') ? dateStr.split('-') : dateStr.split('/');
-  if (parts.length === 3) {
-    const year = parts[0] || '';
-    const month = parseInt(parts[1] || '0', 10);
-    const day = parseInt(parts[2] || '0', 10);
-    return `${year}/${month}/${day}`;
-  }
-  return dateStr;
-};
-// 👈 نترك سطر فارغ هنا (اضغط Enter)
-  
 export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   isOpen, onClose, onAdd, mode, initialData
 }) => {
@@ -101,6 +87,30 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const noteInputRef = useRef<HTMLInputElement>(null);
   const categoryInputRef = useRef<HTMLSelectElement>(null);
   const requestIdRef = useRef<number>(0); // 👈 لمنع تسابق البيانات
+
+  const createAndSaveNewProduct = useCallback((name: string, price: string | number, qty: string | number, cat: string): string => {
+    const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+    const newProd = {
+      id: newProdId,
+      ProductID: newProdId,
+      Name: name,
+      name: name,
+      categoryName: cat || 'عام',
+      UnitPrice: parseFloat(price as string) || 0,
+      price: parseFloat(price as string) || 0,
+      StockQuantity: parseFloat(qty as string) || 0,
+      stock: parseFloat(qty as string) || 0,
+      Is_Active: 1,
+      created_at: new Date().toISOString()
+    };
+    WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
+      .then(() => db.products.put(newProd as any))
+      .catch(err => {
+        console.error("Background save failed:", err);
+        error("فشل حفظ الصنف في قاعدة البيانات، يرجى المحاولة مرة أخرى");
+      });
+    return newProdId;
+  }, [error]);
 
   // Load live stock, expiry, and price intelligence for the selected product
   const loadProductIntelligence = useCallback(async (prodId: string, currentProd?: ProductItem) => {
@@ -300,30 +310,8 @@ let existing = await db.products.filter(p =>
     }
 
     if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
-      const newProd = {
-  id: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-  ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-  Name: manualItemName,
-  name: manualItemName,
-  categoryName: categoryName || 'عام',
-  UnitPrice: parseFloat(tempPrice as string),
-  price: parseFloat(tempPrice as string),
-  StockQuantity: parseFloat(tempQty as string) || 0, // ✅ إضافة الكمية كرصيد
-  stock: parseFloat(tempQty as string) || 0,          // ✅ دعم مسمى آخر للرصيد
-  Is_Active: 1,
-  created_at: new Date().toISOString()
-};
-                // نترك الحفظ في قاعدة البيانات يعمل في الخلفية (بدون await) لتسريع الواجهة
-WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
-  .then(() => db.products.put(newProd as any))
-  .catch(err => {
-    console.error("Background save failed:", err);
-    // ✅ إظهار رسالة خطأ للمستخدم إذا فشل الحفظ في الخلفية
-    error("فشل حفظ الصنف في قاعدة البيانات، يرجى المحاولة مرة أخرى");
-  });
-      
-    finalProductId = newProd.id;
-  }
+      finalProductId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+    }
 
   // ✅ إرسال الصنف للجدول فوراً (سيظهر مباشرة)
   onAdd({ 
@@ -350,30 +338,10 @@ WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as a
   const handleConfirmRegister = async () => {
     setIsConfirmNewProductOpen(false);
     setIsConfirmedNewProduct(true);
-    const newProd = { 
-      id: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-ProductID: 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-      Name: manualItemName, 
-      name: manualItemName,
-      categoryName: categoryName || 'عام', 
-      UnitPrice: parseFloat(tempPrice as string) || 0, 
-      price: parseFloat(tempPrice as string) || 0,
-      StockQuantity: parseFloat(tempQty as string) || 0, 
-      stock: parseFloat(tempQty as string) || 0,
-      Is_Active: 1, 
-      created_at: new Date().toISOString() 
-    };
-        // حفظ في الخلفية (بدون await)
-WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
-  .then(() => db.products.put(newProd as any))
-  .catch(err => {
-    console.error("Background save failed:", err);
-    // ✅ إظهار رسالة خطأ للمستخدم إذا فشل الحفظ في الخلفية
-    error("فشل حفظ الصنف في قاعدة البيانات، يرجى المحاولة مرة أخرى");
-  });
+    const newProdId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
     onAdd({ 
       id: initialData?.id || Date.now().toString(), 
-      productId: newProd.id, 
+      productId: newProdId, 
       name: manualItemName, 
       qty: parseFloat(tempQty as string), 
       price: parseFloat(tempPrice as string), 

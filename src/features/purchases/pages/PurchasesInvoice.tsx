@@ -19,19 +19,7 @@ import { UnifiedModal } from '@/components/shared/UnifiedModal';
 import { SaveSuccessModal } from '@/components/shared/SaveSuccessModal';
 import { DraftRecoveryDialog } from '@/components/shared/DraftRecoveryDialog';
 import { SmartImportModal } from '../components/SmartImportModal';
-import { normalizeToISODate, formatExpiryDateDisplay, getExpiryStatus } from '@/utils/expiryUtils';
-
-const formatDateDisplay = (dateStr: string) => {
-  if (!dateStr) return '';
-  const parts = dateStr.includes('-') ? dateStr.split('-') : dateStr.split('/');
-  if (parts.length === 3) {
-    const year = parts[0] || '';
-    const month = parseInt(parts[1] || '0', 10);
-    const day = parseInt(parts[2] || '0', 10);
-    return `${year}/${month}/${day}`;
-  }
-  return dateStr;
-};
+import { normalizeToISODate, formatExpiryDateDisplay, getExpiryStatus, formatDateDisplay } from '@/utils/expiryUtils';
 
 // Memoized Item Row Component for Performance
 import { Product, InvoiceItem } from '@/types';

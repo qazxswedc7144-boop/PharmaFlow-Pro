@@ -65,6 +65,18 @@ export const formatExpiryDateDisplay = (dateStr?: string | null): string => {
   return iso.replace(/-/g, '/');
 };
 
+export const formatDateDisplay = (dateStr: string): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.includes('-') ? dateStr.split('-') : dateStr.split('/');
+  if (parts.length === 3) {
+    const year = parts[0] || '';
+    const month = parseInt(parts[1] || '0', 10);
+    const day = parseInt(parts[2] || '0', 10);
+    return `${year}/${month}/${day}`;
+  }
+  return dateStr;
+};
+
 export interface ExpiryStatus {
   isExpired: boolean;
   isNearExpiry: boolean;
