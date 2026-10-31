@@ -889,29 +889,42 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           }
         });
       }
-      // ✅ إصلاح مشكلة PRODUCT_NOT_FOUND: تحويل الأصناف اليدوية إلى منتجات حقيقية قبل الحفظ
-let finalizedItems = [...items];
-for (let i = 0; i < finalizedItems.length; i++) {
-    const item = finalizedItems[i];
-    if (!item) continue;
-    if (item.product_id?.startsWith('manual-')) {
-        const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
-        await db.products.put({
-          id: newProdId,
-          ProductID: newProdId,
-          Name: item.name || 'صنف غير مسمى',
-          name: item.name || 'صنف غير مسمى',
-          categoryName: item.category || 'عام',
-          UnitPrice: item.price || 0,
-          price: item.price || 0,
-          Is_Active: 1,
-          created_at: new Date().toISOString()
-        });
-        finalizedItems[i] = { ...item, product_id: newProdId, productId: newProdId, id: item.id || newProdId };
-    }
-}
+      // 1. Stable Idempotency Key for the entire logical request
+      const requestUuid = (editingInvoiceId && !header.invoice_number) 
+        ? `EDIT-${editingInvoiceId}-${Date.now()}` 
+        : (header.invoice_number ? `SAVE-PUR-${header.invoice_number}` : `NEW-PUR-${Date.now()}`);
 
-      // سباق برمجي: إما يتم الحفظ أو ينتهي الوقت خلال 15 ثانية ويفك تجميد الأزرار تلقائياً
+      // 2. Identify and prepare Manual Products for atomic creation
+      const pendingProducts: any[] = [];
+      const finalizedItems = [...items];
+      
+      for (let i = 0; i < finalizedItems.length; i++) {
+        const item = finalizedItems[i];
+        if (!item) continue;
+        
+        if (item.product_id?.startsWith('manual-')) {
+          const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+          pendingProducts.push({
+            id: newProdId,
+            ProductID: newProdId,
+            Name: item.name || 'صنف غير مسمى',
+            name: item.name || 'صنف غير مسمى',
+            categoryName: item.category || 'عام',
+            UnitPrice: item.price || 0,
+            price: item.price || 0,
+            Is_Active: 1,
+          });
+          
+          finalizedItems[i] = { 
+            ...item, 
+            product_id: newProdId, 
+            productId: newProdId, 
+            id: item.id || newProdId 
+          };
+        }
+      }
+
+      // 3. Race against timeout but maintain idempotency logic
       const res = await Promise.race([
         (async () => {
           const r = await addInvoice({
@@ -923,11 +936,17 @@ for (let i = 0; i < finalizedItems.length; i++) {
                 expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
               })),
               total: vTotalSum,
-              invoiceId: header.invoice_number,
-              id: editingInvoiceId || undefined,
+              invoiceId: header.invoice_number, // User facing number
+              invoiceNumber: header.invoice_number, // User facing number for workflow
+              id: editingInvoiceId || undefined, // Internal ID
               notes: header.notes,
               attachment: header.attachment,
-              date: header.date
+              date: header.date,
+              transactionUuid: requestUuid,
+              discountPercent: adjData.discountPercent,
+              otherFees: adjData.otherFees,
+              tax: adjData.tax,
+              pendingProducts // Pass for atomic creation inside workflow
             },
             options: {
               isCash: header.payment_method === 'Cash',
@@ -935,7 +954,8 @@ for (let i = 0; i < finalizedItems.length; i++) {
               invoiceStatus: 'POSTED',
               isReturn: !!header.isReturn,
               currency,
-              date: header.date
+              date: header.date,
+              isEdit: !!editingInvoiceId
             }
           });
           await navPromise;

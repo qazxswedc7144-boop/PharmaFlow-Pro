@@ -16,6 +16,7 @@ export interface PurchaseWorkflowInput {
   items: InvoiceItem[];
   total: number;
   id?: string;
+  invoiceNumber?: string;
   date?: string;
   notes?: string;
   attachment?: string;
@@ -26,6 +27,10 @@ export interface PurchaseWorkflowInput {
   isEdit?: boolean;
   warehouseId?: string;
   originalPurchaseId?: string;
+  discountPercent?: number;
+  otherFees?: number;
+  tax?: number;
+  pendingProducts?: any[]; // Manual products to be created atomically
 }
 
 export interface PurchaseWorkflowResult {
@@ -137,6 +142,57 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     const isReturn = !!input.isReturn;
 
     const docId = input.id || db.generateId('PUR');
+    const userFacingInvoiceNumber = input.invoiceNumber || input.id || docId;
+
+    // 0. Atomic Manual Product Creation (If applicable)
+    // This ensures no orphan products if the workflow fails later.
+    if (input.pendingProducts && input.pendingProducts.length > 0) {
+      for (const prod of input.pendingProducts) {
+        // Double check existence to prevent duplicates within same batch
+        const existing = await db.products.get(prod.id);
+        if (!existing) {
+          await db.products.put({
+            ...prod,
+            tenantId: ctx.tenantId,
+            branchId: ctx.branchId,
+            created_at: new Date().toISOString()
+          });
+        }
+      }
+    }
+
+    // 0.5 Handle Reversals for Edits
+    // If this is an edit of a POSTED/LOCKED document, we MUST reverse its effects first.
+    if (input.isEdit && input.id) {
+      const existing = await db.invoices.get(input.id);
+      const isActuallyPosted = existing && (existing.document_status === 'POSTED' || existing.document_status === 'LOCKED' || (existing as any).invoiceStatus === 'POSTED');
+      
+      if (isActuallyPosted) {
+        // Reverse Inventory Effect
+        const engine = UnifiedInventoryMutationEngine.getInstance();
+        await engine.executeReversal({
+          originalDocumentId: input.id,
+          originalDocumentType: isReturn ? 'PURCHASE_RETURN' : 'PURCHASE',
+          reason: `تعديل الفاتورة رقم ${input.id}`,
+          userId: ctx.userId || 'system',
+          tenantId: ctx.tenantId,
+          transactionUuid: `REV-EDIT-${ctx.idempotencyKey}`
+        });
+
+        // Reverse Accounting Effect
+        // We use deleteEntriesBySource because it correctly reverses balances in this system's architecture.
+        await accountingEngine.postInvoice(
+          {
+            ...existing,
+            isReversal: true, // Signal for potential custom reversal logic in future
+            transactionUuid: `REV-EDIT-ACC-${ctx.idempotencyKey}`
+          } as any,
+          undefined,
+          tx
+        );
+      }
+    }
+
     const savedDoc = await InvoiceRepository.savePurchase(
       input.supplierId!,
       input.items,
@@ -147,7 +203,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       finalStatus,
       0,
       'LOW',
-      docId,
+      userFacingInvoiceNumber, // Pass user-facing number correctly
       input.attachment,
       isReturn,
       effectiveDate,

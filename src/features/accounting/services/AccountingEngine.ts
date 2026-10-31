@@ -363,9 +363,15 @@ export class AccountingEngine {
     _costResult?: { totalCost: number },
     tx?: any
   ): Promise<void> {
-    
     const type = ('type' in invoice && invoice.type) ? invoice.type : (('customerId' in invoice && invoice.customerId) ? 'SALE' : 'PURCHASE');
     const isReturn = ('isReturn' in invoice && invoice.isReturn) || ('invoiceType' in invoice && (invoice as { invoiceType?: string }).invoiceType === 'مرتجع');
+    const isReversal = (invoice as any).isReversal === true;
+
+    // Handle Edit Reversal: Before posting new state, we must neutralize the old one.
+    if (isReversal && invoice.id) {
+      await AccountingRepository.deleteEntriesBySource(invoice.id);
+      return;
+    }
 
     let entry: AccountingEntry | AccountingEntry[];
 

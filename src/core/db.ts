@@ -722,17 +722,22 @@ export class PharmaFlowDB extends Dexie {
   }
 
   async processPurchase(
-    supplierId: string, items: InvoiceItem[], total: number, id: string,
-    isCash: boolean, _currency: string, docStatus: InvoiceStatus, _auditScore: number,
-    _riskLevel: string, refId: string, _attachment: string, isReturn: boolean, date: string,
+    supplierId: string, items: InvoiceItem[], total: number, id?: string,
+    isCash: boolean = false, _currency?: string, docStatus: InvoiceStatus = 'POSTED', _auditScore: number = 0,
+    _riskLevel: string = 'LOW', refId?: string, _attachment?: string, isReturn: boolean = false, date?: string,
     transactionUuid?: string,
     tenantId?: string,
     branchId?: string
   ) {
-    const invNum = this.generateId('PURCH');
     const nowIso = new Date().toISOString();
     const docDate = date || nowIso;
+    
+    // Identity Strategy:
+    // 1. Internal ID (purId): Use provided 'id' (for edits) or generate a fresh UUID.
+    // 2. User-facing Invoice Number (invNum): Use provided 'refId' (user input) or generate a sequential-like ID.
     const purId = id || this.generateId('PUR');
+    const invNum = refId || this.generateId('PURCH');
+    
     const payStatusStr = isCash ? 'Cash' : 'Credit';
     const finStatusStr = isCash ? 'Paid' : 'Unpaid';
     const docStatusStr = docStatus || 'POSTED';
@@ -746,9 +751,9 @@ export class PharmaFlowDB extends Dexie {
       id: purId,
       invoiceNumber: invNum,
       invoice_number: invNum,
-      invoiceId: invNum,
+      invoiceId: invNum, // Compatibility
       date: docDate,
-      Date: docDate,
+      Date: docDate, // Compatibility
       partnerId: supplierId || 'SUPP-GEN',
       partner_id: supplierId || 'SUPP-GEN',
       partnerName: 'Supplier',
@@ -770,7 +775,7 @@ export class PharmaFlowDB extends Dexie {
       invoiceStatus: docStatusStr,
       items: items || [],
       isReturn: !!isReturn,
-      notes: `Ref: ${refId || purId}`,
+      notes: `Ref: ${invNum}`,
       transactionUuid: transactionUuid || `TX-${Date.now()}`,
       hash: `HASH-${Date.now()}`,
       tenantId: effectiveTenantId,
@@ -782,6 +787,8 @@ export class PharmaFlowDB extends Dexie {
       syncStatus: (typeof navigator !== 'undefined' && navigator.onLine) ? 'SYNCED' : 'PENDING',
       updatedAt: nowIso
     };
+
+    // Use put to handle both Create and Update atomically by primary key (id)
     await this.invoices.put(purchase);
     try { await this.purchases.put(purchase); } catch {}
     return purchase;
