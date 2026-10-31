@@ -30,7 +30,7 @@ export interface PurchaseWorkflowInput {
   discountPercent?: number;
   otherFees?: number;
   tax?: number;
-  pendingProducts?: any[]; // Manual products to be created atomically
+  pendingProducts?: any[];
 }
 
 export interface PurchaseWorkflowResult {
@@ -43,6 +43,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
   public name = 'معالجة فاتورة مشتريات';
   public operationType = 'PURCHASE';
   public requiredPermissions = ['purchases.create', 'purchases.edit'];
+
   public tables = [
     'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
     'inventory_layers', 'fifo_consumption_log', 'warehouseStock',
@@ -58,17 +59,29 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     if (!input.items || input.items.length === 0) {
       throw new Error('يجب إضافة صنف واحد على الأقل بفاتورة المشتريات');
     }
+
     if (input.total < 0) {
       throw new Error('إجمالي الفاتورة يجب أن يكون أكبر من أو يساوي الصفر');
     }
   }
 
-  public async validateBusinessRules(input: PurchaseWorkflowInput, ctx: WorkflowContext): Promise<void> {
-    if (!ctx || !ctx.tenantId || ctx.tenantId === 'default' || ctx.tenantId === 'default-tenant' || ctx.tenantId === 'TEN-DEV-001' || ctx.tenantId === 'tenant_default') {
-      throw new Error('FAIL_CLOSED: يتطلب تنفيذ فاتورة المشتريات وجود سياق مؤسسة موثوق (Trusted Tenant Context Required).');
+  public async validateBusinessRules(
+    input: PurchaseWorkflowInput,
+    ctx: WorkflowContext
+  ): Promise<void> {
+    if (
+      !ctx ||
+      !ctx.tenantId ||
+      ctx.tenantId === 'default' ||
+      ctx.tenantId === 'default-tenant' ||
+      ctx.tenantId === 'TEN-DEV-001' ||
+      ctx.tenantId === 'tenant_default'
+    ) {
+      throw new Error(
+        'FAIL_CLOSED: يتطلب تنفيذ فاتورة المشتريات وجود سياق مؤسسة موثوق (Trusted Tenant Context Required).'
+      );
     }
 
-    // Ensure input has an ID so validation, uniqueness checks, and execution share the exact same ID
     if (!input.id) {
       input.id = db.generateId('PUR');
     }
@@ -80,28 +93,51 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     // 1. Cross-Tenant Supplier Validation
     if (input.supplierId && input.supplierId !== 'مورد نقدي') {
       const supplier = await db.suppliers.get(input.supplierId);
+
       if (!supplier) {
-        throw new Error(`SUPPLIER_NOT_FOUND: لم يتم العثور على المورد المحدد [${input.supplierId}].`);
+        throw new Error(
+          `SUPPLIER_NOT_FOUND: لم يتم العثور على المورد المحدد [${input.supplierId}].`
+        );
       }
-      if (ctx?.tenantId && supplier.tenantId && supplier.tenantId !== ctx.tenantId) {
-        throw new Error(`CROSS_TENANT_SUPPLIER_FORBIDDEN: المورد [${input.supplierId}] تابع لمؤسسة أخرى.`);
+
+      if (
+        ctx.tenantId &&
+        supplier.tenantId &&
+        supplier.tenantId !== ctx.tenantId
+      ) {
+        throw new Error(
+          `CROSS_TENANT_SUPPLIER_FORBIDDEN: المورد [${input.supplierId}] تابع لمؤسسة أخرى.`
+        );
       }
     }
 
     // 2. Cross-Tenant Product Validation
     for (const item of input.items || []) {
       const productId = item.productId || (item as any).product_id;
+
       if (productId) {
-        // Check if it's a pending manual product
-        const isPending = input.pendingProducts?.some(p => p.id === productId);
+        const isPending = input.pendingProducts?.some(
+          p => p.id === productId
+        );
+
         if (isPending) continue;
 
         const product = await db.products.get(productId);
+
         if (!product) {
-          throw new Error(`PRODUCT_NOT_FOUND: الصنف [${productId}] غير موجود.`);
+          throw new Error(
+            `PRODUCT_NOT_FOUND: الصنف [${productId}] غير موجود.`
+          );
         }
-        if (ctx?.tenantId && product.tenantId && product.tenantId !== ctx.tenantId) {
-          throw new Error(`CROSS_TENANT_PRODUCT_FORBIDDEN: الصنف [${productId}] تابع لمؤسسة أخرى.`);
+
+        if (
+          ctx.tenantId &&
+          product.tenantId &&
+          product.tenantId !== ctx.tenantId
+        ) {
+          throw new Error(
+            `CROSS_TENANT_PRODUCT_FORBIDDEN: الصنف [${productId}] تابع لمؤسسة أخرى.`
+          );
         }
       }
     }
@@ -109,28 +145,52 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     // 3. Cross-Tenant Existing Invoice Validation
     if (input.isEdit && input.id) {
       const existing = await db.invoices.get(input.id);
-      if (existing && ctx?.tenantId && existing.tenantId && existing.tenantId !== ctx.tenantId) {
-        throw new Error(`CROSS_TENANT_INVOICE_FORBIDDEN: فاتورة المشتريات [${input.id}] تابعة لمؤسسة أخرى.`);
+
+      if (
+        existing &&
+        ctx.tenantId &&
+        existing.tenantId &&
+        existing.tenantId !== ctx.tenantId
+      ) {
+        throw new Error(
+          `CROSS_TENANT_INVOICE_FORBIDDEN: فاتورة المشتريات [${input.id}] تابعة لمؤسسة أخرى.`
+        );
       }
     }
 
     // 4. Strict Invoice Validation Enforcement
-    const validationResult = await validationService.validateInvoice(input, 'PURCHASE');
+    const validationResult = await validationService.validateInvoice(
+      input,
+      'PURCHASE'
+    );
+
     if (!validationResult.valid) {
-      throw new Error(`INVOICE_VALIDATION_FAILED: ${validationResult.errors.join(', ')}`);
+      throw new Error(
+        `INVOICE_VALIDATION_FAILED: ${validationResult.errors.join(', ')}`
+      );
     }
 
     // 5. Strict Invoice ID Uniqueness Enforcement
     if (!input.isEdit && input.id) {
-      const isIdempotentReplay = ctx?.idempotencyKey && await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId);
-      if (!isIdempotentReplay) {
-        const isUnique = await validationService.validateInvoiceIdUniqueness(
-          input.id,
-          input.isReturn ? 'RETURN' : 'PURCHASE',
-          db
+      const isIdempotentReplay =
+        ctx?.idempotencyKey &&
+        await IdempotencyRegistry.get(
+          ctx.idempotencyKey,
+          ctx.tenantId
         );
+
+      if (!isIdempotentReplay) {
+        const isUnique =
+          await validationService.validateInvoiceIdUniqueness(
+            input.id,
+            input.isReturn ? 'RETURN' : 'PURCHASE',
+            db
+          );
+
         if (!isUnique) {
-          throw new Error(`DUPLICATE_INVOICE_ID: معرف الفاتورة [${input.id}] مسجل مسبقاً.`);
+          throw new Error(
+            `DUPLICATE_INVOICE_ID: معرف الفاتورة [${input.id}] مسجل مسبقاً.`
+          );
         }
       }
     }
@@ -142,39 +202,112 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     tx?: any
   ): Promise<PurchaseWorkflowResult> {
     const finalStatus: InvoiceStatus = input.invoiceStatus || 'POSTED';
-    const isPosting = finalStatus === 'POSTED' || finalStatus === 'LOCKED';
+    const isPosting =
+      finalStatus === 'POSTED' || finalStatus === 'LOCKED';
+
     const effectiveDate = input.date || ctx.startedAt;
     const isReturn = !!input.isReturn;
 
     const docId = input.id || db.generateId('PUR');
-    const userFacingInvoiceNumber = input.invoiceNumber || input.id || docId;
+    const userFacingInvoiceNumber =
+      input.invoiceNumber || input.id || docId;
 
-    // 0. Atomic Manual Product Creation (If applicable)
+    // 0. Atomic Manual Product Creation
     if (input.pendingProducts && input.pendingProducts.length > 0) {
+      if (!tx) {
+        throw new Error(
+          'PURCHASE_TRANSACTION_REQUIRED: Manual products must be created inside the purchase transaction.'
+        );
+      }
+
+      const productsTable = tx.table('products');
+
+      if (!productsTable) {
+        throw new Error(
+          'PURCHASE_PRODUCTS_TABLE_UNAVAILABLE: Products table is unavailable in the active transaction.'
+        );
+      }
+
+      const referencedProductIds = new Set(
+        (input.items || [])
+          .map(item =>
+            String(item.productId || (item as any).product_id || '')
+          )
+          .filter(Boolean)
+      );
+
       for (const prod of input.pendingProducts) {
-        const existing = await db.products.get(prod.id);
-        if (!existing) {
-          await db.products.put({
-            ...prod,
-            tenantId: ctx.tenantId,
-            branchId: ctx.branchId,
-            created_at: new Date().toISOString()
-          });
+        if (!prod?.id) {
+          throw new Error(
+            'INVALID_PENDING_PRODUCT: Manual product is missing its ID.'
+          );
         }
+
+        const productId = String(prod.id);
+
+        if (!referencedProductIds.has(productId)) {
+          continue;
+        }
+
+        const existing = await productsTable.get(productId);
+
+        if (existing) {
+          const existingTenantId = existing.tenantId;
+          const existingBranchId = existing.branchId;
+
+          if (
+            existingTenantId &&
+            existingTenantId !== ctx.tenantId
+          ) {
+            throw new Error(
+              `CROSS_TENANT_PRODUCT_FORBIDDEN: Product [${productId}] belongs to another tenant.`
+            );
+          }
+
+          if (
+            existingBranchId &&
+            ctx.branchId &&
+            existingBranchId !== ctx.branchId
+          ) {
+            throw new Error(
+              `CROSS_BRANCH_PRODUCT_FORBIDDEN: Product [${productId}] belongs to another branch.`
+            );
+          }
+
+          continue;
+        }
+
+        await productsTable.add({
+          ...prod,
+          id: productId,
+          tenantId: ctx.tenantId,
+          branchId: ctx.branchId,
+          created_at: new Date().toISOString()
+        });
       }
     }
 
     // 0.5 Handle Reversals for Edits
     if (input.isEdit && input.id) {
       const existing = await db.invoices.get(input.id);
-      const isActuallyPosted = existing && (existing.document_status === 'POSTED' || existing.document_status === 'LOCKED' || (existing as any).invoiceStatus === 'POSTED');
-      
+
+      const isActuallyPosted =
+        existing &&
+        (
+          existing.document_status === 'POSTED' ||
+          existing.document_status === 'LOCKED' ||
+          (existing as any).invoiceStatus === 'POSTED'
+        );
+
       if (isActuallyPosted) {
         // Reverse Inventory Effect
         const engine = UnifiedInventoryMutationEngine.getInstance();
+
         await engine.executeReversal({
           originalDocumentId: input.id,
-          originalDocumentType: isReturn ? 'PURCHASE_RETURN' : 'PURCHASE',
+          originalDocumentType: isReturn
+            ? 'PURCHASE_RETURN'
+            : 'PURCHASE',
           reason: `تعديل الفاتورة رقم ${input.id}`,
           userId: ctx.userId || 'system',
           tenantId: ctx.tenantId,
@@ -184,17 +317,25 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
         // Reverse Supplier Balance
         const oldSuppId = existing.partner_id || existing.partnerId;
-        const oldTotal = existing.finalTotal || existing.totalAmount || 0;
+        const oldTotal =
+          existing.finalTotal || existing.totalAmount || 0;
+
         if (oldSuppId && oldSuppId !== 'مورد نقدي') {
-          const balanceReversal = (existing as any).isReturn ? oldTotal : -oldTotal;
-          await db.updateSupplierBalance(oldSuppId, balanceReversal, tx);
+          const balanceReversal =
+            (existing as any).isReturn ? oldTotal : -oldTotal;
+
+          await db.updateSupplierBalance(
+            oldSuppId,
+            balanceReversal,
+            tx
+          );
         }
 
         // Reverse Accounting Effect
         await accountingEngine.postInvoice(
           {
             ...existing,
-            isReversal: true, 
+            isReversal: true,
             transactionUuid: `REV-EDIT-ACC-${ctx.idempotencyKey}`
           } as any,
           undefined,
@@ -213,7 +354,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       finalStatus,
       0,
       'LOW',
-      userFacingInvoiceNumber, 
+      userFacingInvoiceNumber,
       input.attachment,
       isReturn,
       effectiveDate,
@@ -227,51 +368,83 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     }
 
     const refId = (savedDoc as any)?.id || docId;
-    let costResult = { totalCost: 0, itemCosts: {} as Record<string, number> };
+
+    let costResult = {
+      totalCost: 0,
+      itemCosts: {} as Record<string, number>
+    };
 
     if (isPosting) {
       // 1. Resolve Warehouse
       const warehouseId =
         input.warehouseId ||
         (ctx.metadata?.warehouseId as string) ||
-        configurationService.getSync<string>('inventory.defaultWarehouseId') ||
+        configurationService.getSync<string>(
+          'inventory.defaultWarehouseId'
+        ) ||
         'WH-MAIN';
 
       // 2. Extract Inventory Items
       const inventoryItems = (input.items || [])
-        .filter((item) => {
-          const productId = item.productId || (item as any).product_id;
+        .filter(item => {
+          const productId =
+            item.productId || (item as any).product_id;
+
           if (!productId) return false;
 
           const isService = (item as any).isService === true;
           const trackStock = (item as any).trackStock === false;
-          const isServiceType = (item as any).type === 'SERVICE' || (item as any).itemType === 'SERVICE';
+          const isServiceType =
+            (item as any).type === 'SERVICE' ||
+            (item as any).itemType === 'SERVICE';
+
           if (isService || trackStock || isServiceType) {
             return false;
           }
 
-          const qty = Number(item.quantity ?? (item as any).qty ?? 0);
+          const qty = Number(
+            item.quantity ?? (item as any).qty ?? 0
+          );
+
           return qty > 0;
         })
-        .map((item) => {
-          const productId = (item.productId || (item as any).product_id)!;
-          const quantity = Number(item.quantity ?? (item as any).qty ?? 0);
+        .map(item => {
+          const productId =
+            (item.productId || (item as any).product_id)!;
 
-          const rawCost = (item as any).unitCost !== undefined ? (item as any).unitCost
-            : (item as any).cost !== undefined ? (item as any).cost
-            : (item as any).costPrice !== undefined ? (item as any).costPrice
-            : (item as any).unitPrice !== undefined ? (item as any).unitPrice
-            : (item as any).price;
+          const quantity = Number(
+            item.quantity ?? (item as any).qty ?? 0
+          );
 
-          const unitCost = rawCost !== undefined && rawCost !== null && !isNaN(Number(rawCost))
-            ? Number(rawCost)
-            : undefined;
+          const rawCost =
+            (item as any).unitCost !== undefined
+              ? (item as any).unitCost
+              : (item as any).cost !== undefined
+                ? (item as any).cost
+                : (item as any).costPrice !== undefined
+                  ? (item as any).costPrice
+                  : (item as any).unitPrice !== undefined
+                    ? (item as any).unitPrice
+                    : (item as any).price;
 
-          const rawPrice = (item as any).unitPrice !== undefined ? (item as any).unitPrice
-            : (item as any).price;
-          const unitPrice = rawPrice !== undefined && rawPrice !== null && !isNaN(Number(rawPrice))
-            ? Number(rawPrice)
-            : unitCost;
+          const unitCost =
+            rawCost !== undefined &&
+            rawCost !== null &&
+            !isNaN(Number(rawCost))
+              ? Number(rawCost)
+              : undefined;
+
+          const rawPrice =
+            (item as any).unitPrice !== undefined
+              ? (item as any).unitPrice
+              : (item as any).price;
+
+          const unitPrice =
+            rawPrice !== undefined &&
+            rawPrice !== null &&
+            !isNaN(Number(rawPrice))
+              ? Number(rawPrice)
+              : unitCost;
 
           return {
             productId,
@@ -286,62 +459,108 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
       // 3. Delegate Inventory Mutation
       if (inventoryItems.length > 0) {
-        const engine = UnifiedInventoryMutationEngine.getInstance();
+        const engine =
+          UnifiedInventoryMutationEngine.getInstance();
+
         const tenantId = ctx.tenantId;
         const branchId = ctx.branchId;
 
-        const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
-        const forbiddenBranches = ['branch_default', 'default'];
+        const forbiddenTenants = [
+          'TEN-DEV-001',
+          'tenant_default',
+          'default',
+          'default-tenant'
+        ];
+
+        const forbiddenBranches = [
+          'branch_default',
+          'default'
+        ];
 
         if (!tenantId || forbiddenTenants.includes(tenantId)) {
-          throw new Error('FAIL_CLOSED: TRUSTED_TENANT_CONTEXT_REQUIRED');
+          throw new Error(
+            'FAIL_CLOSED: TRUSTED_TENANT_CONTEXT_REQUIRED'
+          );
         }
+
         if (!branchId || forbiddenBranches.includes(branchId)) {
-          throw new Error('FAIL_CLOSED: TRUSTED_BRANCH_CONTEXT_REQUIRED');
+          throw new Error(
+            'FAIL_CLOSED: TRUSTED_BRANCH_CONTEXT_REQUIRED'
+          );
         }
 
         const userId = ctx.userId || 'system';
         const transactionUuid = ctx.idempotencyKey;
 
         if (isReturn) {
-          const mutationResults = await engine.executePurchaseReturn({
-            returnInvoiceId: refId,
-            originalPurchaseId: input.originalPurchaseId,
-            warehouseId,
-            items: inventoryItems,
-            transactionUuid,
-            userId,
-            tenantId,
-            branchId,
-            notes: input.notes || `مرتجع مشتريات فاتورة #${refId}`,
-            timestamp: effectiveDate
-          });
+          const mutationResults =
+            await engine.executePurchaseReturn({
+              returnInvoiceId: refId,
+              originalPurchaseId: input.originalPurchaseId,
+              warehouseId,
+              items: inventoryItems,
+              transactionUuid,
+              userId,
+              tenantId,
+              branchId,
+              notes:
+                input.notes ||
+                `مرتجع مشتريات فاتورة #${refId}`,
+              timestamp: effectiveDate
+            });
 
-          const totalCost = mutationResults.reduce((sum, r) => sum + ((r.calculatedCost || 0) * Math.abs(r.delta || 0)), 0);
+          const totalCost = mutationResults.reduce(
+            (sum, r) =>
+              sum +
+              ((r.calculatedCost || 0) *
+                Math.abs(r.delta || 0)),
+            0
+          );
+
           const itemCosts: Record<string, number> = {};
+
           for (const r of mutationResults) {
-            itemCosts[r.productId] = (itemCosts[r.productId] || 0) + ((r.calculatedCost || 0) * Math.abs(r.delta || 0));
+            itemCosts[r.productId] =
+              (itemCosts[r.productId] || 0) +
+              ((r.calculatedCost || 0) *
+                Math.abs(r.delta || 0));
           }
+
           costResult = { totalCost, itemCosts };
         } else {
-          const mutationResults = await engine.executeReceivePurchase({
-            invoiceId: refId,
-            warehouseId,
-            supplierId: input.supplierId,
-            items: inventoryItems,
-            transactionUuid,
-            userId,
-            tenantId,
-            branchId,
-            notes: input.notes || `استلام مشتريات فاتورة #${refId}`,
-            timestamp: effectiveDate
-          });
+          const mutationResults =
+            await engine.executeReceivePurchase({
+              invoiceId: refId,
+              warehouseId,
+              supplierId: input.supplierId,
+              items: inventoryItems,
+              transactionUuid,
+              userId,
+              tenantId,
+              branchId,
+              notes:
+                input.notes ||
+                `استلام مشتريات فاتورة #${refId}`,
+              timestamp: effectiveDate
+            });
 
-          const totalCost = mutationResults.reduce((sum, r) => sum + ((r.calculatedCost || 0) * Math.abs(r.delta || 0)), 0);
+          const totalCost = mutationResults.reduce(
+            (sum, r) =>
+              sum +
+              ((r.calculatedCost || 0) *
+                Math.abs(r.delta || 0)),
+            0
+          );
+
           const itemCosts: Record<string, number> = {};
+
           for (const r of mutationResults) {
-            itemCosts[r.productId] = (itemCosts[r.productId] || 0) + ((r.calculatedCost || 0) * Math.abs(r.delta || 0));
+            itemCosts[r.productId] =
+              (itemCosts[r.productId] || 0) +
+              ((r.calculatedCost || 0) *
+                Math.abs(r.delta || 0));
           }
+
           costResult = { totalCost, itemCosts };
         }
       }
@@ -352,29 +571,47 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
       // 4. Financial & Accounting Ledger Execution
       const suppId = input.supplierId;
+
       if (suppId && suppId !== 'مورد نقدي') {
-        const balanceDelta = isReturn ? -input.total : input.total;
-        await db.updateSupplierBalance(suppId, balanceDelta, tx);
+        const balanceDelta = isReturn
+          ? -input.total
+          : input.total;
+
+        await db.updateSupplierBalance(
+          suppId,
+          balanceDelta,
+          tx
+        );
       }
 
-      if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_SUPPLIER_BALANCE') {
+      if (
+        (globalThis as any).__FAIL_AT_STAGE__ ===
+        'AFTER_SUPPLIER_BALANCE'
+      ) {
         throw new Error('SIMULATED_SUPPLIER_BALANCE_FAILURE');
       }
 
-      await FinancialTransactionRepository.record({
-        id: db.generateId('FT'),
-        Transaction_Type: isReturn ? 'Refund' : (input.isCash ? 'Payment' : 'Invoice'),
-        Reference_ID: refId,
-        Reference_Table: 'Purchase_Invoices',
-        Entity_Type: 'Supplier',
-        Entity_Name: input.supplierId || 'مورد نقدي',
-        Amount: input.total,
-        Direction: isReturn ? 'Debit' : 'Credit',
-        Transaction_Date: effectiveDate,
-        Notes: `فاتورة مشتريات #${refId}`,
-        tenantId: ctx.tenantId,
-        branchId: ctx.branchId
-      }, tx);
+      await FinancialTransactionRepository.record(
+        {
+          id: db.generateId('FT'),
+          Transaction_Type: isReturn
+            ? 'Refund'
+            : input.isCash
+              ? 'Payment'
+              : 'Invoice',
+          Reference_ID: refId,
+          Reference_Table: 'Purchase_Invoices',
+          Entity_Type: 'Supplier',
+          Entity_Name: input.supplierId || 'مورد نقدي',
+          Amount: input.total,
+          Direction: isReturn ? 'Debit' : 'Credit',
+          Transaction_Date: effectiveDate,
+          Notes: `فاتورة مشتريات #${refId}`,
+          tenantId: ctx.tenantId,
+          branchId: ctx.branchId
+        },
+        tx
+      );
 
       if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_FT') {
         throw new Error('SIMULATED_FT_FAILURE');
@@ -397,11 +634,15 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         throw new Error('SIMULATED_JOURNAL_FAILURE');
       }
 
-      await ProjectionEventBus.publish('INVOICE_POSTED', refId, {
-        type: 'PURCHASE',
-        transactionUuid: ctx.idempotencyKey,
-        correlationId: ctx.correlationId
-      });
+      await ProjectionEventBus.publish(
+        'INVOICE_POSTED',
+        refId,
+        {
+          type: 'PURCHASE',
+          transactionUuid: ctx.idempotencyKey,
+          correlationId: ctx.correlationId
+        }
+      );
     }
 
     return {
