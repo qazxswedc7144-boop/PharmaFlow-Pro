@@ -898,13 +898,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
       // 1. Stable Idempotency Key for the entire logical request
       // We use a ref to keep the key stable across retries within the same component lifecycle for a specific save attempt.
-      if (!currentOperationRef.current) {
-        currentOperationRef.current = (editingInvoiceId && !header.invoice_number) 
-          ? `EDIT-${editingInvoiceId}-${Math.random().toString(36).substring(2, 9)}` 
-          : (header.invoice_number ? `SAVE-PUR-${header.invoice_number}` : `NEW-PUR-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
-      }
-      const requestUuid = currentOperationRef.current;
-
+		
       // 2. Identify and prepare Manual Products for atomic creation
       // We also need stable IDs for these products during retries
       if (pendingProductsRef.current.length === 0) {
