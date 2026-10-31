@@ -907,7 +907,9 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const requestUuid = currentOperationRef.current;
       // 2. Identify and prepare Manual Products for atomic creation
       // We also need stable IDs for these products during retries
-      if (pendingProductsRef.current.length === 0) {
+		let itemsForSave = items;
+		
+		if (pendingProductsRef.current.length === 0) {
         const finalizedItems = [...items];
         for (let i = 0; i < finalizedItems.length; i++) {
           const item = finalizedItems[i];
@@ -933,6 +935,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           }
         }
         // Update items state with the fixed IDs so subsequent retries use the same payload
+			        itemsForSave = finalizedItems;
         setItems(finalizedItems);
       }
 
@@ -943,7 +946,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
             type: 'PURCHASE',
             payload: {
               supplierId: header.supplier_id,
-              items: items.map(item => ({
+              items: itemsForSave.map(item => ({
                 ...item,
                 expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
               })),
