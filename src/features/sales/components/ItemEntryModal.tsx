@@ -155,22 +155,29 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
         }
       }
 
-      setAvailableStock(stock);
+      // ✅ التحقق من أن هذا الطلب هو الأحدث قبل تحديث الشاشة
+if (currentRequestId !== requestIdRef.current) return;
 
-      // 2. Fetch last actual selling price / price intelligence
-      if (mode === 'sale') {
-        const suggested = await priceIntelligenceService.getSuggestedPrice(prodId, 'SALE');
-        if (suggested?.suggestedPrice && suggested.suggestedPrice > 0) {
-          setLastSellingPriceSuggestion(suggested.suggestedPrice);
-          setPriceInsight(suggested.insight || `آخر سعر بيع: ${suggested.suggestedPrice} ${currency}`);
-          setTempPrice(suggested.suggestedPrice);
-        } else if (prod?.UnitPrice || (prod as any)?.price) {
-          const uPrice = prod.UnitPrice || (prod as any).price || 0;
-          setLastSellingPriceSuggestion(uPrice);
-          setPriceInsight(`سعر البيع الافتراضي: ${uPrice} ${currency}`);
-          setTempPrice(uPrice);
-        }
-      }
+setAvailableStock(stock);
+
+// 2. Fetch last actual selling price / price intelligence
+if (mode === 'sale') {
+  const suggested = await priceIntelligenceService.getSuggestedPrice(prodId, 'SALE');
+  
+  // ✅ التحقق مرة أخرى بعد الانتظار (لأن جلب السعر قد يستغرق وقتاً)
+  if (currentRequestId !== requestIdRef.current) return;
+
+  if (suggested?.suggestedPrice && suggested.suggestedPrice > 0) {
+    setLastSellingPriceSuggestion(suggested.suggestedPrice);
+    setPriceInsight(suggested.insight || `آخر سعر بيع: ${suggested.suggestedPrice} ${currency}`);
+    setTempPrice(suggested.suggestedPrice);
+  } else if (prod?.UnitPrice || (prod as any)?.price) {
+    const uPrice = prod.UnitPrice || (prod as any).price || 0;
+    setLastSellingPriceSuggestion(uPrice);
+    setPriceInsight(`سعر البيع الافتراضي: ${uPrice} ${currency}`);
+    setTempPrice(uPrice);
+  }
+}
     } catch (err) {
       console.warn('[ItemEntryModal] Failed to fetch product intelligence:', err);
     }
