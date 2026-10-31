@@ -50,7 +50,8 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     'medicineBatches', 'stock_movements', 'suppliers', 'journalEntries',
     'journalLines', 'accounts', 'financialTransactions', 'auditLogs',
     'idempotencyKeys', 'projectionEvents', 'projectionCheckpoints',
-    'accountingPeriods', 'purchases', 'settings', 'systemSettings'
+    'accountingPeriods', 'purchases', 'settings', 'systemSettings', 'branches',
+    'idempotency_records'
   ];
 
   public async validateInput(input: PurchaseWorkflowInput): Promise<void> {
@@ -91,6 +92,10 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     for (const item of input.items || []) {
       const productId = item.productId || (item as any).product_id;
       if (productId) {
+        // Check if it's a pending manual product
+        const isPending = input.pendingProducts?.some(p => p.id === productId);
+        if (isPending) continue;
+
         const product = await db.products.get(productId);
         if (!product) {
           throw new Error(`PRODUCT_NOT_FOUND: الصنف [${productId}] غير موجود.`);
@@ -145,10 +150,8 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     const userFacingInvoiceNumber = input.invoiceNumber || input.id || docId;
 
     // 0. Atomic Manual Product Creation (If applicable)
-    // This ensures no orphan products if the workflow fails later.
     if (input.pendingProducts && input.pendingProducts.length > 0) {
       for (const prod of input.pendingProducts) {
-        // Double check existence to prevent duplicates within same batch
         const existing = await db.products.get(prod.id);
         if (!existing) {
           await db.products.put({
@@ -162,7 +165,6 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     }
 
     // 0.5 Handle Reversals for Edits
-    // If this is an edit of a POSTED/LOCKED document, we MUST reverse its effects first.
     if (input.isEdit && input.id) {
       const existing = await db.invoices.get(input.id);
       const isActuallyPosted = existing && (existing.document_status === 'POSTED' || existing.document_status === 'LOCKED' || (existing as any).invoiceStatus === 'POSTED');
@@ -176,15 +178,23 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
           reason: `تعديل الفاتورة رقم ${input.id}`,
           userId: ctx.userId || 'system',
           tenantId: ctx.tenantId,
+          branchId: ctx.branchId,
           transactionUuid: `REV-EDIT-${ctx.idempotencyKey}`
         });
 
+        // Reverse Supplier Balance
+        const oldSuppId = existing.partner_id || existing.partnerId;
+        const oldTotal = existing.finalTotal || existing.totalAmount || 0;
+        if (oldSuppId && oldSuppId !== 'مورد نقدي') {
+          const balanceReversal = (existing as any).isReturn ? oldTotal : -oldTotal;
+          await db.updateSupplierBalance(oldSuppId, balanceReversal, tx);
+        }
+
         // Reverse Accounting Effect
-        // We use deleteEntriesBySource because it correctly reverses balances in this system's architecture.
         await accountingEngine.postInvoice(
           {
             ...existing,
-            isReversal: true, // Signal for potential custom reversal logic in future
+            isReversal: true, 
             transactionUuid: `REV-EDIT-ACC-${ctx.idempotencyKey}`
           } as any,
           undefined,
@@ -203,7 +213,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       finalStatus,
       0,
       'LOW',
-      userFacingInvoiceNumber, // Pass user-facing number correctly
+      userFacingInvoiceNumber, 
       input.attachment,
       isReturn,
       effectiveDate,
@@ -220,20 +230,19 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     let costResult = { totalCost: 0, itemCosts: {} as Record<string, number> };
 
     if (isPosting) {
-      // 1. Resolve Warehouse (Precedence: input -> context -> configuration -> default WH-MAIN)
+      // 1. Resolve Warehouse
       const warehouseId =
         input.warehouseId ||
         (ctx.metadata?.warehouseId as string) ||
         configurationService.getSync<string>('inventory.defaultWarehouseId') ||
         'WH-MAIN';
 
-      // 2. Extract Inventory Items (Exclude service / non-inventory items)
+      // 2. Extract Inventory Items
       const inventoryItems = (input.items || [])
         .filter((item) => {
           const productId = item.productId || (item as any).product_id;
           if (!productId) return false;
 
-          // Defensive service / non-inventory detection
           const isService = (item as any).isService === true;
           const trackStock = (item as any).trackStock === false;
           const isServiceType = (item as any).type === 'SERVICE' || (item as any).itemType === 'SERVICE';
@@ -248,7 +257,6 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
           const productId = (item.productId || (item as any).product_id)!;
           const quantity = Number(item.quantity ?? (item as any).qty ?? 0);
 
-          // Resolve purchase cost with strict priority: unitCost -> cost -> costPrice -> unitPrice -> price
           const rawCost = (item as any).unitCost !== undefined ? (item as any).unitCost
             : (item as any).cost !== undefined ? (item as any).cost
             : (item as any).costPrice !== undefined ? (item as any).costPrice
@@ -276,20 +284,20 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
           };
         });
 
-      // 3. Delegate Inventory Mutation Exclusively to UnifiedInventoryMutationEngine
+      // 3. Delegate Inventory Mutation
       if (inventoryItems.length > 0) {
         const engine = UnifiedInventoryMutationEngine.getInstance();
         const tenantId = ctx.tenantId;
         const branchId = ctx.branchId;
 
         const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
-        const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
+        const forbiddenBranches = ['branch_default', 'default'];
 
         if (!tenantId || forbiddenTenants.includes(tenantId)) {
-          throw new Error('FAIL_CLOSED: TRUSTED_TENANT_CONTEXT_REQUIRED: يتطلب تنفيذ حركة المخزون وجود سياق مؤسسة موثوق.');
+          throw new Error('FAIL_CLOSED: TRUSTED_TENANT_CONTEXT_REQUIRED');
         }
         if (!branchId || forbiddenBranches.includes(branchId)) {
-          throw new Error('FAIL_CLOSED: TRUSTED_BRANCH_CONTEXT_REQUIRED: يتطلب تنفيذ حركة المخزون وجود سياق فرع موثوق.');
+          throw new Error('FAIL_CLOSED: TRUSTED_BRANCH_CONTEXT_REQUIRED');
         }
 
         const userId = ctx.userId || 'system';

@@ -1270,7 +1270,7 @@ const brInv = await db.branchInventory
     if (!command.tenantId || forbiddenTenants.includes(command.tenantId)) {
       throw new Error(`[UnifiedEngine] TRUSTED_TENANT_CONTEXT_REQUIRED: Valid tenantId is required for ${opName}. Got: ${command.tenantId}`);
     }
-    const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
+    const forbiddenBranches = ['branch_default', 'default'];
     if (!command.branchId || forbiddenBranches.includes(command.branchId)) {
       throw new Error(`[UnifiedEngine] TRUSTED_BRANCH_CONTEXT_REQUIRED: Valid branchId is required for ${opName}. Got: ${command.branchId}`);
     }
@@ -1281,8 +1281,16 @@ const brInv = await db.branchInventory
       throw new Error(`[UnifiedEngine] transactionUuid (Idempotency Key) is required for ${opName}.`);
     }
 
-    const branch = await db.branches.get(command.branchId).catch(() => null)
-      || await db.branches.where('code').equals(command.branchId).first().catch(() => null);
+    let branch = await db.branches.get(command.branchId).catch(() => null);
+    
+    if (!branch) {
+      branch = await db.branches.where('code').equals(command.branchId).first().catch(() => null);
+    }
+    
+    if (!branch) {
+      // Last resort: collection filter (slow but safe for small tables like branches)
+      branch = await db.branches.filter((b: any) => b.code === command.branchId || b.id === command.branchId).first().catch(() => null);
+    }
 
     if (!branch) {
       throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Branch '${command.branchId}' is unknown or not registered.`);

@@ -35,7 +35,8 @@ export const useAccountingStore = create<AccountingState>((set) => ({
         customerId: rawPayload.customerId || rawPayload.customer_id,
         items: rawPayload.items || [],
         total: rawPayload.total || rawPayload.subtotal || 0,
-        id: rawPayload.id || rawPayload.invoiceId || rawPayload.invoice_number,
+        id: rawPayload.id,
+        invoiceNumber: rawPayload.invoiceNumber || rawPayload.invoice_number || rawPayload.id,
         date: rawPayload.date || options.date,
         notes: rawPayload.notes,
         attachment: rawPayload.attachment,
@@ -47,11 +48,13 @@ export const useAccountingStore = create<AccountingState>((set) => ({
         supplierId: rawPayload.supplierId || rawPayload.supplier_id,
         items: rawPayload.items || [],
         total: rawPayload.total || rawPayload.subtotal || 0,
-        id: rawPayload.id || rawPayload.invoiceId || rawPayload.invoice_number,
+        id: rawPayload.id,
+        invoiceNumber: rawPayload.invoiceNumber || rawPayload.invoice_number || rawPayload.id,
         date: rawPayload.date || options.date,
         notes: rawPayload.notes,
         attachment: rawPayload.attachment,
-        transactionUuid: rawPayload.transactionUuid
+        transactionUuid: rawPayload.transactionUuid,
+        pendingProducts: rawPayload.pendingProducts
       };
       return await UnifiedBusinessWorkflowOrchestrator.processPurchase(payload, options);
     }

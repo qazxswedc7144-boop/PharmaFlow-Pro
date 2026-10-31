@@ -160,6 +160,9 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     attachment: ''
   });
 
+  const currentOperationRef = useRef<string | null>(null);
+  const pendingProductsRef = useRef<any[]>([]);
+
   const resetInvoiceState = useCallback(() => {
     setHeader({
       invoice_number: '',
@@ -180,6 +183,10 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     setShowAIConfirmModal(false);
     setIsProcessingAI(false);
     setHasUnsavedAI(false);
+    
+    // Reset idempotency and pending products state
+    currentOperationRef.current = null;
+    pendingProductsRef.current = [];
   }, [setEditingInvoiceId]);
 
   const [isDateLockedStatus, setIsDateLockedStatus] = useState(false);
@@ -890,38 +897,43 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         });
       }
       // 1. Stable Idempotency Key for the entire logical request
-      const requestUuid = (editingInvoiceId && !header.invoice_number) 
-        ? `EDIT-${editingInvoiceId}-${Date.now()}` 
-        : (header.invoice_number ? `SAVE-PUR-${header.invoice_number}` : `NEW-PUR-${Date.now()}`);
+      // We use a ref to keep the key stable across retries within the same component lifecycle for a specific save attempt.
+      if (!currentOperationRef.current) {
+        currentOperationRef.current = (editingInvoiceId && !header.invoice_number) 
+          ? `EDIT-${editingInvoiceId}-${Math.random().toString(36).substring(2, 9)}` 
+          : (header.invoice_number ? `SAVE-PUR-${header.invoice_number}` : `NEW-PUR-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`);
+      }
+      const requestUuid = currentOperationRef.current;
 
       // 2. Identify and prepare Manual Products for atomic creation
-      const pendingProducts: any[] = [];
-      const finalizedItems = [...items];
-      
-      for (let i = 0; i < finalizedItems.length; i++) {
-        const item = finalizedItems[i];
-        if (!item) continue;
-        
-        if (item.product_id?.startsWith('manual-')) {
-          const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
-          pendingProducts.push({
-            id: newProdId,
-            ProductID: newProdId,
-            Name: item.name || 'صنف غير مسمى',
-            name: item.name || 'صنف غير مسمى',
-            categoryName: item.category || 'عام',
-            UnitPrice: item.price || 0,
-            price: item.price || 0,
-            Is_Active: 1,
-          });
-          
-          finalizedItems[i] = { 
-            ...item, 
-            product_id: newProdId, 
-            productId: newProdId, 
-            id: item.id || newProdId 
-          };
+      // We also need stable IDs for these products during retries
+      if (pendingProductsRef.current.length === 0) {
+        const finalizedItems = [...items];
+        for (let i = 0; i < finalizedItems.length; i++) {
+          const item = finalizedItems[i];
+          if (item?.product_id?.startsWith('manual-')) {
+            const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
+            pendingProductsRef.current.push({
+              id: newProdId,
+              ProductID: newProdId,
+              Name: item.name || 'صنف غير مسمى',
+              name: item.name || 'صنف غير مسمى',
+              categoryName: item.category || 'عام',
+              UnitPrice: item.price || 0,
+              price: item.price || 0,
+              Is_Active: 1,
+            });
+            
+            finalizedItems[i] = { 
+              ...item, 
+              product_id: newProdId, 
+              productId: newProdId, 
+              id: item.id || newProdId 
+            };
+          }
         }
+        // Update items state with the fixed IDs so subsequent retries use the same payload
+        setItems(finalizedItems);
       }
 
       // 3. Race against timeout but maintain idempotency logic
@@ -931,14 +943,14 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
             type: 'PURCHASE',
             payload: {
               supplierId: header.supplier_id,
-              items: finalizedItems.map(item => ({
+              items: items.map(item => ({
                 ...item,
                 expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
               })),
               total: vTotalSum,
-              invoiceId: header.invoice_number, // User facing number
-              invoiceNumber: header.invoice_number, // User facing number for workflow
-              id: editingInvoiceId || undefined, // Internal ID
+              invoiceId: header.invoice_number, 
+              invoiceNumber: header.invoice_number, 
+              id: editingInvoiceId || undefined, 
               notes: header.notes,
               attachment: header.attachment,
               date: header.date,
@@ -946,7 +958,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
               discountPercent: adjData.discountPercent,
               otherFees: adjData.otherFees,
               tax: adjData.tax,
-              pendingProducts // Pass for atomic creation inside workflow
+              pendingProducts: pendingProductsRef.current
             },
             options: {
               isCash: header.payment_method === 'Cash',

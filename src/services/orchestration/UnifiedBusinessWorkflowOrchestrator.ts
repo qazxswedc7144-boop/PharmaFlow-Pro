@@ -44,6 +44,7 @@ export interface WorkflowSalePayload {
   items: InvoiceItem[];
   total: number;
   id?: string;
+  invoiceNumber?: string;
   date?: string;
   notes?: string;
   attachment?: string;
@@ -56,11 +57,13 @@ export interface WorkflowPurchasePayload {
   items: InvoiceItem[];
   total: number;
   id?: string;
+  invoiceNumber?: string;
   date?: string;
   notes?: string;
   attachment?: string;
   transactionUuid?: string;
   isEdit?: boolean;
+  pendingProducts?: any[];
 }
 
 export interface WorkflowInvoiceOptions {
@@ -256,6 +259,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
         items: payload.items,
         total: payload.total,
         id: payload.id,
+        invoiceNumber: payload.invoiceNumber,
         date: payload.date || options?.date,
         notes: payload.notes,
         attachment: payload.attachment,
@@ -263,7 +267,8 @@ export class UnifiedBusinessWorkflowOrchestrator {
         isReturn: options?.isReturn,
         invoiceStatus: options?.invoiceStatus,
         currency: options?.currency,
-        isEdit: Boolean(options?.isEdit ?? payload.isEdit ?? false)
+        isEdit: Boolean(options?.isEdit ?? payload.isEdit ?? false),
+        pendingProducts: payload.pendingProducts
       },
       { idempotencyKey: transactionUuid }
     );
@@ -298,6 +303,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
         items: payload.items,
         total: payload.total,
         id: payload.id,
+        invoiceNumber: payload.invoiceNumber,
         date: payload.date || options?.date,
         notes: payload.notes,
         attachment: payload.attachment,

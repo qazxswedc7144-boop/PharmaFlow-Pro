@@ -1419,7 +1419,11 @@ export function getDatabaseName(_tenantId?: string | null, _userId?: string | nu
   return 'PharmaFlowPRO';
 }
 
-export let dbInstance = new PharmaFlowDB('PharmaFlowPRO');
+// Persistent Global DB Instance Singleton to survive module reloads and worker context boundaries
+if (!(globalThis as any).__PHARMA_FLOW_DB_INSTANCE__) {
+  (globalThis as any).__PHARMA_FLOW_DB_INSTANCE__ = new PharmaFlowDB('PharmaFlowPRO');
+}
+export const dbInstance = (globalThis as any).__PHARMA_FLOW_DB_INSTANCE__ as PharmaFlowDB;
 
 export async function openUserDatabase(_tenantId?: string, _userId?: string): Promise<PharmaFlowDB> {
   if (!dbInstance.isOpen()) {

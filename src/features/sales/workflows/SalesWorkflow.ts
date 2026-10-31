@@ -16,6 +16,7 @@ export interface SalesWorkflowInput {
   items: InvoiceItem[];
   total: number;
   id?: string;
+  invoiceNumber?: string;
   date?: string;
   notes?: string;
   attachment?: string;
