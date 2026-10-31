@@ -39,7 +39,7 @@ router.get("/permissions", async (_req, res: Response) => {
 router.get("/roles", requirePermission("users.roles.manage"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
     const roles = await RoleService.getRoles(tenantId);
     res.json({ success: true, data: roles });
   } catch (error: any) {
@@ -54,7 +54,7 @@ router.get("/roles", requirePermission("users.roles.manage"), async (req, res: R
 router.post("/roles", requirePermission("users.roles.manage"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
     const { name, description, permissions = [] } = req.body;
 
     if (!name || !name.trim()) {
@@ -85,7 +85,7 @@ router.post("/roles", requirePermission("users.roles.manage"), async (req, res: 
 router.put("/roles/:id", requirePermission("users.roles.manage"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
     const { id } = req.params;
     const { name, description, permissions } = req.body;
 
@@ -117,7 +117,7 @@ router.put("/roles/:id", requirePermission("users.roles.manage"), async (req, re
 router.post("/roles/:id/duplicate", requirePermission("users.roles.manage"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
     const { id } = req.params;
     const { name } = req.body;
 
@@ -149,7 +149,7 @@ router.post("/roles/:id/duplicate", requirePermission("users.roles.manage"), asy
 router.delete("/roles/:id", requirePermission("users.roles.manage"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
     const { id } = req.params;
     if (!id) {
       res.status(400).json({ success: false, error: "معرف الدور مطلوب" });
@@ -178,7 +178,7 @@ router.delete("/roles/:id", requirePermission("users.roles.manage"), async (req,
 router.get("/matrix", requirePermission("users.roles.manage"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
 
     const permissions = PermissionService.getAllPermissions();
     const roles = await RoleService.getRoles(tenantId);
@@ -213,7 +213,7 @@ router.get("/matrix", requirePermission("users.roles.manage"), async (req, res: 
 router.post("/users/:id/overrides", requirePermission("users.permissions.override"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
     const { id } = req.params;
     const { permissionKey, effect } = req.body;
 
@@ -240,7 +240,7 @@ router.post("/users/:id/overrides", requirePermission("users.permissions.overrid
 router.delete("/users/:id/overrides/:permissionKey", requirePermission("users.permissions.override"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
     const { id, permissionKey } = req.params;
 
     if (!id || !permissionKey) {
@@ -266,7 +266,7 @@ router.delete("/users/:id/overrides/:permissionKey", requirePermission("users.pe
 router.get("/users/:id/effective-permissions", async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || req.tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
     const { id } = req.params;
 
     const permissions = await AuthorizationService.getUserEffectivePermissions(

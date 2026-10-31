@@ -67,6 +67,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const [filteredProducts, setFilteredProducts] = useState<ProductItem[]>([]);
   const [isConfirmNewProductOpen, setIsConfirmNewProductOpen] = useState<boolean>(false);
   const [isConfirmedNewProduct, setIsConfirmedNewProduct] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   
   // Phase 3.1A - Sales Intelligence State
   const [availableStock, setAvailableStock] = useState<number | null>(null);
@@ -321,9 +322,9 @@ if (mode === 'sale') {
     if (!manualItemName || !tempQty || !tempPrice) return;
     
     const searchName = manualItemName.trim().toLowerCase();
-let existing = await db.products.filter(p => 
-  ((p.Name || p.name || '')).trim().toLowerCase() === searchName
-).first().catch(() => null);
+    let existing = await db.products.filter(p => 
+      ((p.Name || p.name || '')).trim().toLowerCase() === searchName
+    ).first().catch(() => null);
 
     let finalProductId = selectedProductId || existing?.id || null;
 
@@ -336,53 +337,63 @@ let existing = await db.products.filter(p =>
       return; 
     }
 
-    if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
-      finalProductId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
-    }
+    setIsSubmitting(true);
+    try {
+      if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
+        finalProductId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+      }
 
-  // ✅ إرسال الصنف للجدول فوراً (سيظهر مباشرة)
-  onAdd({ 
-    id: initialData?.id || Date.now().toString(), 
-    productId: finalProductId, 
-    name: manualItemName, 
-    qty: parseFloat(tempQty as string), 
-    price: parseFloat(tempPrice as string), 
-    expiryDate: normalizeToISODate(tempExpiry), 
-    note: tempNote, 
-    category: categoryName || 'عام', 
-    sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
-  });
-  success("تم إضافة الصنف بنجاح");
-  
-  if (initialData) {
-    onClose();
-  } else {
-    resetForm();
-    setTimeout(() => itemNameInputRef.current?.focus(), 100);
-  }
-};
+      // ✅ إرسال الصنف للجدول فوراً (سيظهر مباشرة)
+      onAdd({ 
+        id: initialData?.id || Date.now().toString(), 
+        productId: finalProductId, 
+        name: manualItemName, 
+        qty: parseFloat(tempQty as string), 
+        price: parseFloat(tempPrice as string), 
+        expiryDate: normalizeToISODate(tempExpiry), 
+        note: tempNote, 
+        category: categoryName || 'عام', 
+        sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
+      });
+      success("تم إضافة الصنف بنجاح");
+      
+      if (initialData) {
+        onClose();
+      } else {
+        resetForm();
+        setTimeout(() => itemNameInputRef.current?.focus(), 100);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleConfirmRegister = async () => {
     setIsConfirmNewProductOpen(false);
     setIsConfirmedNewProduct(true);
-    const newProdId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
-    onAdd({ 
-      id: initialData?.id || Date.now().toString(), 
-      productId: newProdId, 
-      name: manualItemName, 
-      qty: parseFloat(tempQty as string), 
-      price: parseFloat(tempPrice as string), 
-      expiryDate: normalizeToISODate(tempExpiry), 
-      note: tempNote, 
-      category: categoryName || 'عام', 
-      sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
-    });
-    success("تم إضافة الصنف بنجاح");
-    if (initialData) {
-      onClose();
-    } else {
-      resetForm();
-      setTimeout(() => itemNameInputRef.current?.focus(), 100);
+    setIsSubmitting(true);
+    try {
+      const newProdId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+      onAdd({ 
+        id: initialData?.id || Date.now().toString(), 
+        productId: newProdId, 
+        name: manualItemName, 
+        qty: parseFloat(tempQty as string), 
+        price: parseFloat(tempPrice as string), 
+        expiryDate: normalizeToISODate(tempExpiry), 
+        note: tempNote, 
+        category: categoryName || 'عام', 
+        sum: parseFloat(tempQty as string) * parseFloat(tempPrice as string) 
+      });
+      success("تم إضافة الصنف بنجاح");
+      if (initialData) {
+        onClose();
+      } else {
+        resetForm();
+        setTimeout(() => itemNameInputRef.current?.focus(), 100);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -587,10 +598,17 @@ let existing = await db.products.filter(p =>
 
           {/* الأزرار الأساسية */}
           <div className="flex gap-2 px-3.5 pt-2 pb-3 border-t border-slate-100 flex-nowrap w-full box-border bg-white flex-shrink-0 m-0">
-            <Button className="flex-[2] !h-10 !rounded-xl !text-[14px] font-bold" variant="primary" onClick={handleFinalize}>
-              {initialData ? 'تعديل الصنف' : 'إضافة الصنف'}
+            <Button className="flex-[2] !h-10 !rounded-xl !text-[14px] font-bold" variant="primary" disabled={isSubmitting} onClick={handleFinalize}>
+              {isSubmitting ? (
+                <div className="flex items-center justify-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>جاري الحفظ...</span>
+                </div>
+              ) : (
+                initialData ? 'تعديل الصنف' : 'إضافة الصنف'
+              )}
             </Button>
-            <Button className="flex-1 !h-10 !rounded-xl !text-[14px] font-bold" variant="neutral" onClick={onClose}>
+            <Button className="flex-1 !h-10 !rounded-xl !text-[14px] font-bold" variant="neutral" disabled={isSubmitting} onClick={onClose}>
               إلغاء
             </Button>
           </div>
@@ -610,10 +628,17 @@ let existing = await db.products.filter(p =>
             </p>
           </div>
           <div className="flex gap-2 pt-1 box-border">
-            <button type="button" onClick={handleConfirmRegister} className="flex-[2] h-10 bg-[#1E4D4D] text-white rounded-xl text-[13px] font-bold active:scale-95 transition-all">
-              نعم، سجل الآن
+            <button type="button" disabled={isSubmitting} onClick={handleConfirmRegister} className="flex-[2] h-10 bg-[#1E4D4D] text-white rounded-xl text-[13px] font-bold active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5">
+              {isSubmitting ? (
+                <>
+                  <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>جاري الحفظ...</span>
+                </>
+              ) : (
+                'نعم، سجل الآن'
+              )}
             </button>
-            <button type="button" onClick={() => setIsConfirmNewProductOpen(false)} className="flex-1 h-10 bg-slate-100 text-slate-600 rounded-xl text-[13px] font-bold active:scale-95 transition-all">
+            <button type="button" disabled={isSubmitting} onClick={() => setIsConfirmNewProductOpen(false)} className="flex-1 h-10 bg-slate-100 text-slate-600 rounded-xl text-[13px] font-bold active:scale-95 transition-all disabled:opacity-50">
               إلغاء
             </button>
           </div>

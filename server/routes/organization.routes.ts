@@ -217,7 +217,9 @@ router.put("/users/:id/status", requirePermission("users.update"), async (req, r
     }
 
     // Invalidate user cache immediately
-    PermissionService.invalidateUserCache(tenantId, id);
+    if (tenantId) {
+      PermissionService.invalidateUserCache(tenantId, id);
+    }
 
     res.json({
       success: true,

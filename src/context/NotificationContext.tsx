@@ -20,6 +20,10 @@ export interface Notification {
   duration?: number;
 }
 
+export interface ActiveToast extends Notification {
+  id: string;
+}
+
 // قاعدة بيانات مستقلّة كلياً لحفظ سجل الإشعارات دون المساس ببنية البيانات الأساسية
 class PharmaFlowNotificationsDB extends Dexie {
   notifications!: Table<DbNotification>;
@@ -63,7 +67,7 @@ export const NotificationService = {
 };
 
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [notification, setNotification] = useState<Notification | null>(null);
+  const [activeToasts, setActiveToasts] = useState<ActiveToast[]>([]);
   const [dbNotifications, setDbNotifications] = useState<DbNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState<number>(0);
   
@@ -117,6 +121,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }
   }, [refreshNotifications]);
 
+  const removeToast = useCallback((id: string) => {
+    setActiveToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
   const showNotification = useCallback((message: string, type: NotificationType, duration = 3000) => {
     if (!message) return;
 
@@ -132,8 +140,15 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     lastProcessed.current[fingerprint] = now;
 
-    // 2. تفعيل التنبيه الأحادي في الشاشة لتركيز تجربة المستخدم
-    setNotification({ message, type, duration });
+    // 2. إضافة التنبيه لقائمة التكدس النشطة (Stacking)
+    const toastId = 'toast_' + now + '_' + Math.random().toString(36).substring(2, 6);
+    const newToast: ActiveToast = { id: toastId, message, type, duration };
+
+    setActiveToasts(prev => [...prev, newToast]);
+
+    setTimeout(() => {
+      removeToast(toastId);
+    }, duration || 3000);
 
     // 3. تخزين الإشعار في IndexedDB
     notificationsDb.notifications.add({
@@ -158,7 +173,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       console.error("[NotificationContext] Failed to log to IndexedDB:", e);
       refreshNotifications();
     });
-  }, [refreshNotifications]);
+  }, [refreshNotifications, removeToast]);
 
   // ربط معالج الإشعارات الخارجي
   useEffect(() => {
@@ -168,46 +183,34 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     };
   }, [showNotification]);
 
-  // إخفاء تلقائي بعد انتهاء المدة
-  useEffect(() => {
-    if (!notification) return;
-
-    const timer = setTimeout(() => {
-      setNotification(null);
-    }, notification.duration || 3000);
-
-    return () => clearTimeout(timer);
-  }, [notification]);
-
   // الاستماع لزر الـ Escape للمقاييس الفضلى لإمكانية الوصول
   useEffect(() => {
-    if (!notification) return;
+    if (activeToasts.length === 0) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setNotification(null);
+        setActiveToasts([]);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [notification]);
+  }, [activeToasts]);
 
-  let displayTitle = '';
-  let displayBody = notification?.message || '';
+  const renderToastContent = (msg: string, type: NotificationType) => {
+    let displayTitle = '';
+    let displayBody = msg;
 
-  if (notification?.message) {
-    const rawMsg = notification.message;
-    if (rawMsg.includes(':')) {
-      const index = rawMsg.indexOf(':');
-      displayTitle = rawMsg.substring(0, index).trim();
-      displayBody = rawMsg.substring(index + 1).trim();
-    } else if (rawMsg.includes('：')) {
-      const index = rawMsg.indexOf('：');
-      displayTitle = rawMsg.substring(0, index).trim();
-      displayBody = rawMsg.substring(index + 1).trim();
+    if (msg.includes(':')) {
+      const index = msg.indexOf(':');
+      displayTitle = msg.substring(0, index).trim();
+      displayBody = msg.substring(index + 1).trim();
+    } else if (msg.includes('：')) {
+      const index = msg.indexOf('：');
+      displayTitle = msg.substring(0, index).trim();
+      displayBody = msg.substring(index + 1).trim();
     } else {
-      switch (notification.type) {
+      switch (type) {
         case 'success':
           displayTitle = 'عملية ناجحة ✅';
           break;
@@ -222,38 +225,37 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           break;
       }
     }
-  }
+    return { displayTitle, displayBody };
+  };
 
-  const getConfig = () => {
-    switch (notification?.type) {
+  const getToastConfig = (type: NotificationType) => {
+    switch (type) {
       case 'success':
         return {
-          icon: <CheckCircle2 className="w-5 h-5 text-emerald-500" />,
-          bgColor: 'bg-emerald-500/10',
-          borderColor: 'border-emerald-500/20',
+          icon: <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />,
+          bgColor: 'bg-emerald-50 dark:bg-emerald-950/40',
+          borderColor: 'border-emerald-200 dark:border-emerald-800',
         };
       case 'error':
         return {
-          icon: <AlertCircle className="w-5 h-5 text-rose-500" />,
-          bgColor: 'bg-rose-500/10',
-          borderColor: 'border-rose-500/20',
+          icon: <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />,
+          bgColor: 'bg-rose-50 dark:bg-rose-950/40',
+          borderColor: 'border-rose-200 dark:border-rose-800',
         };
       case 'warning':
         return {
-          icon: <AlertTriangle className="w-5 h-5 text-amber-500" />,
-          bgColor: 'bg-amber-500/10',
-          borderColor: 'border-amber-500/20',
+          icon: <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />,
+          bgColor: 'bg-amber-50 dark:bg-amber-950/40',
+          borderColor: 'border-amber-200 dark:border-amber-800',
         };
       default:
         return {
-          icon: <Info className="w-5 h-5 text-blue-500" />,
-          bgColor: 'bg-blue-500/10',
-          borderColor: 'border-blue-500/20',
+          icon: <Info className="w-5 h-5 text-blue-500 shrink-0" />,
+          bgColor: 'bg-blue-50 dark:bg-blue-950/40',
+          borderColor: 'border-blue-200 dark:border-blue-800',
         };
     }
   };
-
-  const currentStyle = getConfig();
 
   return (
     <NotificationContext.Provider value={{ 
@@ -266,64 +268,65 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }}>
       {children}
 
-      <AnimatePresence>
-        {notification && (
-          <div 
-            className="fixed inset-0 z-[10000] flex items-center justify-center p-4 pointer-events-none font-sans" 
-            dir="rtl"
-            role="alert"
-            aria-live="assertive"
-          >
-            {/* الخلفية المعتمة */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-slate-950/20 backdrop-blur-[1px] dark:bg-slate-950/50"
-            />
+      <div 
+        className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] flex flex-col items-center gap-2 pointer-events-none font-sans w-[92vw] max-w-md" 
+        dir="rtl"
+        role="region"
+        aria-label="الإشعارات"
+      >
+        <AnimatePresence>
+          {activeToasts.map((toast) => {
+            const { displayTitle, displayBody } = renderToastContent(toast.message, toast.type);
+            const style = getToastConfig(toast.type);
 
-            {/* قالب التنبيه الأحادي */}
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 15 }}
-              transition={{ duration: 0.18, ease: "easeOut" }}
-              className="relative w-full max-w-[325px] md:max-w-[420px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl shadow-2xl p-5 pointer-events-auto flex gap-4 overflow-hidden"
-            >
-              <div className={`absolute top-0 right-0 bottom-0 w-1.5 ${
-                notification.type === 'success' ? 'bg-emerald-500' : 
-                notification.type === 'error' ? 'bg-rose-500' : 
-                notification.type === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
-              }`} />
+            return (
+              <motion.div
+                key={toast.id}
+                initial={{ opacity: 0, y: -50, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
+                className={`relative w-full bg-white dark:bg-slate-900 border ${style.borderColor} text-slate-900 dark:text-slate-100 rounded-2xl shadow-xl px-4 py-3 pointer-events-auto flex items-center gap-3 overflow-hidden`}
+                role="alert"
+                aria-live="assertive"
+              >
+                <div className={`absolute top-0 right-0 bottom-0 w-1.5 ${
+                  toast.type === 'success' ? 'bg-emerald-500' : 
+                  toast.type === 'error' ? 'bg-rose-500' : 
+                  toast.type === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
+                }`} />
 
-              <div className="flex-shrink-0 flex items-start pt-0.5">
-                <span className={`p-2 rounded-xl ${currentStyle.bgColor} ${currentStyle.borderColor} border`}>
-                  {currentStyle.icon}
-                </span>
-              </div>
+                <div className="flex-shrink-0 flex items-center">
+                  <span className={`p-1.5 rounded-xl ${style.bgColor} border border-transparent flex items-center justify-center`}>
+                    {style.icon}
+                  </span>
+                </div>
 
-              <div className="flex-1 min-w-0 pr-1 pl-2 text-right">
-                <h4 className="text-xs font-black text-slate-500 dark:text-slate-400 tracking-wide mb-1 leading-normal select-none">
-                  {displayTitle}
-                </h4>
-                <p className="text-sm font-bold text-slate-800 dark:text-slate-200 leading-relaxed break-words">
-                  {displayBody}
-                </p>
-              </div>
+                <div className="flex-1 min-w-0 pr-1 text-right">
+                  {displayTitle && (
+                    <h4 className="text-[11px] font-black text-slate-400 dark:text-slate-400 tracking-wide mb-0.5 leading-snug select-none">
+                      {displayTitle}
+                    </h4>
+                  )}
+                  <p className="text-[13px] font-bold text-slate-800 dark:text-slate-200 leading-relaxed break-words">
+                    {displayBody}
+                  </p>
+                </div>
 
-              <div className="flex-shrink-0">
-                <button 
-                  onClick={() => setNotification(null)}
-                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded-xl transition-all duration-150 active:scale-90"
-                  aria-label="إغلاق"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+                <div className="flex-shrink-0">
+                  <button 
+                    onClick={() => removeToast(toast.id)}
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 p-1.5 rounded-xl transition-all duration-150 active:scale-90"
+                    aria-label="إغلاق"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </div>
     </NotificationContext.Provider>
   );
 };
