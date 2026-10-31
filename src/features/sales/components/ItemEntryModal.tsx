@@ -100,10 +100,12 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const expiryInputRef = useRef<HTMLInputElement>(null);
   const noteInputRef = useRef<HTMLInputElement>(null);
   const categoryInputRef = useRef<HTMLSelectElement>(null);
+  const requestIdRef = useRef<number>(0); // 👈 لمنع تسابق البيانات
 
   // Load live stock, expiry, and price intelligence for the selected product
   const loadProductIntelligence = useCallback(async (prodId: string, currentProd?: ProductItem) => {
     if (!prodId) return;
+    const currentRequestId = ++requestIdRef.current;
     try {
       // 1. Fetch live stock from product master & inventory layers
       const prod = currentProd || (await db.products.get(prodId)) as ProductItem;
