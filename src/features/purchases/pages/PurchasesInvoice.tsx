@@ -565,13 +565,15 @@ const existingItemIndex = items.findIndex(i =>
 </div>
 
       <CameraModule 
-        isOpen={isCameraOpen} 
-        onClose={() => setIsCameraOpen(false)} 
-        onCapture={(base64) => {
-  setHeader({ ...header, attachment: base64 });
-  setIsCameraOpen(false);
-}} 
-      {header.attachment && (
+  isOpen={isCameraOpen} 
+  onClose={() => setIsCameraOpen(false)} 
+  onCapture={(base64) => {
+    setHeader({ ...header, attachment: base64 });
+    setIsCameraOpen(false);
+  }} 
+/>
+
+{header.attachment && (
         <DocumentViewer 
           isOpen={isViewerOpen} 
           onClose={() => setIsViewerOpen(false)} 
