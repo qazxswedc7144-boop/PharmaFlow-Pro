@@ -1040,6 +1040,10 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
     } catch (error: unknown) {
       setSavePhase('failed');
+      // مسح مفتاح العملية في حالة الفشل لتمكين المستخدم من إعادة المحاولة
+      if (!(error instanceof Error && error.message === 'SAVE_TIMEOUT')) {
+        currentOperationRef.current = null;
+      }
       const normalized = ErrorManager.handleError(error, { module: 'PURCHASES', action: 'SAVE_PURCHASE', showToast: false });
       const isTimeout = error instanceof Error && error.message === 'SAVE_TIMEOUT';
       showNotification(

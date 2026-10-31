@@ -313,7 +313,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
           tenantId: ctx.tenantId,
           branchId: ctx.branchId,
           transactionUuid: `REV-EDIT-${ctx.idempotencyKey}`
-        });
+        }, tx);
 
         // Reverse Supplier Balance
         const oldSuppId = existing.partner_id || existing.partnerId;
