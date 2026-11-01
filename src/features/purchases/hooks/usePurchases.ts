@@ -592,7 +592,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
   ) => {
     if (!approvedRows || approvedRows.length === 0) {
       addToast("لا توجد أصناف معتمدة للتطبيق", "warning");
-      return;
+      return { convertedItems: [], matchedSupplierId: header.supplier_id, invNum: header.invoice_number };
     }
 
     const invNum = detectedInvoiceNumber || header.invoice_number || `INV-${Math.floor(Math.random() * 100000)}`;
@@ -623,6 +623,8 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     setHasUnsavedAI(true);
     setShowAIConfirmModal(false);
     addToast(`✅ تم استيراد ${convertedItems.length} صنف إلى الفاتورة بنجاح للمراجعة والحفظ`, "success");
+
+    return { convertedItems, matchedSupplierId, invNum };
   }, [header.invoice_number, header.supplier_id, suppliers, addToast]);
 
   const applyAIParsedData = async () => {
@@ -863,16 +865,24 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     addToast("تمت إضافة الصنف ✅", "success");
   }, [manualItemName, tempQty, tempPrice, header.invoice_number, selectedProduct, items.length, tempExpiry, tempNote, selectedCategoryId, addToast]);
 
-  const handlePost = useCallback(async () => {
+  const handlePost = useCallback(async (overridePayload?: { items?: InvoiceItem[]; header?: typeof header; adjData?: typeof adjData }) => {
     if (savePhase === 'saving') return;
-    if (!header.supplier_id) {
+    const currentItems = overridePayload?.items || items;
+    const currentHeader = overridePayload?.header || header;
+    const currentAdjData = overridePayload?.adjData || adjData;
+
+    if (!currentHeader.supplier_id) {
       addToast("يرجى اختيار المورد", "error");
       return;
     }
-    if (items.length === 0) {
+    if (currentItems.length === 0) {
       addToast("الفاتورة فارغة", "error");
       return;
     }
+
+    const subtotal = currentItems.reduce((sum: number, item: any) => sum + (item.qty * item.price), 0);
+    const discount = subtotal * (currentAdjData.discountPercent / 100);
+    const currentTotal = subtotal - discount + currentAdjData.otherFees + currentAdjData.tax;
 
     // OPTIMISTIC: Show success immediately and block UI only enough to navigate
     showNotification('⌛ جاري حفظ الفاتورة وتحديث المستودع...', 'info');
@@ -884,13 +894,13 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     try {
       if (aiParsedData) {
         const originalSupplier = aiParsedData.supplier;
-        const finalSupplier = suppliers.find(s => s.id === header.supplier_id)?.Supplier_Name;
+        const finalSupplier = suppliers.find(s => s.id === currentHeader.supplier_id)?.Supplier_Name;
         if (originalSupplier && finalSupplier && originalSupplier !== finalSupplier) {
           saveLearning(originalSupplier, finalSupplier || '');
         }
 
         (aiParsedData.items || []).forEach(aiItem => {
-          const finalItem = items.find(i => i.qty === aiItem.quantity && i.price === aiItem.price);
+          const finalItem = currentItems.find(i => i.qty === aiItem.quantity && i.price === aiItem.price);
           if (finalItem && aiItem.name !== finalItem.name && aiItem.name) {
             saveLearning(aiItem.name, finalItem.name || '');
           }
@@ -898,8 +908,8 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
       // 1. Stable Idempotency Key for the entire logical request
       // We use a ref to keep the key stable across retries within the same component lifecycle for a specific save attempt.
-		      if (!currentOperationRef.current) {
-        const operationId = editingInvoiceId || header.invoice_number || 'NEW';
+      if (!currentOperationRef.current) {
+        const operationId = editingInvoiceId || currentHeader.invoice_number || 'NEW';
         currentOperationRef.current =
           `PURCHASE-${operationId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       }
@@ -907,10 +917,10 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const requestUuid = currentOperationRef.current;
       // 2. Identify and prepare Manual Products for atomic creation
       // We also need stable IDs for these products during retries
-		let itemsForSave = items;
-		
-		if (pendingProductsRef.current.length === 0) {
-        const finalizedItems = [...items];
+      let itemsForSave = currentItems;
+      
+      if (pendingProductsRef.current.length === 0) {
+        const finalizedItems = [...currentItems];
         for (let i = 0; i < finalizedItems.length; i++) {
           const item = finalizedItems[i];
           if (item?.product_id?.startsWith('manual-')) {
@@ -935,7 +945,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           }
         }
         // Update items state with the fixed IDs so subsequent retries use the same payload
-			        itemsForSave = finalizedItems;
+        itemsForSave = finalizedItems;
         setItems(finalizedItems);
       }
 
@@ -945,31 +955,31 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           const r = await addInvoice({
             type: 'PURCHASE',
             payload: {
-              supplierId: header.supplier_id,
+              supplierId: currentHeader.supplier_id,
               items: itemsForSave.map(item => ({
                 ...item,
                 expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
               })),
-              total: vTotalSum,
-              invoiceId: header.invoice_number, 
-              invoiceNumber: header.invoice_number, 
+              total: currentTotal,
+              invoiceId: currentHeader.invoice_number, 
+              invoiceNumber: currentHeader.invoice_number, 
               id: editingInvoiceId || undefined, 
-              notes: header.notes,
-              attachment: header.attachment,
-              date: header.date,
+              notes: currentHeader.notes,
+              attachment: currentHeader.attachment,
+              date: currentHeader.date,
               transactionUuid: requestUuid,
-              discountPercent: adjData.discountPercent,
-              otherFees: adjData.otherFees,
-              tax: adjData.tax,
+              discountPercent: currentAdjData.discountPercent,
+              otherFees: currentAdjData.otherFees,
+              tax: currentAdjData.tax,
               pendingProducts: pendingProductsRef.current
             },
             options: {
-              isCash: header.payment_method === 'Cash',
-              paymentStatus: header.payment_method === 'Cash' ? 'Cash' : 'Credit',
+              isCash: currentHeader.payment_method === 'Cash',
+              paymentStatus: currentHeader.payment_method === 'Cash' ? 'Cash' : 'Credit',
               invoiceStatus: 'POSTED',
-              isReturn: !!header.isReturn,
+              isReturn: !!currentHeader.isReturn,
               currency,
-              date: header.date,
+              date: currentHeader.date,
               isEdit: !!editingInvoiceId
             }
           });
@@ -1073,11 +1083,23 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     detectedInvoiceNumber?: string,
     detectedDate?: string
   ) => {
-    applySmartImportData(approvedRows, detectedSupplier, detectedInvoiceNumber, detectedDate);
-    setTimeout(() => {
-      handlePost();
-    }, 400);
-  }, [applySmartImportData, handlePost]);
+    const result = applySmartImportData(approvedRows, detectedSupplier, detectedInvoiceNumber, detectedDate);
+    if (!result || !result.convertedItems || result.convertedItems.length === 0) return;
+
+    const newHeader = {
+      ...header,
+      invoice_number: result.invNum,
+      supplier_id: result.matchedSupplierId || header.supplier_id,
+      date: detectedDate || header.date,
+      status: 'DRAFT' as const
+    };
+
+    await handlePost({
+      items: result.convertedItems,
+      header: newHeader,
+      adjData
+    });
+  }, [applySmartImportData, handlePost, header, adjData]);
 
   const printData = {
     invoiceId: header.invoice_number,
