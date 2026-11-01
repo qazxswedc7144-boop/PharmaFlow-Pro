@@ -182,14 +182,17 @@ async function runTests() {
   // TEST 6: Non-Destructive Reversal via Compensating Movement
   // -------------------------------------------------------------------------
   console.log('🔹 Group D: Reversal Integrity');
-  const revRes = await unifiedInventoryMutationEngine.executeReversal({
+  const revRes = await db.runTransaction(async (tx) => unifiedInventoryMutationEngine.executeReversal({
     tenantId: 'TEN-DEV-001',
     userId: 'USR-001',
     transactionUuid: 'TX-UUID-REV-01',
     originalDocumentId: 'INV-SALE-001',
     originalDocumentType: 'SALE',
     reason: 'Customer cancelled transaction'
-  });
+  }, tx), [
+      'products', 'inventoryTransactions', 'warehouseStock', 'branchInventory',
+      'medicineBatches', 'inventory_layers', 'fifo_consumption_log'
+    ], 'rw');
 
   const itxRecords = await db.inventoryTransactions.toArray();
   const prodAfterRev = await db.products.get('PROD-PANADOL');
