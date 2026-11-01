@@ -770,7 +770,10 @@ export class PharmaFlowDB extends Dexie {
     const subtotal = itemsSubtotal > 0 ? Math.round(itemsSubtotal * 100) / 100 : (total || 0);
     const discountAmount = Math.round((subtotal * (discountPercent / 100)) * 100) / 100;
     const computedTotal = Math.round((subtotal - discountAmount + otherFees + tax) * 100) / 100;
-    const finalTotal = total > 0 ? total : computedTotal;
+    
+    // Strict enforcement: Only trust input total if it matches computed total within tolerance
+    const tolerance = 0.02;
+    const finalTotal = (total > 0 && Math.abs(total - computedTotal) <= tolerance) ? total : computedTotal;
 
     const calculatedPaid = isCash ? (finalTotal || 0) : 0;
     const calculatedRemaining = Math.max(0, Math.round(((finalTotal || 0) - calculatedPaid) * 100) / 100);

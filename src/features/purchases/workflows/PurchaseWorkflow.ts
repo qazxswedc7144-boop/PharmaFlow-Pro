@@ -622,11 +622,12 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
       // 4. Financial & Accounting Ledger Execution
       const suppId = input.supplierId;
+      const verifiedTotal = (savedDoc as any).totalAmount || (savedDoc as any).finalTotal || input.total;
 
       if (suppId && suppId !== 'مورد نقدي') {
         const balanceDelta = isReturn
-          ? -input.total
-          : input.total;
+          ? -verifiedTotal
+          : verifiedTotal;
 
         await db.updateSupplierBalance(
           suppId,
@@ -654,7 +655,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
           Reference_Table: 'Purchase_Invoices',
           Entity_Type: 'Supplier',
           Entity_Name: input.supplierId || 'مورد نقدي',
-          Amount: input.total,
+          Amount: verifiedTotal,
           Direction: isReturn ? 'Debit' : 'Credit',
           Transaction_Date: effectiveDate,
           Notes: `فاتورة مشتريات #${refId}`,

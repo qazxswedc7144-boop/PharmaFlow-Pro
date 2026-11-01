@@ -146,9 +146,8 @@ export class ValidationService {
       const expectedAdjustedTotal = Math.round((calculatedTotal - discountAmount + otherFees + tax) * 100) / 100;
 
       const matchesAdjusted = Math.abs(declaredTotal - expectedAdjustedTotal) <= tolerance;
-      const matchesRawSubtotal = Math.abs(declaredTotal - calculatedTotal) <= tolerance;
 
-      if (!matchesAdjusted && !matchesRawSubtotal) {
+      if (!matchesAdjusted) {
         errors.push(
           `Total mismatch: Declared ${declaredTotal.toFixed(2)}, but expected ${expectedAdjustedTotal.toFixed(2)} (items sum: ${calculatedTotal.toFixed(2)} - discount: ${discountAmount.toFixed(2)} + fees: ${otherFees.toFixed(2)} + tax: ${tax.toFixed(2)}). Difference: ${Math.abs(declaredTotal - expectedAdjustedTotal).toFixed(2)}`
         );
