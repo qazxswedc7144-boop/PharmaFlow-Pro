@@ -85,7 +85,8 @@ async function runVerification() {
   }, tx), [
       'products', 'inventoryTransactions', 'warehouseStock', 'branchInventory',
       'medicineBatches', 'inventory_layers', 'fifo_consumption_log'
-    ], 'rw');  console.log('[TEST 3 RESULT] Reversal applied:', revMut.success);
+    ], 'rw');
+  console.log('[TEST 3 RESULT] Reversal applied:', revMut.success);
   const layersAfterRev = await db.inventory_layers.where('item_id').equals(testProductId).toArray();
   console.log('[TEST 3 LAYERS RESTORED]:', layersAfterRev[0]?.quantity_remaining);
 
