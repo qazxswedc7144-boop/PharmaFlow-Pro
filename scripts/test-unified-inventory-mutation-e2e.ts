@@ -333,13 +333,16 @@ async function runAllTests() {
       autoExecute: false
     }, { tenantId, userId, branchId: 'BR-MAIN', correlationId: 'C-04' } as any);
 
-    await unifiedInventoryMutationEngine.executeReversal({
+    await db.runTransaction(async (tx) => unifiedInventoryMutationEngine.executeReversal({
       tenantId, userId, branchId: 'BR-MAIN',
       transactionUuid: `TX-TRF-REV-${res.transferId}`,
       originalDocumentId: res.transferId,
       originalDocumentType: 'TRANSFER',
       reason: 'Cancelled'
-    });
+    }, tx), [
+      'products', 'inventoryTransactions', 'warehouseStock', 'branchInventory',
+      'medicineBatches', 'inventory_layers', 'fifo_consumption_log'
+    ], 'rw');
 
     const stockMain = (await db.warehouseStock.where('[warehouseId+productId]').equals(['WH-MAIN', 'P-TEST-01']).first())?.quantity;
     const inventoryOk = stockMain === 40;
