@@ -75,15 +75,17 @@ async function runVerification() {
   console.log('[TEST 2 LAYERS REMAINING]:', layersAfterSale[0]?.quantity_remaining);
 
   console.log('\n[TEST 3] Sale Reversal (Unpost)');
-  const revMut = await unifiedInventoryMutationEngine.executeReversal({
+  const revMut = await db.runTransaction(async (tx) => unifiedInventoryMutationEngine.executeReversal({
     originalDocumentId: saleId,
     originalDocumentType: 'SALE',
     reason: 'Test Unpost Reversal',
     userId: 'test-user',
     tenantId,
     transactionUuid: 'OP-REV-201'
-  });
-  console.log('[TEST 3 RESULT] Reversal applied:', revMut.success);
+  }, tx), [
+      'products', 'inventoryTransactions', 'warehouseStock', 'branchInventory',
+      'medicineBatches', 'inventory_layers', 'fifo_consumption_log'
+    ], 'rw');  console.log('[TEST 3 RESULT] Reversal applied:', revMut.success);
   const layersAfterRev = await db.inventory_layers.where('item_id').equals(testProductId).toArray();
   console.log('[TEST 3 LAYERS RESTORED]:', layersAfterRev[0]?.quantity_remaining);
 
