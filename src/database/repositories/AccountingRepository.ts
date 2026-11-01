@@ -1,4 +1,3 @@
-
 import { db } from '@/core/db';
 import { Account, AccountingEntry, CashFlow, Transaction } from '@/types';
 import { useAuthStore } from '@/store/authStore';
@@ -34,76 +33,188 @@ export const AccountingRepository = {
   },
 
   getRecentJournalEntries: async (): Promise<AccountingEntry[]> => {
-    return await db.journalEntries.orderBy('date').reverse().limit(MAX_ACCOUNTING_SLICE).toArray();
+    return await db.journalEntries
+      .orderBy('date')
+      .reverse()
+      .limit(MAX_ACCOUNTING_SLICE)
+      .toArray();
   },
 
   addEntry: async (entry: AccountingEntry, tx?: any) => {
-    // Audit log integration
-    const totalDebit = entry.lines.reduce((sum, l) => sum + (l.debit || 0), 0);
-    const totalCredit = entry.lines.reduce((sum, l) => sum + (l.credit || 0), 0);
-    
+    const totalDebit = entry.lines.reduce(
+      (sum, l) => sum + (l.debit || 0),
+      0
+    );
+
+    const totalCredit = entry.lines.reduce(
+      (sum, l) => sum + (l.credit || 0),
+      0
+    );
+
     if (Math.abs(totalDebit - totalCredit) > 0.01) {
-      throw new Error(`قيد غير متزن: إجمالي المدين (${totalDebit}) لا يساوي إجمالي الدائن (${totalCredit}) للفاتورة #${entry.sourceId}`);
+      throw new Error(
+        `قيد غير متزن: إجمالي المدين (${totalDebit}) لا يساوي إجمالي الدائن (${totalCredit}) للفاتورة #${entry.sourceId}`
+      );
     }
 
     const performWrite = async (t: any) => {
-      const entryId = entry.id || generateTransactionUuid('JE');
-      
+      if (!t || typeof t.table !== 'function') {
+        throw new Error(
+          'ACCOUNTING_WRITE_REJECTED: ACTIVE_TRANSACTION_REQUIRED'
+        );
+      }
+
+      const entryId =
+        entry.id || generateTransactionUuid('JE');
+
       let tenantId = (entry as any).tenantId;
       let branchId = (entry as any).branchId;
 
-      if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'tenant-default' || tenantId === 'main') {
+      if (
+        !tenantId ||
+        tenantId === 'default' ||
+        tenantId === 'default-tenant' ||
+        tenantId === 'tenant-default' ||
+        tenantId === 'main'
+      ) {
         const authState = useAuthStore.getState();
         const user = authState.user;
-        tenantId = (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
+
+        tenantId =
+          (user as any)?.tenantId ||
+          (user as any)?.tenant_id ||
+          authState.tenantId ||
+          null;
       }
 
-      if (!branchId || branchId === 'main' || branchId === 'default' || branchId === 'default-branch' || branchId === 'BRH-DEFAULT') {
+      if (
+        !branchId ||
+        branchId === 'main' ||
+        branchId === 'default' ||
+        branchId === 'default-branch' ||
+        branchId === 'BRH-DEFAULT'
+      ) {
         const authState = useAuthStore.getState();
         const user = authState.user;
-        branchId = (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
+
+        branchId =
+          (user as any)?.branchId ||
+          (user as any)?.branch_id ||
+          authState.branchId ||
+          null;
       }
 
-      if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'tenant-default' || tenantId === 'main') {
-        throw new Error('FAIL_CLOSED: قيد اليومية يتطلب سياق مؤسسة موثوق (Trusted Tenant Context Required).');
-      }
-      if (!branchId || branchId === 'main' || branchId === 'default' || branchId === 'default-branch' || branchId === 'BRH-DEFAULT') {
-        throw new Error('FAIL_CLOSED: قيد اليومية يتطلب فرع موثوق للمؤسسة (Trusted Branch Context Required).');
+      if (
+        !tenantId ||
+        tenantId === 'default' ||
+        tenantId === 'default-tenant' ||
+        tenantId === 'tenant-default' ||
+        tenantId === 'main'
+      ) {
+        throw new Error(
+          'FAIL_CLOSED: قيد اليومية يتطلب سياق مؤسسة موثوق (Trusted Tenant Context Required).'
+        );
       }
 
-      const jeTbl = (t && t.journalEntries) ? t.journalEntries : db.journalEntries;
-      const accTbl = (t && t.accounts) ? t.accounts : db.accounts;
-      const jlTbl = (t && t.journalLines) ? t.journalLines : db.journalLines;
+      if (
+        !branchId ||
+        branchId === 'main' ||
+        branchId === 'default' ||
+        branchId === 'default-branch' ||
+        branchId === 'BRH-DEFAULT'
+      ) {
+        throw new Error(
+          'FAIL_CLOSED: قيد اليومية يتطلب فرع موثوق للمؤسسة (Trusted Branch Context Required).'
+        );
+      }
+
+      /*
+       * IMPORTANT:
+       * t is the real Dexie Transaction supplied by safeTransaction().
+       * Never fall back to global db tables here.
+       */
+      const jeTbl = t.table('journalEntries');
+      const accTbl = t.table('accounts');
+      const jlTbl = t.table('journalLines');
+
+      const now = new Date().toISOString();
+
+      /*
+       * Transaction-scoped idempotency.
+       *
+       * If the same journal entry was already committed,
+       * do not apply account balances or journal lines again.
+       */
+      const existingEntry = await jeTbl.get(entryId);
+
+      if (existingEntry) {
+        const sameScope =
+          (existingEntry as any).tenantId === tenantId &&
+          (existingEntry as any).branchId === branchId &&
+          (existingEntry as any).sourceId === entry.sourceId &&
+          (existingEntry as any).sourceType === entry.sourceType;
+
+        if (!sameScope) {
+          throw new Error(
+            `ACCOUNTING_IDEMPOTENCY_CONFLICT: Journal entry ${entryId} already exists in a different scope or source.`
+          );
+        }
+
+        return;
+      }
 
       await jeTbl.put({
         ...entry,
         id: entryId,
-        createdAt: (entry as any).createdAt || entry.created_at || new Date().toISOString(),
-        created_at: entry.created_at || (entry as any).createdAt || new Date().toISOString(),
+        createdAt:
+          (entry as any).createdAt ||
+          entry.created_at ||
+          now,
+        created_at:
+          entry.created_at ||
+          (entry as any).createdAt ||
+          now,
         tenantId,
         branchId,
         status: entry.status || 'Posted'
       });
 
-      // Update account balances
+      /*
+       * Update account balances and persist journal lines
+       * inside the SAME Dexie transaction.
+       */
       for (const line of entry.lines) {
-        const lineAccId = line.accountId || line.account_id || 'ACC-GENERIC';
-        const lineEntryId = line.entryId || line.entry_id || entryId;
-        const amount = (line.debit || 0) - (line.credit || 0);
-        if (lineAccId) {
-          const account = await accTbl.get(lineAccId);
-          if (account) {
-            await accTbl.update(lineAccId, {
-              balance: (account.balance || 0) + amount,
-              updatedAt: new Date().toISOString()
-            });
-          }
+        const lineAccId =
+          line.accountId ||
+          line.account_id ||
+          'ACC-GENERIC';
+
+        const lineEntryId =
+          line.entryId ||
+          line.entry_id ||
+          entryId;
+
+        const amount =
+          (line.debit || 0) -
+          (line.credit || 0);
+
+        const account = await accTbl.get(lineAccId);
+
+        if (account) {
+          await accTbl.update(lineAccId, {
+            balance:
+              (account.balance || 0) +
+              amount,
+            updatedAt: now
+          });
         }
 
-        // Also save journal lines separately if needed for indexing
         await jlTbl.add({
           ...line,
-          id: line.id || line.lineId || generateTransactionUuid('JL'),
+          id:
+            line.id ||
+            line.lineId ||
+            generateTransactionUuid('JL'),
           entryId: lineEntryId,
           entry_id: lineEntryId,
           accountId: lineAccId,
@@ -114,70 +225,134 @@ export const AccountingRepository = {
       }
     };
 
-    const activeTx = tx || (db as any).currentTransaction || (db as any).idbdb?.currentTransaction || (globalThis as any).Dexie?.currentTransaction;
-    if (activeTx) {
-      await performWrite(activeTx);
+    if (tx) {
+      await performWrite(tx);
     } else {
-      await db.safeTransaction('rw', ['journalEntries', 'accounts', 'journalLines'], performWrite);
+      await db.safeTransaction(
+        'rw',
+        [
+          'journalEntries',
+          'accounts',
+          'journalLines'
+        ],
+        performWrite
+      );
     }
   },
-
-  // Alias for addEntry to support legacy code
+    // Alias for addEntry to support legacy code
   addJournalEntry: async (entry: AccountingEntry) => {
     return await AccountingRepository.addEntry(entry);
   },
 
   deleteEntry: async (entryId: string) => {
-    await db.safeTransaction('rw', ['journalEntries', 'accounts', 'journalLines'], async () => {
-      const entry = await db.journalEntries.get(entryId);
-      if (entry) {
-        // Reverse balances before deleting
-        for (const line of (entry.lines || [])) {
-          const amount = (line.credit || 0) - (line.debit || 0);
-          const account = await db.accounts.get(line.accountId);
-          if (account) {
-            await db.accounts.update(line.accountId, {
-              balance: (account.balance || 0) + amount,
-              updatedAt: new Date().toISOString()
-            });
+    await db.safeTransaction(
+      'rw',
+      [
+        'journalEntries',
+        'accounts',
+        'journalLines'
+      ],
+      async () => {
+        const entry =
+          await db.journalEntries.get(entryId);
+
+        if (entry) {
+          // Reverse balances before deleting
+          for (const line of (entry.lines || [])) {
+            const amount =
+              (line.credit || 0) -
+              (line.debit || 0);
+
+            const account =
+              await db.accounts.get(line.accountId);
+
+            if (account) {
+              await db.accounts.update(
+                line.accountId,
+                {
+                  balance:
+                    (account.balance || 0) +
+                    amount,
+                  updatedAt:
+                    new Date().toISOString()
+                }
+              );
+            }
           }
+
+          await db.journalEntries.delete(entryId);
+
+          // Also delete lines
+          await db.journalLines
+            .where('entryId')
+            .equals(entryId)
+            .delete();
         }
-        await db.journalEntries.delete(entryId);
-        // Also delete lines
-        await db.journalLines.where('entryId').equals(entryId).delete();
       }
-    });
+    );
   },
 
-  deleteEntriesBySource: async (sourceId: string) => {
-    const entries = await db.journalEntries.where('sourceId').equals(sourceId).toArray();
+  deleteEntriesBySource: async (
+    sourceId: string
+  ) => {
+    const entries =
+      await db.journalEntries
+        .where('sourceId')
+        .equals(sourceId)
+        .toArray();
+
     if (entries) {
       for (const entry of entries) {
-        await AccountingRepository.deleteEntry(entry.id);
+        await AccountingRepository.deleteEntry(
+          entry.id
+        );
       }
     }
   },
 
-  getAccountBalance: async (accountName: string): Promise<number> => {
-    const account = await db.accounts.where('name').equals(accountName).first();
-    return account ? account.balance || 0 : 0;
+  getAccountBalance: async (
+    accountName: string
+  ): Promise<number> => {
+    const account =
+      await db.accounts
+        .where('name')
+        .equals(accountName)
+        .first();
+
+    return account
+      ? account.balance || 0
+      : 0;
   },
 
-  isDateLocked: async (date: string): Promise<boolean> => {
-    const period = await db.accountingPeriods
-      .where('Start_Date').belowOrEqual(date)
-      .and(p => p.End_Date >= date && p.Is_Locked)
-      .first();
+  isDateLocked: async (
+    date: string
+  ): Promise<boolean> => {
+    const period =
+      await db.accountingPeriods
+        .where('Start_Date')
+        .belowOrEqual(date)
+        .and(
+          p =>
+            p.End_Date >= date &&
+            p.Is_Locked
+        )
+        .first();
+
     return !!period;
   },
 
   getTransactions: async (): Promise<Transaction[]> => {
-    const invoices = await db.getTransactions();
+    const invoices =
+      await db.getTransactions();
+
     return invoices.map(inv => ({
       id: inv.id,
       date: inv.date,
       amount: inv.finalTotal,
-      type: inv.type === 'SALE' ? 'sale' : 'purchase',
+      type:
+        inv.type === 'SALE'
+          ? 'sale'
+          : 'purchase',
       customer: inv.partnerName,
       lastModified: inv.lastModified
     }));
