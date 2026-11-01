@@ -155,7 +155,8 @@ const STOCK_TRANSFER_WORKFLOW_TABLES = [
 ];
 
 const UNPOST_WORKFLOW_TABLES = [
-  'invoices', 'invoiceItems', 'products', 'inventoryTransactions', 
+  'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
+  'warehouseStock', 'branchInventory', 'medicineBatches',
   'inventory_layers', 'fifo_consumption_log', 'suppliers', 'customers', 
   'journalEntries', 'journalLines', 'accounts', 'financialTransactions', 
   'auditLogs', 'projectionEvents'
@@ -659,7 +660,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
 
     await BackupService.createBackup(`Auto Backup before Unpost #${invoiceId}`, 'PRE_UNPOST', true);
 
-    return await TransactionService.runSafe(invoiceId, async () => {
+    return await TransactionService.runSafe(invoiceId, async (tx) => {
       try {
         await GlobalGuard.checkSystemState('إلغاء ترحيل');
 
@@ -684,7 +685,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
           userId: user?.id || 'admin',
           tenantId: user?.tenantId,
           transactionUuid: `UNPOST-${invoiceId}-${Date.now()}`
-        });
+        }, tx);
 
         const total = (invoice as any).finalTotal || (invoice as any).totalAmount;
         const partnerId = type === 'SALE' ? (invoice as any).customerId : (invoice as any).partnerId;
