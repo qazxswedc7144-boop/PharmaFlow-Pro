@@ -83,15 +83,58 @@ export const FinancialTransactionRepository = {
   },
 
   /**
-   * حذف أو إلغاء حركة (Logical Delete)
+   * إبطال/عكس الحركات المالية المرتبطة بمرجع معين (Non-Destructive Reversal)
    */
-  cancelTransaction: async (refId: string): Promise<void> => {
+  reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string): Promise<void> => {
     const transactions = await FinancialTransactionRepository.getByReference(refId);
     const now = new Date().toISOString();
+    const table = tx?.financialTransactions ?? db.financialTransactions;
+    
     for (const trx of transactions) {
+      // تجنب عكس الحركات الملغاة أو العكسية مسبقاً
+      if (trx.isDeleted || (trx as any).isReversal) continue;
+
+      const reversalId = idempotencyKey ? `FT-REV-${trx.id}-${idempotencyKey}` : `FT-REV-${trx.id}`;
+      
+      // التحقق من وجود العكس مسبقاً لضمان Idempotency
+      const existingRev = await table.get(reversalId);
+      if (existingRev) continue;
+
+      const reversal: FinancialTransaction = {
+        ...trx,
+        id: reversalId,
+        Transaction_ID: reversalId,
+        Direction: trx.Direction === 'Debit' ? 'Credit' : 'Debit',
+        Notes: `عكس حركة ${trx.Transaction_ID} للمستند #${refId}`,
+        Transaction_Date: now,
+        Created_At: now,
+        lastModified: now,
+        isReversal: true, // وسم لتمييز القيود العكسية
+        isDeleted: false
+      } as any;
+
+      await table.put(reversal);
+
+      // تعليم الحركة الأصلية كملغاة/معكوسة مع بقائها في السجل
       trx.isDeleted = true;
       trx.lastModified = now;
-      await db.financialTransactions.put(trx);
+      (trx as any).reversalId = reversalId;
+      await table.put(trx);
+    }
+  },
+
+  /**
+   * حذف أو إلغاء حركة (Logical Delete)
+   */
+  cancelTransaction: async (refId: string, tx?: any): Promise<void> => {
+    const transactions = await FinancialTransactionRepository.getByReference(refId);
+    const now = new Date().toISOString();
+    const table = tx?.financialTransactions ?? db.financialTransactions;
+    for (const trx of transactions) {
+      if (trx.isDeleted) continue;
+      trx.isDeleted = true;
+      trx.lastModified = now;
+      await table.put(trx);
     }
   }
 };

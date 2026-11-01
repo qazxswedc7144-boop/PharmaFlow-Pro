@@ -372,12 +372,15 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
           );
         }
 
+        // Reverse Financial Transactions
+        await FinancialTransactionRepository.reverseTransactions(input.id, tx, ctx.idempotencyKey);
+
         // Reverse Accounting Effect
         await accountingEngine.postInvoice(
           {
             ...existing,
             isReversal: true,
-            transactionUuid: `REV-EDIT-ACC-${ctx.idempotencyKey}`
+            transactionUuid: ctx.idempotencyKey
           } as any,
           undefined,
           tx
@@ -645,7 +648,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
       await FinancialTransactionRepository.record(
         {
-          id: db.generateId('FT'),
+          id: `FT-${refId}-${ctx.idempotencyKey}`, // Idempotent ID
           Transaction_Type: isReturn
             ? 'Refund'
             : input.isCash

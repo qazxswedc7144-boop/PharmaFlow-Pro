@@ -1,6 +1,6 @@
 
 import { db } from '@/core/db';
-import { AccountingEntry, Sale, Purchase, UnifiedInvoice } from '@/types';
+import { Sale, Purchase, UnifiedInvoice } from '@/types';
 import { AccountingEngine } from './AccountingEngine';
 import { InventoryService } from '@features/inventory/services/InventoryService';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
@@ -96,7 +96,7 @@ export class PostingEngine {
     const entries = await db.getJournalEntries();
     const originalEntry = entries.find(e => e.sourceId === saleId && e.sourceType === 'SALE');
     if (originalEntry) {
-      const reversal = this.createReversalEntry(originalEntry, saleId, 'SALE');
+      const reversal = AccountingEngine.createReversalEntry(originalEntry, saleId, 'SALE');
       await db.saveAccountingEntry(await integrityVerifier.signEntry(reversal));
       
       for (const line of reversal.lines) {
@@ -190,7 +190,7 @@ export class PostingEngine {
     const entries = await db.getJournalEntries();
     const originalEntry = entries.find(e => e.sourceId === purchaseId && e.sourceType === 'PURCHASE');
     if (originalEntry) {
-      const reversal = this.createReversalEntry(originalEntry, purchaseId, 'PURCHASE');
+      const reversal = AccountingEngine.createReversalEntry(originalEntry, purchaseId, 'PURCHASE');
       await db.saveAccountingEntry(await integrityVerifier.signEntry(reversal));
       
       for (const line of reversal.lines) {
@@ -240,7 +240,7 @@ export class PostingEngine {
     const entries = await db.getJournalEntries();
     const originalEntry = entries.find(e => e.sourceId === voucherId && e.sourceType === 'VOUCHER');
     if (originalEntry) {
-      const reversal = this.createReversalEntry(originalEntry, voucherId, 'VOUCHER');
+      const reversal = AccountingEngine.createReversalEntry(originalEntry, voucherId, 'VOUCHER');
       await db.saveAccountingEntry(await integrityVerifier.signEntry(reversal));
       
       for (const line of reversal.lines) {
@@ -276,26 +276,6 @@ export class PostingEngine {
   static async repostPurchase(purchaseId: string): Promise<void> {
     await this.unpostPurchase(purchaseId);
     await this.postPurchase(purchaseId);
-  }
-
-  private static createReversalEntry(entry: AccountingEntry, sourceId: string, _sourceType: string): AccountingEntry {
-    return {
-      id: db.generateId('REV'),
-      date: new Date().toISOString(),
-      description: `عكس قيد ${entry.id} للمستند #${sourceId}`,
-      TotalAmount: entry.TotalAmount,
-      status: 'Posted',
-      sourceId,
-      sourceType: 'AUTO_REVERSAL',
-      lines: entry.lines.map(l => ({
-        ...l,
-        lineId: db.generateId('JL'),
-        debit: l.credit,
-        credit: l.debit,
-        type: l.type === 'DEBIT' ? 'CREDIT' : 'DEBIT',
-      })),
-      lastModified: new Date().toISOString()
-    };
   }
 
   private static async validateTrialBalance(): Promise<void> {

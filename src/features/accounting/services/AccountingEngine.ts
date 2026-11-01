@@ -367,9 +367,23 @@ export class AccountingEngine {
     const isReturn = ('isReturn' in invoice && invoice.isReturn) || ('invoiceType' in invoice && (invoice as { invoiceType?: string }).invoiceType === 'مرتجع');
     const isReversal = (invoice as any).isReversal === true;
 
-    // Handle Edit Reversal: Before posting new state, we must neutralize the old one.
+    // Handle Edit Reversal: Before posting new state, we must neutralize the old one via compensating entries.
     if (isReversal && invoice.id) {
-      await AccountingRepository.deleteEntriesBySource(invoice.id);
+      const idempotencyKey = (invoice as any).transactionUuid;
+      const originalEntries = await db.journalEntries.where('sourceId').equals(invoice.id).toArray();
+      
+      for (const entry of originalEntries) {
+        // Skip already reversed entries and previous reversals to prevent cycles
+        if (entry.sourceType === 'AUTO_REVERSAL') continue;
+        
+        // Check if a reversal for this specific entry already exists with this idempotency key
+        const reversalId = idempotencyKey ? `REV-${entry.id}-${idempotencyKey}` : `REV-${entry.id}`;
+        const existingRev = await db.journalEntries.get(reversalId);
+        if (existingRev) continue;
+
+        const reversal = this.createReversalEntry(entry, invoice.id, entry.sourceType, reversalId);
+        await AccountingRepository.addEntry(reversal, tx);
+      }
       return;
     }
 
@@ -391,6 +405,20 @@ export class AccountingEngine {
       }
     }
 
+    // Ensure idempotency for new entries if transactionUuid is present
+    if (invoice.id && (invoice as any).transactionUuid) {
+      const txUuid = (invoice as any).transactionUuid;
+      if (Array.isArray(entry)) {
+        entry.forEach((e, idx) => {
+          e.id = `JE-${invoice.id}-${txUuid}-${idx}`;
+          e.entry_id = e.id;
+        });
+      } else {
+        entry.id = `JE-${invoice.id}-${txUuid}`;
+        entry.entry_id = entry.id;
+      }
+    }
+
     if (Array.isArray(entry)) {
       for (const e of entry) {
         await AccountingRepository.addEntry(e, tx);
@@ -398,6 +426,38 @@ export class AccountingEngine {
     } else {
       await AccountingRepository.addEntry(entry, tx);
     }
+  }
+
+  static createReversalEntry(entry: AccountingEntry, sourceId: string, _sourceType: string, customId?: string): AccountingEntry {
+    const entryId = customId || db.generateId('REV');
+    return {
+      id: entryId,
+      entry_id: entryId,
+      date: new Date().toISOString(),
+      description: `عكس قيد ${entry.id} للمستند #${sourceId}`,
+      TotalAmount: entry.TotalAmount,
+      status: 'Posted',
+      sourceId,
+      sourceType: 'AUTO_REVERSAL',
+      tenantId: entry.tenantId,
+      branchId: entry.branchId,
+      lines: entry.lines.map((l, idx) => {
+        const lineId = `${entryId}-L-${idx}`;
+        return {
+          ...l,
+          id: lineId,
+          lineId,
+          entryId,
+          entry_id: entryId,
+          debit: l.credit,
+          credit: l.debit,
+          type: l.type === 'DEBIT' ? 'CREDIT' : 'DEBIT',
+        };
+      }),
+      created_at: new Date().toISOString(),
+      lastModified: new Date().toISOString(),
+      timestamp: new Date().toISOString()
+    };
   }
 
   private static async createLine(
