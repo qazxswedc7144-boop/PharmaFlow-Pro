@@ -495,13 +495,18 @@ const existingItemIndex = items.findIndex(i =>
               </AnimatePresence>
             </div>
 
-            <input
-              type="date"
-              value={header.date}
-              onChange={(e) => setHeader({...header, date: e.target.value})}
-              className="w-[95px] h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 text-black text-center bg-transparent text-sm font-semibold font-sans"
-              style={{ colorScheme: 'light' }}
-            />
+            {/* Date Field - Fixed Format & Proper Width */}
+<div className="w-[125px] shrink-0 relative h-10 bg-white">
+  <input 
+    type="date"
+    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+    value={header.date}
+    onChange={(e) => setHeader({...header, date: e.target.value})}
+  />
+  <div className="absolute inset-0 border-b border-gray-400 text-black text-center bg-transparent px-[2px] flex items-center justify-center text-[13px] font-semibold pointer-events-none font-sans whitespace-nowrap">
+    {header.date ? header.date.replace(/-/g, '/') : "التاريخ..."}
+  </div>
+</div>
           </div>
           
           <div className="flex border-b border-slate-100 flex-row gap-[2%] px-3 py-2 bg-white">
