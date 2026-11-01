@@ -1,4 +1,5 @@
 
+
 import { db } from '@/core/db';
 import { configurationService } from '@/services/config/configurationService';
 import { AccountingEntry, JournalLine, Sale, Purchase, InvoiceItem, UnifiedInvoice } from '@/types';
