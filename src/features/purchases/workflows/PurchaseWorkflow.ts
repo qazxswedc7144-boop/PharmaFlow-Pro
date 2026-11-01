@@ -341,6 +341,16 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         );
 
       if (isActuallyPosted) {
+        if (
+  !ctx.tenantId ||
+  !ctx.branchId ||
+  existing.tenantId !== ctx.tenantId ||
+  existing.branchId !== ctx.branchId
+) {
+  throw new Error(
+    'PURCHASE_REVERSAL_REJECTED: TENANT_OR_BRANCH_MISMATCH'
+  );
+        }
         // Reverse Inventory Effect
         const engine = UnifiedInventoryMutationEngine.getInstance();
 
@@ -377,14 +387,16 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
         // Reverse Accounting Effect
         await accountingEngine.postInvoice(
-          {
-            ...existing,
-            isReversal: true,
-            transactionUuid: ctx.idempotencyKey
-          } as any,
-          undefined,
-          tx
-        );
+  {
+    ...existing,
+    tenantId: ctx.tenantId,
+    branchId: ctx.branchId,
+    isReversal: true,
+    transactionUuid: ctx.idempotencyKey
+  } as any,
+  undefined,
+  tx
+);
       }
     }
 
