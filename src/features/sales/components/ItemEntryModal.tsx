@@ -261,7 +261,7 @@ if (mode === 'sale') {
   setShowSearchDropdown(false);
 };
   useEffect(() => {
-    const search = async () => {
+    const timer = setTimeout(async () => {
       if (manualItemName.length > 1) {
         const nameResults = await db.products
           .where('Name')
@@ -304,8 +304,9 @@ if (mode === 'sale') {
       } else { 
         setFilteredProducts([]); 
       } 
-    };
-    search();
+    }, 300);
+
+    return () => clearTimeout(timer);
   }, [manualItemName, mode]);
 
   const selectProduct = (p: ProductItem) => {

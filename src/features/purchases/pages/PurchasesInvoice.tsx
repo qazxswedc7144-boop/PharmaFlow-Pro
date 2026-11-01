@@ -207,7 +207,28 @@ const PurchasesInvoice: React.FC<{ onNavigate?: (view: string, params?: Record<s
     setIsAddItemModalOpen(true);
   };
 
-  const handleAddItem = (item: any) => {
+interface ItemEntryPayload {
+  id?: string;
+  productId?: string;
+  product_id?: string;
+  name?: string;
+  productName?: string;
+  Name?: string;
+  qty?: number | string;
+  quantity?: number | string;
+  price?: number | string;
+  unitPrice?: number | string;
+  sum?: number;
+  subtotal?: number;
+  expiryDate?: string;
+  ExpiryDate?: string;
+  expiry_date?: string;
+  expirationDate?: string;
+  category?: string;
+  categoryName?: string;
+}
+
+  const handleAddItem = (item: ItemEntryPayload) => {
     const rawExp = item.expiryDate || item.ExpiryDate || item.expiry_date || item.expirationDate || '';
     const normExp = normalizeToISODate(rawExp);
 
@@ -474,18 +495,13 @@ const existingItemIndex = items.findIndex(i =>
               </AnimatePresence>
             </div>
 
-            {/* Date Field - fixed and improved width & padding */}
-            <div className="w-[95px] shrink-0 relative h-10 bg-white">
-              <input 
-                type="date"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                value={header.date}
-                onChange={(e) => setHeader({...header, date: e.target.value})}
-              />
-              <div className="absolute inset-0 border-b border-gray-400 text-black text-center bg-transparent px-[2px] flex items-center justify-center text-sm font-semibold pointer-events-none font-sans">
-                {formatDateDisplay(header.date || "") || "التاريخ..."}
-              </div>
-            </div>
+            <input
+              type="date"
+              value={header.date}
+              onChange={(e) => setHeader({...header, date: e.target.value})}
+              className="w-[95px] h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 text-black text-center bg-transparent text-sm font-semibold font-sans"
+              style={{ colorScheme: 'light' }}
+            />
           </div>
           
           <div className="flex border-b border-slate-100 flex-row gap-[2%] px-3 py-2 bg-white">
@@ -760,7 +776,7 @@ const existingItemIndex = items.findIndex(i =>
           setEditingItem(null);
           setSelectedProduct(null);
         }}
-        onAdd={(item: any) => handleAddItem(item)}
+        onAdd={(item: ItemEntryPayload) => handleAddItem(item)}
         mode="purchase"
         initialData={editingItem ? {
           id: editingItem.id,

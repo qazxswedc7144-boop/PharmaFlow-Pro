@@ -716,32 +716,6 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
   }, [items, adjData]);
 
   // 2. Smart Auto Save Draft Engine (Task 5 / Phase 5.2.5-C)
-  // Backup Interval: Auto-save draft every 5 seconds
-  useEffect(() => {
-    if (editingInvoiceId) return;
-
-    const interval = setInterval(async () => {
-      if (items.length === 0 && !header.supplier_id && !header.notes) {
-        return;
-      }
-      try {
-        const partner = suppliers.find(s => s.id === header.supplier_id);
-        const partnerName = partner ? partner.Supplier_Name : '';
-        await DraftService.saveInvoiceDraft('purchases_draft_current', 'PURCHASE', items, {
-          adjData,
-          subtotal: vTotalSum,
-          header,
-          partner: { partnerName }
-        });
-      } catch (e) {
-        console.error("Interval auto-save failed:", e);
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [items, header, adjData, vTotalSum, editingInvoiceId, suppliers]);
-
-  // Immediate save on specific changes: Add Item, Remove Item, Change Qty/Price, Change Supplier, Change Notes
   const prevItemsRef = useRef<InvoiceItem[]>(items);
   const prevSupplierIdRef = useRef<string>(header.supplier_id);
   const prevNotesRef = useRef<string>(header.notes);
@@ -749,22 +723,20 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 
   useEffect(() => {
     if (editingInvoiceId) return;
-    if (items.length === 0 && !header.supplier_id && !header.notes) {
-      return;
-    }
-
+    if (items.length === 0 && !header.supplier_id && !header.notes) return;
+    
     const itemsChanged = JSON.stringify(items) !== JSON.stringify(prevItemsRef.current);
     const supplierChanged = header.supplier_id !== prevSupplierIdRef.current;
     const notesChanged = header.notes !== prevNotesRef.current;
     const adjChanged = JSON.stringify(adjData) !== JSON.stringify(prevAdjDataRef.current);
-
+    
     if (itemsChanged || supplierChanged || notesChanged || adjChanged) {
       prevItemsRef.current = items;
       prevSupplierIdRef.current = header.supplier_id;
       prevNotesRef.current = header.notes;
       prevAdjDataRef.current = adjData;
-
-      const triggerImmediateSave = async () => {
+      
+      const timer = setTimeout(async () => {
         try {
           const partner = suppliers.find(s => s.id === header.supplier_id);
           const partnerName = partner ? partner.Supplier_Name : '';
@@ -775,10 +747,11 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
             partner: { partnerName }
           });
         } catch (e) {
-          console.error("Immediate change-triggered auto-save failed:", e);
+          console.error("Debounced auto-save failed:", e);
         }
-      };
-      triggerImmediateSave().catch(e => console.error("Immediate save error:", e));
+      }, 1000);
+      
+      return () => clearTimeout(timer);
     }
   }, [items, header, adjData, vTotalSum, editingInvoiceId, suppliers]);
 
