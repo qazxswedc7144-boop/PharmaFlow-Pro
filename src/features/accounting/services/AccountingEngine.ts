@@ -1,5 +1,3 @@
-
-
 import { db } from '@/core/db';
 import { configurationService } from '@/services/config/configurationService';
 import { AccountingEntry, JournalLine, Sale, Purchase, InvoiceItem, UnifiedInvoice } from '@/types';
@@ -303,9 +301,8 @@ export class AccountingEngine {
       created_at: new Date().toISOString(),
       lastModified: new Date().toISOString()
     };
-  }
-
-  private static async calculateTotalCOGS(items: InvoiceItem[]): Promise<number> {
+      }
+    private static async calculateTotalCOGS(items: InvoiceItem[]): Promise<number> {
     let totalCOGS = 0;
     for (const item of items) {
       let unitCost = 0;
@@ -375,52 +372,81 @@ export class AccountingEngine {
       const branchId = (invoice as any).branchId;
 
       if (!tenantId || !branchId) {
-      throw new Error(
-    'REVERSAL_REJECTED: TRUSTED_TENANT_AND_BRANCH_REQUIRED'
-    );
-   }
+        throw new Error(
+          'REVERSAL_REJECTED: TRUSTED_TENANT_AND_BRANCH_REQUIRED'
+        );
+      }
 
-   const entriesTbl = tx?.journalEntries ?? db.journalEntries;
+      // Purchase reversals must always execute inside the active Dexie transaction.
+      if (!tx || typeof tx.table !== 'function') {
+        throw new Error(
+          'REVERSAL_REJECTED: ACTIVE_TRANSACTION_REQUIRED'
+        );
+      }
 
-    let query = entriesTbl
-  .where('sourceId')
-  .equals(invoice.id)
-  .and(entry =>
-    entry.tenantId === tenantId &&
-    entry.branchId === branchId
-    );
+      const entriesTbl = tx.table('journalEntries');
 
-     const originalEntries = await query.toArray();
-      
+      if (!entriesTbl) {
+        throw new Error(
+          'REVERSAL_REJECTED: JOURNAL_ENTRIES_TABLE_UNAVAILABLE'
+        );
+      }
+
+      const originalEntries = await entriesTbl
+        .where('sourceId')
+        .equals(invoice.id)
+        .and(entry =>
+          entry.tenantId === tenantId &&
+          entry.branchId === branchId
+        )
+        .toArray();
+
       // Target ONLY active entries that haven't been reversed yet
       const activeEntries = originalEntries.filter(e => 
         e.sourceType !== 'AUTO_REVERSAL' && 
         !(e as any).reversedBy
       );
 
-      console.log(`[AccountingEngine] Found ${originalEntries.length} total entries, ${activeEntries.length} are active for document ${invoice.id} (Tenant: ${tenantId || 'GLOBAL'}, Branch: ${branchId || 'GLOBAL'})`);
+      console.log(
+        `[AccountingEngine] Found ${originalEntries.length} total entries, ${activeEntries.length} are active for document ${invoice.id} (Tenant: ${tenantId}, Branch: ${branchId})`
+      );
 
       for (const entry of activeEntries) {
         // Check if a reversal for this specific entry already exists with this idempotency key
-        const reversalId = idempotencyKey ? `REV-${entry.id}-${idempotencyKey}` : `REV-${entry.id}`;
-        
+        const reversalId = idempotencyKey
+          ? `REV-${entry.id}-${idempotencyKey}`
+          : `REV-${entry.id}`;
+
         // Transaction-Scoped Idempotency Check: MUST use entriesTbl for current visibility
         const existingRev = await entriesTbl.get(reversalId);
+
         if (existingRev) {
-          console.log(`[AccountingEngine] Reversal entry ${reversalId} already exists (idempotent skip)`);
+          console.log(
+            `[AccountingEngine] Reversal entry ${reversalId} already exists (idempotent skip)`
+          );
           continue;
         }
 
-        const reversal = this.createReversalEntry(entry, invoice.id, entry.sourceType, reversalId);
+        const reversal = this.createReversalEntry(
+          entry,
+          invoice.id,
+          entry.sourceType,
+          reversalId
+        );
+
         await AccountingRepository.addEntry(reversal, tx);
 
         // Mark original entry as reversed
-        await entriesTbl.update(entry.id, { 
+        await entriesTbl.update(entry.id, {
           reversedBy: reversalId,
           lastModified: new Date().toISOString()
         });
-        console.log(`[AccountingEngine] REVERSED: Entry ${entry.id} linked to new reversal ${reversalId}`);
+
+        console.log(
+          `[AccountingEngine] REVERSED: Entry ${entry.id} linked to new reversal ${reversalId}`
+        );
       }
+
       return;
     }
 
@@ -428,23 +454,32 @@ export class AccountingEngine {
 
     if (type === 'SALE') {
       const saleObj = invoice as Sale;
+
       if (isReturn) {
-        entry = await this.generateReturnEntry(saleObj, saleObj.items || []);
+        entry = await this.generateReturnEntry(
+          saleObj,
+          saleObj.items || []
+        );
       } else {
-        entry = await this.generateSalesEntry(saleObj, saleObj.items || []);
+        entry = await this.generateSalesEntry(
+          saleObj,
+          saleObj.items || []
+        );
       }
     } else {
       const purchaseObj = invoice as Purchase;
+
       if (isReturn) {
         entry = await this.generatePurchaseReturnEntry(purchaseObj);
       } else {
         entry = await this.generatePurchaseEntry(purchaseObj);
       }
     }
-
+    
     // Ensure idempotency for new entries if transactionUuid is present
     if (invoice.id && (invoice as any).transactionUuid) {
       const txUuid = (invoice as any).transactionUuid;
+
       if (Array.isArray(entry)) {
         entry.forEach((e, idx) => {
           e.id = `JE-${invoice.id}-${txUuid}-${idx}`;
@@ -464,9 +499,14 @@ export class AccountingEngine {
       await AccountingRepository.addEntry(entry, tx);
     }
   }
-
-  static createReversalEntry(entry: AccountingEntry, sourceId: string, _sourceType: string, customId?: string): AccountingEntry {
+  static createReversalEntry(
+    entry: AccountingEntry,
+    sourceId: string,
+    _sourceType: string,
+    customId?: string
+  ): AccountingEntry {
     const entryId = customId || db.generateId('REV');
+
     return {
       id: entryId,
       entry_id: entryId,
@@ -478,9 +518,10 @@ export class AccountingEngine {
       sourceType: 'AUTO_REVERSAL',
       tenantId: entry.tenantId,
       branchId: entry.branchId,
-      reversalOf: entry.id, // Verifiable link to original
+      reversalOf: entry.id,
       lines: entry.lines.map((l, idx) => {
         const lineId = `${entryId}-L-${idx}`;
+
         return {
           ...l,
           id: lineId,
@@ -526,4 +567,3 @@ export class AccountingEngine {
     };
   }
 }
-
