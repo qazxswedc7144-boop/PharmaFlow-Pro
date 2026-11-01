@@ -727,7 +727,17 @@ export class PharmaFlowDB extends Dexie {
     _riskLevel: string = 'LOW', refId?: string, _attachment?: string, isReturn: boolean = false, date?: string,
     transactionUuid?: string,
     tenantId?: string,
-    branchId?: string
+    branchId?: string,
+    adjustments?: {
+      discountPercent?: number;
+      otherFees?: number;
+      tax?: number;
+      notes?: string;
+      attachment?: string;
+      warehouseId?: string;
+      originalPurchaseId?: string;
+      tx?: any;
+    }
   ) {
     const nowIso = new Date().toISOString();
     const docDate = date || nowIso;
@@ -744,8 +754,26 @@ export class PharmaFlowDB extends Dexie {
     const userSession = getCurrentUserSession();
     const effectiveTenantId = tenantId || userSession?.tenantId || 'tenant-default';
     const effectiveBranchId = branchId || userSession?.branchId || 'main';
-    const calculatedPaid = isCash ? (total || 0) : 0;
-    const calculatedRemaining = Math.max(0, Math.round(((total || 0) - calculatedPaid) * 100) / 100);
+
+    // Financial adjustment calculations
+    const discountPercent = Number(adjustments?.discountPercent ?? 0);
+    const otherFees = Number(adjustments?.otherFees ?? 0);
+    const tax = Number(adjustments?.tax ?? 0);
+
+    const itemsSubtotal = (items || []).reduce((sum, it: any) => {
+      const q = Number(it.quantity ?? it.qty ?? 0);
+      const p = Number(it.unitPrice ?? it.price ?? 0);
+      const itemDisc = Number(it.discount ?? it.discount_val ?? 0);
+      return sum + (q * p) - itemDisc;
+    }, 0);
+
+    const subtotal = itemsSubtotal > 0 ? Math.round(itemsSubtotal * 100) / 100 : (total || 0);
+    const discountAmount = Math.round((subtotal * (discountPercent / 100)) * 100) / 100;
+    const computedTotal = Math.round((subtotal - discountAmount + otherFees + tax) * 100) / 100;
+    const finalTotal = total > 0 ? total : computedTotal;
+
+    const calculatedPaid = isCash ? (finalTotal || 0) : 0;
+    const calculatedRemaining = Math.max(0, Math.round(((finalTotal || 0) - calculatedPaid) * 100) / 100);
 
     const purchase: any = {
       id: purId,
@@ -758,10 +786,18 @@ export class PharmaFlowDB extends Dexie {
       partner_id: supplierId || 'SUPP-GEN',
       partnerName: 'Supplier',
       type: 'PURCHASE',
-      subtotal: total || 0,
-      tax: 0,
-      totalAmount: total || 0,
-      finalTotal: total || 0,
+      subtotal: subtotal,
+      discountPercent: discountPercent,
+      discount: discountAmount,
+      discountTotal: discountAmount,
+      discount_val: discountAmount,
+      otherFees: otherFees,
+      tax: tax,
+      taxTotal: tax,
+      tax_val: tax,
+      totalAmount: finalTotal,
+      finalTotal: finalTotal,
+      grandTotal: finalTotal,
       paidAmount: calculatedPaid,
       remainingAmount: calculatedRemaining,
       remaining: calculatedRemaining,
@@ -775,7 +811,10 @@ export class PharmaFlowDB extends Dexie {
       invoiceStatus: docStatusStr,
       items: items || [],
       isReturn: !!isReturn,
-      notes: `Ref: ${invNum}`,
+      originalPurchaseId: adjustments?.originalPurchaseId,
+      warehouseId: adjustments?.warehouseId,
+      notes: adjustments?.notes || (refId ? `Ref: ${refId}` : `Ref: ${invNum}`),
+      attachment: adjustments?.attachment || _attachment,
       transactionUuid: transactionUuid || `TX-${Date.now()}`,
       hash: `HASH-${Date.now()}`,
       tenantId: effectiveTenantId,
@@ -788,9 +827,12 @@ export class PharmaFlowDB extends Dexie {
       updatedAt: nowIso
     };
 
-    // Use put to handle both Create and Update atomically by primary key (id)
-    await this.invoices.put(purchase);
-    try { await this.purchases.put(purchase); } catch {}
+    // Use transaction table if provided to maintain atomic commit inside workflow
+    const invoicesTable = adjustments?.tx?.table ? adjustments.tx.table('invoices') : this.invoices;
+    const purchasesTable = adjustments?.tx?.table ? adjustments.tx.table('purchases') : this.purchases;
+
+    await invoicesTable.put(purchase);
+    try { await purchasesTable.put(purchase); } catch {}
     return purchase;
   }
 

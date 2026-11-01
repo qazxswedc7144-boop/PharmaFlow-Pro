@@ -753,6 +753,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [items, header, adjData, vTotalSum, editingInvoiceId, suppliers]);
 
   const selectProduct = useCallback((p: Product) => {

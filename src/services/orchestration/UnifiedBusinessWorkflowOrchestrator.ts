@@ -63,6 +63,13 @@ export interface WorkflowPurchasePayload {
   attachment?: string;
   transactionUuid?: string;
   isEdit?: boolean;
+  isReturn?: boolean;
+  currency?: string;
+  warehouseId?: string;
+  originalPurchaseId?: string;
+  discountPercent?: number;
+  otherFees?: number;
+  tax?: number;
   pendingProducts?: any[];
 }
 
@@ -75,6 +82,10 @@ export interface WorkflowInvoiceOptions {
   paymentStatus?: 'Cash' | 'Credit';
   date?: string;
   isEdit?: boolean;
+  discountPercent?: number;
+  otherFees?: number;
+  tax?: number;
+  originalPurchaseId?: string;
 }
 
 export interface WorkflowVoucherParams {
@@ -252,6 +263,16 @@ export class UnifiedBusinessWorkflowOrchestrator {
       payload.id = `PUR-${transactionUuid}`;
     }
 
+    const isEdit = Boolean(options?.isEdit ?? payload.isEdit ?? false);
+    const isReturn = Boolean(options?.isReturn ?? payload.isReturn ?? false);
+    const isCash = Boolean(options?.isCash ?? false);
+    const currency = payload.currency || options?.currency;
+    const warehouseId = payload.warehouseId || options?.warehouseId;
+    const originalPurchaseId = payload.originalPurchaseId || options?.originalPurchaseId;
+    const discountPercent = payload.discountPercent ?? options?.discountPercent ?? 0;
+    const otherFees = payload.otherFees ?? options?.otherFees ?? 0;
+    const tax = payload.tax ?? options?.tax ?? 0;
+
     const result = await WorkflowOrchestrator.execute(
       purchaseWorkflow,
       {
@@ -263,11 +284,16 @@ export class UnifiedBusinessWorkflowOrchestrator {
         date: payload.date || options?.date,
         notes: payload.notes,
         attachment: payload.attachment,
-        isCash: options?.isCash,
-        isReturn: options?.isReturn,
+        isCash,
+        isReturn,
         invoiceStatus: options?.invoiceStatus,
-        currency: options?.currency,
-        isEdit: Boolean(options?.isEdit ?? payload.isEdit ?? false),
+        currency,
+        isEdit,
+        warehouseId,
+        originalPurchaseId,
+        discountPercent,
+        otherFees,
+        tax,
         pendingProducts: payload.pendingProducts
       },
       { idempotencyKey: transactionUuid }

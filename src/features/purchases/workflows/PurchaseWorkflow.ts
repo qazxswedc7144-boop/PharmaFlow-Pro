@@ -86,6 +86,14 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       input.id = db.generateId('PUR');
     }
 
+    // Preserve existing invoiceNumber on Edit if not provided explicitly
+    if (input.isEdit && input.id && !input.invoiceNumber) {
+      const existing = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
+      if (existing) {
+        input.invoiceNumber = existing.invoiceNumber || existing.invoice_number || existing.invoiceId;
+      }
+    }
+
     if (!input.supplierId && input.isCash) {
       input.supplierId = 'مورد نقدي';
     }
@@ -170,7 +178,30 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       );
     }
 
-    // 5. Strict Invoice ID Uniqueness Enforcement
+    // 5. Strict Purchase Invoice Number Uniqueness Enforcement (Tenant-Scoped)
+    if (input.invoiceNumber && input.invoiceNumber.trim() !== '') {
+      const existingIdempotency = ctx?.idempotencyKey
+        ? await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId)
+        : null;
+      const isCommittedReplay = existingIdempotency?.status === 'COMMITTED';
+
+      if (!isCommittedReplay) {
+        const isNumUnique = await validationService.validatePurchaseInvoiceNumberUniqueness(
+          input.invoiceNumber.trim(),
+          ctx.tenantId,
+          input.isEdit ? input.id : undefined,
+          db
+        );
+
+        if (!isNumUnique) {
+          throw new Error(
+            `DUPLICATE_INVOICE_NUMBER: رقم فاتورة المشتريات [${input.invoiceNumber.trim()}] مسجل مسبقاً في هذه المؤسسة.`
+          );
+        }
+      }
+    }
+
+    // 6. Strict Invoice ID Uniqueness Enforcement
     if (!input.isEdit && input.id) {
       const isIdempotentReplay =
         ctx?.idempotencyKey &&
@@ -208,9 +239,16 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     const effectiveDate = input.date || ctx.startedAt;
     const isReturn = !!input.isReturn;
 
+    // Strict Identity Separation: internal database id vs user-facing invoiceNumber
     const docId = input.id || db.generateId('PUR');
-    const userFacingInvoiceNumber =
-      input.invoiceNumber || input.id || docId;
+    let userFacingInvoiceNumber = input.invoiceNumber ? input.invoiceNumber.trim() : '';
+    if (!userFacingInvoiceNumber && input.isEdit && input.id) {
+      const existing = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
+      userFacingInvoiceNumber = existing?.invoiceNumber || existing?.invoice_number || existing?.invoiceId || '';
+    }
+    if (!userFacingInvoiceNumber) {
+      userFacingInvoiceNumber = db.generateId('PURCH');
+    }
 
     // 0. Atomic Manual Product Creation
     if (input.pendingProducts && input.pendingProducts.length > 0) {
@@ -278,6 +316,9 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         }
 
         await productsTable.add({
+          stock: 0,
+          StockQuantity: 0,
+          is_active: true,
           ...prod,
           id: productId,
           tenantId: ctx.tenantId,
@@ -360,7 +401,17 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       effectiveDate,
       ctx.idempotencyKey,
       ctx.tenantId,
-      ctx.branchId
+      ctx.branchId,
+      {
+        discountPercent: input.discountPercent,
+        otherFees: input.otherFees,
+        tax: input.tax,
+        notes: input.notes,
+        attachment: input.attachment,
+        warehouseId: input.warehouseId,
+        originalPurchaseId: input.originalPurchaseId,
+        tx
+      }
     );
 
     if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_PURCHASE_DOC') {

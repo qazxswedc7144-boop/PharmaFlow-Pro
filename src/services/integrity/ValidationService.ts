@@ -132,9 +132,25 @@ export class ValidationService {
 
     if (!isNaN(declaredTotal) && declaredTotal > 0) {
       const tolerance = 0.02; // Allow minor float rounding
-      if (Math.abs(declaredTotal - calculatedTotal) > tolerance) {
+
+      // Financial adjustments: subtotal - discount + otherFees + tax
+      const rawDiscountPercent = safeNumber(invoice.discountPercent ?? invoice.discount_percent ?? 0);
+      const discountPercent = !isNaN(rawDiscountPercent) && rawDiscountPercent > 0 ? rawDiscountPercent : 0;
+      const discountFromPercent = discountPercent > 0 ? Math.round(calculatedTotal * (discountPercent / 100) * 100) / 100 : 0;
+      const rawFixedDiscount = safeNumber(invoice.discount ?? invoice.discountTotal ?? invoice.discount_val ?? 0);
+      const discountAmount = discountFromPercent > 0 ? discountFromPercent : (!isNaN(rawFixedDiscount) ? rawFixedDiscount : 0);
+
+      const otherFees = safeNumber(invoice.otherFees ?? invoice.other_fees ?? 0) || 0;
+      const tax = safeNumber(invoice.tax ?? invoice.taxTotal ?? invoice.tax_val ?? 0) || 0;
+
+      const expectedAdjustedTotal = Math.round((calculatedTotal - discountAmount + otherFees + tax) * 100) / 100;
+
+      const matchesAdjusted = Math.abs(declaredTotal - expectedAdjustedTotal) <= tolerance;
+      const matchesRawSubtotal = Math.abs(declaredTotal - calculatedTotal) <= tolerance;
+
+      if (!matchesAdjusted && !matchesRawSubtotal) {
         errors.push(
-          `Total mismatch: Declared ${declaredTotal.toFixed(2)}, but items sum to ${calculatedTotal.toFixed(2)}. Difference: ${Math.abs(declaredTotal - calculatedTotal).toFixed(2)}`
+          `Total mismatch: Declared ${declaredTotal.toFixed(2)}, but expected ${expectedAdjustedTotal.toFixed(2)} (items sum: ${calculatedTotal.toFixed(2)} - discount: ${discountAmount.toFixed(2)} + fees: ${otherFees.toFixed(2)} + tax: ${tax.toFixed(2)}). Difference: ${Math.abs(declaredTotal - expectedAdjustedTotal).toFixed(2)}`
         );
       }
     }
@@ -253,6 +269,86 @@ export class ValidationService {
       console.error('[ValidationService] Uniqueness check failed (failing closed):', error?.message);
       // Fail-closed: reject transaction on DB error, never fail safe
       throw new Error(`DATABASE_CHECK_FAILED: فشل التحقق من فرادة الفاتورة بسبب خطأ في قاعدة البيانات (${error?.message || 'Database query error'})`);
+    }
+  }
+
+  /**
+   * ============================================================
+   * 3.1. Strict Purchase Invoice Number Uniqueness Validation.
+   * Centralized, tenant-scoped validation for PURCHASE invoice numbers.
+   * On edit, excludes the current invoice (excludeInternalId).
+   * Returns TRUE if unique, FALSE if duplicate exists.
+   * ============================================================
+   */
+  static async validatePurchaseInvoiceNumberUniqueness(
+    invoiceNumber: string,
+    tenantId: string,
+    excludeInternalId?: string,
+    dbArg?: any
+  ): Promise<boolean> {
+    if (!invoiceNumber || typeof invoiceNumber !== 'string' || invoiceNumber.trim() === '') {
+      return true;
+    }
+    const cleanNumber = invoiceNumber.trim();
+    const database = dbArg || db;
+
+    if (!database || !database.invoices) {
+      console.error('[ValidationService] Invoices table is unavailable for invoiceNumber uniqueness (failing closed).');
+      throw new Error('DATABASE_CHECK_FAILED: جدول الفواتير غير متاح للتحقق من فرادة رقم الفاتورة.');
+    }
+
+    try {
+      let matches: any[] = [];
+      if (typeof database.invoices.where === 'function') {
+        try {
+          matches = await database.invoices
+            .where('tenantId')
+            .equals(tenantId)
+            .filter((inv: any) => {
+              const isPurchase = (inv.type === 'PURCHASE' || inv.type === 'purchase' || inv.invoiceType === 'مرتجع' || inv.invoiceType === 'مشتريات' || inv.invoiceType === 'PURCHASE');
+              const numMatch = (
+                inv.invoiceNumber === cleanNumber ||
+                inv.invoice_number === cleanNumber ||
+                inv.invoiceId === cleanNumber
+              );
+              return isPurchase && numMatch;
+            })
+            .toArray();
+        } catch {
+          // Fallback to table filter
+          matches = await database.invoices
+            .filter((inv: any) => {
+              const tId = inv.tenantId || inv.tenant_id;
+              if (tId !== tenantId) return false;
+              const isPurchase = (inv.type === 'PURCHASE' || inv.type === 'purchase' || inv.invoiceType === 'مرتجع' || inv.invoiceType === 'مشتريات' || inv.invoiceType === 'PURCHASE');
+              const numMatch = (
+                inv.invoiceNumber === cleanNumber ||
+                inv.invoice_number === cleanNumber ||
+                inv.invoiceId === cleanNumber
+              );
+              return isPurchase && numMatch;
+            })
+            .toArray();
+        }
+      } else {
+        matches = await database.invoices
+          .filter((inv: any) => {
+            const tId = inv.tenantId || inv.tenant_id;
+            if (tId !== tenantId) return false;
+            const isPurchase = (inv.type === 'PURCHASE' || inv.type === 'purchase' || inv.invoiceType === 'مرتجع' || inv.invoiceType === 'مشتريات' || inv.invoiceType === 'PURCHASE');
+            return isPurchase && (inv.invoiceNumber === cleanNumber || inv.invoice_number === cleanNumber || inv.invoiceId === cleanNumber);
+          })
+          .toArray();
+      }
+
+      if (excludeInternalId) {
+        matches = matches.filter((inv: any) => inv.id !== excludeInternalId && inv.invoiceId !== excludeInternalId);
+      }
+
+      return matches.length === 0;
+    } catch (error: any) {
+      console.error('[ValidationService] validatePurchaseInvoiceNumberUniqueness failed:', error?.message);
+      throw new Error(`DATABASE_CHECK_FAILED: فشل التحقق من فرادة رقم الفاتورة بسبب خطأ في قاعدة البيانات (${error?.message || 'Database query error'})`);
     }
   }
 

@@ -19,7 +19,7 @@ import { UnifiedModal } from '@/components/shared/UnifiedModal';
 import { SaveSuccessModal } from '@/components/shared/SaveSuccessModal';
 import { DraftRecoveryDialog } from '@/components/shared/DraftRecoveryDialog';
 import { SmartImportModal } from '../components/SmartImportModal';
-import { normalizeToISODate, formatExpiryDateDisplay, getExpiryStatus, formatDateDisplay } from '@/utils/expiryUtils';
+import { normalizeToISODate, formatExpiryDateDisplay, getExpiryStatus } from '@/utils/expiryUtils';
 
 // Memoized Item Row Component for Performance
 import { Product, InvoiceItem } from '@/types';
@@ -246,8 +246,8 @@ const newItem: InvoiceItem = {
   quantity: Number(item.quantity ?? item.qty ?? 1),
   price: Number(item.price ?? item.unitPrice ?? 0),
   unitPrice: Number(item.unitPrice ?? item.price ?? 0),
-  sum: Number(item.sum ?? ((item.qty ?? item.quantity ?? 1) * (item.price ?? item.unitPrice ?? 0))),
-  subtotal: Number(item.subtotal ?? item.sum ?? ((item.qty ?? item.quantity ?? 1) * (item.price ?? item.unitPrice ?? 0))),
+  sum: Number(item.sum ?? (Number(item.qty ?? item.quantity ?? 1) * Number(item.price ?? item.unitPrice ?? 0))),
+  subtotal: Number(item.subtotal ?? item.sum ?? (Number(item.qty ?? item.quantity ?? 1) * Number(item.price ?? item.unitPrice ?? 0))),
   parent_id: header.invoice_number,
   row_order: items.length + 1,
   expiryDate: normExp,
@@ -734,7 +734,7 @@ const existingItemIndex = items.findIndex(i =>
           <button 
             type="button"
             disabled={isSaving || items.length === 0 || isProcessingAI}
-            onClick={handlePost}
+            onClick={() => handlePost()}
             className="flex-[2] h-11 bg-[#1E4D4D] text-white rounded-xl font-black text-[11px] flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/20 disabled:opacity-50 active:scale-95 transition-all"
           >
             {isSaving ? (
@@ -781,7 +781,7 @@ const existingItemIndex = items.findIndex(i =>
           setEditingItem(null);
           setSelectedProduct(null);
         }}
-        onAdd={(item: ItemEntryPayload) => handleAddItem(item)}
+        onAdd={(item: any) => handleAddItem(item)}
         mode="purchase"
         initialData={editingItem ? {
           id: editingItem.id,

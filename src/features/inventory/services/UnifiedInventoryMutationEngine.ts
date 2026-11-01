@@ -415,7 +415,7 @@ export class UnifiedInventoryMutationEngine {
   /**
    * 7. Reverse Document Stock (Compensating reversal movement - NO PHYSICAL DELETES)
    */
-  public async executeReversal(command: ReverseDocumentStockCommand, tx?: any): Promise<InventoryMutationResult[]> {
+  public async executeReversal(command: ReverseDocumentStockCommand, _tx?: any): Promise<InventoryMutationResult[]> {
     await this.validateCommandBasics(command, 'ReverseDocumentStock');
     const timestamp = command.timestamp || new Date().toISOString();
 
