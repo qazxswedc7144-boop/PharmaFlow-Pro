@@ -371,27 +371,25 @@ export class AccountingEngine {
     if (isReversal && invoice.id) {
       const idempotencyKey = (invoice as any).transactionUuid;
       const tenantId = (invoice as any).tenantId;
-const branchId = (invoice as any).branchId;
+      const branchId = (invoice as any).branchId;
 
-if (!tenantId || !branchId) {
-  throw new Error(
+      if (!tenantId || !branchId) {
+      throw new Error(
     'REVERSAL_REJECTED: TRUSTED_TENANT_AND_BRANCH_REQUIRED'
-  );
-}
+    );
+   }
 
-const entriesTbl = tx?.journalEntries ?? db.journalEntries;
+   const entriesTbl = tx?.journalEntries ?? db.journalEntries;
 
-let query = entriesTbl
+    let query = entriesTbl
   .where('sourceId')
   .equals(invoice.id)
   .and(entry =>
     entry.tenantId === tenantId &&
     entry.branchId === branchId
-  );
+    );
 
-const originalEntries = await query.toArray();
-      
-      const originalEntries = await query.toArray();
+     const originalEntries = await query.toArray();
       
       // Target ONLY active entries that haven't been reversed yet
       const activeEntries = originalEntries.filter(e => 
