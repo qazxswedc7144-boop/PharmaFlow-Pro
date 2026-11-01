@@ -79,7 +79,7 @@ export class TransactionService {
    */
   static async runSafe<T>(
     resourceId: string, 
-    operation: () => Promise<T>, 
+    operation: (tx?: any) => Promise<T>, 
     transactionUuid?: string,
     tables?: string[]
   ): Promise<T> {
@@ -90,8 +90,8 @@ export class TransactionService {
 
     // If we are already inside an active Dexie transaction or if this resource is active in nested execution, reuse context
     if ((db.db as any)?.currentTransaction || this.activeTransactions.has(resourceId)) {
-      return await db.runTransaction(async () => {
-        const result = await operation();
+      return await db.runTransaction(async (tx) => {
+        const result = await operation(tx);
         if (transactionUuid) {
           this.registerCompletedUuid(transactionUuid);
         }
@@ -105,8 +105,8 @@ export class TransactionService {
     }
 
     try {
-      const result = await db.runTransaction(async () => {
-        const res = await operation();
+      const result = await db.runTransaction(async (tx) => {
+        const res = await operation(tx);
         if (transactionUuid) {
           this.registerCompletedUuid(transactionUuid);
         }
