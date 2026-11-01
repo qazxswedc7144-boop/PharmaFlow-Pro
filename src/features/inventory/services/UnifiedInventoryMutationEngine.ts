@@ -415,14 +415,15 @@ export class UnifiedInventoryMutationEngine {
   /**
    * 7. Reverse Document Stock (Compensating reversal movement - NO PHYSICAL DELETES)
    */
-  public async executeReversal(command: ReverseDocumentStockCommand, _tx?: any): Promise<InventoryMutationResult[]> {
+  public async executeReversal(command: ReverseDocumentStockCommand, tx: any): Promise<InventoryMutationResult[]> {
+    if (!tx || typeof tx.table !== 'function') throw new Error('[UnifiedEngine] TRANSACTION_REQUIRED');
     await this.validateCommandBasics(command, 'ReverseDocumentStock');
     const timestamp = command.timestamp || new Date().toISOString();
 
-    return await this.executeAtomicTransaction(async () => {
+    const inventoryTransactionsTable = tx.table('inventoryTransactions');
       // Find all original movements for this document belonging to authoritative tenant.
       // STRICTLY EXCLUDE any prior REVERSAL entries to prevent double-reversal corruption.
-      const allMovements = await db.inventoryTransactions
+      const allMovements = await inventoryTransactionsTable
         .where('source_doc_id')
         .equals(command.originalDocumentId)
         .filter((t: any) => ((t.tenantId || t.tenant_id) === command.tenantId))
@@ -430,7 +431,7 @@ export class UnifiedInventoryMutationEngine {
 
       const baseMovements = allMovements.length > 0
         ? allMovements
-        : await db.inventoryTransactions
+        : await inventoryTransactionsTable
             .filter((t: any) =>
               t.SourceDocumentID === command.originalDocumentId &&
               ((t.tenantId || t.tenant_id) === command.tenantId)
@@ -481,13 +482,12 @@ export class UnifiedInventoryMutationEngine {
           notes: `قيد عكسي تعويضي للمستند #${command.originalDocumentId}. السبب: ${command.reason}`,
           timestamp,
           reversedMovementId: String(orig.id || orig.TransactionID)
-        });
+        }, tx);
 
         results.push(res);
       }
 
-      return results;
-    });
+    return results;
   }
 
   /**
@@ -614,7 +614,7 @@ export class UnifiedInventoryMutationEngine {
   // INTERNAL SINGLE-WRITER MUTATION CORE (STRICTLY PRIVATE)
   // =========================================================================
 
-  private async mutateSingleItem(params: InternalItemMutationParams): Promise<InventoryMutationResult> {
+  private async mutateSingleItem(params: InternalItemMutationParams, tx?: any): Promise<InventoryMutationResult> {
     const {
       productId,
       warehouseId,
@@ -635,8 +635,13 @@ export class UnifiedInventoryMutationEngine {
       timestamp
     } = params;
 
+    const productsTable = tx ? tx.table('products') : db.products;
+    const inventoryTransactionsTable = tx ? tx.table('inventoryTransactions') : db.inventoryTransactions;
+    const warehouseStockTable = tx ? tx.table('warehouseStock') : db.warehouseStock;
+    const branchInventoryTable = tx ? tx.table('branchInventory') : db.branchInventory;
+
     // 1. Idempotency Check (tenant scoped)
-    const existingTx = await this.checkExistingIdempotentTransaction(idempotencyKey, docId, docType, productId, tenantId);
+    const existingTx = await this.checkExistingIdempotentTransaction(idempotencyKey, docId, docType, productId, tenantId, tx);
     if (existingTx) {
       return {
         success: true,
@@ -667,7 +672,7 @@ export class UnifiedInventoryMutationEngine {
     }
 
     // 2. Validate Product Existence, Active Status & Strict Tenant Binding
-    const product = await db.products.get(productId);
+    const product = await productsTable.get(productId);
     if (!product) {
       throw new ProductNotFoundError(productId);
     }
@@ -692,18 +697,18 @@ export class UnifiedInventoryMutationEngine {
     }
 
     // 5. Read Existing Balances (Snapshot Before)
-    const ws = await this.readWarehouseStock(warehouseId, productId, tenantId);
+    const ws = await this.readWarehouseStock(warehouseId, productId, tenantId, tx);
 
     // Fail-Closed Warehouse Context Validation
     // If ws exists, warehouseId is already confirmed bound to tenantId (zero extra queries).
     // If ws does not exist, verify that warehouseId belongs to this tenant/branch context before any mutation.
     if (!ws) {
-      const allWhRecords = await db.warehouseStock
+      const allWhRecords = await warehouseStockTable
         .where('warehouseId')
         .equals(warehouseId)
         .toArray()
         .catch(async () => {
-          return await db.warehouseStock
+          return await warehouseStockTable
             .filter((w: any) => (w.warehouseId === warehouseId || w.warehouse_id === warehouseId))
             .toArray()
             .catch(() => []);
@@ -767,7 +772,7 @@ export class UnifiedInventoryMutationEngine {
     const afterWarehouseQty = beforeWarehouseQty + delta;
 
     // Maintain Product Projection Invariant: products.stock = SUM(warehouseStock.quantity) within authoritative tenant
-    const allWhs = await db.warehouseStock
+    const allWhs = await warehouseStockTable
       .filter((w: any) => 
         (w.productId === productId || w.product_id === productId) &&
         ((w.tenantId || w.tenant_id) === tenantId)
@@ -835,9 +840,9 @@ export class UnifiedInventoryMutationEngine {
       tenantId,
       branchId,
       timestamp
-    });
+    }, tx);
 
-    // 10. Record Canonical Ledger Entry (db.inventoryTransactions)
+    // 10. Record Canonical Ledger Entry (inventoryTransactionsTable)
     const txId = db.generateId('ITX');
     const ledgerRecord: any = {
       id: txId,
@@ -879,10 +884,10 @@ export class UnifiedInventoryMutationEngine {
       reversal_of_id: params.reversedMovementId || null
     };
 
-    await db.inventoryTransactions.add(ledgerRecord);
+    await inventoryTransactionsTable.add(ledgerRecord);
 
     // 11. Update Product Projections (products.stock = canonical, StockQuantity mirrors stock)
-    await db.products.update(productId, {
+    await productsTable.update(productId, {
       stock: afterProductStock,
       StockQuantity: afterProductStock,
       updated_at: timestamp,
@@ -896,13 +901,13 @@ export class UnifiedInventoryMutationEngine {
       if (!wsTenant || wsTenant !== tenantId) {
         throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Warehouse stock record '${ws.id}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
       }
-      await db.warehouseStock.update(ws.id, {
+      await warehouseStockTable.update(ws.id, {
         quantity: afterWarehouseQty,
         lastUpdated: timestamp,
         lastModified: timestamp
       });
     } else {
-      await db.warehouseStock.add({
+      await warehouseStockTable.add({
         id: db.generateId('WHS'),
         warehouseId,
         productId,
@@ -924,7 +929,7 @@ if (!activeBranchId) {
 // 🚨 SECURITY FIX (P0): Filter by tenant INSIDE the query (same DoS fix as readWarehouseStock).
 // A record belonging to another tenant with the same [branchId+productId] must NOT block
 // this tenant's legitimate operation — it is simply invisible to us.
-const brInv = await db.branchInventory
+const brInv = await branchInventoryTable
   .where('[branchId+productId]')
   .equals([activeBranchId, productId])
   .filter((b: any) => ((b.tenantId || b.tenant_id) === tenantId))
@@ -952,12 +957,12 @@ const brInv = await db.branchInventory
 
     if (brInv) {
       const newBrQty = (brInv.stockQuantity || 0) + delta;
-      await db.branchInventory.update(brInv.id, {
+      await branchInventoryTable.update(brInv.id, {
         stockQuantity: newBrQty,
         updatedAt: timestamp
       });
     } else {
-      await db.branchInventory.add({
+      await branchInventoryTable.add({
         id: `INV-${activeBranchId}-${productId}`,
         branchId: activeBranchId,
         productId,
@@ -1009,7 +1014,8 @@ const brInv = await db.branchInventory
     });
   }
 
-  private async readWarehouseStock(warehouseId: string, productId: string, tenantId: string): Promise<any | null> {
+  private async readWarehouseStock(warehouseId: string, productId: string, tenantId: string, tx?: any): Promise<any | null> {
+  const warehouseStockTable = tx ? tx.table('warehouseStock') : db.warehouseStock;
   if (!tenantId) {
     throw new Error(`[UnifiedEngine] TRUSTED_TENANT_CONTEXT_REQUIRED: tenantId is required for readWarehouseStock.`);
   }
@@ -1019,7 +1025,7 @@ const brInv = await db.branchInventory
   // This is a READ-ONLY function: it must return null for "no record for THIS tenant",
   // not throw when another tenant's record exists.
   try {
-    const byCompound = await db.warehouseStock
+    const byCompound = await warehouseStockTable
       .where('[warehouseId+productId]')
       .equals([warehouseId, productId])
       .filter((ws: any) => ((ws.tenantId || ws.tenant_id) === tenantId))
@@ -1030,7 +1036,7 @@ const brInv = await db.branchInventory
   }
 
   // 🚨 SECURITY FIX (P0): Apply the same tenant filter in the fallback path.
-  const byFilter = await db.warehouseStock
+  const byFilter = await warehouseStockTable
     .filter((ws: any) =>
       (ws.warehouseId === warehouseId || ws.warehouse_id === warehouseId) &&
       (ws.productId === productId || ws.product_id === productId) &&
@@ -1046,14 +1052,16 @@ const brInv = await db.branchInventory
     _docId: string,
     _docType: string,
     _productId: string,
-    tenantId: string
+    tenantId: string,
+    tx?: any
   ): Promise<any | null> {
+    const inventoryTransactionsTable = tx ? tx.table('inventoryTransactions') : db.inventoryTransactions;
     if (!tenantId) {
       throw new Error(`[UnifiedEngine] TRUSTED_TENANT_CONTEXT_REQUIRED: tenantId is required for checkExistingIdempotentTransaction.`);
     }
     if (!idempotencyKey) return null;
 
-    const matchingTxs = await db.inventoryTransactions
+    const matchingTxs = await inventoryTransactionsTable
       .filter((t: any) => t.idempotencyKey === idempotencyKey)
       .toArray();
 
@@ -1084,8 +1092,9 @@ const brInv = await db.branchInventory
     tenantId: string;
     branchId?: string;
     timestamp: string;
-  }): Promise<void> {
+  }, tx?: any): Promise<void> {
     const { productId, warehouseId, delta, batchId, batchNumber, expiryDate, unitCost, docId, tenantId, branchId, timestamp } = params;
+    const medicineBatchesTable = tx ? tx.table('medicineBatches') : db.medicineBatches;
 
     // 1. Inward movements (PURCHASE, TRANSFER_IN, positive ADJUSTMENT, positive CORRECTION, positive REVERSAL)
     if (delta > 0) {
@@ -1093,7 +1102,7 @@ const brInv = await db.branchInventory
         const resolvedBatchNum = String(batchNumber || batchId || `B-${Date.now().toString().slice(-6)}`);
         
         // Search if matching batch already exists in this warehouse for the authoritative tenant
-        const existingBatch = await db.medicineBatches
+        const existingBatch = await medicineBatchesTable
           .filter((b: any) => 
             (b.productId === productId || b.product_id === productId) &&
             (b.batchNumber === resolvedBatchNum || b.batchId === resolvedBatchNum) &&
@@ -1104,7 +1113,7 @@ const brInv = await db.branchInventory
 
         if (existingBatch) {
           const newQty = Number(existingBatch.quantity || 0) + delta;
-          await db.medicineBatches.update(existingBatch.id, {
+          await medicineBatchesTable.update(existingBatch.id, {
             quantity: newQty,
             unitCost: unitCost || existingBatch.unitCost || 0,
             cost: unitCost || existingBatch.cost || 0,
@@ -1113,7 +1122,7 @@ const brInv = await db.branchInventory
           });
         } else {
           const newBatchId = batchId || `BATCH_${docId}_${warehouseId}_${productId}_${resolvedBatchNum}`;
-          await db.medicineBatches.put({
+          await medicineBatchesTable.put({
             id: newBatchId,
             batchId: resolvedBatchNum,
             batchNumber: resolvedBatchNum,
@@ -1140,7 +1149,7 @@ const brInv = await db.branchInventory
       const deductQty = Math.abs(delta);
 
       if (batchId) {
-        const batch = await db.medicineBatches.get(batchId).catch(() => null);
+        const batch = await medicineBatchesTable.get(batchId).catch(() => null);
         if (!batch) {
           throw new Error(`[UnifiedEngine] BATCH_NOT_FOUND: Specified batchId '${batchId}' does not exist for deduction.`);
         }
@@ -1157,13 +1166,13 @@ const brInv = await db.branchInventory
             metadata: { productId, warehouseId, batchId, currentQty, deductQty }
           });
         }
-        await db.medicineBatches.update(batch.id, {
+        await medicineBatchesTable.update(batch.id, {
           quantity: currentQty - deductQty,
           updated_at: timestamp,
           lastModified: timestamp
         });
       } else if (batchNumber) {
-        const batch = await db.medicineBatches
+        const batch = await medicineBatchesTable
           .filter((b: any) => 
             (b.productId === productId || b.product_id === productId) &&
             (b.batchNumber === batchNumber || b.batchId === batchNumber) &&
@@ -1187,14 +1196,14 @@ const brInv = await db.branchInventory
             metadata: { productId, warehouseId, batchNumber, currentQty, deductQty }
           });
         }
-        await db.medicineBatches.update(batch.id, {
+        await medicineBatchesTable.update(batch.id, {
           quantity: currentQty - deductQty,
           updated_at: timestamp,
           lastModified: timestamp
         });
       } else {
         // Deduct from earliest expiring batch (FEFO) in warehouse (or globally for product) within authoritative tenant
-        let batches = await db.medicineBatches
+        let batches = await medicineBatchesTable
           .where('productId')
           .equals(productId)
           .filter((b: any) => 
@@ -1205,7 +1214,7 @@ const brInv = await db.branchInventory
           .sortBy('expiryDate');
 
         if (batches.length === 0) {
-          batches = await db.medicineBatches
+          batches = await medicineBatchesTable
             .where('productId')
             .equals(productId)
             .filter((b: any) => 
@@ -1217,7 +1226,7 @@ const brInv = await db.branchInventory
 
         if (batches.length === 0) {
           // Check if any batches exist for this product in this tenant
-          const anyBatchesCount = await db.medicineBatches
+          const anyBatchesCount = await medicineBatchesTable
             .where('productId')
             .equals(productId)
             .filter((b: any) => ((b.tenantId || b.tenant_id) === tenantId))
@@ -1251,7 +1260,7 @@ const brInv = await db.branchInventory
           if (remainingToDeduct <= 0) break;
           const currentBQty = Number(b.quantity || 0);
           const deductFromThis = Math.min(currentBQty, remainingToDeduct);
-          await db.medicineBatches.update(b.id, {
+          await medicineBatchesTable.update(b.id, {
             quantity: currentBQty - deductFromThis,
             updated_at: timestamp,
             lastModified: timestamp
