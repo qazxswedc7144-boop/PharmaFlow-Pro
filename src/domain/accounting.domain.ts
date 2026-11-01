@@ -75,6 +75,11 @@ export interface JournalEntry extends DomainEntity {
   TotalAmount?: number;
   created_at?: string;
   timestamp?: string;
+
+  // Audit & Traceability
+  isReversal?: boolean;
+  reversalOf?: string;
+  reversedBy?: string;
 }
 
 /**

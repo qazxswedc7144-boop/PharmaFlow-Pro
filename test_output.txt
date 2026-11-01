@@ -1,0 +1,819 @@
+
+> pharmaflow@1.0.0 test
+> vitest server/tests/purchase-phase2-reversal-precision.test.ts A & B & C & E
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv5.0.1 [39m[90m/app/applet[39m
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts
+[22m[39m✅ PharmaFlow PRO DB Engine started successfully.
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[zustand persist middleware] Unable to update item 'pharma-auth-storage', the given storage is currently unavailable.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757038-lghd1rw8s)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Processing sequence: 1 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757037-TM91D0
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-P-ORIG, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Published Event: INVOICE_POSTED (ID: evt-1793559757106-1vst5mx2k)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Processing sequence: 2 (Type: INVOICE_POSTED)
+[ReportProjector] Received event INVOICE_POSTED for aggregate PUR-TX-P-ORIG
+[ReportEngine] Clearing and re-aggregating reports data...
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[MemoryManager] Global report cache forced purge.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-P-ORIG, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[AuditService] Action Logger Saved: CREATE - purchases.invoice.process
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_COMPLETED (ID: evt-1793559757125-ormt8sqd2)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Processing sequence: 3 (Type: WORKFLOW_COMPLETED)
+[ReportProjector] Received event WORKFLOW_COMPLETED for aggregate WF-1793559757037-TM91D0
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757203-f23di7627)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Processing sequence: 4 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757202-PBG24F
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-P-EDIT-1, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[FinancialTransactionRepository] Found 1 total FTs, 1 are active for document PUR-TX-P-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[FinancialTransactionRepository] REVERSED: FT FT-PUR-TX-P-ORIG-TX-P-ORIG linked to new reversal FT-REV-FT-PUR-TX-P-ORIG-TX-P-ORIG-TX-P-EDIT-1
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[AccountingEngine] Found 1 total entries, 1 are active for document PUR-TX-P-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[AccountingEngine] Created Reversal REV-JE-PUR-TX-P-ORIG-TX-P-ORIG-TX-P-EDIT-1 for Entry JE-PUR-TX-P-ORIG-TX-P-ORIG, sourceId=PUR-TX-P-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'journalEntries' primKey: JE-PUR-TX-P-ORIG-TX-P-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[AccountingEngine] REVERSED: Entry JE-PUR-TX-P-ORIG-TX-P-ORIG linked to new reversal REV-JE-PUR-TX-P-ORIG-TX-P-ORIG-TX-P-EDIT-1
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'invoices' primKey: PUR-TX-P-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'purchases' primKey: PUR-TX-P-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Published Event: INVOICE_POSTED (ID: evt-1793559757258-isx6flmu8)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Processing sequence: 5 (Type: INVOICE_POSTED)
+[ReportProjector] Received event INVOICE_POSTED for aggregate PUR-TX-P-ORIG
+[ReportEngine] Clearing and re-aggregating reports data...
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[MemoryManager] Global report cache forced purge.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-P-EDIT-1, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[AuditService] Action Logger Saved: CREATE - purchases.invoice.process
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_COMPLETED (ID: evt-1793559757265-3tgrndpv6)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[ProjectionEventBus] Processing sequence: 6 (Type: WORKFLOW_COMPLETED)
+[ReportProjector] Received event WORKFLOW_COMPLETED for aggregate WF-1793559757202-PBG24F
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mA & B & C & E: Sequential Edits maintain precise history and balances
+[22m[39m[Test] JE After Edit 1: [
+  {
+    id: [32m'JE-PUR-TX-P-ORIG-TX-P-EDIT-1'[39m,
+    sourceId: [32m'PUR-TX-P-ORIG'[39m,
+    type: [32m'PURCHASE'[39m,
+    revOf: [90mundefined[39m,
+    revBy: [90mundefined[39m
+  },
+  {
+    id: [32m'JE-PUR-TX-P-ORIG-TX-P-ORIG'[39m,
+    sourceId: [32m'PUR-TX-P-ORIG'[39m,
+    type: [32m'PURCHASE'[39m,
+    revOf: [90mundefined[39m,
+    revBy: [32m'REV-JE-PUR-TX-P-ORIG-TX-P-ORIG-TX-P-EDIT-1'[39m
+  },
+  {
+    id: [32m'REV-JE-PUR-TX-P-ORIG-TX-P-ORIG-TX-P-EDIT-1'[39m,
+    sourceId: [32m'PUR-TX-P-ORIG'[39m,
+    type: [32m'AUTO_REVERSAL'[39m,
+    revOf: [32m'JE-PUR-TX-P-ORIG-TX-P-ORIG'[39m,
+    revBy: [90mundefined[39m
+  }
+]
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[zustand persist middleware] Unable to update item 'pharma-auth-storage', the given storage is currently unavailable.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757330-ecmew8k72)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Processing sequence: 7 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757330-29NFFJ
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-R-ORIG, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Published Event: INVOICE_POSTED (ID: evt-1793559757355-76x1nyllf)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Processing sequence: 8 (Type: INVOICE_POSTED)
+[ReportProjector] Received event INVOICE_POSTED for aggregate PUR-TX-R-ORIG
+[ReportEngine] Clearing and re-aggregating reports data...
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[MemoryManager] Global report cache forced purge.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-R-ORIG, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[AuditService] Action Logger Saved: CREATE - purchases.invoice.process
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_COMPLETED (ID: evt-1793559757362-s4qxqgpos)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Processing sequence: 9 (Type: WORKFLOW_COMPLETED)
+[ReportProjector] Received event WORKFLOW_COMPLETED for aggregate WF-1793559757330-29NFFJ
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757366-jttvkwkrs)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-R-EDIT, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[FinancialTransactionRepository] Found 1 total FTs, 1 are active for document PUR-TX-R-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[FinancialTransactionRepository] REVERSED: FT FT-PUR-TX-R-ORIG-TX-R-ORIG linked to new reversal FT-REV-FT-PUR-TX-R-ORIG-TX-R-ORIG-TX-R-EDIT
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[AccountingEngine] Found 1 total entries, 1 are active for document PUR-TX-R-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[AccountingEngine] Created Reversal REV-JE-PUR-TX-R-ORIG-TX-R-ORIG-TX-R-EDIT for Entry JE-PUR-TX-R-ORIG-TX-R-ORIG, sourceId=PUR-TX-R-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'journalEntries' primKey: JE-PUR-TX-R-ORIG-TX-R-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[AccountingEngine] REVERSED: Entry JE-PUR-TX-R-ORIG-TX-R-ORIG linked to new reversal REV-JE-PUR-TX-R-ORIG-TX-R-ORIG-TX-R-EDIT
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'invoices' primKey: PUR-TX-R-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'purchases' primKey: PUR-TX-R-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Published Event: INVOICE_POSTED (ID: evt-1793559757441-w88jbha4j)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Processing sequence: 10 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757366-VHFO1Y
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Processing sequence: 11 (Type: INVOICE_POSTED)
+[ReportProjector] Received event INVOICE_POSTED for aggregate PUR-TX-R-ORIG
+[ReportEngine] Clearing and re-aggregating reports data...
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[MemoryManager] Global report cache forced purge.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-R-EDIT, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[AuditService] Action Logger Saved: CREATE - purchases.invoice.process
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_COMPLETED (ID: evt-1793559757448-qe9akiq90)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Processing sequence: 12 (Type: WORKFLOW_COMPLETED)
+[ReportProjector] Received event WORKFLOW_COMPLETED for aggregate WF-1793559757366-VHFO1Y
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mD: Retry same Edit does not create duplicate entries
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757453-9g81ud48s)
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[zustand persist middleware] Unable to update item 'pharma-auth-storage', the given storage is currently unavailable.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757463-j49b8j6yq)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Processing sequence: 13 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757453-R9UCTL
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Processing sequence: 14 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757463-GBPVMO
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-F-ORIG, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Published Event: INVOICE_POSTED (ID: evt-1793559757519-bg3tsbnnc)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Processing sequence: 15 (Type: INVOICE_POSTED)
+[ReportProjector] Received event INVOICE_POSTED for aggregate PUR-TX-F-ORIG
+[ReportEngine] Clearing and re-aggregating reports data...
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[MemoryManager] Global report cache forced purge.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-F-ORIG, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[AuditService] Action Logger Saved: CREATE - purchases.invoice.process
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_COMPLETED (ID: evt-1793559757528-s91rx612d)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Processing sequence: 16 (Type: WORKFLOW_COMPLETED)
+[ReportProjector] Received event WORKFLOW_COMPLETED for aggregate WF-1793559757463-GBPVMO
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757532-9nky2cjxz)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-F-FAIL, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[FinancialTransactionRepository] Found 1 total FTs, 1 are active for document PUR-TX-F-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[FinancialTransactionRepository] REVERSED: FT FT-PUR-TX-F-ORIG-TX-F-ORIG linked to new reversal FT-REV-FT-PUR-TX-F-ORIG-TX-F-ORIG-TX-F-FAIL
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[AccountingEngine] Found 1 total entries, 1 are active for document PUR-TX-F-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[AccountingEngine] Created Reversal REV-JE-PUR-TX-F-ORIG-TX-F-ORIG-TX-F-FAIL for Entry JE-PUR-TX-F-ORIG-TX-F-ORIG, sourceId=PUR-TX-F-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'journalEntries' primKey: JE-PUR-TX-F-ORIG-TX-F-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[AccountingEngine] REVERSED: Entry JE-PUR-TX-F-ORIG-TX-F-ORIG linked to new reversal REV-JE-PUR-TX-F-ORIG-TX-F-ORIG-TX-F-FAIL
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'invoices' primKey: PUR-TX-F-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'purchases' primKey: PUR-TX-F-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[DB] Atomic Transaction Failed: Error: SIMULATED_FT_FAILURE
+    at PurchaseWorkflow.executeDomainSteps [90m(/app/applet/[39msrc/features/purchases/workflows/PurchaseWorkflow.ts:672:15[90m)[39m
+    at [90m/app/applet/[39msrc/core/workflow/workflowExecution.ts:106:25
+    at [90m/app/applet/[39msrc/core/integrity/transactionBoundary.ts:29:14
+    at wrappedOp [90m(/app/applet/[39msrc/core/db.ts:1822:24[90m)[39m
+    at Transaction.<anonymous> [90m(/app/applet/[39msrc/core/db.ts:529:16[90m)[39m
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-F-FAIL, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[IntegrityRecoveryManager] Registered failure INC-1793559757618-0 for WF-1793559757532-AHKZCV (PURCHASE): SIMULATED_FT_FAILURE
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_FAILED (ID: evt-1793559757620-bsvccuiv6)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mF: Rollback safety during multi-step Edit
+[22m[39m[ProjectionEventBus] Processing sequence: 17 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757532-AHKZCV
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 18 (Type: WORKFLOW_FAILED)
+[ReportProjector] Received event WORKFLOW_FAILED for aggregate WF-1793559757532-AHKZCV
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[zustand persist middleware] Unable to update item 'pharma-auth-storage', the given storage is currently unavailable.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757632-oz3j5vtn9)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 19 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757632-ZENZEV
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-FT-ORIG, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: INVOICE_POSTED (ID: evt-1793559757656-ptod1r2qo)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 20 (Type: INVOICE_POSTED)
+[ReportProjector] Received event INVOICE_POSTED for aggregate PUR-TX-FT-ORIG
+[ReportEngine] Clearing and re-aggregating reports data...
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[MemoryManager] Global report cache forced purge.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-FT-ORIG, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AuditService] Action Logger Saved: CREATE - purchases.invoice.process
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_COMPLETED (ID: evt-1793559757700-73xi7yz3z)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 21 (Type: WORKFLOW_COMPLETED)
+[ReportProjector] Received event WORKFLOW_COMPLETED for aggregate WF-1793559757632-ZENZEV
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757704-lk8n2jjn2)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-FT-EDIT-1, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[FinancialTransactionRepository] Found 1 total FTs, 1 are active for document PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[FinancialTransactionRepository] REVERSED: FT FT-PUR-TX-FT-ORIG-TX-FT-ORIG linked to new reversal FT-REV-FT-PUR-TX-FT-ORIG-TX-FT-ORIG-TX-FT-EDIT-1
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AccountingEngine] Found 1 total entries, 1 are active for document PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AccountingEngine] Created Reversal REV-JE-PUR-TX-FT-ORIG-TX-FT-ORIG-TX-FT-EDIT-1 for Entry JE-PUR-TX-FT-ORIG-TX-FT-ORIG, sourceId=PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'journalEntries' primKey: JE-PUR-TX-FT-ORIG-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AccountingEngine] REVERSED: Entry JE-PUR-TX-FT-ORIG-TX-FT-ORIG linked to new reversal REV-JE-PUR-TX-FT-ORIG-TX-FT-ORIG-TX-FT-EDIT-1
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'invoices' primKey: PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'purchases' primKey: PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: INVOICE_POSTED (ID: evt-1793559757760-8ndvlnfdn)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 22 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757703-RSF5RT
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 23 (Type: INVOICE_POSTED)
+[ReportProjector] Received event INVOICE_POSTED for aggregate PUR-TX-FT-ORIG
+[ReportEngine] Clearing and re-aggregating reports data...
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[MemoryManager] Global report cache forced purge.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-FT-EDIT-1, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AuditService] Action Logger Saved: CREATE - purchases.invoice.process
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_COMPLETED (ID: evt-1793559757768-nv9ajc19g)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 24 (Type: WORKFLOW_COMPLETED)
+[ReportProjector] Received event WORKFLOW_COMPLETED for aggregate WF-1793559757703-RSF5RT
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[Test] All FTs: [
+  {
+    id: [32m'FT-PUR-TX-FT-ORIG-TX-FT-EDIT-1'[39m,
+    type: [32m'Invoice'[39m,
+    isRev: [90mundefined[39m,
+    revOf: [90mundefined[39m,
+    revBy: [90mundefined[39m,
+    del: [90mundefined[39m
+  },
+  {
+    id: [32m'FT-PUR-TX-FT-ORIG-TX-FT-ORIG'[39m,
+    type: [32m'Invoice'[39m,
+    isRev: [90mundefined[39m,
+    revOf: [90mundefined[39m,
+    revBy: [32m'FT-REV-FT-PUR-TX-FT-ORIG-TX-FT-ORIG-TX-FT-EDIT-1'[39m,
+    del: [33mtrue[39m
+  },
+  {
+    id: [32m'FT-REV-FT-PUR-TX-FT-ORIG-TX-FT-ORIG-TX-FT-EDIT-1'[39m,
+    type: [32m'Invoice'[39m,
+    isRev: [33mtrue[39m,
+    revOf: [32m'FT-PUR-TX-FT-ORIG-TX-FT-ORIG'[39m,
+    revBy: [90mundefined[39m,
+    del: [33mfalse[39m
+  }
+]
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_STARTED (ID: evt-1793559757773-q5l6hbud9)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[LOCK-AUDIT] [LOCK_ACQUIRED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-FT-EDIT-2, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[FinancialTransactionRepository] Found 3 total FTs, 1 are active for document PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[FinancialTransactionRepository] REVERSED: FT FT-PUR-TX-FT-ORIG-TX-FT-EDIT-1 linked to new reversal FT-REV-FT-PUR-TX-FT-ORIG-TX-FT-EDIT-1-TX-FT-EDIT-2
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AccountingEngine] Found 3 total entries, 1 are active for document PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AccountingEngine] Created Reversal REV-JE-PUR-TX-FT-ORIG-TX-FT-EDIT-1-TX-FT-EDIT-2 for Entry JE-PUR-TX-FT-ORIG-TX-FT-EDIT-1, sourceId=PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'journalEntries' primKey: JE-PUR-TX-FT-ORIG-TX-FT-EDIT-1
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AccountingEngine] REVERSED: Entry JE-PUR-TX-FT-ORIG-TX-FT-EDIT-1 linked to new reversal REV-JE-PUR-TX-FT-ORIG-TX-FT-EDIT-1-TX-FT-EDIT-2
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'invoices' primKey: PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'purchases' primKey: PUR-TX-FT-ORIG
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[DB] Re-using parent active transaction zone to prevent early commit
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'products' primKey: PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'branchInventory' primKey: INV-BRH-01-PROD-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'suppliers' primKey: SUP-01
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-102
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[HOOK UPDATING OK] Table 'accounts' primKey: ACC-201
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: INVOICE_POSTED (ID: evt-1793559757849-o7ai0wlcd)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 25 (Type: WORKFLOW_STARTED)
+[ReportProjector] Received event WORKFLOW_STARTED for aggregate WF-1793559757773-XJ9TF0
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 26 (Type: INVOICE_POSTED)
+[ReportProjector] Received event INVOICE_POSTED for aggregate PUR-TX-FT-ORIG
+[ReportEngine] Clearing and re-aggregating reports data...
+
+[90mstderr[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[MemoryManager] Global report cache forced purge.
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[LOCK-AUDIT] [LOCK_RELEASED] Key: TENANT-PRECISION:BRH-01:PURCHASE:TX-FT-EDIT-2, Branch: BRH-01, User: ExecutionGuard
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[AuditService] Action Logger Saved: CREATE - purchases.invoice.process
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Published Event: WORKFLOW_COMPLETED (ID: evt-1793559757857-bt1bs71to)
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[ProjectionEventBus] Processing sequence: 27 (Type: WORKFLOW_COMPLETED)
+[ReportProjector] Received event WORKFLOW_COMPLETED for aggregate WF-1793559757773-XJ9TF0
+
+[90mstdout[2m | server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22m[2mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22m[2mG: Sequential FinancialTransaction cycles
+[22m[39m[Test] All FTs After Edit 2: [
+  {
+    id: [32m'FT-PUR-TX-FT-ORIG-TX-FT-EDIT-1'[39m,
+    type: [32m'Invoice'[39m,
+    isRev: [90mundefined[39m,
+    revOf: [90mundefined[39m,
+    revBy: [32m'FT-REV-FT-PUR-TX-FT-ORIG-TX-FT-EDIT-1-TX-FT-EDIT-2'[39m,
+    del: [33mtrue[39m
+  },
+  {
+    id: [32m'FT-PUR-TX-FT-ORIG-TX-FT-EDIT-2'[39m,
+    type: [32m'Invoice'[39m,
+    isRev: [90mundefined[39m,
+    revOf: [90mundefined[39m,
+    revBy: [90mundefined[39m,
+    del: [90mundefined[39m
+  },
+  {
+    id: [32m'FT-PUR-TX-FT-ORIG-TX-FT-ORIG'[39m,
+    type: [32m'Invoice'[39m,
+    isRev: [90mundefined[39m,
+    revOf: [90mundefined[39m,
+    revBy: [32m'FT-REV-FT-PUR-TX-FT-ORIG-TX-FT-ORIG-TX-FT-EDIT-1'[39m,
+    del: [33mtrue[39m
+  },
+  {
+    id: [32m'FT-REV-FT-PUR-TX-FT-ORIG-TX-FT-EDIT-1-TX-FT-EDIT-2'[39m,
+    type: [32m'Invoice'[39m,
+    isRev: [33mtrue[39m,
+    revOf: [32m'FT-PUR-TX-FT-ORIG-TX-FT-EDIT-1'[39m,
+    revBy: [90mundefined[39m,
+    del: [33mfalse[39m
+  },
+  {
+    id: [32m'FT-REV-FT-PUR-TX-FT-ORIG-TX-FT-ORIG-TX-FT-EDIT-1'[39m,
+    type: [32m'Invoice'[39m,
+    isRev: [33mtrue[39m,
+    revOf: [32m'FT-PUR-TX-FT-ORIG-TX-FT-ORIG'[39m,
+    revBy: [90mundefined[39m,
+    del: [33mfalse[39m
+  }
+]
+
+ [31m❯[39m server/tests/purchase-phase2-reversal-precision.test.ts [2m([22m[2m4 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 848[2mms[22m[39m
+   [31m❯[39m PURCHASE PHASE 2 — Reversal Precision & Financial Integrity [2m(4)[22m
+[31m     [31m×[31m A & B & C & E: Sequential Edits maintain precise history and balances[39m[32m 299[2mms[22m[39m
+     [32m✓[39m D: Retry same Edit does not create duplicate entries[32m 141[2mms[22m[39m
+     [32m✓[39m F: Rollback safety during multi-step Edit[32m 167[2mms[22m[39m
+     [32m✓[39m G: Sequential FinancialTransaction cycles[32m 238[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m server/tests/purchase-phase2-reversal-precision.test.ts[2m > [22mPURCHASE PHASE 2 — Reversal Precision & Financial Integrity[2m > [22mA & B & C & E: Sequential Edits maintain precise history and balances
+[31m[1mAssertionError[22m: expected undefined to be defined[39m
+[36m [2m❯[22m server/tests/purchase-phase2-reversal-precision.test.ts:[2m99:23[22m[39m
+    [90m 97|[39m
+    [90m 98|[39m     expect(origJE).toBeDefined();
+    [90m 99|[39m     expect(revOrigJE).toBeDefined();
+    [90m   |[39m                       [31m^[39m
+    [90m100|[39m     expect(newJE1).toBeDefined();
+    [90m101|[39m     expect((origJE as any).reversedBy).toBe(revOrigJE?.id);
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m3 passed[39m[22m[90m (4)[39m
+[2m   Start at [22m 19:02:34
+[2m   Duration [22m 3.68s[2m (transform 45%, import 29%, tests 25%, setup 2%)[22m
+

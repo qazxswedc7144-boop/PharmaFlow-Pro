@@ -372,17 +372,32 @@ export class AccountingEngine {
       const idempotencyKey = (invoice as any).transactionUuid;
       const originalEntries = await db.journalEntries.where('sourceId').equals(invoice.id).toArray();
       
-      for (const entry of originalEntries) {
-        // Skip already reversed entries and previous reversals to prevent cycles
-        if (entry.sourceType === 'AUTO_REVERSAL') continue;
-        
+      // Target ONLY active entries that haven't been reversed yet
+      const activeEntries = originalEntries.filter(e => 
+        e.sourceType !== 'AUTO_REVERSAL' && 
+        !(e as any).reversedBy
+      );
+
+      console.log(`[AccountingEngine] Found ${originalEntries.length} total entries, ${activeEntries.length} are active for document ${invoice.id}`);
+
+      for (const entry of activeEntries) {
         // Check if a reversal for this specific entry already exists with this idempotency key
         const reversalId = idempotencyKey ? `REV-${entry.id}-${idempotencyKey}` : `REV-${entry.id}`;
         const existingRev = await db.journalEntries.get(reversalId);
-        if (existingRev) continue;
+        if (existingRev) {
+          console.log(`[AccountingEngine] Reversal entry ${reversalId} already exists (idempotent skip)`);
+          continue;
+        }
 
         const reversal = this.createReversalEntry(entry, invoice.id, entry.sourceType, reversalId);
         await AccountingRepository.addEntry(reversal, tx);
+
+        // Mark original entry as reversed
+        await (tx?.journalEntries ?? db.journalEntries).update(entry.id, { 
+          reversedBy: reversalId,
+          lastModified: new Date().toISOString()
+        });
+        console.log(`[AccountingEngine] REVERSED: Entry ${entry.id} linked to new reversal ${reversalId}`);
       }
       return;
     }
@@ -441,6 +456,7 @@ export class AccountingEngine {
       sourceType: 'AUTO_REVERSAL',
       tenantId: entry.tenantId,
       branchId: entry.branchId,
+      reversalOf: entry.id, // Verifiable link to original
       lines: entry.lines.map((l, idx) => {
         const lineId = `${entryId}-L-${idx}`;
         return {

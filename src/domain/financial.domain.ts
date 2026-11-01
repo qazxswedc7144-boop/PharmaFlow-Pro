@@ -53,4 +53,10 @@ export interface FinancialTransaction extends DomainEntity {
   Paid_Amount?: number;
   Created_At?: string;
   Created_By?: string;
+
+  // Audit & Traceability
+  isReversal?: boolean;
+  reversalOf?: string;
+  reversedBy?: string;
+  isDeleted?: boolean;
 }

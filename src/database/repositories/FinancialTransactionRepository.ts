@@ -17,9 +17,10 @@ export const FinancialTransactionRepository = {
     return await db.financialTransactions.get(id);
   },
 
-  getByReference: async (refId: string): Promise<FinancialTransaction[]> => {
+  getByReference: async (refId: string, tx?: any): Promise<FinancialTransaction[]> => {
     if (!refId) return [];
-    return await db.financialTransactions.where('Reference_ID').equals(refId).toArray();
+    const table = tx?.financialTransactions ?? db.financialTransactions;
+    return await table.where('Reference_ID').equals(refId).toArray();
   },
 
   /**
@@ -66,11 +67,9 @@ export const FinancialTransactionRepository = {
       branchId
     } as FinancialTransaction;
 
-    // ✅ التعديل: استخدام tx إن وُجد
     const ftsTbl = tx?.financialTransactions ?? db.financialTransactions;
     await ftsTbl.put(transaction);
     
-    // ✅ التعديل: تمرير tx إلى دالة addAuditLog
     await db.addAuditLog(
       'CREATE', 
       'VOUCHER',
@@ -86,19 +85,24 @@ export const FinancialTransactionRepository = {
    * إبطال/عكس الحركات المالية المرتبطة بمرجع معين (Non-Destructive Reversal)
    */
   reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string): Promise<void> => {
-    const transactions = await FinancialTransactionRepository.getByReference(refId);
-    const now = new Date().toISOString();
     const table = tx?.financialTransactions ?? db.financialTransactions;
+    const transactions = await FinancialTransactionRepository.getByReference(refId, tx);
+    const now = new Date().toISOString();
     
-    for (const trx of transactions) {
-      // تجنب عكس الحركات الملغاة أو العكسية مسبقاً
-      if (trx.isDeleted || (trx as any).isReversal) continue;
+    // Target ONLY active transactions that haven't been reversed yet
+    const activeTxs = transactions.filter(t => !t.isDeleted && !(t as any).isReversal && !(t as any).reversedBy);
+    
+    console.log(`[FinancialTransactionRepository] Found ${transactions.length} total FTs, ${activeTxs.length} are active for document ${refId}`);
 
+    for (const trx of activeTxs) {
       const reversalId = idempotencyKey ? `FT-REV-${trx.id}-${idempotencyKey}` : `FT-REV-${trx.id}`;
       
       // التحقق من وجود العكس مسبقاً لضمان Idempotency
       const existingRev = await table.get(reversalId);
-      if (existingRev) continue;
+      if (existingRev) {
+        console.log(`[FinancialTransactionRepository] Reversal FT ${reversalId} already exists (idempotent skip)`);
+        continue;
+      }
 
       const reversal: FinancialTransaction = {
         ...trx,
@@ -110,16 +114,19 @@ export const FinancialTransactionRepository = {
         Created_At: now,
         lastModified: now,
         isReversal: true, // وسم لتمييز القيود العكسية
+        reversalOf: trx.id, // ربط صريح بالحركة الأصلية
         isDeleted: false
       } as any;
 
       await table.put(reversal);
 
       // تعليم الحركة الأصلية كملغاة/معكوسة مع بقائها في السجل
-      trx.isDeleted = true;
-      trx.lastModified = now;
-      (trx as any).reversalId = reversalId;
-      await table.put(trx);
+      await table.update(trx.id, {
+        isDeleted: true,
+        lastModified: now,
+        reversedBy: reversalId
+      });
+      console.log(`[FinancialTransactionRepository] REVERSED: FT ${trx.id} linked to new reversal ${reversalId}`);
     }
   },
 
@@ -127,14 +134,15 @@ export const FinancialTransactionRepository = {
    * حذف أو إلغاء حركة (Logical Delete)
    */
   cancelTransaction: async (refId: string, tx?: any): Promise<void> => {
-    const transactions = await FinancialTransactionRepository.getByReference(refId);
-    const now = new Date().toISOString();
     const table = tx?.financialTransactions ?? db.financialTransactions;
+    const transactions = await FinancialTransactionRepository.getByReference(refId, tx);
+    const now = new Date().toISOString();
     for (const trx of transactions) {
       if (trx.isDeleted) continue;
-      trx.isDeleted = true;
-      trx.lastModified = now;
-      await table.put(trx);
+      await table.update(trx.id, {
+        isDeleted: true,
+        lastModified: now
+      });
     }
   }
 };
