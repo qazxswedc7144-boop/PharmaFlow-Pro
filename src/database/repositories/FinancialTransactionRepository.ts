@@ -17,10 +17,14 @@ export const FinancialTransactionRepository = {
     return await db.financialTransactions.get(id);
   },
 
-  getByReference: async (refId: string, tx?: any): Promise<FinancialTransaction[]> => {
+  getByReference: async (refId: string, tx?: any, tenantId?: string): Promise<FinancialTransaction[]> => {
     if (!refId) return [];
     const table = tx?.financialTransactions ?? db.financialTransactions;
-    return await table.where('Reference_ID').equals(refId).toArray();
+    let query = table.where('Reference_ID').equals(refId);
+    if (tenantId) {
+      query = query.and(t => t.tenantId === tenantId);
+    }
+    return await query.toArray();
   },
 
   /**
@@ -84,9 +88,9 @@ export const FinancialTransactionRepository = {
   /**
    * إبطال/عكس الحركات المالية المرتبطة بمرجع معين (Non-Destructive Reversal)
    */
-  reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string): Promise<void> => {
+  reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string, tenantId?: string): Promise<void> => {
     const table = tx?.financialTransactions ?? db.financialTransactions;
-    const transactions = await FinancialTransactionRepository.getByReference(refId, tx);
+    const transactions = await FinancialTransactionRepository.getByReference(refId, tx, tenantId);
     const now = new Date().toISOString();
     
     // Target ONLY active transactions that haven't been reversed yet

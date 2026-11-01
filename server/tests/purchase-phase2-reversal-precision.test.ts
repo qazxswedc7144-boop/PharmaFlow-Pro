@@ -295,4 +295,131 @@ describe('PURCHASE PHASE 2 — Reversal Precision & Financial Integrity', () => 
     const origReversals = fts.filter(f => (f as any).isReversal && (f as any).reversalOf === origFT?.id);
     expect(origReversals.length).toBe(1);
   });
+
+  it('H: Triple Edit Chain generates exactly 7 records (1 Orig + 3 Rev + 3 New)', async () => {
+    const res = (await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: { supplierId, items: [{ productId, quantity: 10, unitPrice: 10 }], total: 100, transactionUuid: 'TX-H-ORIG' }
+    })) as { refId: string };
+    const invoiceId = res.refId;
+
+    // 3 Edits
+    for (let i = 1; i <= 3; i++) {
+      await useAccountingStore.getState().addInvoice({
+        type: 'PURCHASE',
+        payload: { id: invoiceId, supplierId, items: [{ productId, quantity: 10 * (i + 1), unitPrice: 10 }], total: 100 * (i + 1), transactionUuid: `TX-H-EDIT-${i}` },
+        options: { isEdit: true }
+      });
+    }
+
+    const entries = await db.journalEntries.where('sourceId').equals(invoiceId).toArray();
+    const fts = await db.financialTransactions.where('Reference_ID').equals(invoiceId).toArray();
+
+    // 1 Original + 3 Reversals + 3 New Versions = 7
+    expect(entries.length).toBe(7);
+    expect(fts.length).toBe(7);
+
+    // Verify Net Accounting Effect: (100) + (-100 + 200) + (-200 + 300) + (-300 + 400) = 400
+    const invAcc = await db.accounts.get('ACC-102');
+    expect(invAcc?.balance).toBe(400);
+
+    // Verify net Supplier Balance
+    const supplier = await db.suppliers.get(supplierId);
+    expect(supplier?.balance).toBe(400);
+
+    // Check for orphaned reversals
+    const entriesWithRevOf = entries.filter(e => (e as any).reversalOf);
+    expect(entriesWithRevOf.length).toBe(3);
+    for (const rev of entriesWithRevOf) {
+      const orig = entries.find(e => e.id === (rev as any).reversalOf);
+      expect(orig).toBeDefined();
+      expect((orig as any).reversedBy).toBe(rev.id);
+    }
+  });
+
+  it('I: Tenant Isolation - Reversal does not affect other tenants', async () => {
+    const tenant2 = 'TENANT-OTHER';
+    const supplierIdT2 = 'SUP-02';
+    const productIdT2 = 'PROD-02';
+    const branchIdT2 = 'BRH-02';
+
+    setupUserSession(tenant2, branchIdT2);
+    await db.branches.put({ id: branchIdT2, code: branchIdT2, name: 'Main Branch T2', tenantId: tenant2, isActive: true } as any);
+    await db.suppliers.put({ id: supplierIdT2, Supplier_Name: 'Supplier 2', balance: 0, tenantId: tenant2, branchId: branchIdT2, is_active: true } as any);
+    await db.products.put({ id: productIdT2, name: 'Med B', stock: 1000, price: 50, costPrice: 40, tenantId: tenant2, is_active: true } as any);
+    await db.accounts.bulkPut([
+      { id: 'ACC-101', code: '101', name: 'Cash', type: 'Asset', tenantId: tenant2, branchId: branchIdT2, balance: 100000 },
+      { id: 'ACC-102', code: '102', name: 'Inventory', type: 'Asset', tenantId: tenant2, branchId: branchIdT2, balance: 0 },
+      { id: 'ACC-201', code: '201', name: 'Payables', type: 'Liability', tenantId: tenant2, branchId: branchIdT2, balance: 0 }
+    ] as any);
+
+    // 1. Purchase in Tenant 2
+    const res2 = (await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: { supplierId: supplierIdT2, items: [{ productId: productIdT2, quantity: 50, unitPrice: 10 }], total: 500, transactionUuid: 'TX-I-T2-ORIG' }
+    })) as { refId: string };
+    const invoiceIdT2 = res2.refId;
+
+    // 2. Switch back to Tenant 1 (Tenant 1 setup already handled in beforeEach)
+    setupUserSession(tenant1, branchId);
+    const res1 = (await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: { supplierId, items: [{ productId, quantity: 10, unitPrice: 10 }], total: 100, transactionUuid: 'TX-I-T1-ORIG' }
+    })) as { refId: string };
+    const invoiceIdT1 = res1.refId;
+
+    // 3. Edit Tenant 1 Purchase
+    await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: { id: invoiceIdT1, supplierId, items: [{ productId, quantity: 20, unitPrice: 10 }], total: 200, transactionUuid: 'TX-I-T1-EDIT' },
+      options: { isEdit: true }
+    });
+
+    // 4. Verify Tenant 2 is untouched
+    setupUserSession(tenant2, branchIdT2);
+    const entriesT2 = await db.journalEntries.where('sourceId').equals(invoiceIdT2).toArray();
+    expect(entriesT2.length).toBe(1);
+    expect((entriesT2[0] as any).reversedBy).toBeUndefined();
+
+    const ftsT2 = await db.financialTransactions.where('Reference_ID').equals(invoiceIdT2).toArray();
+    expect(ftsT2.length).toBe(1);
+    expect(ftsT2[0].isDeleted).toBeFalsy();
+  });
+
+  it('J: Multi-Stage Failure Rollback Verification', async () => {
+    const res = (await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: { supplierId, items: [{ productId, quantity: 10, unitPrice: 10 }], total: 100, transactionUuid: 'TX-J-ORIG' }
+    })) as { refId: string };
+    const invoiceId = res.refId;
+
+    const stages = ['AFTER_PURCHASE_DOC', 'AFTER_INVENTORY', 'AFTER_SUPPLIER_BALANCE', 'AFTER_FT', 'AFTER_JOURNAL'];
+
+    for (const stage of stages) {
+      (globalThis as any).__FAIL_AT_STAGE__ = stage;
+      const failUuid = `TX-J-FAIL-${stage}`;
+
+      await expect(
+        useAccountingStore.getState().addInvoice({
+          type: 'PURCHASE',
+          payload: { id: invoiceId, supplierId, items: [{ productId, quantity: 20, unitPrice: 10 }], total: 200, transactionUuid: failUuid },
+          options: { isEdit: true }
+        })
+      ).rejects.toThrow();
+
+      // Verify rollback: state must match res state (Total 100, 1 entry, 1 FT)
+      const supplier = await db.suppliers.get(supplierId);
+      expect(supplier?.balance).toBe(100, `Balance failed to rollback at stage ${stage}`);
+
+      const entries = await db.journalEntries.where('sourceId').equals(invoiceId).toArray();
+      expect(entries.length).toBe(1, `JournalEntries failed to rollback at stage ${stage}`);
+      expect((entries[0] as any).reversedBy).toBeUndefined();
+
+      const fts = await db.financialTransactions.where('Reference_ID').equals(invoiceId).toArray();
+      expect(fts.length).toBe(1, `FinancialTransactions failed to rollback at stage ${stage}`);
+      expect(fts[0].isDeleted).toBeFalsy();
+
+      delete (globalThis as any).__FAIL_AT_STAGE__;
+    }
+  });
 });

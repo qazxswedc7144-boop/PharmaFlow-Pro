@@ -370,7 +370,17 @@ export class AccountingEngine {
     // Handle Edit Reversal: Before posting new state, we must neutralize the old one via compensating entries.
     if (isReversal && invoice.id) {
       const idempotencyKey = (invoice as any).transactionUuid;
-      const originalEntries = await db.journalEntries.where('sourceId').equals(invoice.id).toArray();
+      const tenantId = (invoice as any).tenantId;
+      
+      const entriesTbl = tx?.journalEntries ?? db.journalEntries;
+      let query = entriesTbl.where('sourceId').equals(invoice.id);
+      
+      // Enforce Tenant Isolation if tenantId is available
+      if (tenantId) {
+        query = query.and(e => e.tenantId === tenantId);
+      }
+      
+      const originalEntries = await query.toArray();
       
       // Target ONLY active entries that haven't been reversed yet
       const activeEntries = originalEntries.filter(e => 
@@ -378,7 +388,7 @@ export class AccountingEngine {
         !(e as any).reversedBy
       );
 
-      console.log(`[AccountingEngine] Found ${originalEntries.length} total entries, ${activeEntries.length} are active for document ${invoice.id}`);
+      console.log(`[AccountingEngine] Found ${originalEntries.length} total entries, ${activeEntries.length} are active for document ${invoice.id} (Tenant: ${tenantId || 'GLOBAL'})`);
 
       for (const entry of activeEntries) {
         // Check if a reversal for this specific entry already exists with this idempotency key
