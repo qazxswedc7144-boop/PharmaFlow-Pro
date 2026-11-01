@@ -4,6 +4,7 @@ import { db } from '@/core/db';
 import { useAccountingStore } from '@/store/accountingStore';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import { configurationService } from '@/services/config/configurationService';
 
 describe('PURCHASE PHASE 2 — Reversal Precision & Financial Integrity', () => {
   const tenant1 = 'TENANT-PRECISION';
@@ -421,5 +422,81 @@ describe('PURCHASE PHASE 2 — Reversal Precision & Financial Integrity', () => 
 
       delete (globalThis as any).__FAIL_AT_STAGE__;
     }
+  });
+
+  it('K: Branch Isolation - Reversal does not affect other branches in same tenant', async () => {
+    const branchA = 'BRH-A';
+    const branchB = 'BRH-B';
+    const sharedSupplier = 'SUP-SHARED';
+    const sharedProduct = 'PROD-SHARED';
+
+    // 1. Setup Branches
+    await db.branches.bulkPut([
+      { id: branchA, code: branchA, name: 'Branch A', tenantId: tenant1, isActive: true },
+      { id: branchB, code: branchB, name: 'Branch B', tenantId: tenant1, isActive: true }
+    ] as any);
+
+    await db.suppliers.put({ id: sharedSupplier, Supplier_Name: 'Shared Supplier', balance: 0, tenantId: tenant1, is_active: true } as any);
+    await db.products.put({ id: sharedProduct, name: 'Shared Med', stock: 1000, price: 50, costPrice: 40, tenantId: tenant1, is_active: true } as any);
+
+    // 2. Setup Accounts for both branches
+    await db.accounts.bulkPut([
+      { id: 'ACC-A-102', code: '102-A', name: 'Inventory A', type: 'Asset', tenantId: tenant1, branchId: branchA, balance: 0 },
+      { id: 'ACC-B-102', code: '102-B', name: 'Inventory B', type: 'Asset', tenantId: tenant1, branchId: branchB, balance: 0 }
+    ] as any);
+
+    // 3. Purchase in Branch B
+    setupUserSession(tenant1, branchB);
+    // Custom accounting setting for Branch B
+    vi.spyOn(configurationService, 'getSync').mockImplementation((key: string) => {
+      if (key === 'ACCOUNT_INVENTORY') return 'ACC-B-102';
+      return null;
+    });
+
+    const resB = (await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: { supplierId: sharedSupplier, items: [{ productId: sharedProduct, quantity: 50, unitPrice: 10 }], total: 500, transactionUuid: 'TX-K-B-ORIG' }
+    })) as { refId: string };
+    const invoiceIdB = resB.refId;
+
+    // 4. Purchase in Branch A (same invoice ID if manually set, or different)
+    setupUserSession(tenant1, branchA);
+    vi.spyOn(configurationService, 'getSync').mockImplementation((key: string) => {
+      if (key === 'ACCOUNT_INVENTORY') return 'ACC-A-102';
+      return null;
+    });
+
+    const resA = (await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: { supplierId: sharedSupplier, items: [{ productId: sharedProduct, quantity: 10, unitPrice: 10 }], total: 100, transactionUuid: 'TX-K-A-ORIG' }
+    })) as { refId: string };
+    const invoiceIdA = resA.refId;
+
+    // 5. Edit Branch A Purchase
+    await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: { id: invoiceIdA, supplierId: sharedSupplier, items: [{ productId: sharedProduct, quantity: 20, unitPrice: 10 }], total: 200, transactionUuid: 'TX-K-A-EDIT' },
+      options: { isEdit: true }
+    });
+
+    // 6. Verify Branch B is untouched
+    const entriesB = await db.journalEntries.where('sourceId').equals(invoiceIdB).toArray();
+    expect(entriesB.length).toBe(1);
+    expect((entriesB[0] as any).reversedBy).toBeUndefined();
+
+    const ftsB = await db.financialTransactions.where('Reference_ID').equals(invoiceIdB).toArray();
+    expect(ftsB.length).toBe(1);
+    expect(ftsB[0].isDeleted).toBeFalsy();
+
+    // 7. Verify Branch A has reversals
+    const entriesA = await db.journalEntries.where('sourceId').equals(invoiceIdA).toArray();
+    expect(entriesA.length).toBe(3); // Orig + Rev + New
+    expect(entriesA.find(e => e.sourceType === 'AUTO_REVERSAL')).toBeDefined();
+
+    const ftsA = await db.financialTransactions.where('Reference_ID').equals(invoiceIdA).toArray();
+    expect(ftsA.length).toBe(3);
+    expect(ftsA.find(f => (f as any).isReversal)).toBeDefined();
+    
+    vi.restoreAllMocks();
   });
 });

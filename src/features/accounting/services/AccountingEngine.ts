@@ -371,13 +371,17 @@ export class AccountingEngine {
     if (isReversal && invoice.id) {
       const idempotencyKey = (invoice as any).transactionUuid;
       const tenantId = (invoice as any).tenantId;
+      const branchId = (invoice as any).branchId;
       
       const entriesTbl = tx?.journalEntries ?? db.journalEntries;
       let query = entriesTbl.where('sourceId').equals(invoice.id);
       
-      // Enforce Tenant Isolation if tenantId is available
+      // Enforce Tenant & Branch Isolation
       if (tenantId) {
         query = query.and(e => e.tenantId === tenantId);
+      }
+      if (branchId) {
+        query = query.and(e => e.branchId === branchId);
       }
       
       const originalEntries = await query.toArray();
@@ -388,12 +392,14 @@ export class AccountingEngine {
         !(e as any).reversedBy
       );
 
-      console.log(`[AccountingEngine] Found ${originalEntries.length} total entries, ${activeEntries.length} are active for document ${invoice.id} (Tenant: ${tenantId || 'GLOBAL'})`);
+      console.log(`[AccountingEngine] Found ${originalEntries.length} total entries, ${activeEntries.length} are active for document ${invoice.id} (Tenant: ${tenantId || 'GLOBAL'}, Branch: ${branchId || 'GLOBAL'})`);
 
       for (const entry of activeEntries) {
         // Check if a reversal for this specific entry already exists with this idempotency key
         const reversalId = idempotencyKey ? `REV-${entry.id}-${idempotencyKey}` : `REV-${entry.id}`;
-        const existingRev = await db.journalEntries.get(reversalId);
+        
+        // Transaction-Scoped Idempotency Check: MUST use entriesTbl for current visibility
+        const existingRev = await entriesTbl.get(reversalId);
         if (existingRev) {
           console.log(`[AccountingEngine] Reversal entry ${reversalId} already exists (idempotent skip)`);
           continue;
@@ -403,7 +409,7 @@ export class AccountingEngine {
         await AccountingRepository.addEntry(reversal, tx);
 
         // Mark original entry as reversed
-        await (tx?.journalEntries ?? db.journalEntries).update(entry.id, { 
+        await entriesTbl.update(entry.id, { 
           reversedBy: reversalId,
           lastModified: new Date().toISOString()
         });

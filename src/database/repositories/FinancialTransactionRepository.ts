@@ -17,13 +17,19 @@ export const FinancialTransactionRepository = {
     return await db.financialTransactions.get(id);
   },
 
-  getByReference: async (refId: string, tx?: any, tenantId?: string): Promise<FinancialTransaction[]> => {
+  getByReference: async (refId: string, tx?: any, tenantId?: string, branchId?: string): Promise<FinancialTransaction[]> => {
     if (!refId) return [];
     const table = tx?.financialTransactions ?? db.financialTransactions;
     let query = table.where('Reference_ID').equals(refId);
+    
     if (tenantId) {
       query = query.and(t => t.tenantId === tenantId);
     }
+    
+    if (branchId) {
+      query = query.and(t => t.branchId === branchId);
+    }
+    
     return await query.toArray();
   },
 
@@ -88,20 +94,20 @@ export const FinancialTransactionRepository = {
   /**
    * إبطال/عكس الحركات المالية المرتبطة بمرجع معين (Non-Destructive Reversal)
    */
-  reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string, tenantId?: string): Promise<void> => {
+  reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string, tenantId?: string, branchId?: string): Promise<void> => {
     const table = tx?.financialTransactions ?? db.financialTransactions;
-    const transactions = await FinancialTransactionRepository.getByReference(refId, tx, tenantId);
+    const transactions = await FinancialTransactionRepository.getByReference(refId, tx, tenantId, branchId);
     const now = new Date().toISOString();
     
     // Target ONLY active transactions that haven't been reversed yet
     const activeTxs = transactions.filter(t => !t.isDeleted && !(t as any).isReversal && !(t as any).reversedBy);
     
-    console.log(`[FinancialTransactionRepository] Found ${transactions.length} total FTs, ${activeTxs.length} are active for document ${refId}`);
+    console.log(`[FinancialTransactionRepository] Found ${transactions.length} total FTs, ${activeTxs.length} are active for document ${refId} (Tenant: ${tenantId || 'GLOBAL'}, Branch: ${branchId || 'GLOBAL'})`);
 
     for (const trx of activeTxs) {
       const reversalId = idempotencyKey ? `FT-REV-${trx.id}-${idempotencyKey}` : `FT-REV-${trx.id}`;
       
-      // التحقق من وجود العكس مسبقاً لضمان Idempotency
+      // التحقق من وجود العكس مسبقاً لضمان Idempotency (استخدام الجدول المرتبط بالمعاملة لضمان الرؤية)
       const existingRev = await table.get(reversalId);
       if (existingRev) {
         console.log(`[FinancialTransactionRepository] Reversal FT ${reversalId} already exists (idempotent skip)`);
