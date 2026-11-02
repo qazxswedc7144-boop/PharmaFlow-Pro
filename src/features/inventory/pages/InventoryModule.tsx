@@ -13,7 +13,7 @@ import {
   TrendingUp, Layers, ArrowRight, Plus, 
   AlertCircle, History, 
   Warehouse as WarehouseIcon, Settings2, ArrowRightLeft, MinusCircle, PlusCircle,
-  ChevronRight, Box, BarChart3, Save, Users, RotateCcw, Search, ScanBarcode,
+  ChevronRight, Box, ClipboardCheck, Save, Users, ShoppingCart, Search, ScanBarcode, PackageSearch,
   AlertTriangle, XCircle, Clock3
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -321,10 +321,10 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
               <Plus size={19} /><span className="truncate">إضافة</span>
             </button>
             <button onClick={() => onNavigate?.('inventory-audit')} className="min-w-0 h-14 sm:h-16 bg-white border-2 border-slate-50 text-[#1E4D4D] rounded-2xl sm:rounded-[32px] flex items-center justify-center gap-1 sm:gap-2 text-[10px] sm:text-[11px] font-black shadow-sm hover:bg-slate-50 active:scale-95 transition-all px-2 sm:px-4">
-              <BarChart3 size={19} /><span className="truncate">جرد</span>
+              <ClipboardCheck size={19} /><span className="truncate">جرد</span>
             </button>
             <button onClick={handleAutoReorderClick} className={`min-w-0 h-14 sm:h-16 border-2 rounded-2xl sm:rounded-[32px] flex items-center justify-center gap-1 sm:gap-2 text-[10px] sm:text-[11px] font-black shadow-sm active:scale-95 transition-all px-2 sm:px-4 relative group ${lowStockProducts.length > 0 ? 'bg-emerald-50 text-[#1E4D4D] border-emerald-200 hover:bg-[#1E4D4D] hover:text-white' : 'bg-white border-slate-50 text-slate-500 hover:bg-slate-50'}`} title="إنشاء مسودة طلب شراء تلقائي بناءً على الحد الأدنى للرصيد">
-              <RotateCcw size={18} className={lowStockProducts.length > 0 ? 'text-emerald-700 group-hover:text-white transition-colors shrink-0' : 'text-slate-400 shrink-0'} />
+              <ShoppingCart size={18} className={lowStockProducts.length > 0 ? 'text-emerald-700 group-hover:text-white transition-colors shrink-0' : 'text-slate-400 shrink-0'} />
               <span className="truncate">إعادة الطلب</span>
               {lowStockProducts.length > 0 && <span className="bg-red-500 text-white text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded-full shadow-md animate-pulse shrink-0">{lowStockProducts.length}</span>}
             </button>
@@ -382,6 +382,15 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
             <div className="flex flex-col items-center justify-center h-full text-slate-400 font-black gap-4">
               <div className="w-10 h-10 border-4 border-slate-200 border-t-[#1E4D4D] rounded-full animate-spin"></div>
               <span>جاري التحميل...</span>
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full min-h-[240px] px-6 text-center gap-4">
+              <div className="w-16 h-16 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center">
+                <PackageSearch size={30} />
+              </div>
+              <p className="text-sm sm:text-base font-bold text-slate-500">
+                لا توجد أصناف مطابقة لبحثك أو الفلتر المحدد.
+              </p>
             </div>
           ) : (
             <List height={containerRef.current?.offsetHeight || 600} itemCount={filteredProducts.length} itemSize={120} width="100%" className="custom-scrollbar" itemKey={(index) => { const p = filteredProducts[index]; return p ? p.id : index.toString(); }}>
