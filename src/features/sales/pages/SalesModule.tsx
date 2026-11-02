@@ -480,6 +480,8 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
         }}
         onAdd={(item: any) => handleAddItem(item)}
         mode="sale"
+        isReturnMode={header.isReturn}
+        customerId={header.customer_id || undefined}
         initialData={editingItem ? {
           id: editingItem.id,
           productId: editingItem.product_id,
