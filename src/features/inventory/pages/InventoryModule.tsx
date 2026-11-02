@@ -13,7 +13,7 @@ import {
   TrendingUp, Layers, ArrowRight, Plus, 
   AlertCircle, History, 
   Warehouse as WarehouseIcon, Settings2, ArrowRightLeft, MinusCircle, PlusCircle,
-  ChevronRight, Box, BarChart3, Save, Users, RotateCcw
+  ChevronRight, Box, BarChart3, Save, Users, RotateCcw, Search, ScanBarcode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PullToRefresh } from '@/components/shared/PullToRefresh';
@@ -145,41 +145,41 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white border border-slate-100 rounded-[40px] h-full flex items-center justify-between px-8 sm:px-10 shadow-sm hover:shadow-xl hover:border-[#1E4D4D]/20 transition-all group cursor-pointer active:scale-[0.99]"
+      className="bg-white border border-slate-100 rounded-3xl h-full flex items-center justify-between px-4 sm:px-10 shadow-sm hover:shadow-xl hover:border-[#1E4D4D]/20 transition-all group cursor-pointer active:scale-[0.99]"
       onClick={onClick}
     >
-        <div className="flex items-center gap-6 sm:gap-8 flex-1">
-          <div className="w-14 sm:w-16 h-14 sm:h-16 bg-slate-50 text-[#1E4D4D] rounded-[24px] flex items-center justify-center text-2xl shadow-inner group-hover:scale-110 transition-transform">
-            <Box size={28} />
+        <div className="flex items-center gap-3 sm:gap-8 flex-1 min-w-0">
+          <div className="w-12 sm:w-16 h-12 sm:h-16 shrink-0 bg-slate-50 text-[#1E4D4D] rounded-2xl flex items-center justify-center text-2xl shadow-inner group-hover:scale-105 transition-transform">
+            <Box size={26} />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h3 
               onClick={(e) => {
                 e.stopPropagation();
                 onInspect(e);
               }}
-              className="text-[12px] font-black text-[#1E4D4D] hover:text-emerald-700 hover:underline cursor-pointer truncate leading-none mb-2"
+              className="text-base sm:text-lg font-black text-[#1E4D4D] hover:text-emerald-700 hover:underline cursor-pointer truncate leading-tight mb-1"
               title="انقر لعرض تفاصيل التتبع والعملاء والموردين"
             >
               {product.name || product.Name}
             </h3>
-            <div className="flex items-center gap-3 sm:gap-4 flex-nowrap">
-                <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest">ID: {product.id}</p>
-                <div className="w-1.5 h-1.5 bg-slate-200 rounded-full"></div>
-                <Badge variant={(product.stock || product.StockQuantity || 0) <= (product.MinLevel || 5) ? 'danger' : 'info'} className="!rounded-full px-3 py-0.5 text-[10px] font-black uppercase tracking-tight">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-nowrap">
+                <p className="hidden sm:block text-[10px] font-black text-slate-400 uppercase tracking-widest truncate">ID: {product.id}</p>
+                <div className="hidden sm:block w-1.5 h-1.5 bg-slate-200 rounded-full"></div>
+                <Badge variant={(product.stock || product.StockQuantity || 0) <= (product.MinLevel || 5) ? 'danger' : 'info'} className="!rounded-full px-2.5 py-0.5 text-[10px] font-black uppercase tracking-tight truncate">
                 {product.categoryName || 'بدون تصنيف'}
                 </Badge>
             </div>
           </div>
         </div>
         
-        <div className="flex items-center gap-6 sm:gap-10">
+        <div className="flex items-center gap-2 sm:gap-10 shrink-0">
           {/* Smart Traceability & Audit Button */}
           <button
             type="button"
             onClick={onInspect}
             title="تتبع الصنف والموردين وحركات المخزون والمطابقة"
-            className="px-3.5 py-2 rounded-2xl bg-emerald-50 text-emerald-800 hover:bg-[#1E4D4D] hover:text-white border border-emerald-100/80 transition-all text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 z-10"
+            className="p-2 sm:px-3.5 sm:py-2 rounded-2xl bg-emerald-50 text-emerald-800 hover:bg-[#1E4D4D] hover:text-white border border-emerald-100/80 transition-all text-xs font-black flex items-center gap-1.5 shadow-sm active:scale-95 z-10"
           >
             <History size={14} />
             <span className="hidden md:inline">تتبع ومطابقة</span>
@@ -193,15 +193,15 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                 {lastRealPurchasePrice ? `${lastRealPurchasePrice.toLocaleString()} ${currency}` : '---'}
               </p>
           </div>
-          <div className="text-center w-28 sm:w-32">
-              <p className="text-[11px] font-black text-slate-300 uppercase mb-1 tracking-tight">الرصيد الحالي</p>
-              <div className="flex items-center justify-center gap-2">
-                <p className={`text-[12px] font-black ${(product.stock || product.StockQuantity || 0) <= (product.MinLevel || 5) ? 'text-red-500' : 'text-[#1E4D4D]'}`}>{product.stock || product.StockQuantity}</p>
-                <span className="text-[11px] font-black text-slate-400 uppercase">{product.DefaultUnit || 'حبة'}</span>
+          <div className="text-center w-20 sm:w-32">
+              <p className="text-[10px] sm:text-[11px] font-black text-slate-300 uppercase mb-1 tracking-tight">الرصيد الحالي</p>
+              <div className="flex items-center justify-center gap-1 sm:gap-2">
+                <p className={`text-xl sm:text-[12px] font-black ${(product.stock || product.StockQuantity || 0) <= (product.MinLevel || 5) ? 'text-red-500' : 'text-[#1E4D4D]'}`}>{product.stock || product.StockQuantity}</p>
+                <span className="hidden sm:inline text-[11px] font-black text-slate-400 uppercase">{product.DefaultUnit || 'حبة'}</span>
               </div>
           </div>
-          <div className="w-10 sm:w-12 h-10 sm:h-12 bg-slate-50 text-slate-300 rounded-2xl flex items-center justify-center group-hover:bg-[#1E4D4D] group-hover:text-white transition-all shadow-sm">
-            <ChevronRight size={22} />
+          <div className="w-9 sm:w-12 h-9 sm:h-12 bg-slate-50 text-slate-300 rounded-xl sm:rounded-2xl flex items-center justify-center group-hover:bg-[#1E4D4D] group-hover:text-white transition-all shadow-sm">
+            <ChevronRight size={20} />
           </div>
         </div>
     </motion.div>
@@ -211,45 +211,49 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
   return (
     <div className="flex flex-col min-h-full h-full bg-[#F8FAFA] font-cairo w-full relative" dir="rtl">
       {/* Modern Header */}
-      <header className="p-6 sm:p-10 pb-8 shrink-0 bg-white border-b border-slate-100 z-20">
+      <header className="p-4 sm:p-10 pb-5 sm:pb-8 shrink-0 bg-white border-b border-slate-100 z-20">
         {/* Row 1: Back, Spacer, Centered Title */}
-        <div className="flex items-center w-full mb-10 relative">
+        <div className="flex items-center w-full mb-5 sm:mb-8 relative">
           <button 
             onClick={() => onNavigate?.('dashboard')}
-            className="w-14 h-14 bg-white border-2 border-slate-50 text-[#1E4D4D] rounded-[24px] flex items-center justify-center shadow-lg shadow-slate-200/40 active:scale-95 active:bg-slate-100 hover:bg-slate-50 transition-all z-10"
+            className="w-11 h-11 sm:w-14 sm:h-14 bg-white border-2 border-slate-50 text-[#1E4D4D] rounded-2xl sm:rounded-[24px] flex items-center justify-center shadow-lg shadow-slate-200/40 active:scale-95 active:bg-slate-100 hover:bg-slate-50 transition-all z-10"
           >
-            <ArrowRight size={26} strokeWidth={3.5} />
+            <ArrowRight size={22} sm:size={26} strokeWidth={3.5} />
           </button>
           
-          <div className="w-[15%] shrink-0" />
+          <div className="w-[8%] sm:w-[15%] shrink-0" />
 
-          <div className="flex-1 flex items-center justify-center gap-4">
-            <div className="w-14 h-14 bg-[#1E4D4D] text-white rounded-[24px] flex items-center justify-center shadow-2xl shadow-emerald-900/30">
-              <Layers size={28} />
+          <div className="flex-1 flex items-center justify-center gap-2 sm:gap-4 min-w-0">
+            <div className="w-11 h-11 sm:w-14 sm:h-14 shrink-0 bg-[#1E4D4D] text-white rounded-2xl sm:rounded-[24px] flex items-center justify-center shadow-2xl shadow-emerald-900/30">
+              <Layers size={24} sm:size={28} />
             </div>
-            <div className="flex flex-col items-start">
-              <h2 className="text-xl sm:text-2xl font-black text-[#1E4D4D] tracking-tight leading-none">المستودع الرقمي</h2>
-              <p className="text-[11px] text-slate-300 font-bold uppercase tracking-widest mt-2">Digital Inventory System</p>
+            <div className="flex min-w-0 flex-col items-start">
+              <h2 className="text-lg sm:text-2xl font-black text-[#1E4D4D] tracking-tight leading-none truncate">المستودع الرقمي</h2>
+              <p className="text-[9px] sm:text-[11px] text-slate-300 font-bold uppercase tracking-widest mt-1.5 sm:mt-2 truncate">Digital Inventory System</p>
             </div>
           </div>
           
           {/* Invisible spacers to maintain perfect centering of the middle div */}
-          <div className="w-[15%] shrink-0" />
-          <div className="w-14" />
+          <div className="w-[8%] sm:w-[15%] shrink-0" />
+          <div className="w-11 sm:w-14 shrink-0" />
         </div>
 
         {/* Row 2: Search (45%), Add, Jerd, Reorder */}
-        <div className="flex items-center gap-3 flex-wrap lg:flex-nowrap">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap lg:flex-nowrap">
           <div className="basis-full lg:basis-[45%] relative group">
+            <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
             <input 
-              className="w-full h-16 bg-slate-50 border-2 border-slate-50 rounded-[32px] px-8 text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-sm transition-all" 
-              placeholder="بحث عن صنف..." 
+              className="w-full h-14 sm:h-16 bg-slate-50 border-2 border-slate-50 rounded-2xl sm:rounded-[32px] pr-11 pl-12 text-sm sm:text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-sm transition-all" 
+              placeholder="بحث عن صنف أو باركود..." 
               value={search} 
               onChange={e => setSearch(e.target.value)} 
             />
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-xl bg-white border border-slate-100 text-[#1E4D4D] flex items-center justify-center pointer-events-none" aria-hidden="true">
+              <ScanBarcode size={18} />
+            </div>
           </div>
           
-          <div className="flex items-center gap-3 flex-1 w-full lg:w-auto">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 flex-1 w-full lg:w-auto min-w-0">
             <button 
               onClick={() => { 
                 const newId = db.generateId('PROD');
@@ -271,33 +275,33 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                 } as any); 
                 setActiveTab('details'); 
               }}
-              className="flex-1 h-16 bg-[#1E4D4D] text-white rounded-[32px] flex items-center justify-center gap-2 text-[11px] font-black shadow-xl shadow-emerald-900/20 hover:scale-[1.02] active:scale-95 transition-all whitespace-nowrap px-4"
+              className="min-w-0 h-14 sm:h-16 bg-[#1E4D4D] text-white rounded-2xl sm:rounded-[32px] flex items-center justify-center gap-1 sm:gap-2 text-[10px] sm:text-[11px] font-black shadow-xl shadow-emerald-900/20 hover:scale-[1.02] active:scale-95 transition-all px-2 sm:px-4"
             >
-              <Plus size={20} />
-              <span>إضافة</span>
+              <Plus size={19} />
+              <span className="truncate">إضافة</span>
             </button>
             
             <button 
               onClick={() => onNavigate?.('inventory-audit')}
-              className="flex-1 h-16 bg-white border-2 border-slate-50 text-[#1E4D4D] rounded-[32px] flex items-center justify-center gap-2 text-[11px] font-black shadow-sm hover:bg-slate-50 active:scale-95 transition-all whitespace-nowrap px-4"
+              className="min-w-0 h-14 sm:h-16 bg-white border-2 border-slate-50 text-[#1E4D4D] rounded-2xl sm:rounded-[32px] flex items-center justify-center gap-1 sm:gap-2 text-[10px] sm:text-[11px] font-black shadow-sm hover:bg-slate-50 active:scale-95 transition-all px-2 sm:px-4"
             >
-              <BarChart3 size={20} />
-              <span>جرد</span>
+              <BarChart3 size={19} />
+              <span className="truncate">جرد</span>
             </button>
 
             <button 
               onClick={handleAutoReorderClick}
-              className={`flex-1 h-16 border-2 rounded-[32px] flex items-center justify-center gap-2 text-[11px] font-black shadow-sm active:scale-95 transition-all whitespace-nowrap px-4 relative group ${
+              className={`min-w-0 h-14 sm:h-16 border-2 rounded-2xl sm:rounded-[32px] flex items-center justify-center gap-1 sm:gap-2 text-[10px] sm:text-[11px] font-black shadow-sm active:scale-95 transition-all px-2 sm:px-4 relative group ${
                 lowStockProducts.length > 0
                   ? 'bg-emerald-50 text-[#1E4D4D] border-emerald-200 hover:bg-[#1E4D4D] hover:text-white'
                   : 'bg-white border-slate-50 text-slate-500 hover:bg-slate-50'
               }`}
               title="إنشاء مسودة طلب شراء تلقائي بناءً على الحد الأدنى للرصيد"
             >
-              <RotateCcw size={18} className={lowStockProducts.length > 0 ? 'text-emerald-700 group-hover:text-white transition-colors' : 'text-slate-400'} />
-              <span>إعادة طلب تلقائي</span>
+              <RotateCcw size={18} className={lowStockProducts.length > 0 ? 'text-emerald-700 group-hover:text-white transition-colors shrink-0' : 'text-slate-400 shrink-0'} />
+              <span className="truncate">إعادة الطلب</span>
               {lowStockProducts.length > 0 && (
-                <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-md animate-pulse">
+                <span className="bg-red-500 text-white text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded-full shadow-md animate-pulse shrink-0">
                   {lowStockProducts.length}
                 </span>
               )}
@@ -306,10 +310,10 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
         </div>
 
         {/* Categories Scroller */}
-        <div className="flex items-center gap-3 overflow-x-auto pt-8 pb-2 no-scrollbar scroll-smooth flex-nowrap">
+        <div className="flex items-center gap-2 sm:gap-3 overflow-x-auto pt-5 sm:pt-8 pb-2 no-scrollbar scroll-smooth flex-nowrap">
           <button 
             onClick={() => setSelectedCategoryId('ALL')}
-            className={`px-8 py-3 rounded-full text-[11px] font-black transition-all whitespace-nowrap border-2 ${selectedCategoryId === 'ALL' ? 'bg-[#1E4D4D] text-white border-[#1E4D4D] shadow-lg' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200'}`}
+            className={`px-5 sm:px-8 py-2.5 sm:py-3 rounded-full text-[10px] sm:text-[11px] font-black transition-all whitespace-nowrap border-2 ${selectedCategoryId === 'ALL' ? 'bg-[#1E4D4D] text-white border-[#1E4D4D] shadow-lg' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200'}`}
           >
             جميع التصنيفات
           </button>
@@ -317,7 +321,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
             <button 
               key={cat.id}
               onClick={() => setSelectedCategoryId(cat.id)}
-              className={`px-8 py-3 rounded-full text-[11px] font-black transition-all whitespace-nowrap border-2 ${selectedCategoryId === cat.id ? 'bg-[#1E4D4D] text-white border-[#1E4D4D] shadow-lg' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200'}`}
+              className={`px-5 sm:px-8 py-2.5 sm:py-3 rounded-full text-[10px] sm:text-[11px] font-black transition-all whitespace-nowrap border-2 ${selectedCategoryId === cat.id ? 'bg-[#1E4D4D] text-white border-[#1E4D4D] shadow-lg' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-200'}`}
             >
               {cat.categoryName}
             </button>
@@ -326,7 +330,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
       </header>
 
       {/* List Area */}
-      <div className="flex-1 bg-[#F8FAFA] pt-6" ref={containerRef}>
+      <div className="flex-1 bg-[#F8FAFA] pt-4 sm:pt-6" ref={containerRef}>
         <PullToRefresh onRefresh={async () => { await refreshGlobal(); }} className="h-full w-full">
           {isLoading ? (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 font-black gap-4">
@@ -349,7 +353,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                 const prod = filteredProducts[index];
                 if (!prod) return null;
                 return (
-                  <div style={style} className="px-8 py-3" key={prod.id}>
+                  <div style={style} className="px-3 sm:px-8 py-2 sm:py-3" key={prod.id}>
                     <ProductItem 
                       product={prod} 
                       currency={currency} 
