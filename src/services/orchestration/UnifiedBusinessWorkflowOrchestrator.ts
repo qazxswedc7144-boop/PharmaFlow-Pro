@@ -160,7 +160,7 @@ const UNPOST_WORKFLOW_TABLES = [
   'warehouseStock', 'branchInventory', 'medicineBatches',
   'inventory_layers', 'fifo_consumption_log', 'suppliers', 'customers', 
   'journalEntries', 'journalLines', 'accounts', 'financialTransactions', 
-  'auditLogs', 'projectionEvents'
+  'sales', 'purchases', 'auditLogs', 'projectionEvents'
 ];
 
 /**
@@ -740,9 +740,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
         }
 
         if (type === 'SALE') {
-          await db.sales.update(invoiceId, { InvoiceStatus: 'DRAFT_EDIT', lastModified: new Date().toISOString() });
+          await tx.table('sales').update(invoiceId, { InvoiceStatus: 'DRAFT_EDIT', lastModified: new Date().toISOString() });
         } else {
-          await db.purchases.update(invoiceId, { invoiceStatus: 'DRAFT_EDIT', lastModified: new Date().toISOString() });
+          await tx.table('purchases').update(invoiceId, { invoiceStatus: 'DRAFT_EDIT', lastModified: new Date().toISOString() });
         }
 
         await AuditService.log({
@@ -751,7 +751,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
           transactionUuid: invoiceId,
           recordId: invoiceId,
           after: { invoiceId, type, unpostedBy: user?.User_Email }
-        });
+        }, tx);
 
         await ProjectionEventBus.publish('INVOICE_UNPOSTED', invoiceId, { type });
         return { success: true };
