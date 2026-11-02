@@ -27,7 +27,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log('[Vercel] Application loaded successfully');
     }
 
-    // 2. Pass request to Express
+    // 2. Pass request to Express only after confirming the cached handler is callable.
+    if (typeof cachedApp !== 'function') {
+      throw new Error('[Vercel] Express application handler is not available');
+    }
     return cachedApp(req, res);
   } catch (err: any) {
     console.error('[Vercel Serverless Fatal Error]', err?.stack || err);
