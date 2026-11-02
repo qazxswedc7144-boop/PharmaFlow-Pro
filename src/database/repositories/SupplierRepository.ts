@@ -68,8 +68,9 @@ export const SupplierRepository = {
     }
   },
 
-  postToLedger: async (entry: any): Promise<void> => {
-    await db.journalEntries.add({
+  postToLedger: async (entry: any, tx?: any): Promise<void> => {
+    const journalEntriesTable = tx ? tx.table('journalEntries') : db.journalEntries;
+    await journalEntriesTable.add({
       ...entry,
       created_at: new Date().toISOString()
     });
