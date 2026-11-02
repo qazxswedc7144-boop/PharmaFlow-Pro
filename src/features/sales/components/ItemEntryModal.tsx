@@ -41,6 +41,8 @@ interface ItemEntryModalProps {
   onClose: () => void;
   onAdd: (item: FinalItemPayload) => void;
   mode: 'purchase' | 'sale';
+  isReturnMode?: boolean;
+  customerId?: string;
   initialData?: {
     id?: string;
     name?: string;
@@ -55,7 +57,7 @@ interface ItemEntryModalProps {
 }
 
 export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
-  isOpen, onClose, onAdd, mode, initialData
+  isOpen, onClose, onAdd, mode, initialData, isReturnMode = false, customerId
 }) => {
   const [manualItemName, setManualItemName] = useState<string>('');
   const [tempQty, setTempQty] = useState<string | number>('');
@@ -289,7 +291,7 @@ if (mode === 'sale') {
         });
         let results = Array.from(combinedMap.values());
 
-        if (mode === 'sale') {
+        if (mode === 'sale' && !isReturnMode) {
           results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
         }
 
@@ -307,15 +309,67 @@ if (mode === 'sale') {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [manualItemName, mode]);
+  }, [manualItemName, mode, isReturnMode]);
+
+  const loadLastSaleDetails = useCallback(async (productId: string) => {
+    try {
+      const [saleItems, invoices] = await Promise.all([
+        db.invoiceItems.toArray(),
+        db.invoices.toArray()
+      ]);
+      const invoiceById = new Map(invoices.map((invoice: any) => [invoice.id, invoice]));
+      const matchingSales = saleItems
+        .filter((item: any) => (item.product_id || item.productId) === productId)
+        .map((item: any) => {
+          const invoice = invoiceById.get(item.parent_id || item.invoiceId || item.invoice_id) as any;
+          return { item, invoice };
+        })
+        .filter(({ invoice }: any) => {
+          if (!invoice) return false;
+          const type = String(invoice.type || invoice.Type || '').toUpperCase();
+          if (type !== 'SALE' || invoice.isReturn === true) return false;
+          if (!customerId) return true;
+          return (invoice.customer_id || invoice.customerId || invoice.partner_id || invoice.partnerId) === customerId;
+        })
+        .sort((a: any, b: any) => {
+          const dateA = new Date(a.invoice.date || a.invoice.Date || a.invoice.createdAt || 0).getTime();
+          const dateB = new Date(b.invoice.date || b.invoice.Date || b.invoice.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+
+      const latest = matchingSales[0]?.item;
+      if (!latest) return;
+
+      const lastPrice = Number(latest.unitPrice ?? latest.unit_price ?? latest.price);
+      if (Number.isFinite(lastPrice) && lastPrice > 0) {
+        setTempPrice(lastPrice);
+        setLastSellingPriceSuggestion(lastPrice);
+        setPriceInsight(`آخر سعر بيع مسجل: ${lastPrice} ${currency}`);
+      }
+
+      const expiry = latest.expiryDate || latest.expiry_date;
+      if (expiry) setTempExpiry(normalizeToISODate(expiry));
+
+      const category = latest.category || latest.categoryName;
+      if (category) setCategoryName(category);
+    } catch (err) {
+      console.warn('[ItemEntryModal] Failed to load last sale details:', err);
+    }
+  }, [customerId, currency]);
 
   const selectProduct = (p: ProductItem) => {
-    setManualItemName(p.Name || ''); 
-    setCategoryName(p.categoryName || p.category || ''); 
-    setTempExpiry(normalizeToISODate(p.ExpiryDate || p.expiryDate || '')); 
+    setManualItemName(p.Name || '');
+    setCategoryName(p.categoryName || p.category || p.Category || '');
     setSelectedProductId(p.id);
-    setShowSearchDropdown(false); 
-    loadProductIntelligence(p.id, p);
+    setShowSearchDropdown(false);
+
+    if (isReturnMode && mode === 'sale') {
+      setTempQty(1);
+      void loadProductIntelligence(p.id, p).then(() => loadLastSaleDetails(p.id));
+    } else {
+      setTempExpiry(normalizeToISODate(p.ExpiryDate || p.expiryDate || ''));
+      loadProductIntelligence(p.id, p);
+    }
     qtyInputRef.current?.focus();
   };
 
