@@ -515,7 +515,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[3px]">توزيع المخزون</h4>
                     <div className="grid grid-cols-1 gap-4">
                       {warehouseStocks.map(ws => (<div key={ws.id} className="bg-white p-8 rounded-[32px] border border-slate-100 flex justify-between items-center shadow-sm"><div className="flex items-center gap-6"><div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center shadow-inner"><WarehouseIcon size={24} /></div><div><p className="text-sm font-black text-[#1E4D4D]">{ws.warehouseId === 'WH-MAIN' ? 'المستودع الرئيسي' : ws.warehouseId}</p><p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mt-1">آخر تحديث: {new Date(ws.lastUpdated).toLocaleDateString()}</p></div></div><div className="text-left"><p className="text-3xl font-black text-[#1E4D4D]">{ws.quantity}</p><p className="text-[11px] text-slate-300 uppercase font-bold tracking-widest mt-1">Available Units</p></div></div>))}
-                      {warehouseStocks.length === 0 && <div className="p-20 text-center text-slate-300 italic">لا توجد بيانات مستودعات متاحة</div>}
+                      {warehouseStocks.length === 0 && <div className="min-h-[220px] flex items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm font-bold text-slate-400 text-center px-4">لا توجد بيانات مستودعات متاحة</div>}
                     </div>
                   </div>
                 )}
