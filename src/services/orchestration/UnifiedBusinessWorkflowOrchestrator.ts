@@ -5,6 +5,7 @@ import { TransactionService } from '@/services/transactions/TransactionService';
 import { FaultService } from '@/services/integrity/FaultService';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+import { AccountingEngine } from '@features/accounting/services/AccountingEngine';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { SupplierRepository } from '@/database/repositories/SupplierRepository';
 import { authService } from '@features/auth/services/authService';
@@ -124,14 +125,14 @@ export interface WorkflowStockTransferStatusParams {
 }
 
 export const PURCHASE_WORKFLOW_TABLES = [
-  'invoices', 'invoiceItems', 'products', 'inventoryTransactions', 
+  'invoices', 'invoiceItems', 'products', 'inventoryTransactions', 'branches',
   'inventory_layers', 'suppliers', 'journalEntries', 'journalLines', 
   'accounts', 'financialTransactions', 'auditLogs', 'idempotencyKeys', 
   'projectionEvents', 'customers', 'vouchers'
 ];
 
 export const SALES_WORKFLOW_TABLES = [
-  'invoices', 'invoiceItems', 'products', 'inventoryTransactions', 
+  'invoices', 'invoiceItems', 'products', 'inventoryTransactions', 'branches',
   'inventory_layers', 'fifo_consumption_log', 'customers', 'journalEntries', 
   'journalLines', 'accounts', 'financialTransactions', 'auditLogs', 
   'idempotencyKeys', 'projectionEvents', 'vouchers', 'suppliers'
@@ -155,7 +156,7 @@ const STOCK_TRANSFER_WORKFLOW_TABLES = [
 ];
 
 const UNPOST_WORKFLOW_TABLES = [
-  'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
+  'invoices', 'invoiceItems', 'products', 'inventoryTransactions', 'branches',
   'warehouseStock', 'branchInventory', 'medicineBatches',
   'inventory_layers', 'fifo_consumption_log', 'suppliers', 'customers', 
   'journalEntries', 'journalLines', 'accounts', 'financialTransactions', 
@@ -675,7 +676,24 @@ export class UnifiedBusinessWorkflowOrchestrator {
           throw new Error("Only POSTED invoices can be unposted.");
         }
 
-        await AccountingRepository.deleteEntriesBySource(invoiceId);
+        const trustedContext = getTrustedContext();
+        const reversalBranchId = (invoice as any).branchId || (invoice as any).branch_id || trustedContext.branchId;
+        if (!reversalBranchId) {
+          throw new Error('TRUSTED_BRANCH_CONTEXT_REQUIRED: Cannot reverse invoice without a trusted branchId.');
+        }
+
+        // Create compensating journal entries; preserve the original posted entries.
+        await AccountingEngine.postInvoice(
+          {
+            ...(invoice as any),
+            tenantId: trustedContext.tenantId,
+            branchId: reversalBranchId,
+            isReversal: true,
+            transactionUuid: `UNPOST-REV-${invoiceId}-${Date.now()}`
+          } as any,
+          undefined,
+          tx
+        );
 
         // 🚨 MIGRATE: Replace legacy destructive deletions with canonical compensating movements
         await unifiedInventoryMutationEngine.executeReversal({
@@ -683,7 +701,8 @@ export class UnifiedBusinessWorkflowOrchestrator {
           originalDocumentType: type === 'SALE' ? 'SALE' : 'PURCHASE',
           reason: `إلغاء ترحيل الفاتورة رقم ${invoiceId}`,
           userId: user?.id || 'admin',
-          tenantId: user?.tenantId,
+          tenantId: trustedContext.tenantId,
+          branchId: reversalBranchId,
           transactionUuid: `UNPOST-${invoiceId}-${Date.now()}`
         }, tx);
 
