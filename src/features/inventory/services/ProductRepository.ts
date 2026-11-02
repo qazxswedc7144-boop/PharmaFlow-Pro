@@ -137,10 +137,9 @@ export const ProductRepository = {
       product.Is_Active = true;
     }
     
-    // Standardize fields before saving
+    // Standardize non-inventory fields before saving.
     product.name = product.name || product.Name || '';
     product.price = product.price || product.UnitPrice || 0;
-    product.stock = product.stock || product.StockQuantity || 0;
     product.tenantId = effectiveTenantId;
     const now = new Date().toISOString();
     product.updated_at = now;
@@ -148,16 +147,26 @@ export const ProductRepository = {
 
     const existing = await ProductRepository.getById(product.id, effectiveTenantId);
     if (existing) {
-      const diff = (product.stock || 0) - (existing.stock || existing.StockQuantity || 0);
-      if (Math.abs(diff) > 0.001) {
-        await ProductRepository.updateStock(product.id, diff, 'ADJUSTMENT', 'MANUAL-EDIT', 'ADJUSTMENT');
-      }
-    } else {
-      if ((product.stock || 0) > 0) {
-        await db.saveProduct(product);
-        await ProductRepository.updateStock(product.id, product.stock!, 'ADJUSTMENT', 'INITIAL-SETUP', 'ADJUSTMENT');
-        return;
-      }
+      // Existing product edits must never write quantity values supplied by a stale UI object.
+      // Preserve the authoritative persisted projections; all stock changes go through the
+      // UnifiedInventoryMutationEngine via the dedicated inventory movement workflows.
+      const productToSave = {
+        ...product,
+        stock: existing.stock ?? existing.StockQuantity ?? 0,
+        StockQuantity: existing.StockQuantity ?? existing.stock ?? 0,
+        quantity: (existing as any).quantity
+      };
+      await db.saveProduct(productToSave);
+      return;
+    }
+
+    // A new product may receive an opening balance once, through the inventory movement path.
+    const initialStock = Number(product.stock ?? product.StockQuantity ?? product.quantity ?? 0);
+    product.stock = Number.isFinite(initialStock) ? initialStock : 0;
+    if (product.stock > 0) {
+      await db.saveProduct(product);
+      await ProductRepository.updateStock(product.id, product.stock, 'ADJUSTMENT', 'INITIAL-SETUP', 'ADJUSTMENT');
+      return;
     }
 
     await db.saveProduct(product);
