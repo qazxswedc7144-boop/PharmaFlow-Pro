@@ -229,7 +229,7 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
             tenantId,
             branchId,
             notes: input.notes || `مرتجع مبيعات فاتورة #${refId}`
-          });
+          }, tx);
 
           const totalCost = mutationResults.reduce((sum, r) => sum + (r.calculatedCost || 0), 0);
           const itemCosts: Record<string, number> = {};
@@ -247,7 +247,7 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
             tenantId,
             branchId,
             notes: input.notes || `صرف مبيعات فاتورة #${refId}`
-          });
+          }, tx);
 
           const totalCost = mutationResults.reduce((sum, r) => sum + (r.calculatedCost || 0), 0);
           const itemCosts: Record<string, number> = {};
