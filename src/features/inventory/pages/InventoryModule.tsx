@@ -50,6 +50,113 @@ const InventoryModule: React.FC<{ onNavigate?: (view: string, params?: Record<st
   
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [isBarcodeScannerOpen, setIsBarcodeScannerOpen] = useState(false);
+  const [barcodeScannerError, setBarcodeScannerError] = useState('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const scannerStreamRef = useRef<MediaStream | null>(null);
+
+  useEffect(() => {
+    if (!isBarcodeScannerOpen) return;
+
+    let cancelled = false;
+    let animationFrameId: number | null = null;
+    let isDetecting = false;
+
+    const stopCamera = () => {
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
+      }
+      scannerStreamRef.current?.getTracks().forEach(track => track.stop());
+      scannerStreamRef.current = null;
+      if (videoRef.current) {
+        videoRef.current.pause();
+        videoRef.current.srcObject = null;
+      }
+    };
+
+    const startScanner = async () => {
+      const BarcodeDetectorConstructor = (window as Window & {
+        BarcodeDetector?: new (options?: { formats?: string[] }) => {
+          detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue?: string }>>;
+        };
+      }).BarcodeDetector;
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setBarcodeScannerError('يتطلب تشغيل الكاميرا اتصالاً آمناً (HTTPS) ومتصفحاً يدعم الوصول إلى الكاميرا.');
+        return;
+      }
+
+      if (!BarcodeDetectorConstructor) {
+        setBarcodeScannerError('ميزة قراءة الباركود غير مدعومة في هذا المتصفح. جرّب أحدث إصدار من Chrome على الهاتف.');
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: 'environment' } }
+        });
+
+        if (cancelled) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+
+        scannerStreamRef.current = stream;
+        const video = videoRef.current;
+        if (!video) return;
+
+        video.srcObject = stream;
+        await video.play();
+
+        const detector = new BarcodeDetectorConstructor({
+          formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf', 'qr_code']
+        });
+
+        const scanFrame = async () => {
+          if (cancelled || isDetecting || !videoRef.current) return;
+          isDetecting = true;
+          try {
+            const codes = await detector.detect(videoRef.current);
+            const value = codes.find(code => code.rawValue)?.rawValue?.trim();
+            if (value) {
+              setSearch(value);
+              setDebouncedSearch(value);
+              setIsBarcodeScannerOpen(false);
+              return;
+            }
+          } catch (error) {
+            console.warn('Barcode detection frame failed:', error);
+          } finally {
+            isDetecting = false;
+          }
+          if (!cancelled) animationFrameId = requestAnimationFrame(scanFrame);
+        };
+
+        animationFrameId = requestAnimationFrame(scanFrame);
+      } catch (error) {
+        if (cancelled) return;
+        const name = error instanceof DOMException ? error.name : '';
+        setBarcodeScannerError(
+          name === 'NotAllowedError' || name === 'PermissionDeniedError'
+            ? 'لم يتم السماح بالوصول إلى الكاميرا. امنح المتصفح إذن الكاميرا ثم حاول مجدداً.'
+            : name === 'NotFoundError'
+              ? 'لم يتم العثور على كاميرا متاحة في هذا الجهاز.'
+              : 'تعذر تشغيل الكاميرا. تحقق من الأذونات ثم حاول مرة أخرى.'
+        );
+        stopCamera();
+      }
+    };
+
+    setBarcodeScannerError('');
+    void startScanner();
+
+    return () => {
+      cancelled = true;
+      stopCamera();
+    };
+  }, [isBarcodeScannerOpen]);
   const [sortAsc] = useState(true);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [filterBy] = useState<'all' | 'low' | 'out' | 'expired'>('all');
@@ -307,9 +414,15 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
               value={search} 
               onChange={e => setSearch(e.target.value)} 
             />
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-xl bg-white border border-slate-100 text-[#1E4D4D] flex items-center justify-center pointer-events-none" aria-hidden="true">
+            <button
+              type="button"
+              onClick={() => setIsBarcodeScannerOpen(true)}
+              title="مسح الباركود بالكاميرا"
+              aria-label="مسح الباركود بالكاميرا"
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-xl bg-white border border-slate-100 text-[#1E4D4D] flex items-center justify-center hover:bg-emerald-50 active:scale-95 transition-all"
+            >
               <ScanBarcode size={18} />
-            </div>
+            </button>
           </div>
           <div className="grid grid-cols-3 gap-2 sm:gap-3 flex-1 w-full lg:w-auto min-w-0">
             <button onClick={() => { 
@@ -374,6 +487,38 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
           ))}
         </div>
       </header>
+
+      {isBarcodeScannerOpen && (
+        <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="ماسح الباركود">
+          <div className="w-full max-w-lg bg-white rounded-3xl overflow-hidden shadow-2xl" dir="rtl">
+            <div className="flex items-center justify-between gap-3 p-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-[#1E4D4D]">مسح الباركود</h3>
+                <p className="text-xs text-slate-400 mt-1">وجّه الكاميرا نحو باركود الصنف</p>
+              </div>
+              <button type="button" onClick={() => setIsBarcodeScannerOpen(false)} className="w-10 h-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center" aria-label="إغلاق ماسح الباركود">
+                <XCircle size={20} />
+              </button>
+            </div>
+            <div className="p-4">
+              {barcodeScannerError ? (
+                <div className="min-h-48 flex flex-col items-center justify-center text-center gap-3">
+                  <AlertCircle size={30} className="text-amber-500" />
+                  <p className="text-sm font-bold text-slate-600">{barcodeScannerError}</p>
+                  <button type="button" onClick={() => { setBarcodeScannerError(''); setIsBarcodeScannerOpen(false); window.setTimeout(() => setIsBarcodeScannerOpen(true), 0); }} className="px-5 py-2.5 rounded-xl bg-[#1E4D4D] text-white text-xs font-black">إعادة المحاولة</button>
+                </div>
+              ) : (
+                <div className="relative overflow-hidden rounded-2xl bg-black aspect-[4/3]">
+                  <video ref={videoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
+                  <div className="absolute inset-x-8 top-1/2 -translate-y-1/2 h-24 border-2 border-emerald-400 rounded-lg shadow-[0_0_0_999px_rgba(0,0,0,0.25)] pointer-events-none" />
+                  <p className="absolute bottom-3 inset-x-3 text-center text-xs font-bold text-white drop-shadow">ثبّت الباركود داخل الإطار</p>
+                </div>
+              )}
+              <p className="text-[11px] text-slate-400 text-center mt-3">سيتم إدخال الرقم المقروء في البحث وعرض الصنف المطابق.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 bg-[#F8FAFA] pt-4 sm:pt-6" ref={containerRef}>
         <PullToRefresh onRefresh={async () => { await refreshGlobal(); }} className="h-full w-full">
