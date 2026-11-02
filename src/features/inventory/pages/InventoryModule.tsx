@@ -218,14 +218,14 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
             onClick={() => onNavigate?.('dashboard')}
             className="w-11 h-11 sm:w-14 sm:h-14 bg-white border-2 border-slate-50 text-[#1E4D4D] rounded-2xl sm:rounded-[24px] flex items-center justify-center shadow-lg shadow-slate-200/40 active:scale-95 active:bg-slate-100 hover:bg-slate-50 transition-all z-10"
           >
-            <ArrowRight size={22} sm:size={26} strokeWidth={3.5} />
+            <ArrowRight size={22} strokeWidth={3.5} />
           </button>
           
           <div className="w-[8%] sm:w-[15%] shrink-0" />
 
           <div className="flex-1 flex items-center justify-center gap-2 sm:gap-4 min-w-0">
             <div className="w-11 h-11 sm:w-14 sm:h-14 shrink-0 bg-[#1E4D4D] text-white rounded-2xl sm:rounded-[24px] flex items-center justify-center shadow-2xl shadow-emerald-900/30">
-              <Layers size={24} sm:size={28} />
+              <Layers size={24} />
             </div>
             <div className="flex min-w-0 flex-col items-start">
               <h2 className="text-lg sm:text-2xl font-black text-[#1E4D4D] tracking-tight leading-none truncate">المستودع الرقمي</h2>
@@ -244,7 +244,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
             <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
             <input 
               className="w-full h-14 sm:h-16 bg-slate-50 border-2 border-slate-50 rounded-2xl sm:rounded-[32px] pr-11 pl-12 text-sm sm:text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-sm transition-all" 
-              placeholder="بحث عن صنف أو باركود..." 
+              placeholder="بحث عن صنف..." 
               value={search} 
               onChange={e => setSearch(e.target.value)} 
             />
