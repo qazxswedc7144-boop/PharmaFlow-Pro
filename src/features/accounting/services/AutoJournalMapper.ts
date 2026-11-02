@@ -65,8 +65,10 @@ export const AutoJournalMapper = {
       const result = await db.safeTransaction('rw', [
         'products', 'invoices', 'invoiceItems', 'sales', 'purchases', 
         'inventoryTransactions', 'journalEntries', 'accounts', 'journalLines',
-        'customers', 'suppliers'
-      ], async () => {
+        'customers', 'suppliers', 'warehouseStock', 'branchInventory', 'branches',
+        'inventory_layers', 'fifo_consumption_log', 'medicineBatches', 'stock_movements',
+        'accountingPeriods', 'settings', 'systemSettings'
+      ], async (tx) => {
         
         // --- STEP A: Inventory Movement & Costing (1/3) ---
         console.log(`[Structured Logs] [ACID Step 1/3] Calculating cost & executing Warehouse Stock Movements via Unified Engine.`);
@@ -92,7 +94,7 @@ export const AutoJournalMapper = {
                   userId: 'system-financial-mapper',
                   tenantId,
                   branchId
-                });
+                }, tx);
               } else {
                 mutationResults = await engine.executeIssueSale({
                   invoiceId: invoiceId,
@@ -102,7 +104,7 @@ export const AutoJournalMapper = {
                   userId: 'system-financial-mapper',
                   tenantId,
                   branchId
-                });
+                }, tx);
               }
             } else {
               if (isReturn) {
