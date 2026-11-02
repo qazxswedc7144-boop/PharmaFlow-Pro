@@ -313,17 +313,21 @@ if (mode === 'sale') {
 
   const loadLastSaleDetails = useCallback(async (productId: string) => {
     try {
-      const [saleItems, invoices] = await Promise.all([
-        db.invoiceItems.toArray(),
-        db.invoices.toArray()
-      ]);
-      const invoiceById = new Map(invoices.map((invoice: any) => [invoice.id, invoice]));
-      const matchingSales = saleItems
-        .filter((item: any) => (item.product_id || item.productId) === productId)
-        .map((item: any) => {
-          const invoice = invoiceById.get(item.parent_id || item.invoiceId || item.invoice_id) as any;
-          return { item, invoice };
-        })
+      let saleItems = await db.invoiceItems
+        .where('product_id')
+        .equals(productId)
+        .toArray()
+        .catch(() => []);
+      if (saleItems.length === 0) {
+        saleItems = await db.invoiceItems
+          .filter((item: any) => item.productId === productId)
+          .toArray();
+      }
+      const matchingSales = (await Promise.all(saleItems.map(async (item: any) => {
+        const invoiceId = item.parent_id || item.invoiceId || item.invoice_id;
+        const invoice = invoiceId ? await db.invoices.get(invoiceId).catch(() => null) : null;
+        return { item, invoice };
+      })))
         .filter(({ invoice }: any) => {
           if (!invoice) return false;
           const type = String(invoice.type || invoice.Type || '').toUpperCase();
