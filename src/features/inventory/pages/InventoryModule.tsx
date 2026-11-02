@@ -105,12 +105,27 @@ const InventoryModule: React.FC<{ onNavigate?: (view: string, params?: Record<st
   }, [search]);
 
   const categoryFilteredProducts = useMemo(() => {
-    return InventoryService.filterProducts(products, {
-      search: debouncedSearch,
+    const categorizedProducts = InventoryService.filterProducts(products, {
+      search: '',
       categoryId: selectedCategoryId,
       filterBy,
       sortAsc
     });
+
+    const normalizedSearch = debouncedSearch.trim().toLowerCase();
+    if (!normalizedSearch) return categorizedProducts;
+
+    return categorizedProducts.filter(product =>
+      [
+        product.Name,
+        product.name,
+        (product as any).barcode,
+        (product as any).sku,
+        product.id
+      ].some(value =>
+        String(value ?? '').toLowerCase().includes(normalizedSearch)
+      )
+    );
   }, [products, debouncedSearch, sortAsc, filterBy, selectedCategoryId]);
 
   const isExpiringSoon = useCallback((product: Product) => {
