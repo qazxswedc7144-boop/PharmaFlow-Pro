@@ -606,7 +606,7 @@ export class PharmaFlowDB extends Dexie {
     }));
   }
   async updateSupplierBalance(id: string, delta: number, tx?: any) {
-  const suppliersTable = tx?.suppliers ?? this.suppliers;
+  const suppliersTable = tx ? tx.table('suppliers') : this.suppliers;
 
   const supp = await suppliersTable.get(id);
 
@@ -629,7 +629,7 @@ export class PharmaFlowDB extends Dexie {
   async persist() { return true; }
   
   async updateCustomerBalance(id: string, delta: number, tx?: any) {
-    const customersTable = tx?.customers ?? this.customers;
+    const customersTable = tx ? tx.table('customers') : this.customers;
     const cust = await customersTable.get(id);
     if (!cust) throw new Error(`CUSTOMER_NOT_FOUND: العميل [${id}] غير موجود لتحديث الرصيد.`);
     const newBalance = Math.round(((Number(cust.balance) || 0) + delta) * 100) / 100;
@@ -1688,7 +1688,7 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'persist') return async () => true;
     if (prop === 'resetResilientMode') return () => { isDbBlocked = false; };
     if (prop === 'updateCustomerBalance') return async (id: string, delta: number, tx?: any) => {
-      const customersTable = tx?.customers ?? dbProxy.customers;
+      const customersTable = tx ? tx.table('customers') : dbProxy.customers;
       const c = await customersTable.get(id);
       if (!c) throw new Error(`CUSTOMER_NOT_FOUND: العميل [${id}] غير موجود لتحديث الرصيد.`);
       const newBalance = Math.round(((Number(c.balance) || 0) + delta) * 100) / 100;
@@ -1697,7 +1697,7 @@ export const dbProxy = new Proxy({} as any, {
     };
     if (prop === 'updateSupplierBalance') {
   return async (id: string, delta: number, tx?: any) => {
-    const suppliersTable = tx?.suppliers ?? dbProxy.suppliers;
+      const suppliersTable = tx ? tx.table('suppliers') : dbProxy.suppliers;
 
     const s = await suppliersTable.get(id);
 
