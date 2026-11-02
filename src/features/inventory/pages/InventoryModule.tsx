@@ -19,7 +19,6 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { PullToRefresh } from '@/components/shared/PullToRefresh';
 
-import SupplierManagement from '@features/accounting/components/SupplierManagement';
 import { AutoReorderModal } from '../components/AutoReorderModal';
 import { ProductDrillDownModal } from '../components/ProductDrillDownModal';
 
@@ -290,8 +289,8 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
             <div className="w-11 h-11 sm:w-14 sm:h-14 shrink-0 bg-[#1E4D4D] text-white rounded-2xl sm:rounded-[24px] flex items-center justify-center shadow-2xl shadow-emerald-900/30">
               <Layers size={24} />
             </div>
-            <div className="flex min-w-0 flex-col items-start">
-              <h2 className="text-lg sm:text-2xl font-black text-[#1E4D4D] tracking-tight leading-none truncate">المستودع الرقمي</h2>
+            <div className="flex min-w-0 flex-col items-start pb-2">
+              <h2 className="text-lg sm:text-2xl font-black text-[#1E4D4D] tracking-tight leading-relaxed">المستودع الرقمي</h2>
               <p className="text-[9px] sm:text-[11px] text-slate-300 font-bold uppercase tracking-widest mt-1.5 sm:mt-2 truncate">Digital Inventory System</p>
             </div>
           </div>
@@ -325,7 +324,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
             </button>
             <button onClick={handleAutoReorderClick} className={`min-w-0 h-14 sm:h-16 border-2 rounded-2xl sm:rounded-[32px] flex items-center justify-center gap-1 sm:gap-2 text-[10px] sm:text-[11px] font-black shadow-sm active:scale-95 transition-all px-2 sm:px-4 relative group ${lowStockProducts.length > 0 ? 'bg-emerald-50 text-[#1E4D4D] border-emerald-200 hover:bg-[#1E4D4D] hover:text-white' : 'bg-white border-slate-50 text-slate-500 hover:bg-slate-50'}`} title="إنشاء مسودة طلب شراء تلقائي بناءً على الحد الأدنى للرصيد">
               <ShoppingCart size={18} className={lowStockProducts.length > 0 ? 'text-emerald-700 group-hover:text-white transition-colors shrink-0' : 'text-slate-400 shrink-0'} />
-              <span className="truncate">إعادة الطلب</span>
+              <span className="truncate">طلب</span>
               {lowStockProducts.length > 0 && <span className="bg-red-500 text-white text-[9px] sm:text-[10px] font-black px-1.5 sm:px-2 py-0.5 rounded-full shadow-md animate-pulse shrink-0">{lowStockProducts.length}</span>}
             </button>
           </div>
@@ -350,7 +349,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
           </div>
         </div>
 
-        <div className="flex items-center gap-2 overflow-x-auto pt-4 sm:pt-5 pb-1 no-scrollbar scroll-smooth flex-nowrap">
+        <div className="grid grid-cols-4 gap-1 sm:gap-2 pt-4 sm:pt-5 pb-1">
           {([
             { id: 'all', label: 'الكل', count: inventoryKpis.total },
             { id: 'low', label: 'منخفض', count: inventoryKpis.low },
@@ -361,9 +360,9 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
               key={filter.id}
               type="button"
               onClick={() => setStatusFilter(filter.id)}
-              className={`px-4 sm:px-5 py-2 rounded-full text-[10px] sm:text-[11px] font-black whitespace-nowrap border transition-all flex items-center gap-1.5 ${statusFilter === filter.id ? 'bg-[#1E4D4D] text-white border-[#1E4D4D] shadow-md' : 'bg-white text-slate-500 border-slate-100 hover:border-slate-200'}`}
+              className={`min-w-0 px-1 sm:px-3 py-2 rounded-xl sm:rounded-full text-[9px] sm:text-[11px] font-black border transition-all flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-1.5 text-center leading-tight ${statusFilter === filter.id ? 'bg-[#1E4D4D] text-white border-[#1E4D4D] shadow-md' : 'bg-white text-slate-500 border-slate-100 hover:border-slate-200'}`}
             >
-              <span>{filter.label}</span><span className={statusFilter === filter.id ? 'text-white/70' : 'text-slate-300'}>{filter.count}</span>
+              <span className="truncate max-w-full">{filter.label}</span><span className={statusFilter === filter.id ? 'text-white/70' : 'text-slate-300'}>{filter.count}</span>
             </button>
           ))}
         </div>
@@ -412,15 +411,15 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
         {editingProduct && (
           <Modal isOpen={!!editingProduct} onClose={() => setEditingProduct(null)} title="بطاقة بيانات صنف" noPadding>
             <div className="flex flex-col h-[85vh] font-sans" dir="rtl">
-              <div className="flex items-center gap-1 bg-slate-50 p-2 shrink-0 flex-nowrap overflow-x-auto no-scrollbar">
-                <button onClick={() => setActiveTab('details')} className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black flex items-center justify-center gap-2 transition-all whitespace-nowrap ${activeTab === 'details' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><Settings2 size={14} /> التفاصيل</button>
-                <button onClick={() => setActiveTab('history')} className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black flex items-center justify-center gap-2 transition-all whitespace-nowrap ${activeTab === 'history' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><History size={14} /> السجل</button>
-                <button onClick={() => setActiveTab('warehouses')} className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black flex items-center justify-center gap-2 transition-all whitespace-nowrap ${activeTab === 'warehouses' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><WarehouseIcon size={14} /> المستودعات</button>
-                <button onClick={() => setActiveTab('suppliers')} className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black flex items-center justify-center gap-2 transition-all whitespace-nowrap ${activeTab === 'suppliers' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><Users size={14} /> الموردين</button>
-                <button onClick={() => setActiveTab('adjust')} className={`flex-1 py-3 px-3 rounded-xl text-[11px] font-black flex items-center justify-center gap-2 transition-all whitespace-nowrap ${activeTab === 'adjust' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><ArrowRightLeft size={14} /> تسوية</button>
+              <div className="grid grid-cols-5 gap-1 bg-slate-50 p-2 shrink-0">
+                <button onClick={() => setActiveTab('details')} className={`min-w-0 py-2 px-1 rounded-xl text-[9px] sm:text-[11px] font-black flex flex-col items-center justify-center gap-1 transition-all leading-tight ${activeTab === 'details' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><Settings2 size={17} /><span>التفاصيل</span></button>
+                <button onClick={() => setActiveTab('history')} className={`min-w-0 py-2 px-1 rounded-xl text-[9px] sm:text-[11px] font-black flex flex-col items-center justify-center gap-1 transition-all leading-tight ${activeTab === 'history' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><History size={17} /><span>السجل</span></button>
+                <button onClick={() => setActiveTab('warehouses')} className={`min-w-0 py-2 px-1 rounded-xl text-[9px] sm:text-[11px] font-black flex flex-col items-center justify-center gap-1 transition-all leading-tight ${activeTab === 'warehouses' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><WarehouseIcon size={17} /><span>المستودعات</span></button>
+                <button onClick={() => setActiveTab('suppliers')} className={`min-w-0 py-2 px-1 rounded-xl text-[9px] sm:text-[11px] font-black flex flex-col items-center justify-center gap-1 transition-all leading-tight ${activeTab === 'suppliers' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><Users size={17} /><span>الموردين</span></button>
+                <button onClick={() => setActiveTab('adjust')} className={`min-w-0 py-2 px-1 rounded-xl text-[9px] sm:text-[11px] font-black flex flex-col items-center justify-center gap-1 transition-all leading-tight ${activeTab === 'adjust' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><ArrowRightLeft size={17} /><span>تسوية</span></button>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-10 space-y-10 custom-scrollbar">
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-8 space-y-6 sm:space-y-8 custom-scrollbar">
                 {activeTab === 'details' && (
                   <div className="space-y-8">
                     <div className="space-y-2">
@@ -480,15 +479,34 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                 )}
 
                 {activeTab === 'history' && (
-                  <div className="space-y-6">
+                  <div className="space-y-4">
                     <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[3px]">سجل حركات المخزون</h4>
-                    <div className="bg-white border border-slate-100 rounded-[32px] overflow-x-auto custom-scrollbar shadow-sm">
+                    {movements.length === 0 ? (
+                      <div className="min-h-[220px] flex items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm font-bold text-slate-400 text-center px-4">لا توجد حركات مسجلة لهذا الصنف</div>
+                    ) : (
+                      <>
+                    <div className="md:hidden space-y-3">
+                      {movements.map(mv => (
+                        <div key={mv.TransactionID} className="bg-white border border-slate-100 rounded-2xl p-4 shadow-sm space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <Badge variant={mv.TransactionType === 'SALE' ? 'warning' : mv.TransactionType === 'PURCHASE' ? 'success' : 'info'} className="!rounded-full px-3 py-1 text-[10px] font-black">{mv.TransactionType}</Badge>
+                            <span className="text-xs font-bold text-slate-500">{new Date(mv.TransactionDate).toLocaleDateString()}</span>
+                          </div>
+                          <div className="flex items-center justify-between border-t border-slate-50 pt-3">
+                            <span className="text-xs font-bold text-slate-400">الكمية</span>
+                            <span className={`text-lg font-black ${mv.QuantityChange > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{mv.QuantityChange > 0 ? '+' : ''}{mv.QuantityChange}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="hidden md:block bg-white border border-slate-100 rounded-[32px] overflow-x-auto custom-scrollbar shadow-sm">
                       <table className="w-full text-right min-w-[450px]"><thead className="bg-slate-50 text-[11px] font-black text-slate-400 uppercase tracking-widest"><tr><th className="px-8 py-5">التاريخ</th><th className="px-8 py-5">النوع</th><th className="px-8 py-5 text-center">الكمية</th><th className="px-8 py-5">المستند</th></tr></thead>
                         <tbody className="divide-y divide-slate-50">
                           {movements.map(mv => (<tr key={mv.TransactionID} className="hover:bg-slate-50 transition-colors"><td className="px-8 py-5 text-xs font-bold text-slate-500">{new Date(mv.TransactionDate).toLocaleDateString()}</td><td className="px-8 py-5"><Badge variant={mv.TransactionType === 'SALE' ? 'warning' : mv.TransactionType === 'PURCHASE' ? 'success' : 'info'} className="!rounded-full px-3 py-0.5 text-[9px] font-black">{mv.TransactionType}</Badge></td><td className={`px-8 py-5 text-center text-sm font-black ${mv.QuantityChange > 0 ? 'text-emerald-600' : 'text-red-500'}`}>{mv.QuantityChange > 0 ? '+' : ''}{mv.QuantityChange}</td><td className="px-8 py-5 text-[11px] font-bold text-slate-400">{mv.SourceDocumentID}</td></tr>))}
-                          {movements.length === 0 && <tr><td colSpan={4} className="px-8 py-20 text-center text-slate-300 italic">لا توجد حركات مسجلة لهذا الصنف</td></tr>}
                         </tbody></table>
                     </div>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -502,22 +520,39 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                   </div>
                 )}
 
-                {activeTab === 'suppliers' && <div className="h-full -m-10"><SupplierManagement lang="ar" onNavigate={onNavigate} /></div>}
+                {activeTab === 'suppliers' && (
+                  <div className="space-y-4">
+                    <h4 className="text-sm font-black text-[#1E4D4D]">الموردون المرتبطون بهذا الصنف</h4>
+                    {editingProduct.supplierId && suppliers.some(s => (s.Supplier_ID || s.id) === editingProduct.supplierId) ? (
+                      suppliers.filter(s => (s.Supplier_ID || s.id) === editingProduct.supplierId).map(s => (
+                        <div key={s.Supplier_ID || s.id} className="flex items-center gap-3 bg-white border border-slate-100 rounded-2xl p-4 shadow-sm">
+                          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-[#1E4D4D] flex items-center justify-center shrink-0"><Users size={18} /></div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-black text-[#1E4D4D] truncate">{s.Supplier_Name || s.name || 'مورد'}</p>
+                            {(s.Phone || s.phone) && <p className="text-xs text-slate-400 mt-1" dir="ltr">{s.Phone || s.phone}</p>}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="min-h-[180px] flex items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm font-bold text-slate-400 text-center px-4">لا يوجد مورد مرتبط بهذا الصنف</div>
+                    )}
+                  </div>
+                )}
 
                 {activeTab === 'adjust' && (
-                  <div className="space-y-10">
-                    <div className="bg-amber-50 border border-amber-100 p-8 rounded-[32px] flex gap-6"><AlertCircle className="text-amber-500 shrink-0" size={32} /><div className="space-y-2"><p className="text-sm font-black text-amber-900">تحذير أمني</p><p className="text-xs font-bold text-amber-700 leading-relaxed">عمليات التسوية المخزنية تؤثر مباشرة على الأرصدة والقيود المحاسبية. يرجى التأكد من الكميات والأسباب قبل التأكيد.</p></div></div>
-                    <div className="grid grid-cols-2 gap-8">
+                  <div className="space-y-5">
+                    <div className="bg-amber-50 border border-amber-100 p-3 sm:p-4 rounded-2xl flex items-start gap-3"><AlertCircle className="text-amber-500 shrink-0" size={20} /><div className="space-y-1"><p className="text-xs font-black text-amber-900">تحذير أمني</p><p className="text-[11px] font-bold text-amber-700 leading-relaxed">عمليات التسوية المخزنية تؤثر مباشرة على الأرصدة والقيود المحاسبية. يرجى التأكد من الكميات والأسباب قبل التأكيد.</p></div></div>
+                    <div className="grid grid-cols-1 gap-4">
                       <div className="space-y-3"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block mr-2">نوع التسوية</label><div className="flex bg-slate-100 p-1.5 rounded-2xl gap-2"><button onClick={() => setAdjustment({...adjustment, qty: Math.abs(adjustment.qty)})} className={`flex-1 py-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${adjustment.qty >= 0 ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400'}`}><PlusCircle size={16} /> إضافة</button><button onClick={() => setAdjustment({...adjustment, qty: -Math.abs(adjustment.qty)})} className={`flex-1 py-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${adjustment.qty < 0 ? 'bg-white text-red-500 shadow-sm' : 'text-slate-400'}`}><MinusCircle size={16} /> خصم</button></div></div>
                       <div className="space-y-3"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block mr-2">الكمية</label><input type="number" className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-6 text-lg font-black text-[#1E4D4D] outline-none focus:bg-white focus:border-emerald-500 transition-all" placeholder="0" value={Math.abs(adjustment.qty)} onChange={e => setAdjustment({...adjustment, qty: (parseFloat(e.target.value) || 0) * (adjustment.qty < 0 ? -1 : 1)})} /></div>
                     </div>
                     <div className="space-y-3"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block mr-2">سبب التسوية</label><input className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-6 text-sm font-black text-[#1E4D4D] outline-none focus:bg-white focus:border-emerald-500 transition-all" placeholder="مثال: تلف، خطأ جرد، هدايا..." value={adjustment.reason} onChange={e => setAdjustment({...adjustment, reason: e.target.value})} /></div>
-                    <button onClick={handleAdjustment} className={`w-full h-16 rounded-[24px] font-black text-sm text-white shadow-xl active:scale-95 transition-all ${adjustment.qty < 0 ? 'bg-red-500 shadow-red-900/20' : 'bg-emerald-500 shadow-emerald-900/20'}`}>تأكيد التسوية المخزنية</button>
+                    <button onClick={handleAdjustment} className="w-full h-14 rounded-2xl bg-[#1E4D4D] text-white font-black text-sm shadow-lg shadow-emerald-900/20 active:scale-95 transition-all">تأكيد التسوية المخزنية</button>
                   </div>
                 )}
               </div>
 
-              {activeTab === 'details' && <div className="p-10 border-t border-slate-50 shrink-0"><button onClick={async () => { await ProductRepository.save(editingProduct); refreshGlobal(); setEditingProduct(null); addToast("تم تحديث البيانات بنجاح ✅", "success"); }} className="w-full h-16 bg-[#1E4D4D] text-white rounded-[24px] font-black text-sm shadow-2xl shadow-emerald-900/40 active:scale-95 transition-all flex items-center justify-center gap-3"><Save size={20} /><span>تأكيد وحفظ بيانات الصنف</span></button></div>}
+              {activeTab === 'details' && <div className="p-4 sm:p-8 border-t border-slate-50 shrink-0"><button onClick={async () => { await ProductRepository.save(editingProduct); refreshGlobal(); setEditingProduct(null); addToast("تم تحديث البيانات بنجاح ✅", "success"); }} className="w-full h-16 bg-[#1E4D4D] text-white rounded-[24px] font-black text-sm shadow-2xl shadow-emerald-900/40 active:scale-95 transition-all flex items-center justify-center gap-3"><Save size={20} /><span>تأكيد وحفظ بيانات الصنف</span></button></div>}
             </div>
           </Modal>
         )}
