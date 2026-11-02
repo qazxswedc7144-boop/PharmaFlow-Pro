@@ -627,6 +627,9 @@ if (mode === 'sale') {
                   }`}
                 >
                   <option value="">{mode === 'sale' ? categoryName || 'عام' : 'اختر تصنيفاً...'}</option>
+                  {categoryName && !['أدوية', 'مستلزمات طبية', 'مستحضر تجميلي', 'مكملات غذائية', 'أجهزة طبية', 'مواد استهلاكية', 'أصناف أخرى'].includes(categoryName) && (
+                    <option value={categoryName}>{categoryName}</option>
+                  )}
                   {['أدوية', 'مستلزمات طبية', 'مستحضر تجميلي', 'مكملات غذائية', 'أجهزة طبية', 'مواد استهلاكية', 'أصناف أخرى'].map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
