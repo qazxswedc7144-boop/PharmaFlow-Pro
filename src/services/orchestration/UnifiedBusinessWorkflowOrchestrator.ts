@@ -661,13 +661,14 @@ export class UnifiedBusinessWorkflowOrchestrator {
 
     await BackupService.createBackup(`Auto Backup before Unpost #${invoiceId}`, 'PRE_UNPOST', true);
 
-    return await TransactionService.runSafe(invoiceId, async (tx) => {
+    const result = await TransactionService.runSafe(invoiceId, async (tx) => {
       try {
         await GlobalGuard.checkSystemState('إلغاء ترحيل');
 
-        const invoice = type === 'SALE' 
-          ? await InvoiceRepository.getSaleById(invoiceId)
-          : await InvoiceRepository.getPurchaseById(invoiceId);
+        // Read the source invoice through the same transaction used for every reversal write.
+        const invoiceTable = tx.table(type === 'SALE' ? 'sales' : 'purchases');
+        const invoice = await invoiceTable.get(invoiceId)
+          || await tx.table('invoices').get(invoiceId);
 
         if (!invoice) throw new Error("Invoice not found.");
 
@@ -753,7 +754,6 @@ export class UnifiedBusinessWorkflowOrchestrator {
           after: { invoiceId, type, unpostedBy: user?.User_Email }
         }, tx);
 
-        await ProjectionEventBus.publish('INVOICE_UNPOSTED', invoiceId, { type });
         return { success: true };
       } catch (err: any) {
         FaultService.log({
@@ -766,6 +766,10 @@ export class UnifiedBusinessWorkflowOrchestrator {
         throw err;
       }
     }, invoiceId, UNPOST_WORKFLOW_TABLES);
+
+    // Publish only after runSafe has committed successfully.
+    await ProjectionEventBus.publish('INVOICE_UNPOSTED', invoiceId, { type });
+    return result;
   }
 
   public static async deleteInvoice(invoiceId: string, type: 'SALE' | 'PURCHASE'): Promise<{ success: boolean }> {
