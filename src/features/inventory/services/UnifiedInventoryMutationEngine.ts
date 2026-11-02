@@ -84,45 +84,30 @@ export class UnifiedInventoryMutationEngine {
   /**
    * 1. Issue Sale Stock (Deduction for sales)
    */
-  public async executeIssueSale(command: IssueSaleStockCommand): Promise<InventoryMutationResult[]> {
+  public async executeIssueSale(command: IssueSaleStockCommand, tx: any): Promise<InventoryMutationResult[]> {
+    if (!tx || typeof tx.table !== 'function') throw new Error('TRANSACTION_REQUIRED');
     await this.validateCommandBasics(command, 'IssueSale');
     if (!Array.isArray(command.items) || command.items.length === 0) {
       throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
     }
     const timestamp = command.timestamp || new Date().toISOString();
+    const results: InventoryMutationResult[] = [];
 
-    return await this.executeAtomicTransaction(async () => {
-      const results: InventoryMutationResult[] = [];
-
-      for (let i = 0; i < command.items.length; i++) {
-        const item = command.items[i]!;
-        const itemKey = `${command.transactionUuid}-${item.productId}-${i}`;
-
-        const res = await this.mutateSingleItem({
-          productId: item.productId,
-          warehouseId: command.warehouseId,
-          delta: -Math.abs(item.quantity),
-          docType: 'SALE',
-          docId: command.invoiceId,
-          movementType: 'SALE',
-          unitCost: item.unitCost,
-          unitPrice: item.unitPrice,
-          batchId: item.batchId,
-          batchNumber: item.batchNumber,
-          expiryDate: item.expiryDate,
-          userId: command.userId,
-          tenantId: command.tenantId,
-          branchId: command.branchId,
-          idempotencyKey: itemKey,
-          notes: command.notes || `صرف مبيعات فاتورة #${command.invoiceId}`,
-          timestamp
-        });
-
-        results.push(res);
-      }
-
-      return results;
-    });
+    for (let i = 0; i < command.items.length; i++) {
+      const item = command.items[i]!;
+      const itemKey = `${command.transactionUuid}-${item.productId}-${i}`;
+      const res = await this.mutateSingleItem({
+        productId: item.productId, warehouseId: command.warehouseId,
+        delta: -Math.abs(item.quantity), docType: 'SALE', docId: command.invoiceId,
+        movementType: 'SALE', unitCost: item.unitCost, unitPrice: item.unitPrice,
+        batchId: item.batchId, batchNumber: item.batchNumber, expiryDate: item.expiryDate,
+        userId: command.userId, tenantId: command.tenantId, branchId: command.branchId,
+        idempotencyKey: itemKey, notes: command.notes || `صرف مبيعات فاتورة #${command.invoiceId}`,
+        timestamp
+      }, tx);
+      results.push(res);
+    }
+    return results;
   }
 
   /**
@@ -172,44 +157,29 @@ export class UnifiedInventoryMutationEngine {
   /**
    * 3. Process Sales Return (Customer return -> stock IN)
    */
-  public async executeSalesReturn(command: ProcessSalesReturnStockCommand): Promise<InventoryMutationResult[]> {
+  public async executeSalesReturn(command: ProcessSalesReturnStockCommand, tx: any): Promise<InventoryMutationResult[]> {
+    if (!tx || typeof tx.table !== 'function') throw new Error('TRANSACTION_REQUIRED');
     await this.validateCommandBasics(command, 'ProcessSalesReturn');
     if (!Array.isArray(command.items) || command.items.length === 0) {
       throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
     }
     const timestamp = command.timestamp || new Date().toISOString();
-
-    return await this.executeAtomicTransaction(async () => {
-      const results: InventoryMutationResult[] = [];
-
-      for (let i = 0; i < command.items.length; i++) {
-        const item = command.items[i]!;
-        const itemKey = `${command.transactionUuid}-${item.productId}-${i}`;
-
-        const res = await this.mutateSingleItem({
-          productId: item.productId,
-          warehouseId: command.warehouseId,
-          delta: Math.abs(item.quantity),
-          docType: 'SALE_RETURN',
-          docId: command.returnInvoiceId,
-          movementType: 'RETURN',
-          unitCost: item.unitCost,
-          batchId: item.batchId,
-          batchNumber: item.batchNumber,
-          expiryDate: item.expiryDate,
-          userId: command.userId,
-          tenantId: command.tenantId,
-          branchId: command.branchId,
-          idempotencyKey: itemKey,
-          notes: command.notes || `مرتجع مبيعات #${command.returnInvoiceId}`,
-          timestamp
-        });
-
-        results.push(res);
-      }
-
-      return results;
-    });
+    const results: InventoryMutationResult[] = [];
+    for (let i = 0; i < command.items.length; i++) {
+      const item = command.items[i]!;
+      const itemKey = `${command.transactionUuid}-${item.productId}-${i}`;
+      const res = await this.mutateSingleItem({
+        productId: item.productId, warehouseId: command.warehouseId,
+        delta: Math.abs(item.quantity), docType: 'SALE_RETURN', docId: command.returnInvoiceId,
+        movementType: 'RETURN', unitCost: item.unitCost, batchId: item.batchId,
+        batchNumber: item.batchNumber, expiryDate: item.expiryDate,
+        userId: command.userId, tenantId: command.tenantId, branchId: command.branchId,
+        idempotencyKey: itemKey, notes: command.notes || `مرتجع مبيعات #${command.returnInvoiceId}`,
+        timestamp
+      }, tx);
+      results.push(res);
+    }
+    return results;
   }
 
   /**
