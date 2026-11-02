@@ -77,7 +77,7 @@ export const FinancialTransactionRepository = {
       branchId
     } as FinancialTransaction;
 
-    const ftsTbl = tx?.financialTransactions ?? db.financialTransactions;
+    const ftsTbl = tx ? tx.table('financialTransactions') : db.financialTransactions;
     await ftsTbl.put(transaction);
     
     await db.addAuditLog(
