@@ -639,8 +639,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     try {
       const nextStatus = InvoiceWorkflowEngine.determineNextStatus(vTotalSum, header.payment_method === 'Cash' ? vTotalSum : 0, 'PENDING');
       
-      const savePromise = (async () => {
-        const r = await addInvoice({
+      const res = await addInvoice({
           type: 'SALE',
           payload: { 
             customerId: header.customer_id, 
@@ -661,17 +660,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
             date: header.date
           }
         });
-        await navPromise;
-        return r;
-      })();
-
-      // سباق برمجي: إما يتم الحفظ أو ينتهي الوقت خلال 15 ثانية ويفك تجميد الأزرار تلقائياً
-      const res = await Promise.race([
-        savePromise,
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('SAVE_TIMEOUT')), 15000)
-        )
-      ]) as { success: boolean; refId?: string };
+      await navPromise;
 
       if (res?.success) { 
         setSavePhase('idle');
@@ -726,19 +715,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     } catch (err: unknown) {
       setSavePhase('failed');
       const normalized = ErrorManager.handleError(err, { module: 'SALES', action: 'SAVE_SALE', showToast: false });
-      const isTimeout = err instanceof Error && err.message === 'SAVE_TIMEOUT';
-      showNotification(
-        isTimeout 
-          ? '⚠️ تأخر حفظ الفاتورة؛ تم فك تجميد الواجهة حرصاً على استمرار العمل.' 
-          : '❌ تعذر حفظ فاتورة المبيعات', 
-        'error'
-      );
-      addToast(
-        isTimeout
-          ? 'تأخر حفظ الفاتورة سحابياً؛ تم فك تجميد الواجهة حرصاً على العمل المستمر. راجع مركز المزامنة.'
-          : normalized.arabicMessage,
-        'error'
-      );
+      showNotification('❌ تعذر حفظ فاتورة المبيعات', 'error');
+      addToast(normalized.arabicMessage, 'error');
     } finally {
       setIsSaving(false);
     }
