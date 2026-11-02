@@ -720,13 +720,13 @@ export class UnifiedBusinessWorkflowOrchestrator {
           Direction: type === 'SALE' ? 'Debit' : 'Credit',
           Transaction_Date: new Date().toISOString(),
           Notes: `[UNPOST REVERSAL] Invoice #${invoiceId}`
-        });
+        }, tx);
 
         if (partnerId && partnerId !== 'عميل نقدي' && partnerId !== 'مورد نقدي') {
           if (type === 'SALE') {
-            await db.updateCustomerBalance(partnerId, -total);
+            await db.updateCustomerBalance(partnerId, -total, tx);
           } else {
-            await db.updateSupplierBalance(partnerId, -total);
+            await db.updateSupplierBalance(partnerId, -total, tx);
           }
           await SupplierRepository.postToLedger({
             id: db.generateId('PL'),
@@ -736,7 +736,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
             debit: type === 'SALE' ? 0 : total,
             credit: type === 'SALE' ? total : 0,
             referenceId: invoiceId
-          });
+          }, tx);
         }
 
         if (type === 'SALE') {
