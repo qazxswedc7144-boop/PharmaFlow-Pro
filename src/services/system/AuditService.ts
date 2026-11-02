@@ -33,7 +33,7 @@ export const AuditService = {
     before?: any;
     after?: any;
     recordId?: string;
-  }): Promise<void> => {
+  }, tx?: any): Promise<void> => {
     try {
       const user = (authService?.getCurrentUser() || { id: 'unknown', User_Email: 'SYSTEM', branchId: 'unknown', Branch_Name: 'Main' }) as any;
       const now = new Date().toISOString();
@@ -62,10 +62,14 @@ export const AuditService = {
         Modified_At: now
       };
 
-      await db.Audit_Log.add(entry);
+      const auditLogsTable = tx ? tx.table('auditLogs') : db.auditLogs;
+      await auditLogsTable.add(entry);
       console.log(`[AuditService] Action Logger Saved: ${params.action} - ${params.module}`);
     } catch (e) {
-      console.error('Failed to write into Audit_Log table inside AuditService:', e);
+      console.error('Failed to write into auditLogs table inside AuditService:', e);
+      // Transaction-scoped audit writes are part of the business operation: fail the
+      // workflow so Dexie can roll back all related changes if the audit write fails.
+      if (tx) throw e;
     }
   },
 
