@@ -347,7 +347,7 @@ const existingItemIndex = items.findIndex(i =>
             {/* Back Button */}
             <button 
               onClick={() => safeNavigate('dashboard')} 
-              className="w-7 h-7 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shrink-0 active:scale-95"
+              className="w-7 h-7 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shrink-0"
               title="الرجوع للرئيسية"
             >
               <ArrowRight size={16} />
