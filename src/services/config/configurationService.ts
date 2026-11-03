@@ -17,6 +17,8 @@ import { runLegacySettingsMigration } from '@/core/config/configMigration';
 import { configurationRepository } from './configurationRepository';
 import { configurationSyncService } from './configurationSyncService';
 import { configurationEvents } from './configurationEvents';
+// 👈 استيراد خدمة المصادقة للتحقق من الصلاحيات
+import { authService } from '@features/auth/services/authService'; 
 
 export class ConfigurationService {
   private cache: Map<string, ConfigurationRecord<any>> = new Map();
@@ -56,7 +58,7 @@ export class ConfigurationService {
         this.isInitialized = true;
       } catch (err) {
         console.error('[ConfigurationService] Failed to initialize:', err);
-        this.isInitialized = true;
+        // 👈 إصلاح: لا نجعلها true في حالة الفشل، لكي نتمكن من إعادة المحاولة لاحقاً
       } finally {
         this.initPromise = null;
       }
@@ -73,11 +75,8 @@ export class ConfigurationService {
     overrideContext?: ConfigurationContext
   ): Promise<T> {
     await this.initialize();
-    const context = getCurrentContext(overrideContext);
-    const canonicalKey = normalizeConfigKey(key);
-
-    const allRecords = await configurationRepository.getAllRecords();
-    return resolveConfigValue<T>(canonicalKey, allRecords, context);
+    // 👈 إصلاح الأداء: استخدام الـ Cache بدلاً من قراءة قاعدة البيانات بالكامل في كل مرة
+    return this.getSync<T>(key, overrideContext);
   }
 
   /**
@@ -108,6 +107,13 @@ export class ConfigurationService {
     overrideContext?: ConfigurationContext
   ): Promise<void> {
     await this.initialize();
+
+    // 👈 إصلاح أمني: التحقق من صلاحيات المستخدم (RBAC)
+    const user = authService.getCurrentUser();
+    if (user && user.Role !== 'Admin' && user.Role !== 'SuperAdmin') {
+      throw new Error('[ConfigurationService] غير مصرح لك بتعديل الإعدادات. يتطلب صلاحيات مدير.');
+    }
+
     const context = getCurrentContext(overrideContext);
     const canonicalKey = normalizeConfigKey(key);
 
@@ -140,7 +146,12 @@ export class ConfigurationService {
     this.cache.set(canonicalKey, record);
 
     // 5. Handle network synchronization if syncable
-    await configurationSyncService.handleConfigMutation(record);
+    // نضعها في كتلة try-catch حتى لا يمنع فشل المزامنة حفظ الإعداد محلياً
+    try {
+      await configurationSyncService.handleConfigMutation(record);
+    } catch (syncErr) {
+      console.warn('[ConfigurationService] Sync failed, but local save succeeded:', syncErr);
+    }
 
     // 6. Emit change event
     const event: ConfigChangeEvent<T> = {
@@ -163,9 +174,11 @@ export class ConfigurationService {
     overrideContext?: ConfigurationContext
   ): Promise<void> {
     await this.initialize();
-    for (const [k, v] of Object.entries(settings)) {
-      await this.set(k, v, overrideContext);
-    }
+    const context = getCurrentContext(overrideContext);
+    
+    // 👈 إصلاح الأداء: تنفيذ الحفظ بشكل متوازي (Parallel) بدلاً من التسلسل (Sequential)
+    const promises = Object.entries(settings).map(([k, v]) => this.set(k, v, context));
+    await Promise.all(promises);
   }
 
   /**
@@ -177,6 +190,7 @@ export class ConfigurationService {
   ): Promise<Record<string, any>> {
     await this.initialize();
     const result: Record<string, any> = {};
+    // 👈 بما أن get أصبح يعتمد على الـ Cache، هذه الحلقة أصبحت سريعة جداً ولن ترهق قاعدة البيانات
     for (const key of groupKeys) {
       result[key] = await this.get(key, overrideContext);
     }
@@ -191,7 +205,8 @@ export class ConfigurationService {
   ): Promise<Record<string, any>> {
     await this.initialize();
     const context = getCurrentContext(overrideContext);
-    const allRecords = await configurationRepository.getAllRecords();
+    // 👈 استخدام الـ Cache بدلاً من القراءة من قاعدة البيانات
+    const allRecords = Array.from(this.cache.values());
 
     const result: Record<string, any> = {};
     const knownKeys = Object.keys(CONFIG_REGISTRY);
@@ -211,13 +226,33 @@ export class ConfigurationService {
     overrideContext?: ConfigurationContext
   ): Promise<void> {
     await this.initialize();
+
+    // 👈 إصلاح أمني: التحقق من صلاحيات المستخدم (RBAC)
+    const user = authService.getCurrentUser();
+    if (user && user.Role !== 'Admin' && user.Role !== 'SuperAdmin') {
+      throw new Error('[ConfigurationService] غير مصرح لك بحذف الإعدادات. يتطلب صلاحيات مدير.');
+    }
+
     const context = getCurrentContext(overrideContext);
     const canonicalKey = normalizeConfigKey(key);
     const def = CONFIG_REGISTRY[canonicalKey];
     const scope: ConfigScope = def ? def.scope : 'TENANT';
 
+    const oldValue = this.getSync(key, context); // 👈 أخذ القيمة القديمة قبل الحذف
+
     await configurationRepository.deleteRecord(canonicalKey, scope, context);
     this.cache.delete(canonicalKey);
+
+    // 👈 إصلاح: إطلاق حدث عند الحذف ليتحدث باقي التطبيق
+    configurationEvents.emit({
+      key: canonicalKey,
+      value: undefined,
+      oldValue,
+      scope,
+      context,
+      source: 'ConfigurationService',
+      timestamp: new Date().toISOString()
+    });
   }
 
   /**
