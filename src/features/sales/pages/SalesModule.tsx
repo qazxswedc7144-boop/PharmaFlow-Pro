@@ -504,41 +504,45 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
       />
 
       {/* MODALS - FLATTENED DESIGN */}
-      <Modal 
-        isOpen={isAddCustomerModalOpen} 
-        onClose={cancelAddCustomer}
-        title=""
-        maxWidth="w-full max-w-[340px]"
-        noPadding={true}
-        centerOnMobile={true}
-        showCloseButton={false}
-      >
-        <div className="pt-[2px] px-[2px] pb-4 text-center space-y-1 bg-white">
-          <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-500">
-            <User size={24} />
-          </div>
-          <div className="space-y-[2px]">
-            <h3 className="text-sm font-black text-[#1E4D4D]">عميل جديد؟</h3>
-            <p className="text-[11px] font-bold text-slate-500 leading-relaxed px-2">
-              هل تريد إضافة <span className="text-[#1E4D4D] underline">{newCustomerName}</span> كعميل جديد في النظام؟
-            </p>
-          </div>
-          <div className="flex gap-[2px] pt-1 px-2">
-            <button 
-              onClick={confirmAddCustomer}
-              className="flex-[2] h-10 bg-[#1E4D4D] text-white rounded-xl text-[11px] font-black shadow-md active:scale-95 transition-all"
+      <AnimatePresence>
+        {isAddCustomerModalOpen && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" dir="rtl">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 12 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-2xl w-full max-w-[340px] shadow-2xl overflow-hidden p-5 relative"
             >
-              نعم
-            </button>
-            <button 
-              onClick={cancelAddCustomer}
-              className="flex-1 h-10 bg-slate-100 text-slate-500 rounded-xl text-[11px] font-black active:scale-95 transition-all"
-            >
-              لا
-            </button>
+              <div className="pt-[2px] px-[2px] pb-4 text-center space-y-1 bg-white">
+                <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center mx-auto text-emerald-500">
+                  <User size={24} />
+                </div>
+                <div className="space-y-[2px]">
+                  <h3 className="text-sm font-black text-[#1E4D4D]">عميل جديد؟</h3>
+                  <p className="text-[11px] font-bold text-slate-500 leading-relaxed px-2">
+                    هل تريد إضافة <span className="text-[#1E4D4D] underline">{newCustomerName}</span> كعميل جديد في النظام؟
+                  </p>
+                </div>
+                <div className="flex gap-[2px] pt-1 px-2">
+                  <button
+                    onClick={confirmAddCustomer}
+                    className="flex-[2] h-10 bg-[#1E4D4D] text-white rounded-xl text-[11px] font-black shadow-md active:scale-95 transition-all"
+                  >
+                    نعم
+                  </button>
+                  <button
+                    onClick={cancelAddCustomer}
+                    className="flex-1 h-10 bg-slate-100 text-slate-500 rounded-xl text-[11px] font-black active:scale-95 transition-all"
+                  >
+                    لا
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           </div>
-        </div>
-      </Modal>
+        )}
+      </AnimatePresence>
 
       {/* Confirmation Save Modal - Unified Pattern */}
       <AnimatePresence>
