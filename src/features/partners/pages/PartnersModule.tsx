@@ -5,7 +5,7 @@ import { useUI, useAccounting } from '@/contexts/AppContext';
 import { Card, Button, Modal, Input } from '@/components/shared/SharedUI';
 import { 
   Users, Search, MoreVertical, Phone, 
-  MapPin, CreditCard, UserPlus, ArrowRight,
+  MapPin, CreditCard, UserPlus, ChevronLeft,
   TrendingUp, TrendingDown, UserCircle, Truck, Building2, BookOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -154,152 +154,117 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
   return (
     <div className="p-4 md:p-8 space-y-8 bg-[#F8FAFA] min-h-full font-cairo" dir="rtl">
       {/* Header Section */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 bg-[#1E4D4D] text-white rounded-[20px] flex items-center justify-center shadow-xl">
-            {activeTab === 'SUPPLIERS' ? <Truck size={28} /> : activeTab === 'PARTNERS' ? <Building2 size={28} /> : activeTab === 'ALL' ? <BookOpen size={28} /> : <Users size={28} />}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#1E4D4D] p-4 rounded-2xl shadow-sm">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-11 h-11 bg-white/10 text-white rounded-xl flex items-center justify-center shrink-0">
+            {activeTab === 'SUPPLIERS' ? <Truck size={24} /> : activeTab === 'PARTNERS' ? <Building2 size={24} /> : activeTab === 'ALL' ? <BookOpen size={24} /> : <Users size={24} />}
           </div>
-          <div>
-            <h2 className="text-2xl font-black text-[#1E4D4D] tracking-tight">{getHeaderTitle()}</h2>
-            <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest leading-none mt-1">{getHeaderDescription()}</p>
+          <div className="min-w-0">
+            <h2 className="text-lg font-black text-white tracking-tight">{getHeaderTitle()}</h2>
+            <p className="text-[11px] font-bold text-white/70 leading-relaxed mt-1">{getHeaderDescription()}</p>
           </div>
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-100 flex-wrap gap-1">
-            <button 
-              onClick={() => setActiveTab('SUPPLIERS')}
-              className={`px-4 py-2 rounded-xl text-[11px] font-black transition-all ${activeTab === 'SUPPLIERS' ? 'bg-[#1E4D4D] text-white shadow-md' : 'text-slate-400 hover:text-[#1E4D4D]'}`}
-            >
-              الموردون
-            </button>
-            <button 
-              onClick={() => setActiveTab('CUSTOMERS')}
-              className={`px-4 py-2 rounded-xl text-[11px] font-black transition-all ${activeTab === 'CUSTOMERS' ? 'bg-[#1E4D4D] text-white shadow-md' : 'text-slate-400 hover:text-[#1E4D4D]'}`}
-            >
-              العملاء
-            </button>
-            <button 
-              onClick={() => setActiveTab('PARTNERS')}
-              className={`px-4 py-2 rounded-xl text-[11px] font-black transition-all ${activeTab === 'PARTNERS' ? 'bg-[#1E4D4D] text-white shadow-md' : 'text-slate-400 hover:text-[#1E4D4D]'}`}
-            >
-              الشركاء / الجهات المرتبطة
-            </button>
-            <button 
-              onClick={() => setActiveTab('ALL')}
-              className={`px-4 py-2 rounded-xl text-[11px] font-black transition-all ${activeTab === 'ALL' ? 'bg-[#1E4D4D] text-white shadow-md' : 'text-slate-400 hover:text-[#1E4D4D]'}`}
-            >
-              دليل جهات الاتصال
-            </button>
-          </div>
-          <button 
-            onClick={() => onNavigate?.('dashboard')}
-            className="w-12 h-12 bg-white border border-slate-100 rounded-2xl flex items-center justify-center text-slate-400 hover:text-[#1E4D4D] transition-all shadow-sm shrink-0"
-            title="العودة للوحة التحكم"
-          >
-            <ArrowRight size={20} />
-          </button>
         </div>
       </div>
 
+      {/* Horizontal partner tabs */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
+        <button onClick={() => setActiveTab('CUSTOMERS')} className={`shrink-0 px-5 py-2.5 rounded-full text-xs font-black transition-colors ${activeTab === 'CUSTOMERS' ? 'bg-[#1E4D4D] text-white' : 'bg-slate-100 text-slate-500'}`}>العملاء</button>
+        <button onClick={() => setActiveTab('SUPPLIERS')} className={`shrink-0 px-5 py-2.5 rounded-full text-xs font-black transition-colors ${activeTab === 'SUPPLIERS' ? 'bg-[#1E4D4D] text-white' : 'bg-slate-100 text-slate-500'}`}>الموردون</button>
+        <button onClick={() => setActiveTab('PARTNERS')} className={`shrink-0 px-5 py-2.5 rounded-full text-xs font-black transition-colors ${activeTab === 'PARTNERS' ? 'bg-[#1E4D4D] text-white' : 'bg-slate-100 text-slate-500'}`}>الشركاء / الجهات المرتبطة</button>
+        <button onClick={() => setActiveTab('ALL')} className={`shrink-0 px-5 py-2.5 rounded-full text-xs font-black transition-colors ${activeTab === 'ALL' ? 'bg-[#1E4D4D] text-white' : 'bg-slate-100 text-slate-500'}`}>دليل جهات الاتصال</button>
+      </div>
+
       {/* Toolbar */}
-      <div className="flex flex-col md:flex-row gap-4">
-        <div className="relative flex-1 group">
-          <Search className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-[#1E4D4D] transition-colors" size={20} />
+      <div className="flex flex-row items-center gap-2">
+        <div className="relative flex-1 min-w-0 group">
+          <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-[#1E4D4D] transition-colors" size={18} />
           <input 
             type="text" 
             placeholder={`البحث في قائمة ${getPartnerLabel()}ين...`}
-            className="w-full h-14 bg-white border border-slate-100 rounded-2xl pr-14 pl-6 text-[11px] font-black outline-none focus:border-[#1E4D4D] shadow-sm transition-all"
+            className="w-full h-12 bg-white border border-slate-100 rounded-xl pr-11 pl-4 text-[11px] font-black outline-none focus:border-[#1E4D4D] shadow-sm transition-all"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        
         <button 
           onClick={() => { setEditingPartner({}); setIsModalOpen(true); }}
-          className="h-14 px-8 bg-[#1E4D4D] text-white rounded-2xl flex items-center justify-center gap-3 text-[11px] font-black shadow-lg shadow-emerald-900/20 hover:scale-105 active:scale-95 transition-all"
+          className="w-12 h-12 shrink-0 bg-[#1E4D4D] text-white rounded-xl flex items-center justify-center shadow-sm hover:bg-[#163D3D] active:scale-95 transition-all"
+          title={`إضافة ${getPartnerLabel()} جديد`}
+          aria-label={`إضافة ${getPartnerLabel()} جديد`}
         >
-          <UserPlus size={18} />
-          <span>إضافة {getPartnerLabel()} جديد</span>
+          <UserPlus size={20} />
         </button>
       </div>
 
-      {/* Grid of Partners */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <AnimatePresence mode="popLayout">
-          {filteredPartners.map((p: any, idx: number) => {
-            const id = p.Customer_ID || p.Supplier_ID || p.id;
-            const name = p.Customer_Name || p.Supplier_Name || p.name;
-            const balance = p.balance || p.Balance || 0;
-            const categoryLabel = p.categoryLabel || getPartnerLabel();
-            
-            return (
-              <motion.div
-                key={id + '-' + idx}
-                layout
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                transition={{ delay: idx * 0.03 }}
-              >
-                <Card 
-                  className="group relative overflow-hidden !rounded-[32px] border-slate-100/60 hover:border-[#1E4D4D]/20 transition-all hover:shadow-xl hover:-translate-y-1"
+      {/* Partner list */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        {filteredPartners.length > 0 ? (
+          <AnimatePresence mode="popLayout">
+            {filteredPartners.map((p: any, idx: number) => {
+              const id = p.Customer_ID || p.Supplier_ID || p.id;
+              const name = p.Customer_Name || p.Supplier_Name || p.name;
+              const balance = p.balance || p.Balance || 0;
+              const categoryLabel = p.categoryLabel || getPartnerLabel();
+
+              return (
+                <motion.div
+                  key={id + '-' + idx}
+                  layout
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.18 }}
+                  className="flex items-center gap-3 px-4 py-4 border-b border-slate-100 last:border-b-0"
                 >
-                  <div className="absolute top-0 right-0 p-6 opacity-[0.03] group-hover:opacity-[0.07] transition-opacity">
-                    <UserCircle size={80} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <h3 className="text-sm font-black text-slate-800 truncate">{name}</h3>
+                      <span className="shrink-0 text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{categoryLabel}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-1"><Phone size={11} />{p.Phone || '---'}</p>
                   </div>
-                  
-                  <div className="flex flex-col gap-6 relative z-10">
-                    <div className="flex justify-between items-start">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-slate-50 text-[#1E4D4D] rounded-2xl flex items-center justify-center font-black text-lg shadow-inner group-hover:bg-[#1E4D4D] group-hover:text-white transition-all">
-                          {name?.charAt(0) || '?'}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-[13px] font-black text-[#1E4D4D] group-hover:text-emerald-800 transition-colors">{name}</h3>
-                            <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
-                              {categoryLabel}
-                            </span>
-                          </div>
-                          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">{id}</p>
-                        </div>
-                      </div>
-                      <button onClick={() => { setEditingPartner({ id, name, phone: p.Phone, address: p.Address, taxNumber: p.Tax_Number, email: p.Email, balance, category: p.partnerCategory }); setIsModalOpen(true); }} className="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-[#1E4D4D] hover:bg-slate-50 rounded-lg transition-all">
-                        <MoreVertical size={16} />
-                      </button>
-                    </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 group-hover:bg-white transition-colors">
-                          <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Phone size={10}/> الهاتف</p>
-                          <p className="text-[11px] font-black text-[#1E4D4D]">{p.Phone || '---'}</p>
-                       </div>
-                       <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 group-hover:bg-white transition-colors">
-                          <p className="text-[11px] font-black text-slate-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><CreditCard size={10}/> الرصيد</p>
-                          <p className={`text-[11px] font-black ${balance > 0 ? 'text-red-500' : balance < 0 ? 'text-emerald-500' : 'text-[#1E4D4D]'}`}>
-                            {Math.abs(balance).toLocaleString()} <span className="text-[11px] opacity-40 font-normal">{currency}</span>
-                            {balance > 0 && <TrendingUp size={10} className="inline ml-1"/>}
-                            {balance < 0 && <TrendingDown size={10} className="inline ml-1"/>}
-                          </p>
-                       </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 group-hover:translate-x-[-4px] transition-transform">
-                      <MapPin size={12} className="text-slate-300 shrink-0" />
-                      <p className="text-[11px] font-bold text-slate-400 truncate">{p.Address || 'لا يوجد عنوان مسجل'}</p>
-                    </div>
-
-                    <div className="flex items-center gap-2 pt-2 border-t border-slate-50 mt-auto">
-                       <Button variant="neutral" size="sm" className="flex-1 !rounded-xl !text-[11px] !py-3" onClick={() => onNavigate?.('aging-report')}>كشف حساب</Button>
-                       <Button variant="secondary" size="sm" className="flex-1 !rounded-xl !text-[11px] !py-3" onClick={() => onNavigate?.(p.partnerCategory === 'SUPPLIER' || activeTab === 'SUPPLIERS' ? 'purchases' : 'sales')}>فاتورة جديدة</Button>
-                    </div>
+                  <div className="shrink-0 text-left min-w-[82px]">
+                    <p className="text-[10px] text-slate-400 mb-1">الرصيد الحالي</p>
+                    <p className={`text-xs font-black ${balance > 0 ? 'text-red-500' : balance < 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
+                      {Math.abs(balance).toLocaleString()} <span className="text-[10px] opacity-60 font-normal">{currency}</span>
+                    </p>
                   </div>
-                </Card>
-              </motion.div>
-            );
-          })}
-        </AnimatePresence>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      onClick={() => { setEditingPartner({ id, name, phone: p.Phone, address: p.Address, taxNumber: p.Tax_Number, email: p.Email, balance, category: p.partnerCategory }); setIsModalOpen(true); }}
+                      className="w-9 h-9 flex items-center justify-center text-slate-400 hover:text-[#1E4D4D] hover:bg-slate-50 rounded-lg transition-colors"
+                      title="تعديل البيانات"
+                      aria-label="تعديل البيانات"
+                    >
+                      <MoreVertical size={17} />
+                    </button>
+                    <button
+                      onClick={() => onNavigate?.(p.partnerCategory === 'SUPPLIER' || activeTab === 'SUPPLIERS' ? 'purchases' : 'sales')}
+                      className="hidden sm:flex h-9 px-2 items-center justify-center text-[10px] font-bold text-slate-500 hover:text-[#1E4D4D] rounded-lg transition-colors"
+                    >
+                      فاتورة
+                    </button>
+                    <button
+                      onClick={() => onNavigate?.('aging-report')}
+                      className="w-9 h-9 flex items-center justify-center text-[#1E4D4D] bg-slate-50 hover:bg-[#1E4D4D]/10 rounded-lg transition-colors"
+                      title="كشف الحساب"
+                      aria-label="كشف الحساب"
+                    >
+                      <ChevronLeft size={20} />
+                    </button>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        ) : (
+          <div className="flex flex-col items-center justify-center text-center px-6 py-14">
+            {activeTab === 'SUPPLIERS' ? <Truck size={48} className="text-slate-200 mb-4" /> : <Users size={48} className="text-slate-200 mb-4" />}
+            <p className="text-sm font-bold text-slate-400">لا توجد بيانات مسجلة حالياً. اضغط على زر الإضافة للبدء.</p>
+          </div>
+        )}
       </div>
 
       {/* Modal - New/Edit Partner */}
