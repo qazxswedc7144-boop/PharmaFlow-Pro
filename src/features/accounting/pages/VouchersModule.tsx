@@ -5,9 +5,8 @@ import { voucherService } from '@features/accounting/services/voucherService';
 import { useUI } from '@/contexts/AppContext';
 import { Receipt, Payment, Supplier } from '@/types';
 import PrintMenu from '@/components/shared/PrintMenu';
-import { ArrowDownCircle, ArrowUpRight, Trash2, Calendar, CreditCard, Wallet, X, ChevronLeft } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpRight, Trash2, Calendar, CreditCard, Wallet, X, ChevronLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { BackButton } from '@/components/shared/BackButton';
 
 interface VouchersModuleProps {
   onNavigate?: (view: string) => void;
@@ -160,7 +159,15 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
     <div className="p-2 sm:p-4 space-y-1 pb-24 font-cairo bg-[#F8FAFA] min-h-full w-full" dir="rtl">
       <header className="bg-[#1E4D4D] text-white p-3 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl border border-[#1E4D4D] shadow-sm relative z-20 w-full overflow-hidden">
         <div className="flex items-center justify-between gap-2 sm:gap-3 w-full">
-          {onNavigate && <BackButton onClick={() => onNavigate('dashboard')} />}
+          {onNavigate && (
+            <button 
+              onClick={() => onNavigate('dashboard')} 
+              className="w-7 h-7 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shrink-0"
+              title="الرجوع للرئيسية"
+            >
+              <ArrowRight size={16} />
+            </button>
+          )}
           <div className="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 text-center px-1">
             <div className="w-10 h-10 sm:w-11 sm:h-11 bg-white/10 text-white border border-white/10 rounded-xl flex items-center justify-center shadow-md shadow-black/10 font-black shrink-0"><CreditCard size={20} /></div>
             <div className="w-full min-w-0 flex flex-col items-center text-center">
