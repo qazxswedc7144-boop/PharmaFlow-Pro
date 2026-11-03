@@ -19,7 +19,7 @@ const getToday = () => new Date().toISOString().split('T')[0];
 const formatVoucherDate = (value?: string) => {
   if (!value) return '';
   const raw = value.slice(0, 10);
-  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const match = raw.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
   return match ? `${match[1]}/${match[2]}/${match[3]}` : raw.replace(/-/g, '/');
 };
 
@@ -96,7 +96,7 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
       if (exactMatch) {
         finalPartnerId = exactMatch.id;
       } else {
-        if (window.confirm(`الاسم "${partnerSearch}" غير موجود. هل تريد إضافته كـ ${vType === 'RECEIPT' ? 'عميل جديد' : 'مورد جديد'}؟`)) {
+        if (window.confirm(`الاسم \\"${partnerSearch}\\" غير موجود. هل تريد إضافته كـ ${vType === 'RECEIPT' ? 'عميل جديد' : 'مورد جديد'}؟`)) {
           try {
             const newPartner: Supplier = {
               id: `${vType === 'RECEIPT' ? 'C' : 'S'}-${Date.now()}`,
@@ -158,17 +158,17 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
 
   return (
     <div className="p-2 sm:p-4 space-y-1 pb-24 font-cairo bg-[#F8FAFA] min-h-full w-full" dir="rtl">
-      <header className="bg-[#1E4D4D] text-white p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl border border-[#1E4D4D] shadow-sm relative z-20 w-full overflow-hidden">
-        <div className="flex items-center justify-between gap-3 sm:gap-4 w-full">
+      <header className="bg-[#1E4D4D] text-white p-3 sm:p-5 md:p-6 rounded-2xl sm:rounded-3xl border border-[#1E4D4D] shadow-sm relative z-20 w-full overflow-hidden">
+        <div className="flex items-center justify-between gap-2 sm:gap-3 w-full">
           {onNavigate && <BackButton onClick={() => onNavigate('dashboard')} />}
-          <div className="flex-1 flex flex-col sm:flex-row items-center justify-center gap-2.5 sm:gap-4 text-center sm:text-right min-w-0 px-2 overflow-hidden">
-            <div className="w-11 h-11 sm:w-13 sm:h-13 bg-white/10 text-white border border-white/10 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-md shadow-black/10 font-black shrink-0"><CreditCard size={24} /></div>
-            <div className="flex flex-col items-center sm:items-start text-center sm:text-right min-w-0 max-w-full">
-              <h2 className="text-lg sm:text-xl md:text-2xl font-black text-white tracking-tight leading-snug truncate max-w-full">سندات القبض والصرف</h2>
-              <p className="text-[10px] sm:text-[11px] font-bold text-white/65 uppercase tracking-wider truncate max-w-full mt-0.5">Voucher Management System</p>
+          <div className="flex-1 min-w-0 flex flex-col items-center justify-center gap-1 text-center px-1">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 bg-white/10 text-white border border-white/10 rounded-xl flex items-center justify-center shadow-md shadow-black/10 font-black shrink-0"><CreditCard size={20} /></div>
+            <div className="w-full min-w-0 flex flex-col items-center text-center">
+              <h2 className="w-full text-lg sm:text-xl font-black text-white tracking-tight leading-snug text-center whitespace-normal break-words">سندات القبض والصرف</h2>
+              <p className="w-full text-[9px] sm:text-[10px] font-bold text-white/65 uppercase tracking-wider text-center leading-tight">Voucher Management System</p>
             </div>
           </div>
-          <div className="w-10 h-10 sm:w-12 sm:h-12 shrink-0 invisible sm:block" aria-hidden="true" />
+          <div className="w-9 h-9 sm:w-10 sm:h-10 shrink-0 invisible" aria-hidden="true" />
         </div>
       </header>
 
@@ -195,7 +195,7 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block mr-1">المبلغ</label><div className="relative"><input type="number" className="w-full bg-[#F8FAFA] border-2 border-slate-50 rounded-2xl px-5 py-4 font-black text-[#1E4D4D] text-center text-xl" placeholder="0.00" value={form.amount} onChange={e => setForm({...form, amount: e.target.value})} /><div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none opacity-20 font-black text-[11px]">{currency}</div></div></div>
-              <div className="space-y-1.5"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block mr-1">التاريخ</label><input type="text" inputMode="numeric" maxLength={10} dir="ltr" placeholder="YYYY/MM/DD" aria-label="التاريخ YYYY/MM/DD" className="w-full bg-[#F8FAFA] border-2 border-slate-50 rounded-2xl px-3 py-4 font-black text-slate-600 text-[11px] text-center" value={dateInput} onChange={e => { const value = e.target.value.replace(/[^\d/]/g, '').slice(0, 10); setDateInput(value); const digits = value.replace(/\D/g, '').slice(0, 8); if (digits.length === 8) { const year = digits.slice(0, 4); const month = digits.slice(4, 6); const day = digits.slice(6, 8); setForm({...form, date: `${year}-${month}-${day}`}); } else { setForm({...form, date: ''}); } }} /></div>
+              <div className="space-y-1.5"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block mr-1">التاريخ</label><input type="text" inputMode="numeric" maxLength={10} dir="ltr" placeholder="YYYY/MM/DD" aria-label="التاريخ YYYY/MM/DD" className="w-full bg-[#F8FAFA] border-2 border-slate-50 rounded-2xl px-3 py-4 font-black text-slate-600 text-[11px] text-center" value={dateInput} onChange={e => { const value = e.target.value.replace(/[^\\d/]/g, '').slice(0, 10); setDateInput(value); const digits = value.replace(/\\D/g, '').slice(0, 8); if (digits.length === 8) { const year = digits.slice(0, 4); const month = digits.slice(4, 6); const day = digits.slice(6, 8); setForm({...form, date: `${year}-${month}-${day}`}); } else { setForm({...form, date: ''}); } }} /></div>
             </div>
 
             <div className="space-y-1.5"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block mr-1">طريقة الدفع</label><div className="grid grid-cols-2 gap-3"><button onClick={() => setForm({...form, paymentMethod: 'CASH'})} className={`py-3 rounded-xl font-bold text-[11px] border-2 transition-all flex items-center justify-center gap-2 ${form.paymentMethod === 'CASH' ? 'border-[#1E4D4D] bg-[#1E4D4D]/5 text-[#1E4D4D]' : 'border-slate-50 text-slate-400'}`}><Wallet size={14} />نقداً</button><button onClick={() => setForm({...form, paymentMethod: 'TRANSFER'})} className={`py-3 rounded-xl font-bold text-[11px] border-2 transition-all flex items-center justify-center gap-2 ${form.paymentMethod === 'TRANSFER' ? 'border-[#1E4D4D] bg-[#1E4D4D]/5 text-[#1E4D4D]' : 'border-slate-50 text-slate-400'}`}><ArrowUpRight size={14} />تحويل بنكي</button></div></div>
