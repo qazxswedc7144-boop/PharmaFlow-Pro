@@ -270,8 +270,8 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
       {/* Modal - New/Edit Partner */}
       <AnimatePresence>
         {isModalOpen && (
-          <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingPartner(null); }} title={`${editingPartner?.id ? 'تعديل' : 'إضافة'} بيانات ${getPartnerLabel()}`} noPadding>
-            <div className="max-h-[90vh] overflow-y-auto overscroll-contain p-4 space-y-2">
+          <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingPartner(null); }} title={`${editingPartner?.id ? 'تعديل' : 'إضافة'} بيانات ${getPartnerLabel()}`} noPadding positionClass="items-center !p-4">
+            <div className="max-h-[90vh] overflow-y-auto overscroll-contain px-4 pt-2 pb-4 space-y-2">
                <div className="space-y-2">
                   <div className="space-y-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">اسم {getPartnerLabel()}</label>
@@ -284,7 +284,7 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">رقم الهاتف</label>
                       <Input 
                         value={editingPartner?.phone || ''} 
@@ -293,7 +293,7 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                         className="!h-10 !text-sm"
                       />
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-1">
                       <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">الرقم الضريبي</label>
                       <Input 
                         value={editingPartner?.taxNumber || ''} 
@@ -304,7 +304,7 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">البريد الإلكتروني</label>
                     <Input 
                       value={editingPartner?.email || ''} 
@@ -314,7 +314,7 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                     />
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">العنوان</label>
                     <textarea 
                       rows={2} className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm font-bold text-[#1E4D4D] outline-none h-20 resize-none focus:bg-white focus:border-[#1E4D4D] transition-all"
@@ -324,7 +324,7 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                     />
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">الرصيد الافتتاحي</label>
                     <Input 
                       type="number" 
