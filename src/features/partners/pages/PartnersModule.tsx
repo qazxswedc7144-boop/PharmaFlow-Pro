@@ -154,14 +154,15 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
   return (
     <div className="p-4 md:p-8 space-y-8 bg-[#F8FAFA] min-h-full font-cairo" dir="rtl">
       {/* Header Section */}
-      <button
-        onClick={() => onNavigate?.('dashboard')}
-        className="w-8 h-8 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shrink-0 mb-3"
-        title="الرجوع للرئيسية"
-      >
-        <ArrowRight size={18} />
-      </button>
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#1E4D4D] p-4 rounded-2xl shadow-sm">
+      <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#1E4D4D] p-4 rounded-2xl shadow-sm">
+        <button
+          onClick={() => onNavigate?.('dashboard')}
+          className="absolute top-4 left-4 w-8 h-8 bg-white rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shadow-sm"
+          title="الرجوع للرئيسية"
+          aria-label="الرجوع للرئيسية"
+        >
+          <ArrowRight size={18} />
+        </button>
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-11 h-11 bg-white/10 text-white rounded-xl flex items-center justify-center shrink-0">
             {activeTab === 'SUPPLIERS' ? <Truck size={24} /> : activeTab === 'PARTNERS' ? <Building2 size={24} /> : activeTab === 'ALL' ? <BookOpen size={24} /> : <Users size={24} />}
