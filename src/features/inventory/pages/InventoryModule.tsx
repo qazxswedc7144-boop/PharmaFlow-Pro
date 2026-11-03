@@ -383,8 +383,8 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
 
   return (
     <div className="flex flex-col min-h-full h-full bg-[#F8FAFA] font-cairo w-full relative" dir="rtl">
-      <header className="p-4 sm:p-10 pb-5 sm:pb-8 shrink-0 bg-white border-b border-slate-100 z-20">
-        <div className="flex items-center w-full mb-5 sm:mb-8 relative">
+      <header className="p-3 sm:p-8 pb-3 sm:pb-5 shrink-0 bg-white border-b border-slate-100 z-20">
+        <div className="flex items-center w-full mb-3 sm:mb-5 relative">
           <button 
             onClick={() => onNavigate?.('dashboard')}
             className="w-11 h-11 sm:w-14 sm:h-14 bg-white border-2 border-slate-50 text-[#1E4D4D] rounded-2xl sm:rounded-[24px] flex items-center justify-center shadow-lg shadow-slate-200/40 active:scale-95 active:bg-slate-100 hover:bg-slate-50 transition-all z-10"
@@ -397,7 +397,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
               <Layers size={24} />
             </div>
             <div className="flex min-w-0 flex-col items-start pb-2">
-              <h2 className="text-lg sm:text-2xl font-black text-[#1E4D4D] tracking-tight leading-relaxed">المستودع الرقمي</h2>
+              <h2 className="text-base sm:text-2xl font-black text-[#1E4D4D] tracking-tight leading-tight whitespace-nowrap">المستودع الرقمي</h2>
               <p className="text-[9px] sm:text-[11px] text-slate-300 font-bold uppercase tracking-widest mt-1.5 sm:mt-2 truncate">Digital Inventory System</p>
             </div>
           </div>
@@ -554,7 +554,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
 
       <AnimatePresence>
         {editingProduct && (
-          <Modal isOpen={!!editingProduct} onClose={() => setEditingProduct(null)} title="بطاقة بيانات صنف" noPadding>
+          <Modal isOpen={!!editingProduct} onClose={() => setEditingProduct(null)} title="بطاقات بيانات الأصناف" noPadding>
             <div className="flex flex-col h-[85vh] font-sans" dir="rtl">
               <div className="grid grid-cols-5 gap-1 bg-slate-50 p-2 shrink-0">
                 <button onClick={() => setActiveTab('details')} className={`min-w-0 py-2 px-1 rounded-xl text-[9px] sm:text-[11px] font-black flex flex-col items-center justify-center gap-1 transition-all leading-tight ${activeTab === 'details' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><Settings2 size={17} /><span>التفاصيل</span></button>
@@ -564,14 +564,14 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                 <button onClick={() => setActiveTab('adjust')} className={`min-w-0 py-2 px-1 rounded-xl text-[9px] sm:text-[11px] font-black flex flex-col items-center justify-center gap-1 transition-all leading-tight ${activeTab === 'adjust' ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-400'}`}><ArrowRightLeft size={17} /><span>تسوية</span></button>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-8 space-y-6 sm:space-y-8 custom-scrollbar">
+              <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 space-y-3 custom-scrollbar">
                 {activeTab === 'details' && (
-                  <div className="space-y-8">
+                  <div className="space-y-3">
                     <div className="space-y-2">
-                      <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">إسم الصنف التجاري</label>
+                      
                       <input className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-6 text-[11px] font-black text-[#1E4D4D] outline-none focus:bg-white focus:border-emerald-500 transition-all text-right" value={editingProduct.name || editingProduct.Name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value, Name: e.target.value})} />
                     </div>
-                    <div className="grid grid-cols-2 gap-8">
+                    <div className="grid grid-cols-2 gap-2">
                        <div className="space-y-2">
                         <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">سعر البيع للجمهور</label>
                         <input type="number" className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-6 text-[11px] font-black text-[#1E4D4D] outline-none focus:bg-white focus:border-emerald-500 transition-all text-center" value={editingProduct.price || editingProduct.UnitPrice} onChange={e => setEditingProduct({...editingProduct, price: parseFloat(e.target.value) || 0, UnitPrice: parseFloat(e.target.value) || 0})} />
@@ -607,11 +607,11 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                         </select>
                        </div>
                     </div>
-                    <div className="pt-8 border-t border-slate-100 space-y-6">
+                    <div className="pt-4 border-t border-slate-100 space-y-3">
                        <h4 className="text-[11px] font-black text-slate-400 uppercase tracking-[3px]">إحصائيات الأسعار</h4>
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                         <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
-                           <p className="text-[11px] font-black text-slate-400 mb-4 uppercase tracking-widest">تغيرات الأسعار الأخيرة</p>
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                         <div className="bg-slate-50 rounded-3xl p-4 border border-slate-100">
+                           <p className="text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">تغيرات الأسعار الأخيرة</p>
                            {priceHistory.length === 0 ? <p className="text-xs font-bold text-slate-300 italic">لا يوجد سجل أسعار متاح</p> : <div className="space-y-3">{priceHistory.map(ph => (<div key={ph.id} className="flex justify-between items-center"><span className="text-[11px] font-bold text-slate-400">{ph.Invoice_Date}</span><span className="text-sm font-black text-[#1E4D4D]">{ph.Price} {currency}</span></div>))}</div>}
                          </div>
                          <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
@@ -697,7 +697,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                 )}
               </div>
 
-              {activeTab === 'details' && <div className="p-4 sm:p-8 border-t border-slate-50 shrink-0"><button onClick={async () => { await ProductRepository.save(editingProduct); refreshGlobal(); setEditingProduct(null); addToast("تم تحديث البيانات بنجاح ✅", "success"); }} className="w-full h-16 bg-[#1E4D4D] text-white rounded-[24px] font-black text-sm shadow-2xl shadow-emerald-900/40 active:scale-95 transition-all flex items-center justify-center gap-3"><Save size={20} /><span>تأكيد وحفظ بيانات الصنف</span></button></div>}
+              {activeTab === 'details' && <div className="p-3 sm:p-5 border-t border-slate-50 shrink-0 flex"><button onClick={async () => { await ProductRepository.save(editingProduct); refreshGlobal(); setEditingProduct(null); addToast("تم تحديث البيانات بنجاح ✅", "success"); }} className="w-fit mr-auto px-8 h-14 bg-[#1E4D4D] text-white rounded-[24px] font-black text-sm shadow-2xl shadow-emerald-900/40 active:scale-95 transition-all flex items-center justify-center gap-3"><Save size={20} /><span>تأكيد وحفظ بيانات الصنف</span></button></div>}
             </div>
           </Modal>
         )}
