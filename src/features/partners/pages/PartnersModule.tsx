@@ -271,26 +271,26 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
       <AnimatePresence>
         {isModalOpen && (
           <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingPartner(null); }} title={`${editingPartner?.id ? 'تعديل' : 'إضافة'} بيانات ${getPartnerLabel()}`} noPadding>
-            <div className="p-8 space-y-6">
-               <div className="space-y-4">
-                  <div className="space-y-1.5">
+            <div className="max-h-[90vh] overflow-y-auto overscroll-contain p-4 space-y-2">
+               <div className="space-y-2">
+                  <div className="space-y-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">اسم {getPartnerLabel()}</label>
                     <Input 
                       value={editingPartner?.name || ''} 
                       onChange={e => setEditingPartner({...editingPartner, name: e.target.value})} 
                       placeholder="الاسم بالكامل..." 
-                      className="!h-14 !text-base focus:!border-[#1E4D4D]"
+                      className="!h-10 !text-sm focus:!border-[#1E4D4D]"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1.5">
                       <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">رقم الهاتف</label>
                       <Input 
                         value={editingPartner?.phone || ''} 
                         onChange={e => setEditingPartner({...editingPartner, phone: e.target.value})} 
                         placeholder="05xxxxxxxx" 
-                        className="!h-14"
+                        className="!h-10 !text-sm"
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -299,7 +299,7 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                         value={editingPartner?.taxNumber || ''} 
                         onChange={e => setEditingPartner({...editingPartner, taxNumber: e.target.value})} 
                         placeholder="VAT Registration..." 
-                        className="!h-14"
+                        className="!h-10 !text-sm"
                       />
                     </div>
                   </div>
@@ -310,14 +310,14 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                       value={editingPartner?.email || ''} 
                       onChange={e => setEditingPartner({...editingPartner, email: e.target.value})} 
                       placeholder="email@example.com" 
-                      className="!h-14"
+                      className="!h-10 !text-sm"
                     />
                   </div>
 
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">العنوان</label>
                     <textarea 
-                      className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-6 py-4 text-sm font-black text-[#1E4D4D] outline-none h-24 focus:bg-white focus:border-[#1E4D4D] transition-all"
+                      rows={2} className="w-full bg-slate-50 border border-slate-100 rounded-xl px-3 py-2 text-sm font-bold text-[#1E4D4D] outline-none h-20 resize-none focus:bg-white focus:border-[#1E4D4D] transition-all"
                       value={editingPartner?.address || ''} 
                       onChange={e => setEditingPartner({...editingPartner, address: e.target.value})} 
                       placeholder="العنوان الكامل للشريك..."
@@ -330,14 +330,14 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                       type="number" 
                       value={editingPartner?.balance || 0} 
                       onChange={e => setEditingPartner({...editingPartner, balance: parseFloat(e.target.value) || 0})} 
-                      className="!h-14 !text-blue-600 font-black"
+                      className="!h-10 !text-sm !text-blue-600 font-black"
                     />
                   </div>
                </div>
 
-               <div className="flex gap-4 pt-4">
-                  <Button variant="neutral" className="flex-1 !h-14 !rounded-2xl" onClick={() => setIsModalOpen(false)}>إلغاء</Button>
-                  <Button variant="primary" className="flex-1 !h-14 !rounded-2xl shadow-xl shadow-emerald-900/20" onClick={handleSave}>حفظ البيانات ✅</Button>
+               <div className="flex flex-row gap-2 pt-2">
+                  <Button variant="neutral" className="flex-1 !h-10 !rounded-xl !text-sm" onClick={() => setIsModalOpen(false)}>إلغاء</Button>
+                  <Button variant="primary" className="flex-1 !h-10 !rounded-xl !text-sm shadow-md shadow-emerald-900/10" onClick={handleSave}>حفظ البيانات ✅</Button>
                </div>
             </div>
           </Modal>
