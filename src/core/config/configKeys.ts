@@ -3,6 +3,11 @@ import { ConfigurationDefinition } from './types';
 
 /**
  * Phase 3.4.5 Canonical Key Registry
+ * 
+ * ⚠️ RULES:
+ * 1. All keys must follow [domain].[snake_case_property] format.
+ * 2. 'SERVER_AUTHORITATIVE' means the value is controlled by the backend (read-only locally).
+ * 3. 'LOCAL_ONLY' means the value is not synced to the cloud (e.g., device-specific settings).
  */
 export const CONFIG_REGISTRY: Record<string, ConfigurationDefinition<any>> = {
   // System / General
@@ -134,12 +139,12 @@ export const CONFIG_REGISTRY: Record<string, ConfigurationDefinition<any>> = {
   },
 
   // Inventory
-  'inventory.allowNegativeStock': {
-    key: 'inventory.allowNegativeStock',
+  'inventory.allow_negative_stock': { // 👈 تم توحيد النمط إلى snake_case
+    key: 'inventory.allow_negative_stock',
     defaultValue: false,
     scope: 'BRANCH',
     syncPolicy: 'SYNCABLE',
-    legacyKeys: ['allowNegativeStock', 'inventory.allow_negative_stock'],
+    legacyKeys: ['allowNegativeStock', 'inventory.allowNegativeStock'], // 👈 الاحتفاظ بالمفتاح القديم للتوافق
     description: 'السماح بالمخزون بالسالب'
   },
   'inventory.expiry_warning_days': {
