@@ -19,6 +19,7 @@ import { ReportEngine } from '@/services/reports/reportEngine';
 import { SmartImportOrchestrator } from '../services/smartImport/smartImportOrchestrator';
 import { ImportAnalysisResult, ExtractedImportRow } from '../services/smartImport/types';
 import { normalizeToISODate } from '@/utils/expiryUtils';
+import { generateTransactionUuid } from '@/utils/uuid';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -125,6 +126,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
   const categoryInputRef = useRef<HTMLSelectElement>(null);
   const [header, setHeader] = useState({ invoice_number: '', supplier_id: '', payment_method: 'Cash', status: 'DRAFT' as InvoiceStatus, payment_status: 'Unpaid' as PaymentStatus, date: new Date().toISOString().split('T')[0], notes: '', isReturn: false, attachment: '' });
   const currentOperationRef = useRef<string | null>(null);
+  const isSavingRef = useRef(false);
   const pendingProductsRef = useRef<any[]>([]);
 
   const resetInvoiceState = useCallback(() => {
@@ -170,7 +172,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
   const finalizeItemAdd = useCallback(() => { if (!manualItemName || !tempQty || !tempPrice) { addToast("يرجى إكمال بيانات الصنف", "error"); return; } const newItem: InvoiceItem = { id: `PUR-DET-${Date.now()}`, parent_id: header.invoice_number, product_id: selectedProduct?.id || `manual-${Date.now()}`, productId: selectedProduct?.id || `manual-${Date.now()}`, productName: manualItemName, name: manualItemName, quantity: Number(tempQty), qty: Number(tempQty), unitPrice: Number(tempPrice), price: Number(tempPrice), subtotal: Number(tempQty) * Number(tempPrice), sum: Number(tempQty) * Number(tempPrice), row_order: items.length + 1, expiryDate: normalizeToISODate(tempExpiry), notes: tempNote, category: selectedCategoryId || selectedProduct?.categoryId }; setItems(prev => [...prev, newItem]); setSelectedProduct(null); setManualItemName(''); setTempQty(''); setTempPrice(''); setTempExpiry(''); setTempNote(''); setSelectedCategoryId(''); setManualCategoryName(''); setShowCategoryDropdown(false); itemNameInputRef.current?.focus(); addToast("تمت إضافة الصنف ✅", "success"); }, [manualItemName, tempQty, tempPrice, header.invoice_number, selectedProduct, items.length, tempExpiry, tempNote, selectedCategoryId, addToast]);
 
   const handlePost = useCallback(async (overridePayload?: { items?: InvoiceItem[]; header?: typeof header; adjData?: typeof adjData }) => {
-    if (savePhase === 'saving') return;
+    if (isSavingRef.current || savePhase === 'saving') return;
     const currentItems = overridePayload?.items || items;
     const currentHeader = overridePayload?.header || header;
     const currentAdjData = overridePayload?.adjData || adjData;
@@ -179,6 +181,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     const subtotal = currentItems.reduce((sum: number, item: any) => sum + (item.qty * item.price), 0);
     const discount = subtotal * (currentAdjData.discountPercent / 100);
     const currentTotal = subtotal - discount + currentAdjData.otherFees + currentAdjData.tax;
+    isSavingRef.current = true;
     showNotification('⌛ جاري حفظ الفاتورة وتحديث المستودع...', 'info');
     addToast("جاري الحفظ والمزامنة... ⏳", "info");
     setIsSaving(true);
@@ -190,7 +193,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         if (originalSupplier && finalSupplier && originalSupplier !== finalSupplier) saveLearning(originalSupplier, finalSupplier || '');
         (aiParsedData.items || []).forEach(aiItem => { const finalItem = currentItems.find(i => i.qty === aiItem.quantity && i.price === aiItem.price); if (finalItem && aiItem.name !== finalItem.name && aiItem.name) saveLearning(aiItem.name, finalItem.name || ''); });
       }
-      if (!currentOperationRef.current) { const operationId = editingInvoiceId || currentHeader.invoice_number || 'NEW'; currentOperationRef.current = `PURCHASE-${operationId}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`; }
+      if (!currentOperationRef.current) { currentOperationRef.current = generateTransactionUuid('PURCHASE'); }
       const requestUuid = currentOperationRef.current;
       let itemsForSave = currentItems;
       if (pendingProductsRef.current.length === 0) {
@@ -265,7 +268,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const normalized = ErrorManager.handleError(error, { module: 'PURCHASES', action: 'SAVE_PURCHASE', showToast: false });
       showNotification('❌ تعذر حفظ فاتورة المشتريات', 'error');
       addToast(normalized.arabicMessage, 'error');
-    } finally { setIsSaving(false); }
+    } finally { isSavingRef.current = false; setIsSaving(false); }
   }, [header, items, aiParsedData, suppliers, vTotalSum, editingInvoiceId, currency, addInvoice, addToast, refreshGlobal, onNavigate, showNotification, savePhase]);
 
   const handleExport = () => { /* Implementation for export */ };
