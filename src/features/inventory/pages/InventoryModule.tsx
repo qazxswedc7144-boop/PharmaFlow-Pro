@@ -387,9 +387,9 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
         <div className="flex items-center w-full mb-3 sm:mb-5 relative">
           <button 
             onClick={() => onNavigate?.('dashboard')}
-            className="w-11 h-11 sm:w-14 sm:h-14 bg-white border-2 border-slate-50 text-[#1E4D4D] rounded-2xl sm:rounded-[24px] flex items-center justify-center shadow-lg shadow-slate-200/40 active:scale-95 active:bg-slate-100 hover:bg-slate-50 transition-all z-10"
+            className="w-7 h-7 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shrink-0"
           >
-            <ArrowRight size={22} strokeWidth={3.5} />
+            <ArrowRight size={16} />
           </button>
           <div className="w-[8%] sm:w-[15%] shrink-0" />
           <div className="flex-1 flex items-center justify-center gap-2 sm:gap-4 min-w-0">
