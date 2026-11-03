@@ -278,9 +278,9 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
       <AnimatePresence>
         {isModalOpen && (
           <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingPartner(null); }} title={`${editingPartner?.id ? 'تعديل' : 'إضافة'} بيانات ${getPartnerLabel()}`} noPadding positionClass="items-center !p-4">
-            <div className="max-h-[90vh] overflow-y-auto overscroll-contain px-4 pt-2 pb-4 space-y-2">
+            <div className="max-h-[90vh] overflow-y-auto overscroll-contain px-4 pt-1 pb-4 space-y-2">
                <div className="space-y-2">
-                  <div className="space-y-1">
+                  <div className="space-y-1 mt-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">اسم {getPartnerLabel()}</label>
                     <Input 
                       value={editingPartner?.name || ''} 
@@ -289,6 +289,8 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                       className="!h-10 !text-sm focus:!border-[#1E4D4D]"
                     />
                   </div>
+
+                  <div className="w-full h-px bg-slate-200 my-2"></div>
 
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
@@ -311,6 +313,8 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                     </div>
                   </div>
 
+                  <div className="w-full h-px bg-slate-200 my-2"></div>
+
                   <div className="space-y-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">البريد الإلكتروني</label>
                     <Input 
@@ -321,6 +325,8 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                     />
                   </div>
 
+                  <div className="w-full h-px bg-slate-200 my-2"></div>
+
                   <div className="space-y-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">العنوان</label>
                     <textarea 
@@ -330,6 +336,8 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
                       placeholder="العنوان الكامل للشريك..."
                     />
                   </div>
+
+                  <div className="w-full h-px bg-slate-200 my-2"></div>
 
                   <div className="space-y-1">
                     <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">الرصيد الافتتاحي</label>
