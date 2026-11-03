@@ -14,7 +14,6 @@ import { CameraModule } from '@features/shared/pages/CameraModule';
 import { DocumentViewer } from '@/components/shared/DocumentViewer';
 import { AnimatedNumber } from '@/components/shared/AnimatedNumber';
 import { PullToRefresh } from '@/components/shared/PullToRefresh';
-import { InvoiceItemEditModal } from '@/components/shared/InvoiceItemEditModal';
 import { UnifiedModal } from '@/components/shared/UnifiedModal';
 import { SaveSuccessModal } from '@/components/shared/SaveSuccessModal';
 import { DraftRecoveryDialog } from '@/components/shared/DraftRecoveryDialog';
@@ -122,8 +121,7 @@ const PurchasesInvoice: React.FC<{ onNavigate?: (view: string, params?: Record<s
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const attachmentInputRef = React.useRef<HTMLInputElement>(null);
   const [editingItem, setEditingItem] = React.useState<Partial<InvoiceItem> | null>(null);
-  const [isEditModalOpen, setIsEditModalOpen] = React.useState<boolean>(false);
-
+  
   const {
     items, setItems,
     searchTerm, setSearchTerm,
@@ -316,36 +314,8 @@ const existingItemIndex = items.findIndex(i =>
       notes: item.notes || (item as any).note || '',
       category: (item as any).category
     });
-    setIsEditModalOpen(true);
+    setIsAddItemModalOpen(true);
   }, [isLocked]);
-
-  const handleSaveModalData = React.useCallback((updatedItem: Partial<InvoiceItem>) => {
-    setItems(prev => prev.map(i => {
-      if (i.id === updatedItem.id) {
-        const newQty = updatedItem.qty !== undefined ? Number(updatedItem.qty) : i.qty;
-        const newPrice = updatedItem.price !== undefined ? Number(updatedItem.price) : i.price;
-        const rawExp = updatedItem.expiryDate !== undefined ? updatedItem.expiryDate : i.expiryDate;
-        const newExp = normalizeToISODate(rawExp);
-
-        return {
-          ...i,
-          name: updatedItem.name || i.name,
-          productName: updatedItem.name || i.name || i.productName,
-          qty: newQty,
-          quantity: newQty,
-          price: newPrice,
-          unitPrice: newPrice,
-          expiryDate: newExp,
-          notes: updatedItem.notes !== undefined ? updatedItem.notes : i.notes,
-          sum: newQty * newPrice,
-          subtotal: newQty * newPrice
-        };
-      }
-      return i;
-    }));
-    setIsEditModalOpen(false);
-    setEditingItem(null);
-  }, [setItems]);
 
   const isPriceHigher = React.useCallback((item: InvoiceItem) => {
     const product = filteredProducts.find(p => p.id === item.product_id);
@@ -952,19 +922,7 @@ const existingItemIndex = items.findIndex(i =>
           />
         )}
       </AnimatePresence>
-
-      {/* Item edit modal */}
-      <InvoiceItemEditModal 
-        isOpen={isEditModalOpen}
-        item={editingItem as any}
-        mode="purchase"
-        currency={currency || "YER"}
-        onSave={handleSaveModalData}
-        onClose={() => {
-          setIsEditModalOpen(false);
-          setEditingItem(null);
-        }}
-      />
+      
     </div>
   );
 };
