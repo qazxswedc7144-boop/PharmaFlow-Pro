@@ -569,7 +569,7 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                   <div className="space-y-3">
                     <div className="space-y-2">
                       
-                      <input className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-6 text-[11px] font-black text-[#1E4D4D] outline-none focus:bg-white focus:border-emerald-500 transition-all text-right" value={editingProduct.name || editingProduct.Name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value, Name: e.target.value})} />
+                      <input className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-6 text-[11px] font-black text-[#1E4D4D] outline-none focus:bg-white focus:border-emerald-500 transition-all text-right" placeholder="اسم الصنف" value={editingProduct.name || editingProduct.Name} onChange={e => setEditingProduct({...editingProduct, name: e.target.value, Name: e.target.value})} />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                        <div className="space-y-2">
@@ -581,12 +581,12 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                         <div className="w-full h-14 bg-slate-100 border border-slate-200 rounded-2xl flex items-center px-6 text-[11px] font-black text-slate-500">{editingProduct.stock || editingProduct.StockQuantity}</div>
                        </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-8">
-                       <div className="space-y-2">
+                    <div className="grid grid-cols-3 gap-2">
+                       <div className="col-span-1 space-y-2">
                         <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">الحد الأدنى للطلب</label>
                         <input type="number" className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-6 text-[11px] font-black text-[#1E4D4D] outline-none focus:bg-white focus:border-emerald-500 transition-all text-center" value={editingProduct.MinLevel} onChange={e => setEditingProduct({...editingProduct, MinLevel: parseFloat(e.target.value) || 0})} />
                        </div>
-                       <div className="space-y-2">
+                       <div className="col-span-2 space-y-2">
                         <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest mr-2">المورد الرئيسي</label>
                         <select className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-6 text-[11px] font-black text-[#1E4D4D] outline-none focus:bg-white focus:border-emerald-500 transition-all appearance-none" value={editingProduct.supplierId || ''} onChange={e => { const s = suppliers.find(sup => sup.Supplier_ID === e.target.value); setEditingProduct({...editingProduct, supplierId: e.target.value, supplierName: s?.Supplier_Name || ''}); }}>
                           <option value="">اختر مورداً...</option>
@@ -614,9 +614,9 @@ const ProductItem = React.memo(({ product, currency, onClick, onInspect }: { pro
                            <p className="text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">تغيرات الأسعار الأخيرة</p>
                            {priceHistory.length === 0 ? <p className="text-xs font-bold text-slate-300 italic">لا يوجد سجل أسعار متاح</p> : <div className="space-y-3">{priceHistory.map(ph => (<div key={ph.id} className="flex justify-between items-center"><span className="text-[11px] font-bold text-slate-400">{ph.Invoice_Date}</span><span className="text-sm font-black text-[#1E4D4D]">{ph.Price} {currency}</span></div>))}</div>}
                          </div>
-                         <div className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
-                           <p className="text-[11px] font-black text-slate-400 mb-4 uppercase tracking-widest">آخر عمليات الشراء</p>
-                           {purchaseHistory.length === 0 ? <p className="text-xs font-bold text-slate-300 italic">لا يوجد سجل مشتريات متاح</p> : <div className="space-y-3">{purchaseHistory.map(ph => (<div key={ph.id} className="flex justify-between items-center"><span className="text-[11px] font-bold text-slate-400">{(ph.date || '').split('T')[0]}</span><span className="text-sm font-black text-blue-600">{ph.items?.find((it: any) => it.product_id === editingProduct.id)?.price || 0} {currency}</span></div>))}</div>}
+                         <div className="bg-slate-50 rounded-3xl p-4 border border-slate-100">
+                           <p className="text-[11px] font-black text-slate-400 mb-2 uppercase tracking-widest">آخر عمليات الشراء</p>
+                           {purchaseHistory.length === 0 ? <p className="text-xs font-bold text-slate-300 italic">لا يوجد سجل مشتريات متاح</p> : <div className="space-y-2">{purchaseHistory.map(ph => (<div key={ph.id} className="flex justify-between items-center"><span className="text-[11px] font-bold text-slate-400">{(ph.date || '').split('T')[0]}</span><span className="text-sm font-black text-blue-600">{ph.items?.find((it: any) => it.product_id === editingProduct.id)?.price || 0} {currency}</span></div>))}</div>}
                          </div>
                        </div>
                     </div>
