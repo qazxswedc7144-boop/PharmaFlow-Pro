@@ -7,6 +7,9 @@ import { useAdaptivePerformance, type EcoModeValue } from '../../../../hooks/use
 import { useUIStore } from '../../../../store/useUIStore';
 import { useSettingsStore } from '../../../../store/useSettingsStore';
 
+// 👈 استيراد خدمة المصادقة للتحقق من صلاحيات المستخدم
+import { authService } from '@features/auth/services/authService'; 
+
 interface GeneralTabProps {
   activeTab?: string;
 }
@@ -36,6 +39,21 @@ export default function GeneralTab({ activeTab }: GeneralTabProps = {}) {
   }, [currentCurrency]);
 
   const handleChange = (key: string, value: SettingValue) => {
+    // 👈 1. التحقق من صلاحيات المستخدم (RBAC)
+    const user = authService.getCurrentUser();
+    if (user?.Role !== 'Admin' && user?.Role !== 'SuperAdmin') {
+      useUIStore.getState().addToast('غير مصرح لك بتعديل الإعدادات. يتطلب صلاحيات مدير.', 'error');
+      return; // إيقاف العملية
+    }
+
+    // 👈 2. تحذير تغيير العملة الأساسية
+    if (key === 'currency' && value !== settings.currency) {
+      const confirmChange = window.confirm(
+        'تحذير هام: تغيير العملة الأساسية سيؤثر على التقارير المالية التاريخية والأسعار المخزنة. هل أنت متأكد من رغبتك في المتابعة؟'
+      );
+      if (!confirmChange) return; // إيقاف العملية إذا تراجع المستخدم
+    }
+
     setSettings((prev) => ({ ...prev, [key]: value }));
     settingsService.saveSetting(key, value, true);
 
@@ -57,7 +75,7 @@ export default function GeneralTab({ activeTab }: GeneralTabProps = {}) {
           <SettingSelect
             label="الوضع (ليلي/نهاري)"
             value={themeMode}
-            onChange={(val: string) => setThemeMode(val as any)}
+            onChange={(val: string) => setThemeMode(val as 'light' | 'dark' | 'system')}
             options={[
               { value: 'light', label: 'نهاري (Light)' },
               { value: 'dark', label: 'ليلي (Dark)' },
@@ -79,7 +97,7 @@ export default function GeneralTab({ activeTab }: GeneralTabProps = {}) {
       <Accordion title="المنطقة والعملة" defaultOpen={activeTab === 'currency' || !activeTab}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <SettingSelect
-            label="العملة الرئسية"
+            label="العملة الرئيسية"
             value={(settings.currency as string) || currentCurrency || 'YER'}
             onChange={(val: string) => handleChange('currency', val)}
             options={[
