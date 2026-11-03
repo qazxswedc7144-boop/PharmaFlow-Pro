@@ -20,45 +20,47 @@ export const SaleItemRow = React.memo(({
   isLocked: boolean;
   isRecovery: boolean;
 }) => (
-  <motion.div 
+  <motion.div
     initial={{ opacity: 0, x: 20 }}
     animate={{ opacity: 1, x: 0 }}
     exit={{ opacity: 0, x: -20 }}
-    className="flex items-center px-2 py-3 hover:bg-slate-50/50 transition-colors cursor-pointer w-full group relative"
+    className="m-2 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm hover:border-slate-200 transition-colors cursor-pointer w-auto group relative flex flex-col gap-3"
     onClick={() => {
       if (!isLocked && !isRecovery) {
         onClick();
       }
     }}
   >
-    <div className="flex-[2] flex flex-col items-start overflow-hidden pr-1">
-      <span className="text-[11px] font-black text-[#1E4D4D] truncate w-full text-right">{item.name}</span>
-    </div>
-    <div className="flex-1 text-center">
-      <span className={`text-[11px] font-black rounded-md px-1 sm:px-2 py-0.5 ${
-        item.qty < 5 ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-[#1E4D4D]'
-      }`}>
-        {item.qty}
-      </span>
-    </div>
-    <div className="flex-1 text-center text-[11px] font-black text-slate-500">
-      {item.price.toLocaleString()}
-    </div>
-    <div className="flex-1 text-center text-[11px] font-black text-[#1E4D4D]">
-      {(item.sum ?? (item.qty * item.price) ?? 0).toLocaleString()}
-    </div>
-
-    <div className="w-10 flex items-center justify-center shrink-0">
-      <button 
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0 flex-1 flex flex-col items-start">
+        <span className="text-sm font-black text-[#1E4D4D] w-full text-right break-words">{item.name}</span>
+        <span className="mt-1 text-xs font-bold text-slate-500">{item.price.toLocaleString()} / سعر الوحدة</span>
+      </div>
+      <button
         onClick={(e) => {
           e.stopPropagation();
           onDelete(idx);
         }}
-        className="p-1.5 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+        className="w-10 h-10 shrink-0 flex items-center justify-center text-red-600 bg-red-50 hover:bg-red-100 border border-red-100 rounded-xl transition-all"
         title="حذف الصنف"
       >
-        <Trash2 size={15} />
+        <Trash2 size={18} />
       </button>
     </div>
-  </motion.div>
-));
+    <div className="grid grid-cols-2 gap-2">
+      <div className="rounded-xl bg-slate-50 px-3 py-2 flex items-center justify-between gap-2">
+        <span className="text-xs font-bold text-slate-500">الكمية</span>
+        <span className={`text-sm font-black rounded-lg px-3 py-1 ${
+          item.qty < 5 ? 'bg-orange-100 text-orange-600' : 'bg-white text-[#1E4D4D]'
+        }`}>
+          {item.qty}
+        </span>
+      </div>
+      <div className="rounded-xl bg-emerald-50 px-3 py-2 flex items-center justify-between gap-2">
+        <span className="text-xs font-bold text-emerald-700">المجموع</span>
+        <span className="text-sm font-black text-[#1E4D4D]">
+          {(item.sum ?? (item.qty * item.price) ?? 0).toLocaleString()}
+        </span>
+      </div>
+    </div>
+  </motion.div>));
