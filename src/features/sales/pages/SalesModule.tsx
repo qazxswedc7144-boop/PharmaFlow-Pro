@@ -388,7 +388,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
       {/* ITEMS LIST SECTION - ONLY SCROLLABLE AREA */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-white">
         <PullToRefresh onRefresh={async () => { await refreshGlobal(); }} className="flex-1 min-h-0 overflow-y-auto bg-white custom-scrollbar flex flex-col">
-          <div className="sticky top-0 bg-white/95 backdrop-blur-sm z-10 border-b border-slate-100 flex items-center px-2 py-2 w-full shrink-0 flex-nowrap">
+          <div className="hidden">
             <span className="flex-[2] text-[11px] font-black text-slate-400 uppercase tracking-widest text-right">الصنف</span>
             <span className="flex-1 text-[11px] font-black text-slate-400 uppercase tracking-widest text-center">الكمية</span>
             <span className="flex-1 text-[11px] font-black text-slate-400 uppercase tracking-widest text-center">السعر</span>
