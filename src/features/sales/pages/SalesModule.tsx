@@ -5,7 +5,7 @@ import { ItemEntryModal } from '@features/sales/components/ItemEntryModal';
 import PrintMenu from '@/components/shared/PrintMenu';
 import { 
   Plus, CheckCircle2, Package, RotateCcw, ArrowRight,
-  Percent, User
+  Percent, User, Search
 } from 'lucide-react';
 import { useSales } from '@features/sales/hooks/useSales';
 import { motion, AnimatePresence } from 'motion/react';
@@ -205,10 +205,10 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
           </div>
 
           {/* Right side: Payment Toggle (smaller) */}
-          <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 w-[110px] shrink-0">
+          <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 w-[132px] shrink-0">
             <button 
               onClick={() => setHeader({...header, payment_method: 'Cash'})}
-              className={`flex-1 py-1 rounded-md text-[9px] font-black transition-all relative z-10 ${header.payment_method === 'Cash' ? 'text-white' : 'text-slate-400'}`}
+              className={`flex-1 py-2 rounded-lg text-xs font-black transition-all relative z-10 ${header.payment_method === 'Cash' ? 'text-white' : 'text-slate-400'}`}
             >
               {header.payment_method === 'Cash' && (
                 <motion.div layoutId="payment-bg-sale" className="absolute inset-0 bg-[#1E4D4D] rounded-md -z-10 shadow-sm" />
@@ -339,7 +339,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
           <input 
             ref={itemNameInputRef}
             disabled={isLocked || isRecovery}
-            className="w-full h-10 bg-slate-50 border border-slate-100 rounded-lg px-3 text-[6px] font-black text-[#1E4D4D] focus:bg-white focus:ring-1 focus:ring-[#1E4D4D]/20 transition-all outline-none text-right" 
+            className="w-full h-14 bg-slate-50 border border-slate-100 rounded-2xl px-3 text-base font-black text-[#1E4D4D] focus:bg-white focus:ring-1 focus:ring-[#1E4D4D]/20 transition-all outline-none text-right" 
             placeholder="ابحث عن صنف..." 
             value={manualItemName ?? ''} 
             onChange={e => { setManualItemName(e.target.value); setShowSearchDropdown(true); setSelectedIndex(-1); }} 
@@ -347,6 +347,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
             onKeyDown={handleSearchKeyDown}
           />
           
+          <Search size={20} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
           <AnimatePresence>
             {showSearchDropdown && filteredProducts.length > 0 && (
               <motion.div 
@@ -377,10 +378,10 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
         <button 
           disabled={isLocked || isRecovery} 
           onClick={() => setIsDetailModalOpen(true)}
-          className="h-10 px-4 bg-[#10B981] text-white rounded-lg flex items-center gap-1 text-[11px] font-black hover:bg-emerald-600 transition-all shrink-0 shadow-sm"
+          className="h-14 min-w-[104px] px-5 bg-[#10B981] text-white rounded-2xl flex items-center gap-1 text-[11px] font-black hover:bg-emerald-600 transition-all shrink-0 shadow-sm"
         >
-          <Plus size={16} />
-          <span>إضافة</span>
+          <Plus size={21} />
+          <span>إضافة صنف</span>
         </button>
       </div>
 
@@ -421,7 +422,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
       </div>
 
       {/* PERFECTLY ALIGNED STICKY FOOTER SECTION - FIXED AT BOTTOM */}
-      <div className="shrink-0 sticky bottom-0 w-full z-40 bg-white border-t border-gray-200 p-3 shadow-lg space-y-2 pb-[calc(12px+env(safe-area-inset-bottom,0px))] px-4">
+      <div className="shrink-0 sticky bottom-0 w-full z-40 bg-white border-t border-gray-200 p-3 shadow-lg space-y-3 pb-[calc(14px+env(safe-area-inset-bottom,0px))] px-4">
         <div className="flex items-center justify-between flex-nowrap px-2">
           <div className="flex flex-col items-center">
             <span className="text-[11px] font-black text-slate-400 uppercase">الخصم</span>
@@ -432,10 +433,10 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
             <AnimatedNumber value={adjData.otherFees} className="text-[11px] font-black text-slate-600" />
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-[11px] font-black text-slate-400 uppercase">الصافي</span>
+            <span className="text-xs font-black text-slate-500 uppercase">الصافي</span>
             <div className="flex items-baseline gap-1">
-              <AnimatedNumber value={vTotalSum} className="text-[11px] font-black text-[#1E4D4D]" />
-              <span className="text-[11px] font-black text-slate-400">{currency}</span>
+              <AnimatedNumber value={vTotalSum} className="text-xl font-black text-[#1E4D4D]" />
+              <span className="text-sm font-black text-slate-500">{currency}</span>
             </div>
           </div>
         </div>
@@ -444,7 +445,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
           <button 
             type="button"
             onClick={() => setIsAdjustmentsOpen(true)}
-            className="flex-1 h-11 bg-slate-100 text-[#1E4D4D] rounded-xl font-black text-[11px] flex items-center justify-center gap-2 hover:bg-slate-200 active:scale-95 transition-all"
+            className="flex-1 h-14 bg-slate-100 text-[#1E4D4D] rounded-xl font-black text-[11px] flex items-center justify-center gap-2 hover:bg-slate-200 active:scale-95 transition-all"
           >
             <div className="flex items-center -space-x-1 rtl:space-x-reverse text-emerald-600">
               <Percent size={15} />
@@ -456,7 +457,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
             type="button"
             onClick={() => setIsConfirmSaveOpen(true)} 
             disabled={items.length === 0 || isLocked || isDuplicate || isSaving || isRecovery} 
-            className={`flex-[2] h-11 rounded-xl font-black text-[11px] text-white shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${isLocked || isDuplicate || isRecovery ? 'bg-red-500 shadow-red-900/20' : 'bg-[#1E4D4D] shadow-emerald-900/20'} disabled:opacity-50`}
+            className={`flex-[2] h-14 rounded-xl font-black text-sm text-white shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${isLocked || isDuplicate || isRecovery ? 'bg-red-500 shadow-red-900/20' : 'bg-[#1E4D4D] shadow-emerald-900/20'} disabled:opacity-50`}
           >
             {isSaving ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
