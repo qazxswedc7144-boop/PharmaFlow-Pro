@@ -4,7 +4,7 @@ import { db } from '@/core/db';
 import { useUI, useAccounting } from '@/contexts/AppContext';
 import { Card, Button, Modal, Input } from '@/components/shared/SharedUI';
 import { 
-  Users, Search, MoreVertical, Phone, 
+  Users, Search, MoreVertical, Phone, ArrowRight, 
   MapPin, CreditCard, UserPlus, ChevronLeft,
   TrendingUp, TrendingDown, UserCircle, Truck, Building2, BookOpen
 } from 'lucide-react';
@@ -156,6 +156,13 @@ const PartnersModule: React.FC<PartnersModuleProps> = ({ onNavigate, subType, in
       {/* Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#1E4D4D] p-4 rounded-2xl shadow-sm">
         <div className="flex items-center gap-3 min-w-0">
+          <button 
+            onClick={() => onNavigate?.('dashboard')} 
+            className="w-7 h-7 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shrink-0"
+            title="الرجوع للرئيسية"
+          >
+            <ArrowRight size={16} />
+          </button>
           <div className="w-11 h-11 bg-white/10 text-white rounded-xl flex items-center justify-center shrink-0">
             {activeTab === 'SUPPLIERS' ? <Truck size={24} /> : activeTab === 'PARTNERS' ? <Building2 size={24} /> : activeTab === 'ALL' ? <BookOpen size={24} /> : <Users size={24} />}
           </div>
