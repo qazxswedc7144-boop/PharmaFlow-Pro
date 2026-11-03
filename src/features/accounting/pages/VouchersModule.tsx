@@ -157,23 +157,23 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
   }, [history, searchTerm, customers, suppliers]);
 
   return (
-    <div className="p-2 sm:p-4 space-y-6 sm:space-y-8 pb-24 font-cairo bg-[#F8FAFA] min-h-full w-full" dir="rtl">
-      <header className="bg-white p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-sm relative z-20 w-full overflow-hidden">
+    <div className="p-2 sm:p-4 space-y-1 pb-24 font-cairo bg-[#F8FAFA] min-h-full w-full" dir="rtl">
+      <header className="bg-[#1E4D4D] text-white p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-3xl border border-[#1E4D4D] shadow-sm relative z-20 w-full overflow-hidden">
         <div className="flex items-center justify-between gap-3 sm:gap-4 w-full">
           {onNavigate && <BackButton onClick={() => onNavigate('dashboard')} />}
           <div className="flex-1 flex flex-col sm:flex-row items-center justify-center gap-2.5 sm:gap-4 text-center sm:text-right min-w-0 px-2 overflow-hidden">
-            <div className="w-11 h-11 sm:w-13 sm:h-13 bg-[#1E4D4D] text-white rounded-xl sm:rounded-2xl flex items-center justify-center shadow-md shadow-emerald-950/20 font-black shrink-0"><CreditCard size={24} /></div>
+            <div className="w-11 h-11 sm:w-13 sm:h-13 bg-white/10 text-white border border-white/10 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-md shadow-black/10 font-black shrink-0"><CreditCard size={24} /></div>
             <div className="flex flex-col items-center sm:items-start text-center sm:text-right min-w-0 max-w-full">
-              <h2 className="text-lg sm:text-xl md:text-2xl font-black text-[#1E4D4D] tracking-tight leading-snug truncate max-w-full">سندات القبض والصرف</h2>
-              <p className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider truncate max-w-full mt-0.5">Voucher Management System</p>
+              <h2 className="text-lg sm:text-xl md:text-2xl font-black text-white tracking-tight leading-snug truncate max-w-full">سندات القبض والصرف</h2>
+              <p className="text-[10px] sm:text-[11px] font-bold text-white/65 uppercase tracking-wider truncate max-w-full mt-0.5">Voucher Management System</p>
             </div>
           </div>
           <div className="w-10 h-10 sm:w-12 sm:h-12 shrink-0 invisible sm:block" aria-hidden="true" />
         </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-1 bg-white rounded-[40px] p-8 shadow-sm border border-slate-100 space-y-8 h-fit lg:sticky lg:top-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-1">
+        <div className="lg:col-span-1 bg-white rounded-[40px] px-5 sm:px-6 md:px-8 py-5 shadow-sm border border-slate-100 space-y-6 h-fit lg:sticky lg:top-8">
           <div className="flex p-1.5 bg-[#F8FAFA] rounded-3xl border border-slate-100">
             <button onClick={() => { setVType('RECEIPT'); setForm(f => ({...f, partnerId: ''})); setPartnerSearch(''); }} className={`flex-1 py-4 rounded-2xl font-black text-sm transition-all flex items-center justify-center gap-2 ${vType === 'RECEIPT' ? 'bg-emerald-600 text-white shadow-xl' : 'text-slate-400 hover:text-emerald-600'}`}><ArrowDownCircle size={18} />سند قبض</button>
             <button onClick={() => { setVType('PAYMENT'); setForm(f => ({...f, partnerId: ''})); setPartnerSearch(''); }} className={`flex-1 py-4 rounded-2xl font-black text-sm transition-all flex items-center justify-center gap-2 ${vType === 'PAYMENT' ? 'bg-red-500 text-white shadow-xl' : 'text-slate-400 hover:text-red-500'}`}><ArrowUpRight size={18} />سند صرف</button>
@@ -203,7 +203,10 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
             <div className="space-y-1.5"><label className="text-[11px] font-black text-slate-400 uppercase tracking-widest block mr-1">البيان / السبب</label><textarea className="w-full bg-[#F8FAFA] border-2 border-slate-50 rounded-2xl px-5 py-4 font-bold text-slate-700 h-28 focus:outline-none focus:border-[#1E4D4D] transition-all text-[11px]" placeholder="اكتب تفاصيل العملية هنا..." value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} /></div>
           </div>
 
-          <div className="flex gap-3"><button type="button" disabled={loading} onClick={resetForm} className="flex-1 py-5 rounded-[24px] font-black text-sm text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50"><X size={18} />مسح</button><button disabled={loading} onClick={handleSave} className={`flex-[2] py-5 rounded-[24px] font-black text-lg text-white shadow-2xl transition-all active:scale-95 flex items-center justify-center gap-3 ${vType === 'RECEIPT' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100' : 'bg-red-500 hover:bg-red-600 shadow-red-100'} ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>{loading ? 'جاري الحفظ...' : 'حفظ السند وإصدار القيد ✨'}</button></div>
+          <div className="flex flex-row gap-3 items-stretch">
+            <button type="button" disabled={loading} onClick={resetForm} className="flex-1 h-11 rounded-xl font-black text-sm text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all active:scale-95 shadow-md flex items-center justify-center gap-2 disabled:opacity-50"><X size={18} />مسح</button>
+            <button disabled={loading} onClick={handleSave} className={`flex-[2] h-11 rounded-xl font-black text-sm text-white shadow-md transition-all active:scale-95 flex items-center justify-center gap-3 ${vType === 'RECEIPT' ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-100' : 'bg-red-500 hover:bg-red-600 shadow-red-100'} ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}>{loading ? 'جاري الحفظ...' : 'حفظ السند وإصدار القيد ✨'}</button>
+          </div>
         </div>
 
         <div className="lg:col-span-2 bg-white rounded-[40px] p-8 shadow-sm border border-slate-100 overflow-hidden flex flex-col h-full min-h-[600px]">
