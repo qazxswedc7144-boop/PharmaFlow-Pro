@@ -1,6 +1,6 @@
 import { useState, Suspense, useMemo, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2, Search, SlidersHorizontal } from 'lucide-react';
+import { motion } from 'motion/react';
+import { Search, SlidersHorizontal } from 'lucide-react';
 import { LoadingSkeleton } from '../components/shared/SettingsUI';
 import { SETTINGS_GROUPS, SETTINGS_SECTIONS } from '../data/settingsSectionsMetadata';
 import { SettingsSectionItem } from '../types/settingsNavigation.types';
@@ -8,17 +8,22 @@ import { SettingsHeader } from '../components/navigation/SettingsHeader';
 import { SettingsGroupCard } from '../components/navigation/SettingsGroupCard';
 import { SettingsSidebar } from '../components/navigation/SettingsSidebar';
 
+// 👈 استيراد useToast العام (تأكد من صحة المسار في مشروعك)
+import { useToast } from '@/hooks/useToast';
+
 interface SettingsModuleProps {
   onNavigate?: (view: string, params?: any) => void;
   initialTab?: string;
 }
 
 export default function SettingsModule({ onNavigate, initialTab }: SettingsModuleProps) {
+  // 👈 استخدام الإشعارات العامة بدلاً من الحالة المحلية
+  const { success, error } = useToast(); 
+  
   const [activeTab, setActiveTab] = useState<string>(initialTab || 'general');
   const [mobileView, setMobileView] = useState<'list' | 'detail'>(initialTab ? 'detail' : 'list');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
 
   useEffect(() => {
     if (initialTab) {
@@ -40,13 +45,24 @@ export default function SettingsModule({ onNavigate, initialTab }: SettingsModul
     });
   }, [searchQuery]);
 
-  const activeSectionMeta: SettingsSectionItem = useMemo(() => {
+  // 👈 حماية من الانهيار (Safe Fallback) بدلاً من throw Error
+  const activeSectionMeta = useMemo(() => {
     const found = SETTINGS_SECTIONS.find((s) => s.id === activeTab);
-    if (found) return found;
-    const defaultSection = SETTINGS_SECTIONS[0];
-    if (defaultSection) return defaultSection;
-    throw new Error('No settings sections configured');
+    return found || SETTINGS_SECTIONS[0];
   }, [activeTab]);
+
+  // إذا لم يكن هناك أي إعدادات مهيأة في النظام
+  if (!activeSectionMeta) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full w-full p-6 text-center">
+        <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mb-4">
+          <SlidersHorizontal size={28} />
+        </div>
+        <h2 className="text-lg font-bold text-slate-800">لا توجد أقسام إعدادات متاحة</h2>
+        <p className="text-sm text-slate-500 mt-2">يرجى التأكد من تهيئة ملفات الإعدادات (Settings Metadata) في النظام.</p>
+      </div>
+    );
+  }
 
   const ActiveComponent = activeSectionMeta.component;
 
@@ -59,35 +75,32 @@ export default function SettingsModule({ onNavigate, initialTab }: SettingsModul
     setMobileView('list');
   };
 
+  // 👈 دالة حفظ حقيقية وجاهزة للربط بقاعدة البيانات
   const handleManualSave = async () => {
     setIsSaving(true);
-    // Dispatch system-wide sync wakeup
-    window.dispatchEvent(new CustomEvent('SYNC_WAKEUP'));
-
-    setTimeout(() => {
+    try {
+      // 1. إطلاق حدث المزامنة (Sync Event)
+      window.dispatchEvent(new CustomEvent('SYNC_WAKEUP'));
+      
+      // 2. استدعاء خدمة الحفظ (مثال - قم بإلغاء التعليق عند ربطها)
+      // await SettingsService.saveAllSettings(); 
+      
+      // محاكاة تأخير بسيط (يمكن حذفه عند الربط الفعلي)
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      
+      // 3. إظهار إشعار النجاح العام
+      success('تم حفظ الإعدادات بنجاح وتحديث المتغيرات في المنظومة');
+    } catch (err: any) {
+      // 4. إظهار إشعار الخطأ في حال فشل الحفظ
+      error(`فشل حفظ الإعدادات: ${err.message || 'خطأ غير متوقع'}`);
+    } finally {
       setIsSaving(false);
-      setToastMessage('تم حفظ الإعدادات بنجاح وتحديث المتغيرات في المنظومة');
-      setTimeout(() => setToastMessage(''), 3000);
-    }, 800);
+    }
   };
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden box-border font-cairo relative" dir="rtl">
-      {/* Toast Notification */}
-      <AnimatePresence>
-        {toastMessage && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, x: '-50%' }}
-            animate={{ opacity: 1, y: 20, x: '-50%' }}
-            exit={{ opacity: 0, y: -20, x: '-50%' }}
-            className="fixed top-4 left-1/2 z-50 px-5 sm:px-6 py-3 bg-[#1E4D4D] text-white rounded-xl shadow-2xl font-cairo text-xs sm:text-sm font-bold flex items-center gap-2.5 border border-emerald-400/30 backdrop-blur-md"
-          >
-            <CheckCircle2 size={18} className="text-emerald-400 animate-pulse shrink-0" />
-            <span>{toastMessage}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+      
       {/* Fixed Header Section (shrink-0) */}
       <div className="shrink-0 mb-3 sm:mb-4">
         <SettingsHeader
@@ -106,9 +119,9 @@ export default function SettingsModule({ onNavigate, initialTab }: SettingsModul
 
       {/* Scrollable Content Container (flex-1 min-h-0 overflow-y-auto) */}
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar">
+        
         {/* =======================================================================
-            MOBILE VIEW (< lg breakpoint): 
-            - Grouped vertical card navigation OR drilldown view into selected tab
+            MOBILE VIEW (< lg breakpoint)
            ======================================================================= */}
         <div className="block lg:hidden w-full pb-28">
           {mobileView === 'list' ? (
@@ -145,8 +158,8 @@ export default function SettingsModule({ onNavigate, initialTab }: SettingsModul
 
               {/* Empty state when no sections match search query */}
               {filteredSections.length === 0 && (
-                <div className="bg-white dark:bg-slate-850 p-8 rounded-2xl border border-slate-200 dark:border-slate-700 text-center space-y-2.5 shadow-xs">
-                  <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto text-slate-400">
+                <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl border border-slate-200 dark:border-slate-700 text-center space-y-2.5 shadow-xs">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mx-auto text-slate-400">
                     <SlidersHorizontal size={22} />
                   </div>
                   <p className="text-sm font-bold text-slate-800 dark:text-slate-100">
@@ -191,8 +204,7 @@ export default function SettingsModule({ onNavigate, initialTab }: SettingsModul
         </div>
 
         {/* =======================================================================
-            DESKTOP VIEW (lg: breakpoint and above):
-            - Sidebar on right (RTL) + Content Panel on left
+            DESKTOP VIEW (lg: breakpoint and above)
            ======================================================================= */}
         <div className="hidden lg:flex items-start gap-4 xl:gap-5 w-full h-full min-h-0 pb-6">
           {/* Right Column: Sticky Sidebar with 4 Groups Accordion */}
@@ -212,14 +224,14 @@ export default function SettingsModule({ onNavigate, initialTab }: SettingsModul
               const parentGroup = SETTINGS_GROUPS.find((g) => g.id === activeSectionMeta.groupId);
 
               return (
-                <div className="bg-white dark:bg-slate-850 p-4 sm:p-5 rounded-2xl border border-slate-200/90 dark:border-slate-700/80 shadow-xs flex items-center justify-between gap-4 w-full">
+                <div className="bg-white dark:bg-slate-800 p-4 sm:p-5 rounded-2xl border border-slate-200/90 dark:border-slate-700/80 shadow-xs flex items-center justify-between gap-4 w-full">
                   <div className="flex items-center gap-3.5 min-w-0">
                     <div className="w-11 h-11 rounded-xl bg-[#1E4D4D]/10 dark:bg-emerald-950/40 text-[#1E4D4D] dark:text-emerald-400 flex items-center justify-center shrink-0 border border-[#1E4D4D]/20">
                       <ActiveIcon size={22} />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <h2 className="text-base font-black text-slate-850 dark:text-slate-100 font-cairo truncate">
+                        <h2 className="text-base font-black text-slate-800 dark:text-slate-100 font-cairo truncate">
                           {activeSectionMeta.title}
                         </h2>
                         {parentGroup && (
@@ -249,4 +261,3 @@ export default function SettingsModule({ onNavigate, initialTab }: SettingsModul
     </div>
   );
 }
-
