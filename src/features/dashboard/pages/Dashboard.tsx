@@ -24,7 +24,7 @@ import {
 } from 'recharts';
 
 const StatMiniCard = React.memo(({ label, value, icon, color, unit, trend }: { label: string, value: string | number, icon: React.ReactNode, color: string, unit?: string, trend?: string }) => (
-  <Card className={`flex flex-col justify-between h-40 border-b-4 ${color} group hover:shadow-2xl transition-all !p-6 bg-white dark:bg-slate-800 relative overflow-hidden !rounded-[32px]`}>
+  <Card className={`flex flex-col justify-between min-h-36 sm:min-h-40 border-b-4 ${color} group hover:shadow-2xl transition-all !p-4 sm:!p-6 bg-white dark:bg-slate-800 relative overflow-hidden !rounded-[26px]`}>
     <div className="flex justify-between items-start relative z-10">
         <div className="space-y-1">
             <p className="text-[11px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-[2px] opacity-80">{label}</p>
@@ -137,7 +137,7 @@ const Dashboard: React.FC<{ lang?: 'ar', onNavigate?: (view: any, params?: any) 
   return (
     <div className="min-h-full h-full flex flex-col bg-[#F8FAFA] font-cairo overflow-hidden w-full relative" dir="rtl">
       {/* Modern Centered Branding Header */}
-      <div className="mt-[5px] px-6 sm:px-10 py-5 sm:py-12 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 flex flex-col items-center justify-center gap-4 sm:gap-8 shrink-0 z-20 shadow-sm relative overflow-hidden w-full">
+      <div className="mt-1 px-4 sm:px-10 py-5 sm:py-8 bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 flex flex-col items-center justify-center gap-4 sm:gap-8 shrink-0 z-20 shadow-sm relative overflow-hidden w-full">
         {/* Decorative background elements */}
         <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-50 dark:bg-emerald-900/20 rounded-full blur-3xl opacity-20 -mr-32 -mt-32"></div>
         <div className="absolute bottom-0 left-0 w-64 h-64 bg-slate-50 dark:bg-slate-900/20 rounded-full blur-3xl opacity-20 -ml-32 -mb-32"></div>
@@ -149,7 +149,7 @@ const Dashboard: React.FC<{ lang?: 'ar', onNavigate?: (view: any, params?: any) 
             transition={{ delay: 0.2, duration: 0.5 }}
             className="space-y-1"
           >
-            <h2 className="text-3xl font-black text-[#1E4D4D] dark:text-emerald-400 tracking-tight">أهلاً بك، {user?.User_Name}</h2>
+            <h2 className="text-2xl sm:text-3xl font-black text-[#1E4D4D] dark:text-emerald-400 tracking-tight">أهلاً بك، {user?.User_Name}</h2>
             <div className="flex items-center justify-center gap-2 mt-2">
               <div className="flex items-center gap-1.5 px-4 py-1.5 bg-slate-50 dark:bg-slate-900 rounded-full border border-slate-100 dark:border-slate-700 shadow-sm">
                 <Calendar size={14} className="text-slate-400 dark:text-slate-500" />
@@ -173,16 +173,16 @@ const Dashboard: React.FC<{ lang?: 'ar', onNavigate?: (view: any, params?: any) 
         </div>
       </div>
 
-      <main className="flex-1 overflow-y-auto pt-[5px] pb-[5px] px-4 sm:p-10 space-y-[5px] custom-scrollbar">
+      <main className="flex-1 overflow-y-auto pt-4 pb-6 px-4 sm:p-10 space-y-4 custom-scrollbar">
         
         {/* 1. Main Action Cards - Top Priority */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-[5px] sm:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-5">
           <motion.button 
             whileHover={{ y: -2 }}
             onClick={() => onNavigate?.('sales')}
-            className="group h-24 bg-gradient-to-br from-[#10B981] to-[#059669] text-white p-4 rounded-[24px] flex items-center gap-4 text-right transition-all shadow-lg shadow-emerald-900/10 relative overflow-hidden"
+            className="group min-h-28 sm:min-h-32 bg-gradient-to-br from-[#10B981] to-[#059669] text-white p-5 sm:p-6 rounded-[26px] flex items-center gap-4 text-right transition-all shadow-lg shadow-emerald-900/10 relative overflow-hidden"
           >
-            <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md shrink-0">
+            <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md shrink-0">
               <ShoppingCart size={24} />
             </div>
             <div>
@@ -195,7 +195,7 @@ const Dashboard: React.FC<{ lang?: 'ar', onNavigate?: (view: any, params?: any) 
           <motion.button 
             whileHover={{ y: -2 }}
             onClick={() => onNavigate?.('purchases')}
-            className="group h-24 bg-gradient-to-br from-[#1E4D4D] to-[#0f2a2a] text-white p-4 rounded-[24px] flex items-center gap-4 text-right transition-all shadow-lg shadow-emerald-900/10 relative overflow-hidden"
+            className="group min-h-28 sm:min-h-32 bg-gradient-to-br from-[#1E4D4D] to-[#0f2a2a] text-white p-5 sm:p-6 rounded-[26px] flex items-center gap-4 text-right transition-all shadow-lg shadow-emerald-900/10 relative overflow-hidden"
           >
             <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md shrink-0">
               <PackagePlus size={24} />
@@ -209,7 +209,7 @@ const Dashboard: React.FC<{ lang?: 'ar', onNavigate?: (view: any, params?: any) 
         </div>
 
         {/* Quick Access Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-[5px] sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
           <QuickActionBtn icon={<PackageIcon size={24} />} label="المخزون" onClick={() => onNavigate?.('inventory')} color="bg-purple-500" />
           
           <div className="relative h-full">
@@ -228,7 +228,7 @@ const Dashboard: React.FC<{ lang?: 'ar', onNavigate?: (view: any, params?: any) 
         </div>
 
         {/* 2. Primary Stats Row - Realtime Metrics */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-[5px] sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <StatMiniCard label="السيولة الصندوقية" value={metrics.cash} icon={<Wallet2 size={24} />} color="border-[#1E4D4D]" unit={currency} trend="لحظي" />
           <StatMiniCard label="إيرادات المبيعات" value={metrics.revenue} icon={<DollarSign size={24} />} color="border-emerald-500" unit={currency} trend="مباشر" />
           <StatMiniCard label="صافي الربح" value={metrics.netProfit} icon={<Activity size={24} />} color="border-purple-500" unit={currency} />
@@ -244,7 +244,7 @@ const Dashboard: React.FC<{ lang?: 'ar', onNavigate?: (view: any, params?: any) 
         </div>
 
         {/* Bento Grid Layout - Distribution and AI */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-[5px] lg:gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-8">
           {/* Side Bento Column */}
           <div className="lg:col-span-4 space-y-4">
             <Card className="!p-4 !rounded-[24px] bg-white border border-slate-100 shadow-sm h-full flex flex-col justify-between">
@@ -302,7 +302,7 @@ const Dashboard: React.FC<{ lang?: 'ar', onNavigate?: (view: any, params?: any) 
         </div>
 
         {/* Charts and Lists Bento */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-[5px] lg:gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-8">
           
           {/* Sales Trend */}
           <Card className="lg:col-span-8 !p-6 !rounded-[32px] bg-white border border-slate-100 shadow-sm">
@@ -401,12 +401,12 @@ const QuickActionBtn = ({ icon, label, onClick, color }: { icon: React.ReactNode
     whileHover={{ scale: 1.02, y: -2 }}
     whileTap={{ scale: 0.98 }}
     onClick={onClick}
-    className="flex flex-col items-center justify-center gap-2 p-4 bg-white border border-slate-100 rounded-[24px] shadow-sm hover:shadow-md transition-all group h-full w-full"
+    className="flex flex-col items-center justify-center gap-3 p-4 sm:p-5 bg-white border border-slate-100 rounded-[24px] shadow-md hover:shadow-lg hover:shadow-md transition-all group h-full w-full"
   >
-    <div className={`w-12 h-12 ${color} text-white rounded-2xl flex items-center justify-center shadow-md group-hover:rotate-3 transition-transform`}>
+    <div className={`w-14 h-14 ${color} text-white rounded-2xl flex items-center justify-center shadow-md group-hover:rotate-3 transition-transform`}>
       {icon}
     </div>
-    <span className="text-[11px] font-black text-[#1E4D4D] uppercase tracking-widest text-center">{label}</span>
+    <span className="text-xs font-black text-[#1E4D4D] tracking-wide text-center">{label}</span>
   </motion.button>
 );
 
