@@ -2,61 +2,107 @@ import { useState, useEffect } from 'react';
 import { SettingsCard, Accordion, SettingInput, SettingToggle, SettingSelect } from '../shared/SettingsUI';
 import { Building2, Printer, Download, Image as ImageIcon } from 'lucide-react';
 import { settingsService, type SettingValue } from '../../data/SettingsService';
+import { authService } from '@features/auth/services/authService'; // 👈 للتحقق من الصلاحيات
+import { useUIStore } from '../../../../store/useUIStore'; // 👈 للإشعارات
 
 export default function PharmacyTab() {
   const [settings, setSettings] = useState<Record<string, SettingValue>>({});
 
   useEffect(() => {
     settingsService.getSettingsGroup([
-      'pharmacy_name', 'pharmacy_logo', 'pharmacy_address', 'pharmacy_phone', 
+      'pharmacy_name', 'pharmacy_logo', 'pharmacy_icon', 'pharmacy_address', 'pharmacy_phone', 
       'tax_number', 'commercial_record', 'invoice_qr', 'print_paper_size',
       'print_margin', 'print_copies', 'print_logo', 'invoice_footer'
     ]).then(setSettings);
   }, []);
 
-  const handleChange = (key: string, value: SettingValue) => {
+  const handleChange = async (key: string, value: SettingValue) => {
+    // 👈 1. التحقق من صلاحيات المستخدم (RBAC)
+    const user = authService.getCurrentUser();
+    if (user?.Role !== 'Admin' && user?.Role !== 'SuperAdmin') {
+      useUIStore.getState().addToast('غير مصرح لك بتعديل الإعدادات. يتطلب صلاحيات مدير.', 'error');
+      return;
+    }
+
     setSettings((prev) => ({ ...prev, [key]: value }));
-    settingsService.saveSetting(key, value, true);
+    
+    try {
+      await settingsService.saveSetting(key, value, true);
+    } catch (err) {
+      useUIStore.getState().addToast('فشل حفظ الإعداد، يرجى المحاولة مرة أخرى', 'error');
+    }
   };
+
+  // 👈 2. دالة مساعدة لمعالجة رفع الصور (تحويلها إلى Base64 لحفظها في Dexie)
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, key: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      handleChange(key, reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // استخراج مسارات الصور من الإعدادات (إذا وجدت) أو استخدام الافتراضية
+  const logoSrc = (settings.pharmacy_logo as string) || '/pharmaflow_logo.jpg';
+  const iconSrc = (settings.pharmacy_icon as string) || '/pharmaflow_icon.jpg';
 
   return (
     <div className="space-y-6">
       <SettingsCard title="شعار وأيقونة الهوية الموحدة" description="معاينة وتحميل الشعار والأيقونة الرسمية مباشرة للطباعة والوثائق والتطبيقات" icon={ImageIcon}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* الشعار (Logo) */}
           <div className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
             <div className="w-16 h-16 rounded-2xl overflow-hidden border-2 border-[#1E4D4D]/20 shadow-sm bg-white shrink-0 p-1">
-              <img src="/pharmaflow_logo.jpg" alt="PharmaFlow Logo" className="w-full h-full object-cover rounded-xl" />
+              <img src={logoSrc} alt="PharmaFlow Logo" className="w-full h-full object-cover rounded-xl" />
             </div>
             <div className="flex-1 min-w-0">
-              <h4 className="font-bold text-slate-800 dark:text-slate-100 text-xs sm:text-sm truncate">شعار PharmaFlow (Logo)</h4>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">pharmaflow_logo.jpg</p>
+              <h4 className="font-bold text-slate-800 dark:text-slate-100 text-xs sm:text-sm truncate">شعار الصيدلية (Logo)</h4>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">يظهر في الفواتير والتقارير</p>
             </div>
-            <a
-              href="/pharmaflow_logo.jpg"
-              download="pharmaflow_logo.jpg"
-              className="flex items-center gap-1.5 px-3 py-2 bg-[#1E4D4D] text-white hover:bg-[#153737] rounded-xl text-xs font-bold transition-all shadow-sm shrink-0"
-            >
-              <Download size={14} />
-              <span>تحميل</span>
-            </a>
+            <div className="flex flex-col gap-2 shrink-0">
+              <label className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg text-[10px] font-bold cursor-pointer transition-all shadow-sm">
+                <ImageIcon size={12} />
+                <span>تغيير</span>
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, 'pharmacy_logo')} />
+              </label>
+              <a
+                href={logoSrc}
+                download="pharmacy_logo.jpg"
+                className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 rounded-lg text-[10px] font-bold transition-all shadow-sm"
+              >
+                <Download size={12} />
+                <span>تحميل</span>
+              </a>
+            </div>
           </div>
 
+          {/* الأيقونة (Icon) */}
           <div className="flex items-center gap-4 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700">
             <div className="w-16 h-16 rounded-2xl overflow-hidden border-2 border-[#1E4D4D]/20 shadow-sm bg-white shrink-0 p-1">
-              <img src="/pharmaflow_icon.jpg" alt="PharmaFlow Icon" className="w-full h-full object-cover rounded-xl" />
+              <img src={iconSrc} alt="PharmaFlow Icon" className="w-full h-full object-cover rounded-xl" />
             </div>
             <div className="flex-1 min-w-0">
-              <h4 className="font-bold text-slate-800 dark:text-slate-100 text-xs sm:text-sm truncate">أيقونة PharmaFlow (Icon)</h4>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">pharmaflow_icon.jpg</p>
+              <h4 className="font-bold text-slate-800 dark:text-slate-100 text-xs sm:text-sm truncate">أيقونة النظام (Icon)</h4>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">تظهر كأيقونة للتطبيق</p>
             </div>
-            <a
-              href="/pharmaflow_icon.jpg"
-              download="pharmaflow_icon.jpg"
-              className="flex items-center gap-1.5 px-3 py-2 bg-[#1E4D4D] text-white hover:bg-[#153737] rounded-xl text-xs font-bold transition-all shadow-sm shrink-0"
-            >
-              <Download size={14} />
-              <span>تحميل</span>
-            </a>
+            <div className="flex flex-col gap-2 shrink-0">
+              <label className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg text-[10px] font-bold cursor-pointer transition-all shadow-sm">
+                <ImageIcon size={12} />
+                <span>تغيير</span>
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, 'pharmacy_icon')} />
+              </label>
+              <a
+                href={iconSrc}
+                download="pharmacy_icon.jpg"
+                className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-slate-200 text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 rounded-lg text-[10px] font-bold transition-all shadow-sm"
+              >
+                <Download size={12} />
+                <span>تحميل</span>
+              </a>
+            </div>
           </div>
         </div>
       </SettingsCard>
