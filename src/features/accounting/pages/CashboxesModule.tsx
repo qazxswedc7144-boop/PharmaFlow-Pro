@@ -61,7 +61,7 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
     () => accounts.filter(a => a.type === 'EQUITY' && a.isActive !== false),
     [accounts]
   );
-  const accountById = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts]);
+  const accountById = useMemo(() => new Map<string, Account>(accounts.map(a => [a.id, a] as const)), [accounts]);
 
   const openCreate = () => {
     setError('');
@@ -97,6 +97,7 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
     try {
       if (!createForm.name.trim()) throw new Error('اسم الصندوق مطلوب.');
       if (!tenantId || !branchId) throw new Error('تعذر تحديد المؤسسة والفرع من الجلسة الحالية.');
+      if (session.branchId && session.branchId !== branchId) throw new Error('لا يمكن إنشاء صندوق خارج الفرع المحدد في جلسة المستخدم.');
       if (!createForm.accountId) throw new Error('اختر الحساب المحاسبي المرتبط بالصندوق.');
       if (!Number.isFinite(amount) || amount < 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
         throw new Error('الرصيد الافتتاحي يجب أن يكون صفراً أو مبلغاً موجباً بمنزلتين عشريتين.');
