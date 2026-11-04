@@ -147,6 +147,7 @@ export class PharmaFlowDB extends Dexie {
   payments!: Table<any>;
   settlements!: Table<any>;
   cashFlow!: Table<any>;
+  cashboxes!: Table<any, string>;
   priceHistory!: Table<any>;
   inventory!: Table<any>;
   invoiceAdjustments!: Table<any>;
@@ -440,6 +441,13 @@ export class PharmaFlowDB extends Dexie {
     this.version(33).stores({
       users: '&id, username, role, status, branch, createdAt',
       userPermissions: '&id, userId'
+    });
+
+    // Version 34: Cashboxes and optional cash movement/user associations
+    this.version(34).stores({
+      cashboxes: '&id, name, accountId, branchId, isActive',
+      users: '&id, username, role, status, branch, createdAt, cashboxId',
+      cashFlow: '&id, transaction_id, date, type, cashboxId, userId'
     });
 
     // Handle structural integrity and recovery
@@ -1020,6 +1028,20 @@ export class PharmaFlowDB extends Dexie {
         ]).catch((err) => console.warn('[DB] Accounts seed warning:', err));
       }
 
+      // Seed the default cashbox without changing existing user or cash movement records.
+      const cashboxCount = await this.cashboxes.count().catch(() => 0);
+      if (cashboxCount === 0) {
+        const cashAccount = await this.accounts.where('code').equals('101').first().catch(() => undefined);
+        await this.cashboxes.add({
+          id: 'cashbox-main',
+          name: 'الصندوق الرئيسي',
+          ...(cashAccount?.id ? { accountId: cashAccount.id } : {}),
+          branchId: 'MAIN',
+          isActive: true,
+          createdAt: new Date().toISOString()
+        }).catch((err) => console.warn('[DB] Default cashbox seed warning:', err));
+      }
+
       // Seed initial products for offline browsing if products table is empty
       const prodCount = await this.products.count().catch(() => 0);
       if (prodCount === 0) {
@@ -1452,7 +1474,7 @@ export const ALL_SCHEMA_TABLE_NAMES = [
   'auditLogs', 'settings', 'users', 'userPermissions', 'systemSettings', 'medicineBatches', 'exchangeRates',
   'systemBackups', 'branches', 'branchSettings', 'branchInventory', 'branchTransfers',
   'branchTransferItems', 'branchUsers', 'sales', 'purchases', 'categories', 'receipts',
-  'payments', 'settlements', 'cashFlow', 'priceHistory', 'inventory', 'invoiceAdjustments',
+  'payments', 'settlements', 'cashFlow', 'cashboxes', 'priceHistory', 'inventory', 'invoiceAdjustments',
   'systemAlerts', 'financialHealthSnapshots', 'historicalMetrics', 'voucherInvoiceLinks',
   'financialTransactions', 'warehouseStock', 'inventory_layers', 'fifo_consumption_log',
   'itemUsageLog', 'stock_movements', 'inventory_logs', 'Audit_Log', 'Accounting_Periods',
