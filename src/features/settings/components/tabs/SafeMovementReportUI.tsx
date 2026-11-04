@@ -59,7 +59,7 @@ const SafeMovementReportUI: React.FC<SafeMovementReportUIProps> = ({ user, movem
       </header>
 
       <div className="safe-report-no-print rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-        تعرض هذه الشاشة الحركات النقدية المسجلة والمرتبطة بالمستخدم أو الصندوق المحدد.
+        تعرض هذه الشاشة الحركات المسجلة المرتبطة بالمستخدم أو الصندوق. صافي الحركات لا يمثل رصيداً افتتاحياً أو رصيداً محاسبياً معتمداً.
       </div>
 
       <div className="safe-report-no-print grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-4">
