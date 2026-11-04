@@ -62,9 +62,19 @@ export const UsersTab: React.FC = () => {
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // 👈 التصحيح: فحص مرن للصلاحيات (يقبل العربي والإنجليزي)
     const currentUser = authService.getCurrentUser();
-    if (currentUser?.Role !== 'Admin' && currentUser?.Role !== 'SuperAdmin') {
-      useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين', 'error');
+    const userRole = (currentUser?.Role || currentUser?.User_Role || '').toLowerCase();
+    
+    const isAuthorized = 
+      userRole.includes('admin') || 
+      userRole.includes('superadmin') || 
+      userRole.includes('administrator') ||
+      userRole.includes('مدير');
+
+    if (!isAuthorized) {
+      useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين. يتطلب صلاحيات مدير.', 'error');
       return;
     }
 
@@ -147,7 +157,6 @@ export const UsersTab: React.FC = () => {
       {activeSubTab === 'users' ? (
         <div className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200/80 shadow-sm space-y-4 min-h-[400px] flex flex-col">
           
-          {/* الهيدر الداخلي للبطاقة - تم تعديل الترتيب لمنع التداخل */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-4 gap-3">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
@@ -167,10 +176,8 @@ export const UsersTab: React.FC = () => {
             </button>
           </div>
 
-          {/* قائمة المستخدمين أو الحالة الفارغة */}
           <div className="flex-1">
             {users.length === 0 ? (
-              /* بطاقة الحالة الفارغة (Empty State) الممتدة */
               <div className="h-full flex flex-col items-center justify-center py-12 px-4 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 mt-4">
                 <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-sm mb-4 border border-slate-100">
                   <Users className="w-10 h-10 text-slate-300" />
@@ -229,7 +236,6 @@ export const UsersTab: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-3">
-          {/* ... (بقية كود الصلاحيات يظل كما هو) ... */}
           <div className="bg-emerald-800 text-white p-3 rounded-xl flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-2">
               <Shield className="w-5 h-5 text-emerald-200" />
@@ -283,7 +289,6 @@ export const UsersTab: React.FC = () => {
         </div>
       )}
 
-      {/* النافذة المنبثقة Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
           <div className="bg-white w-full max-w-md rounded-2xl p-5 shadow-2xl border border-slate-100 my-auto space-y-4">
