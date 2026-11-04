@@ -90,6 +90,7 @@ export class FinancialHealthService {
     // 5. Generate Insights
     const insights = this.generateInsights(kpis, breakdown);
 
+    const session = getCurrentUserSession();
     // 6. Create Snapshot
     const snapshot: FinancialHealthSnapshot = {
       id: `HEALTH-${Date.now()}`,
@@ -97,7 +98,8 @@ export class FinancialHealthService {
       score,
       metrics: kpis,
       breakdown,
-      insights
+      insights,
+      tenantId: session.tenantId
     };
 
     // Save snapshot (one per day usually, but we'll save this one)
@@ -167,7 +169,8 @@ export class FinancialHealthService {
   }
 
   private static async detectRisks(kpis: HealthKPIs, sales: Sale[], purchases: Purchase[], products: Product[]) {
-    const alerts: SystemAlert[] = [];
+    const session = getCurrentUserSession();
+    const alerts: (SystemAlert & { tenantId?: string })[] = [];
     const now = new Date().toISOString();
 
     // 1. AR > 40% of total sales (Last 30 days)
@@ -184,7 +187,8 @@ export class FinancialHealthService {
         severity: 'HIGH',
         message: 'تحذير: ذمم العملاء تجاوزت 40% من إجمالي المبيعات. خطر في السيولة.',
         timestamp: now,
-        isRead: false
+        isRead: false,
+        tenantId: session.tenantId
       });
     }
 
@@ -204,7 +208,8 @@ export class FinancialHealthService {
         severity: 'MEDIUM',
         message: 'تنبيه: توجد فواتير مشتريات متأخرة السداد لأكثر من 30 يوماً.',
         timestamp: now,
-        isRead: false
+        isRead: false,
+        tenantId: session.tenantId
       });
     }
 
@@ -216,7 +221,8 @@ export class FinancialHealthService {
         severity: 'CRITICAL',
         message: 'حرج: رصيد الصندوق سالب! يرجى مراجعة العمليات المالية فوراً.',
         timestamp: now,
-        isRead: false
+        isRead: false,
+        tenantId: session.tenantId
       });
     }
 
@@ -241,7 +247,8 @@ export class FinancialHealthService {
         severity: 'MEDIUM',
         message: `تنبيه: يوجد ${stagnantProducts.length} أصناف راكدة لم يتم بيعها منذ 90 يوماً.`,
         timestamp: now,
-        isRead: false
+        isRead: false,
+        tenantId: session.tenantId
       });
     }
 
@@ -255,12 +262,18 @@ export class FinancialHealthService {
         severity: 'HIGH',
         message: 'تحذير: هامش الربح الصافي أقل من 5%. كفاءة التشغيل منخفضة.',
         timestamp: now,
-        isRead: false
+        isRead: false,
+        tenantId: session.tenantId
       });
     }
 
+    if (!session.tenantId) return;
+
     // Save alerts (only if not already present and unread to avoid flooding)
-    const existingAlerts = await db.systemAlerts.where('isRead').equals(0).toArray();
+    const existingAlerts = await db.systemAlerts
+      .where('tenantId').equals(session.tenantId)
+      .and(a => a.isRead === 0)
+      .toArray();
     
     for (const alert of alerts) {
       const isDuplicate = existingAlerts.some(a => a.message === alert.message && a.severity === alert.severity);
@@ -272,8 +285,8 @@ export class FinancialHealthService {
           // We don't call addAlert here to avoid recursion, but we trigger the threshold check
           const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
           const criticalCount = await db.systemAlerts
-            .where('timestamp').above(oneDayAgo)
-            .filter(a => a.severity === 'CRITICAL')
+            .where('tenantId').equals(session.tenantId)
+            .filter(a => a.severity === 'CRITICAL' && a.timestamp > oneDayAgo)
             .count();
             
           if (criticalCount >= 10) {
@@ -338,13 +351,24 @@ export class FinancialHealthService {
   static async getLatestSnapshot(): Promise<FinancialHealthSnapshot | undefined> {
     const { tenantId } = getCurrentUserSession();
     if (!tenantId) return undefined;
-    return await db.financialHealthSnapshots
+    
+    // Explicit ordering by date and filtering by tenant
+    const snapshots = await db.financialHealthSnapshots
       .where('tenantId').equals(tenantId)
-      .reverse()
-      .first();
+      .toArray();
+    
+    if (snapshots.length === 0) return undefined;
+    
+    // Manual sort and take last as a fallback if reverse().first() is flaky in fake-indexeddb
+    return snapshots.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
   }
 
   static async getActiveAlerts(): Promise<SystemAlert[]> {
-    return await db.systemAlerts.where('isRead').equals(0).toArray();
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await db.systemAlerts
+      .where('tenantId').equals(tenantId)
+      .filter(a => a.isRead === 0)
+      .toArray();
   }
 }

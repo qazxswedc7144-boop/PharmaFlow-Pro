@@ -1,4 +1,4 @@
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { AccountingEntry, JournalLine } from '@/types';
 import { PeriodLockEngine } from '@/services/transactions/PeriodLockEngine';
@@ -41,8 +41,16 @@ export class CashboxTransferWorkflow {
     if (!input.date || Number.isNaN(new Date(input.date).getTime())) {
       throw new Error('تاريخ التحويل غير صالح.');
     }
-    if (!input.tenantId || !input.branchId || !input.transactionUuid?.trim()) {
-      throw new Error('سياق المؤسسة والفرع ومعرّف العملية مطلوب لضمان العزل ومنع التكرار.');
+    const session = getCurrentUserSession();
+    if (!session.tenantId || !session.branchId) {
+      throw new Error('فشلت العملية: لا توجد جلسة مستخدم نشطة أو صلاحيات كافية.');
+    }
+    if (input.tenantId !== session.tenantId || input.branchId !== session.branchId) {
+      console.error('[SECURITY] Cashbox transfer attempt with mismatched session context:', { input, session });
+      throw new Error('خطأ أمني: سياق المؤسسة أو الفرع غير مطابق للجلسة النشطة.');
+    }
+    if (!input.transactionUuid?.trim()) {
+      throw new Error('معرّف العملية مطلوب لضمان العزل ومنع التكرار.');
     }
 
     await PeriodLockEngine.validateOperation(input.date, 'التحويل بين الصناديق');

@@ -84,9 +84,13 @@ export const UsersTab: React.FC = () => {
         return;
       }
 
-      db.userPermissions.where('userId').equals(selectedUser.id).first().then((perms) => {
-        setModulesPermissions({ ...EMPTY_PERMISSIONS, ...(perms?.permissions || {}) });
-      });
+      db.userPermissions
+        .where('userId').equals(selectedUser.id)
+        .and(p => p.tenantId === session.tenantId)
+        .first()
+        .then((perms) => {
+          setModulesPermissions({ ...EMPTY_PERMISSIONS, ...(perms?.permissions || {}) });
+        });
     }
   }, [selectedUser]);
 
@@ -163,12 +167,24 @@ export const UsersTab: React.FC = () => {
     }
 
     try {
-      const existing = await db.userPermissions.where('userId').equals(selectedUser.id).first();
-      if (existing) await db.userPermissions.update(existing.id, { permissions: modulesPermissions });
-      else await db.userPermissions.add({ id: Date.now().toString(), userId: selectedUser.id, permissions: modulesPermissions, tenantId: session.tenantId });
+      const existing = await db.userPermissions
+        .where('userId').equals(selectedUser.id)
+        .and(p => p.tenantId === session.tenantId)
+        .first();
+      
+      if (existing) {
+        await db.userPermissions.update(existing.id, { permissions: modulesPermissions });
+      } else {
+        await db.userPermissions.add({ 
+          id: Date.now().toString(), 
+          userId: selectedUser.id, 
+          permissions: modulesPermissions, 
+          tenantId: session.tenantId 
+        });
+      }
       useUIStore.getState().addToast('تم حفظ الصلاحيات بنجاح', 'success');
-    } catch {
-      useUIStore.getState().addToast('فشل حفظ الصلاحيات', 'error');
+    } catch (err: any) {
+      useUIStore.getState().addToast(`فشل حفظ الصلاحيات: ${err.message}`, 'error');
     }
   };
 

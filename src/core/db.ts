@@ -389,23 +389,23 @@ export class PharmaFlowDB extends Dexie {
 
     // Version 27: Phase 8.1 - Offline Multi-Tenant Composite Key Architecture & Data Isolation
     this.version(27).stores({
-      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId, [tenantId+id], [tenantId+barcode], [tenantId+sku], [tenantId+categoryId]',
-      invoices: '&id, invoice_number, invoiceNumber, date, Date, partner_id, partnerId, type, payment_status, financial_status, document_status, is_synced, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoiceNumber], [tenantId+invoice_number], [tenantId+type], [tenantId+branchId], [tenantId+partnerId], [tenantId+partner_id], [type+partner_id], [type+partnerId], [type+invoice_number], [type+invoiceNumber]',
-      sales: '&id, invoice_number, date, Date, InvoiceStatus, hash, SaleID, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoice_number], [tenantId+branchId]',
-      purchases: '&id, invoice_number, date, Date, invoiceStatus, hash, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoice_number], [tenantId+branchId]',
-      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
-      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
-      journalEntries: '&id, date, sourceId, source_id, referenceId, reference_id, partnerId, sourceType, status, createdAt, tenantId, branchId, [tenantId+id], [tenantId+branchId], [tenantId+date]',
-      accounts: '&id, code, name, type, parentId, tenantId, [tenantId+id], [tenantId+code]',
-      syncQueue: '++id, &idempotencyKey, mutationId, syncStatus, tenantId, [tenantId+id], [tenantId+syncStatus], [syncStatus+createdAt], [entityType+createdAt]',
-      outbox: '++id, &mutationId, &idempotencyKey, status, type, tenantId, createdAt, [tenantId+status], [status+createdAt]'
+      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId',
+      invoices: '&id, invoice_number, invoiceNumber, date, Date, partner_id, partnerId, type, payment_status, financial_status, document_status, is_synced, createdAt, transactionUuid, tenantId, branchId',
+      sales: '&id, invoice_number, date, Date, InvoiceStatus, hash, SaleID, createdAt, transactionUuid, tenantId, branchId',
+      purchases: '&id, invoice_number, date, Date, invoiceStatus, hash, createdAt, transactionUuid, tenantId, branchId',
+      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
+      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
+      journalEntries: '&id, date, sourceId, source_id, referenceId, reference_id, partnerId, sourceType, status, createdAt, tenantId, branchId',
+      accounts: '&id, code, name, type, parentId, tenantId',
+      syncQueue: '++id, &idempotencyKey, mutationId, syncStatus, tenantId',
+      outbox: '++id, &mutationId, &idempotencyKey, status, type, tenantId, createdAt'
     });
 
     // Version 28: Defensive Product & Entity Schema Upgrade - Indexing Name, ProductID, Is_Active
     this.version(28).stores({
-      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId, [tenantId+id], [tenantId+barcode], [tenantId+sku], [tenantId+categoryId], [tenantId+name], [tenantId+Name]',
-      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
-      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]'
+      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId',
+      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
+      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId'
     });
 
     // Version 29: Phase 2.3 - Smart Import Alias Learning System Multi-Tenant Schema & Indexes
@@ -456,12 +456,13 @@ export class PharmaFlowDB extends Dexie {
     });
 
     // Version 36: Tenant Isolation Hardening for Cash Flow and Financial Monitoring
+    // Note: We avoid compound indexes on potentially optional fields to prevent DataError in some environments
     this.version(36).stores({
-      cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId, [tenantId+cashboxId], [tenantId+userId]',
-      financialHealthSnapshots: '&id, date, tenantId, [tenantId+date]',
-      systemAlerts: '&id, type, timestamp, isRead, tenantId, [tenantId+type]',
-      accountingPeriods: '&id, Start_Date, End_Date, Is_Locked, start_date, end_date, is_locked, tenantId, [tenantId+is_locked]',
-      vouchers: '&id, voucher_id, type, partner_id, partnerId, date, status, tenantId, branchId, [tenantId+id], [tenantId+type], [tenantId+status]'
+      cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId',
+      financialHealthSnapshots: '&id, date, tenantId',
+      systemAlerts: '&id, type, timestamp, isRead, tenantId',
+      accountingPeriods: '&id, Start_Date, End_Date, Is_Locked, start_date, end_date, is_locked, tenantId',
+      vouchers: '&id, voucher_id, type, partner_id, partnerId, date, status, tenantId, branchId'
     });
 
     // Handle structural integrity and recovery
@@ -486,21 +487,38 @@ export class PharmaFlowDB extends Dexie {
         if (table) {
           table.hook('creating', (_primKey: any, obj: any) => {
             const session = getCurrentUserSession();
+            if (!session.tenantId) {
+              console.error(`[SECURITY] Creation blocked on table '${tableName}': No active tenant session.`);
+              throw new Error("FAIL_CLOSED: Creation forbidden without active tenant session.");
+            }
             if (obj && typeof obj === 'object') {
-              obj.tenantId = obj.tenantId || session.tenantId;
+              // Force tenantId from session to prevent spoofing
+              obj.tenantId = session.tenantId;
               obj.userId = obj.userId || session.userId;
             }
           });
           table.hook('updating', (mods: any, _primKey: any, obj: any) => {
             const session = getCurrentUserSession();
             
+            if (!session.tenantId) {
+              console.error(`[SECURITY] Update blocked on table '${tableName}': No active tenant session.`);
+              throw new Error("FAIL_CLOSED: Update forbidden without active tenant session.");
+            }
+
             // Security: Prevent updating records that don't belong to the current tenant
-            if (obj && obj.tenantId && session.tenantId && obj.tenantId !== session.tenantId) {
-              console.error(`[SECURITY] Cross-tenant update blocked on table '${tableName}' for key:`, _primKey);
-              throw new Error("FAIL_CLOSED: Unauthorized cross-tenant data modification attempt.");
+            // Or updating old records that don't have a tenantId (Orphaned)
+            if (!obj || !obj.tenantId || obj.tenantId !== session.tenantId) {
+              console.error(`[SECURITY] Cross-tenant or orphaned update blocked on table '${tableName}' for key:`, _primKey, "Target Tenant:", obj?.tenantId, "Active Session:", session.tenantId);
+              throw new Error("FAIL_CLOSED: Unauthorized data modification attempt (Cross-tenant or Orphaned).");
             }
 
             if (mods && typeof mods === 'object') {
+              // Prevent changing tenantId via update
+              if (mods.tenantId && mods.tenantId !== obj.tenantId) {
+                console.error(`[SECURITY] Attempt to change tenantId blocked on table '${tableName}'`);
+                throw new Error("FAIL_CLOSED: tenantId modification is strictly forbidden.");
+              }
+
               return {
                 ...mods,
                 tenantId: session.tenantId, // Force tenantId from session
@@ -1748,19 +1766,74 @@ export const dbProxy = new Proxy({} as any, {
       };
     }
 
-    // Safe compatibility wrappers
-    if (prop === 'getAccounts') return async () => dbProxy.accounts.toArray();
-    if (prop === 'getJournalEntries') return async () => dbProxy.journalEntries.toArray();
-    if (prop === 'getAccountingPeriods') return async () => dbProxy.accountingPeriods.toArray();
-    if (prop === 'getCustomers') return async () => dbProxy.customers.toArray();
-    if (prop === 'getSuppliers') return async () => dbProxy.suppliers.toArray();
-    if (prop === 'getProducts') return async () => dbProxy.products.toArray();
-    if (prop === 'getReceipts') return async () => dbProxy.receipts.where('tenantId').equals(getCurrentUserSession().tenantId).toArray();
-    if (prop === 'getPayments') return async () => dbProxy.payments.where('tenantId').equals(getCurrentUserSession().tenantId).toArray();
-    if (prop === 'getTransactions') return async () => dbProxy.invoices.where('tenantId').equals(getCurrentUserSession().tenantId).toArray();
-    if (prop === 'getCurrencies') return async () => dbProxy.getSetting('CURRENCIES', []);
-    if (prop === 'getCashFlow') return async () => dbProxy.cashFlow.toArray();
-    if (prop === 'getMedicineAlerts') return async () => dbProxy.systemAlerts.where('type').equals('STOCK').toArray();
+    // Safe compatibility wrappers with strict tenant isolation (Fail-Closed)
+    // We use the underlying 'target' (dbInstance) to avoid recursion via dbProxy
+    if (prop === 'getAccounts') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.accounts.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getJournalEntries') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.journalEntries.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getAccountingPeriods') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.accountingPeriods.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getCustomers') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.customers.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getSuppliers') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.suppliers.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getProducts') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.products.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getReceipts') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.receipts.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getPayments') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.payments.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getTransactions') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.invoices.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getSales') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.invoices.where('tenantId').equals(session.tenantId).filter((i: any) => i.type === 'SALE').toArray();
+    };
+    if (prop === 'getPurchases') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.invoices.where('tenantId').equals(session.tenantId).filter((i: any) => i.type === 'PURCHASE').toArray();
+    };
+    if (prop === 'getCurrencies') return async () => target.getSetting('CURRENCIES', []);
+    if (prop === 'getCashFlow') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.cashFlow.where('tenantId').equals(session.tenantId).toArray();
+    };
+    if (prop === 'getMedicineAlerts') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return [];
+      return await target.systemAlerts.where('tenantId').equals(session.tenantId).filter((a: any) => a.type === 'STOCK').toArray();
+    };
     if (prop === 'saveMedicineAlert') return async (alert: any) => dbProxy.systemAlerts.add(alert);
     if (prop === 'clearOldAlerts') return async () => dbProxy.systemAlerts.clear();
     if (prop === 'getDailyAuditTask') return async (date: string) => dbProxy.dailyAuditTasks.where('date').equals(date).first();
