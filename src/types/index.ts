@@ -390,6 +390,8 @@ export interface CashFlow extends SyncableEntity {
   amount: number;
   notes?: string;
   branchId: string;
+  userId?: string;
+  cashboxId?: string;
 }
 
 export interface CashLog extends SyncableEntity {
