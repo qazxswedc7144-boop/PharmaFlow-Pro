@@ -17,10 +17,6 @@ interface SafeMovementReportUIProps {
   onBack: () => void;
 }
 
- {
-  user?: { name?: string; username?: string } | null;
-  onBack: () => void;
-}
 
 const formatAmount = (value: number) => new Intl.NumberFormat('en-US', {
   minimumFractionDigits: 2,
