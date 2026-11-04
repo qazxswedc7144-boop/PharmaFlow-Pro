@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Users, UserPlus, ShieldCheck, CheckCircle2, Edit3, Trash2, X, ArrowRight, Shield } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/core/db'; // 👈 تأكد من مسار قاعدة البيانات
-import { authService } from '@features/auth/services/authService'; // 👈 للتحقق من الصلاحيات
-import { useUIStore } from '@/store/useUIStore'; // 👈 للإشعارات
+import { db } from '@/core/db';
+import { authService } from '@features/auth/services/authService';
+import { useUIStore } from '@/store/useUIStore';
 
 export const UsersTab: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<'users' | 'permissions'>('users');
@@ -11,10 +11,8 @@ export const UsersTab: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
 
-  // 👈 1. جلب المستخدمين الحقيقيين من قاعدة البيانات (Reactive)
   const users = useLiveQuery(() => db.users.toArray(), []) || [];
 
-  // 👈 2. نموذج الموظف
   const [formData, setFormData] = useState({
     name: '',
     username: '',
@@ -24,12 +22,10 @@ export const UsersTab: React.FC = () => {
     status: 'active'
   });
 
-  // 👈 3. مصفوفة الصلاحيات (يتم جلبها من قاعدة البيانات للمستخدم المحدد)
   const [modulesPermissions, setModulesPermissions] = useState<Record<string, { read: boolean; add: boolean; edit: boolean; delete: boolean }>>({});
 
   useEffect(() => {
     if (selectedUser) {
-      // جلب الصلاحيات من جدول منفصل أو من كائن المستخدم (سنفترض هنا وجود جدول user_permissions)
       db.userPermissions.where('userId').equals(selectedUser.id).first().then((perms) => {
         if (perms) setModulesPermissions(perms.permissions);
       });
@@ -64,11 +60,8 @@ export const UsersTab: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  // 👈 4. حفظ المستخدم (إضافة أو تعديل) في قاعدة البيانات
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // التحقق من الصلاحيات
     const currentUser = authService.getCurrentUser();
     if (currentUser?.Role !== 'Admin' && currentUser?.Role !== 'SuperAdmin') {
       useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين', 'error');
@@ -77,17 +70,15 @@ export const UsersTab: React.FC = () => {
 
     try {
       if (editingUser) {
-        // تحديث مستخدم موجود
         await db.users.update(editingUser.id, {
           name: formData.name,
           role: formData.role,
           branch: formData.branch,
           status: formData.status,
-          ...(formData.password ? { password: formData.password } : {}) // تحديث كلمة المرور فقط إذا تم إدخالها
+          ...(formData.password ? { password: formData.password } : {})
         });
         useUIStore.getState().addToast('تم تحديث بيانات المستخدم بنجاح', 'success');
       } else {
-        // إضافة مستخدم جديد
         await db.users.add({
           ...formData,
           id: Date.now().toString(),
@@ -101,7 +92,6 @@ export const UsersTab: React.FC = () => {
     }
   };
 
-  // 👈 5. حذف المستخدم
   const handleDeleteUser = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
@@ -114,7 +104,6 @@ export const UsersTab: React.FC = () => {
     }
   };
 
-  // 👈 6. حفظ الصلاحيات
   const handleSavePermissions = async () => {
     if (!selectedUser) return;
     try {
@@ -156,77 +145,102 @@ export const UsersTab: React.FC = () => {
       </div>
 
       {activeSubTab === 'users' ? (
-        <div className="bg-white rounded-xl p-4 border border-slate-200/80 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
-                <Users className="w-4 h-4" />
+        <div className="bg-white rounded-xl p-4 sm:p-6 border border-slate-200/80 shadow-sm space-y-4 min-h-[400px] flex flex-col">
+          
+          {/* الهيدر الداخلي للبطاقة - تم تعديل الترتيب لمنع التداخل */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-100 pb-4 gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                <Users className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-xs font-bold text-slate-800">إدارة مستخدمي الصيدلية</h3>
-                <p className="text-[10px] text-slate-400">انقر على الموظف للتحكم المباشر بصلاحياته</p>
+                <h3 className="text-sm font-bold text-slate-800">إدارة مستخدمي الصيدلية</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">انقر على الموظف للتحكم المباشر بصلاحياته</p>
               </div>
             </div>
             <button
               onClick={handleOpenAddModal}
-              className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shrink-0 shadow-xs"
+              className="py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors shrink-0 shadow-sm self-start sm:self-auto"
             >
-              <UserPlus className="w-3.5 h-3.5" />
+              <UserPlus className="w-4 h-4" />
               <span>إضافة مستخدم</span>
             </button>
           </div>
 
-          <div className="space-y-2">
-            {users.map((u: any) => (
-              <div
-                key={u.id}
-                onClick={() => handleSelectUserPermissions(u)}
-                className="p-3 bg-slate-50/70 hover:bg-emerald-50/40 border border-slate-100 hover:border-emerald-200 rounded-xl flex items-center justify-between cursor-pointer transition-all"
-              >
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-xs shrink-0">
-                    {u.name?.charAt(0) || '؟'}
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-800">{u.name}</h4>
-                    <p className="text-[10px] text-slate-400 font-mono">@{u.username} • {u.branch}</p>
-                  </div>
+          {/* قائمة المستخدمين أو الحالة الفارغة */}
+          <div className="flex-1">
+            {users.length === 0 ? (
+              /* بطاقة الحالة الفارغة (Empty State) الممتدة */
+              <div className="h-full flex flex-col items-center justify-center py-12 px-4 text-center border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50 mt-4">
+                <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-sm mb-4 border border-slate-100">
+                  <Users className="w-10 h-10 text-slate-300" />
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
-                    {u.role}
-                  </span>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                    u.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
-                  }`}>
-                    <CheckCircle2 className="w-2.5 h-2.5" /> {u.status === 'active' ? 'نشط' : 'معطل'}
-                  </span>
-                  <button onClick={(e) => handleOpenEditModal(u, e)} className="p-1.5 text-slate-500 hover:text-emerald-700 rounded-lg hover:bg-emerald-100/50 transition-colors">
-                    <Edit3 className="w-4 h-4" />
-                  </button>
-                  <button onClick={(e) => handleDeleteUser(u.id, e)} className="p-1.5 text-slate-500 hover:text-red-600 rounded-lg hover:bg-red-100/50 transition-colors">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
+                <h3 className="text-base font-bold text-slate-800 mb-1">لا يوجد مستخدمون مسجلون حالياً</h3>
+                <p className="text-xs text-slate-500 max-w-[280px] leading-relaxed mb-6">
+                  لم يتم إضافة أي موظفين للنظام بعد. قم بإضافة مستخدم جديد لمنحه صلاحيات الوصول إلى الصيدلية.
+                </p>
+                <button
+                  onClick={handleOpenAddModal}
+                  className="py-2.5 px-6 bg-[#1E4D4D] hover:bg-emerald-800 text-white text-xs font-bold rounded-xl flex items-center gap-2 transition-colors shadow-sm"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>إضافة أول مستخدم</span>
+                </button>
               </div>
-            ))}
-            {users.length === 0 && (
-              <p className="text-center text-xs text-slate-400 py-4">لا يوجد مستخدمون مسجلون حالياً.</p>
+            ) : (
+              <div className="space-y-2 mt-2">
+                {users.map((u: any) => (
+                  <div
+                    key={u.id}
+                    onClick={() => handleSelectUserPermissions(u)}
+                    className="p-3 bg-slate-50/70 hover:bg-emerald-50/40 border border-slate-100 hover:border-emerald-200 rounded-xl flex items-center justify-between cursor-pointer transition-all"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-emerald-100 text-emerald-800 font-bold flex items-center justify-center text-sm shrink-0">
+                        {u.name?.charAt(0) || '؟'}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-800">{u.name}</h4>
+                        <p className="text-[10px] text-slate-400 font-mono mt-0.5">@{u.username} • {u.branch}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 hidden sm:inline-block">
+                        {u.role}
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                        u.status === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        <CheckCircle2 className="w-2.5 h-2.5" /> {u.status === 'active' ? 'نشط' : 'معطل'}
+                      </span>
+                      <button onClick={(e) => handleOpenEditModal(u, e)} className="p-1.5 text-slate-500 hover:text-emerald-700 rounded-lg hover:bg-emerald-100/50 transition-colors">
+                        <Edit3 className="w-4 h-4" />
+                      </button>
+                      <button onClick={(e) => handleDeleteUser(u.id, e)} className="p-1.5 text-slate-500 hover:text-red-600 rounded-lg hover:bg-red-100/50 transition-colors">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
       ) : (
         <div className="space-y-3">
+          {/* ... (بقية كود الصلاحيات يظل كما هو) ... */}
           <div className="bg-emerald-800 text-white p-3 rounded-xl flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-2">
               <Shield className="w-5 h-5 text-emerald-200" />
-              <h3 className="text-sm font-bold">صلاحيات : {selectedUser?.name}</h3>
+              <h3 className="text-sm font-bold">صلاحيات : {selectedUser?.name || 'اختر مستخدم'}</h3>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={handleSavePermissions} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs font-bold transition-colors">
-                حفظ الصلاحيات
-              </button>
+              {selectedUser && (
+                <button onClick={handleSavePermissions} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-xs font-bold transition-colors">
+                  حفظ الصلاحيات
+                </button>
+              )}
               <button onClick={() => setActiveSubTab('users')} className="p-1 hover:bg-emerald-700 rounded-lg transition-colors text-xs flex items-center gap-1">
                 <span>رجوع</span>
                 <ArrowRight className="w-4 h-4" />
@@ -235,28 +249,36 @@ export const UsersTab: React.FC = () => {
           </div>
 
           <div className="space-y-2.5">
-            {Object.entries(modulesPermissions).map(([moduleName, perms]) => (
-              <div key={moduleName} className="bg-white rounded-xl p-3 border border-slate-200/80 shadow-xs space-y-2.5">
-                <h4 className="text-xs font-bold text-center text-slate-800 border-b border-slate-100 pb-1.5">
-                  {moduleName}
-                </h4>
-                <div className="grid grid-cols-4 gap-1.5 dir-rtl text-center">
-                  {['read', 'add', 'edit', 'delete'].map((action) => (
-                    <label key={action} className="flex flex-col items-center justify-center p-1.5 rounded-lg border border-slate-100 bg-slate-50/50 cursor-pointer hover:bg-emerald-50/30 transition-colors">
-                      <span className="text-[10px] font-bold text-slate-600 mb-1">
-                        {action === 'read' ? 'قراءة' : action === 'add' ? 'إضافة' : action === 'edit' ? 'تعديل' : 'حذف'}
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={(perms as any)[action]}
-                        onChange={() => toggleAction(moduleName, action as any)}
-                        className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
-                      />
-                    </label>
-                  ))}
-                </div>
+            {!selectedUser ? (
+              <div className="text-center py-10 opacity-60">
+                <ShieldCheck className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm font-bold text-slate-500">الرجاء اختيار مستخدم أولاً</p>
+                <p className="text-xs text-slate-400 mt-1">اذهب إلى تبويب "حسابات الموظفين" وانقر على الموظف لعرض صلاحياته.</p>
               </div>
-            ))}
+            ) : (
+              Object.entries(modulesPermissions).map(([moduleName, perms]) => (
+                <div key={moduleName} className="bg-white rounded-xl p-3 border border-slate-200/80 shadow-xs space-y-2.5">
+                  <h4 className="text-xs font-bold text-center text-slate-800 border-b border-slate-100 pb-1.5">
+                    {moduleName}
+                  </h4>
+                  <div className="grid grid-cols-4 gap-1.5 dir-rtl text-center">
+                    {['read', 'add', 'edit', 'delete'].map((action) => (
+                      <label key={action} className="flex flex-col items-center justify-center p-1.5 rounded-lg border border-slate-100 bg-slate-50/50 cursor-pointer hover:bg-emerald-50/30 transition-colors">
+                        <span className="text-[10px] font-bold text-slate-600 mb-1">
+                          {action === 'read' ? 'قراءة' : action === 'add' ? 'إضافة' : action === 'edit' ? 'تعديل' : 'حذف'}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={(perms as any)[action]}
+                          onChange={() => toggleAction(moduleName, action as any)}
+                          className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
