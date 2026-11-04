@@ -22,10 +22,12 @@ export const UsersTab: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
   const users = useLiveQuery(() => db.users.toArray(), []) || [];
+  const cashboxes = useLiveQuery(() => db.cashboxes.toArray(), []) || [];
+  const defaultCashboxId = cashboxes.find((cashbox: any) => cashbox.name === 'الصندوق الرئيسي')?.id || cashboxes[0]?.id || 'cashbox-main';
 
   const [formData, setFormData] = useState({
     name: '', username: '', password: '', role: 'صيدلي مسؤول',
-    branch: 'الفرع الرئيسي', status: 'active'
+    branch: 'الفرع الرئيسي', status: 'active', cashboxId: 'cashbox-main'
   });
   const [modulesPermissions, setModulesPermissions] = useState<Record<string, PermissionSet>>(EMPTY_PERMISSIONS);
 
@@ -51,14 +53,14 @@ export const UsersTab: React.FC = () => {
 
   const handleOpenAddModal = () => {
     setEditingUser(null);
-    setFormData({ name: '', username: '', password: '', role: 'صيدلي مسؤول', branch: 'الفرع الرئيسي', status: 'active' });
+    setFormData({ name: '', username: '', password: '', role: 'صيدلي مسؤول', branch: 'الفرع الرئيسي', status: 'active', cashboxId: defaultCashboxId });
     setIsModalOpen(true);
   };
 
   const handleOpenEditModal = (user: any, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingUser(user);
-    setFormData({ name: user.name || '', username: user.username || '', password: '', role: user.role || 'صيدلي مسؤول', branch: user.branch || 'الفرع الرئيسي', status: user.status || 'active' });
+    setFormData({ name: user.name || '', username: user.username || '', password: '', role: user.role || 'صيدلي مسؤول', branch: user.branch || 'الفرع الرئيسي', status: user.status || 'active', cashboxId: user.cashboxId || defaultCashboxId });
     setIsModalOpen(true);
   };
 
@@ -75,11 +77,12 @@ export const UsersTab: React.FC = () => {
       if (editingUser) {
         await db.users.update(editingUser.id, {
           name: formData.name, role: formData.role, branch: formData.branch,
-          status: formData.status, ...(formData.password ? { password: formData.password } : {})
+          status: formData.status, cashboxId: formData.cashboxId || defaultCashboxId,
+          ...(formData.password ? { password: formData.password } : {})
         });
         useUIStore.getState().addToast('تم تحديث بيانات المستخدم بنجاح', 'success');
       } else {
-        await db.users.add({ ...formData, id: Date.now().toString(), createdAt: new Date().toISOString() });
+        await db.users.add({ ...formData, cashboxId: formData.cashboxId || defaultCashboxId, id: Date.now().toString(), createdAt: new Date().toISOString() });
         useUIStore.getState().addToast('تمت إضافة المستخدم بنجاح', 'success');
       }
       setIsModalOpen(false);
@@ -173,7 +176,7 @@ export const UsersTab: React.FC = () => {
                     </div>
                     <div className="flex min-w-0 items-center gap-2 rounded-xl bg-slate-50 p-2.5">
                       <Wallet className="h-4 w-4 shrink-0 text-slate-400" />
-                      <div className="min-w-0"><p className="text-[10px] text-slate-400">الصندوق المالي</p><p className="truncate text-xs font-bold text-slate-700">غير محدد</p></div>
+                      <div className="min-w-0"><p className="text-[10px] text-slate-400">الصندوق المالي</p><p className="truncate text-xs font-bold text-slate-700">{cashboxes.find((cashbox: any) => cashbox.id === u.cashboxId)?.name || (u.cashboxId === 'cashbox-main' ? 'الصندوق الرئيسي' : 'غير محدد')}</p></div>
                     </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3">
@@ -237,6 +240,7 @@ export const UsersTab: React.FC = () => {
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">الاسم الثلاثي</label><input type="text" required placeholder="الاسم الكامل" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10" /></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">اسم المستخدم</label><input type="text" required disabled={!!editingUser} dir="ltr" placeholder="username" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-left text-sm outline-none transition focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10 disabled:opacity-50" /></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">كلمة السر {editingUser ? '(اتركها فارغة دون تغيير)' : ''}</label><input type="password" required={!editingUser} placeholder="••••••••" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none transition focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10" /></div>
+              <div><label className="mb-1.5 block text-xs font-bold text-slate-700">الصندوق المالي</label><select value={formData.cashboxId || defaultCashboxId} onChange={(e) => setFormData({ ...formData, cashboxId: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#1E4D4D] focus:bg-white">{cashboxes.length === 0 ? <option value="cashbox-main">الصندوق الرئيسي</option> : cashboxes.filter((cashbox: any) => cashbox.isActive !== false).map((cashbox: any) => <option key={cashbox.id} value={cashbox.id}>{cashbox.name}</option>)}</select></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">المسمى الوظيفي</label><select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#1E4D4D] focus:bg-white"><option value="صيدلي مسؤول">صيدلي مسؤول</option><option value="كاشير مبيعات">كاشير مبيعات</option><option value="مدير نظام">مدير نظام</option></select></div>
               <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3.5"><span><span className="block text-sm font-bold text-slate-700">حالة الحساب</span><span className="mt-1 block text-xs text-slate-500">{formData.status === 'active' ? 'الحساب نشط ويمكنه الدخول' : 'الحساب معطل'}</span></span><input type="checkbox" checked={formData.status === 'active'} onChange={(e) => setFormData({ ...formData, status: e.target.checked ? 'active' : 'inactive' })} className="h-5 w-5 accent-emerald-600" /></label>
               <div className="flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row"><button type="submit" className="flex-1 rounded-xl bg-[#1E4D4D] px-4 py-3 text-sm font-extrabold text-white transition hover:bg-[#163d3d]">حفظ البيانات</button><button type="button" onClick={() => setIsModalOpen(false)} className="rounded-xl bg-slate-100 px-5 py-3 text-sm font-bold text-slate-600 transition hover:bg-slate-200">إلغاء</button></div>
