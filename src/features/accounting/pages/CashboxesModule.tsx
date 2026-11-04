@@ -135,8 +135,8 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
             (currentOpeningAccount.branchId && currentOpeningAccount.branchId !== branchId))) {
           throw new Error('حساب الأرصدة الافتتاحية لم يعد صالحاً أو لا يتبع المؤسسة والفرع المحددين.');
         }
-        if (await boxesTable.where('accountId').equals(currentCashAccount.id).first()) {
-          throw new Error('هذا الحساب مرتبط بصندوق آخر بالفعل. اختر حساباً غير مستخدم.');
+        if (await boxesTable.where('accountId').equals(currentCashAccount.id).and((b: any) => b.tenantId === tenantId).first()) {
+          throw new Error('هذا الحساب مرتبط بصندوق آخر بالفعل في هذه المؤسسة. اختر حساباً غير مستخدم.');
         }
         const now = new Date().toISOString();
         const box: Cashbox = {

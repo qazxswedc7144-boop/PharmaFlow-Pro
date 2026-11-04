@@ -53,10 +53,14 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
 
   useEffect(() => {
     const fetchData = async () => {
-      const custs = await db.customers.toArray();
-      const supps = await db.suppliers.toArray();
-      const rcpts = await db.receipts.toArray();
-      const pymnts = await db.payments.toArray();
+      // Use hardened getters instead of direct table access
+      const [custs, supps, rcpts, pymnts] = await Promise.all([
+        db.getCustomers(),
+        db.getSuppliers(),
+        db.getReceipts(),
+        db.getPayments()
+      ]);
+
       setCustomers(custs);
       setSuppliers(supps);
       setHistory([
@@ -129,7 +133,26 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
     }
   };
 
-  // handleDelete removed as it was unused
+  const handleDelete = async (id: string, type: 'RECEIPT' | 'PAYMENT', partnerId: string, amount: number) => {
+    if (!window.confirm('هل أنت متأكد من حذف (إلغاء) هذا السند؟ سيتم عكس جميع القيود المحاسبية وتحديث الأرصدة.')) return;
+    
+    setLoading(true);
+    try {
+      await voucherService.cancelVoucher({
+        id,
+        type,
+        partnerId,
+        amount,
+        reason: 'إلغاء مستخدم'
+      });
+      addToast('تم إلغاء السند وعكس القيود بنجاح', 'success');
+      refreshGlobal();
+    } catch (err: any) {
+      addToast(err.message || 'فشل إلغاء السند', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filteredHistory = useMemo(() => {
     if (!searchTerm.trim()) return history;
@@ -236,7 +259,20 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <p dir="ltr" className={`text-base font-black ${isReceipt ? 'text-emerald-600' : 'text-red-500'}`}>{isReceipt ? '+' : '-'}{h.amount.toLocaleString()} <span className="text-[9px] font-bold opacity-50">{currency}</span></p>
-                    <ChevronLeft size={18} className="text-slate-300 group-hover:text-[#1E4D4D] transition-colors" />
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          const pId = isReceipt ? (h as Receipt).customer_id : (h as Payment).supplier_id;
+                          handleDelete(h.id, isReceipt ? 'RECEIPT' : 'PAYMENT', pId, h.amount); 
+                        }} 
+                        className="p-2 text-rose-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                        title="حذف / إلغاء"
+                      >
+                        <X size={16} />
+                      </button>
+                      <ChevronLeft size={18} className="text-slate-300 group-hover:text-[#1E4D4D] transition-colors" />
+                    </div>
                   </div>
                 </div>
               );

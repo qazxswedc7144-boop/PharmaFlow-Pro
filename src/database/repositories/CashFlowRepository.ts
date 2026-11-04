@@ -29,6 +29,13 @@ export const CashFlowRepository = {
     context?: { userId?: string; cashboxId?: string }
   ) => {
     const session = getCurrentUserSession();
+    const tenantId = session.tenantId;
+    const branchId = session.branchId;
+
+    if (!tenantId || !branchId) {
+      throw new Error("FAIL_CLOSED: Trusted tenant and branch context required for recording cash flow.");
+    }
+
     const userId = context?.userId ?? session.userId;
     const assignedUser = userId
       ? await db.users.get(userId).catch(() => undefined)
@@ -43,7 +50,8 @@ export const CashFlowRepository = {
       name,
       amount,
       notes,
-      branchId: session.branchId || 'MAIN',
+      tenantId,
+      branchId,
       userId,
       cashboxId: context?.cashboxId ?? assignedUser?.cashboxId
     };

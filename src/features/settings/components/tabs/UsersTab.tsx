@@ -35,11 +35,15 @@ export const UsersTab: React.FC = () => {
   }, []) || [];
   const cashMovements = useLiveQuery(async () => {
     if (!selectedUser?.id) return [];
+    const session = getCurrentUserSession();
+    if (!session.tenantId) return [];
+
+    // Filter by tenantId to prevent leakage if indexes exist, otherwise filter in memory
     const [byCashbox, byUser] = await Promise.all([
       selectedUser.cashboxId
-        ? db.cashFlow.where('cashboxId').equals(selectedUser.cashboxId).toArray()
+        ? db.cashFlow.where('cashboxId').equals(selectedUser.cashboxId).filter((c: any) => c.tenantId === session.tenantId).toArray()
         : Promise.resolve([]),
-      db.cashFlow.where('userId').equals(selectedUser.id).toArray()
+      db.cashFlow.where('userId').equals(selectedUser.id).filter((c: any) => c.tenantId === session.tenantId).toArray()
     ]);
     return Array.from(new Map([...byCashbox, ...byUser].map((movement: any) => [movement.id, movement])).values());
   }, [selectedUser?.id, selectedUser?.cashboxId]) || [];
@@ -72,6 +76,14 @@ export const UsersTab: React.FC = () => {
 
   useEffect(() => {
     if (selectedUser) {
+      const session = getCurrentUserSession();
+      // Security: Ensure selectedUser belongs to current tenant before fetching perms
+      if (selectedUser.tenantId && selectedUser.tenantId !== session.tenantId) {
+        setSelectedUser(null);
+        setActiveView('users');
+        return;
+      }
+
       db.userPermissions.where('userId').equals(selectedUser.id).first().then((perms) => {
         setModulesPermissions({ ...EMPTY_PERMISSIONS, ...(perms?.permissions || {}) });
       });
@@ -144,10 +156,16 @@ export const UsersTab: React.FC = () => {
 
   const handleSavePermissions = async () => {
     if (!selectedUser) return;
+    const session = getCurrentUserSession();
+    if (selectedUser.tenantId && selectedUser.tenantId !== session.tenantId) {
+      useUIStore.getState().addToast('خطأ أمني: لا يمكنك تعديل صلاحيات مستخدم في مؤسسة أخرى', 'error');
+      return;
+    }
+
     try {
       const existing = await db.userPermissions.where('userId').equals(selectedUser.id).first();
       if (existing) await db.userPermissions.update(existing.id, { permissions: modulesPermissions });
-      else await db.userPermissions.add({ id: Date.now().toString(), userId: selectedUser.id, permissions: modulesPermissions });
+      else await db.userPermissions.add({ id: Date.now().toString(), userId: selectedUser.id, permissions: modulesPermissions, tenantId: session.tenantId });
       useUIStore.getState().addToast('تم حفظ الصلاحيات بنجاح', 'success');
     } catch {
       useUIStore.getState().addToast('فشل حفظ الصلاحيات', 'error');

@@ -455,6 +455,15 @@ export class PharmaFlowDB extends Dexie {
       cashboxes: '&id, name, accountId, branchId, isActive, openingBalance, openingBalanceJournalId'
     });
 
+    // Version 36: Tenant Isolation Hardening for Cash Flow and Financial Monitoring
+    this.version(36).stores({
+      cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId, [tenantId+cashboxId], [tenantId+userId]',
+      financialHealthSnapshots: '&id, date, tenantId, [tenantId+date]',
+      systemAlerts: '&id, type, timestamp, isRead, tenantId, [tenantId+type]',
+      accountingPeriods: '&id, Start_Date, End_Date, Is_Locked, start_date, end_date, is_locked, tenantId, [tenantId+is_locked]',
+      vouchers: '&id, voucher_id, type, partner_id, partnerId, date, status, tenantId, branchId, [tenantId+id], [tenantId+type], [tenantId+status]'
+    });
+
     // Handle structural integrity and recovery
     this.on('versionchange', () => {
       console.warn("Database structure updated in another tab. Switching to resilient mode.");
@@ -469,7 +478,7 @@ export class PharmaFlowDB extends Dexie {
       'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
       'accounts', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
       'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
-      'cashboxes', 'cashFlow', 'users', 'userPermissions'
+      'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments'
     ];
     targetTables.forEach(tableName => {
       try {
@@ -483,16 +492,18 @@ export class PharmaFlowDB extends Dexie {
             }
           });
           table.hook('updating', (mods: any, _primKey: any, obj: any) => {
-            if (_primKey === undefined || _primKey === null) {
-              console.error(`[HOOK UPDATING ERROR] Table '${tableName}' called updating hook with primKey:`, _primKey);
-            } else {
-              console.log(`[HOOK UPDATING OK] Table '${tableName}' primKey:`, _primKey);
-            }
             const session = getCurrentUserSession();
+            
+            // Security: Prevent updating records that don't belong to the current tenant
+            if (obj && obj.tenantId && session.tenantId && obj.tenantId !== session.tenantId) {
+              console.error(`[SECURITY] Cross-tenant update blocked on table '${tableName}' for key:`, _primKey);
+              throw new Error("FAIL_CLOSED: Unauthorized cross-tenant data modification attempt.");
+            }
+
             if (mods && typeof mods === 'object') {
               return {
                 ...mods,
-                tenantId: mods.tenantId || (obj ? obj.tenantId : undefined) || session.tenantId,
+                tenantId: session.tenantId, // Force tenantId from session
                 userId: mods.userId || (obj ? obj.userId : undefined) || session.userId
               };
             }
@@ -588,11 +599,41 @@ export class PharmaFlowDB extends Dexie {
   }
 
   // --- COMPATIBILITY LAYER ---
-  async getAccounts() { return await this.accounts.toArray(); }
-  async getJournalEntries() { return await this.journalEntries.toArray(); }
-  async getAccountingPeriods() { return await this.accountingPeriods.toArray(); }
-  async getCustomers() { return await this.customers.toArray(); }
-  async getSuppliers() { return await this.suppliers.toArray(); }
+  async getAccounts() { 
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.accounts.where('tenantId').equals(tenantId).toArray(); 
+  }
+  async getJournalEntries() { 
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.journalEntries.where('tenantId').equals(tenantId).toArray(); 
+  }
+  async getAccountingPeriods() { 
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.accountingPeriods.where('tenantId').equals(tenantId).toArray(); 
+  }
+  async getReceipts() {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.receipts.where('tenantId').equals(tenantId).toArray();
+  }
+  async getPayments() {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.payments.where('tenantId').equals(tenantId).toArray();
+  }
+  async getCustomers() { 
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.customers.where('tenantId').equals(tenantId).toArray(); 
+  }
+  async getSuppliers() { 
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.suppliers.where('tenantId').equals(tenantId).toArray(); 
+  }
   async getCurrencies(): Promise<Currency[]> { return await this.getSetting('CURRENCIES', []) as Currency[]; }
   async getMedicineAlerts() { return await this.systemAlerts.where('type').equals('STOCK').toArray(); }
   async getDailyAuditTask(date: string) { return await this.dailyAuditTasks.where('date').equals(date).first(); }
@@ -674,7 +715,9 @@ export class PharmaFlowDB extends Dexie {
   }
 
   async getCashFlow() {
-    return await this.cashFlow.toArray();
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.cashFlow.where('tenantId').equals(tenantId).toArray();
   }
 
   async saveAccountingEntry(entry: JournalEntry) {
@@ -872,7 +915,9 @@ export class PharmaFlowDB extends Dexie {
   }
 
   async getSales() { 
-    return await this.invoices.where('type').equals('SALE').toArray(); 
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.invoices.where('tenantId').equals(tenantId).filter(inv => inv.type === 'SALE').toArray(); 
   }
 
   async getValidationRules(): Promise<ValidationRule[]> {
@@ -906,7 +951,9 @@ export class PharmaFlowDB extends Dexie {
   }
   
   async getPurchases() { 
-    return await this.invoices.where('type').equals('PURCHASE').toArray(); 
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.invoices.where('tenantId').equals(tenantId).filter(inv => inv.type === 'PURCHASE').toArray(); 
   }
 
   async getTransactions() {
@@ -1012,7 +1059,11 @@ export class PharmaFlowDB extends Dexie {
   }
 
   // --- TABLES HELPERS ---
-  async getProducts() { return await this.products.toArray(); }
+  async getProducts() { 
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.products.where('tenantId').equals(tenantId).toArray(); 
+  }
 
   // --- INITIALIZATION ---
   async init() {
@@ -1704,9 +1755,9 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'getCustomers') return async () => dbProxy.customers.toArray();
     if (prop === 'getSuppliers') return async () => dbProxy.suppliers.toArray();
     if (prop === 'getProducts') return async () => dbProxy.products.toArray();
-    if (prop === 'getSales') return async () => dbProxy.invoices.where('type').equals('SALE').toArray();
-    if (prop === 'getPurchases') return async () => dbProxy.invoices.where('type').equals('PURCHASE').toArray();
-    if (prop === 'getTransactions') return async () => dbProxy.invoices.toArray();
+    if (prop === 'getReceipts') return async () => dbProxy.receipts.where('tenantId').equals(getCurrentUserSession().tenantId).toArray();
+    if (prop === 'getPayments') return async () => dbProxy.payments.where('tenantId').equals(getCurrentUserSession().tenantId).toArray();
+    if (prop === 'getTransactions') return async () => dbProxy.invoices.where('tenantId').equals(getCurrentUserSession().tenantId).toArray();
     if (prop === 'getCurrencies') return async () => dbProxy.getSetting('CURRENCIES', []);
     if (prop === 'getCashFlow') return async () => dbProxy.cashFlow.toArray();
     if (prop === 'getMedicineAlerts') return async () => dbProxy.systemAlerts.where('type').equals('STOCK').toArray();

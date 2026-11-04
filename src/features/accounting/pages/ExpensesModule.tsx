@@ -2,7 +2,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { db } from '@/core/db';
 import { CashFlow } from '@/types';
-import { NotificationService } from '@/context/NotificationContext';
+import { CashFlowRepository } from '@/database/repositories/CashFlowRepository';
+import { useUI } from '@/contexts/AppContext';
 
 interface ExpensesModuleProps {
   lang: 'en' | 'ar';
@@ -11,6 +12,7 @@ interface ExpensesModuleProps {
 
 const ExpensesModule: React.FC<ExpensesModuleProps> = ({ lang, onNavigate }) => {
   const isAr = lang === 'ar';
+  const { addToast } = useUI();
   const [searchTerm, setSearchTerm] = useState('');
   const [history, setHistory] = useState<CashFlow[]>([]);
   const [formData, setFormData] = useState({
@@ -36,24 +38,22 @@ const ExpensesModule: React.FC<ExpensesModuleProps> = ({ lang, onNavigate }) => 
 
   const handleSave = async () => {
     if (!formData.amount || !formData.category) return;
-    const id = db.generateId('CF');
-    const entry: CashFlow = {
-      id,
-      transaction_id: id,
-      date: new Date().toISOString(),
-      type: formData.type,
-      category: formData.category,
-      name: formData.category, // Use category as name for expenses
-      amount: parseFloat(formData.amount),
-      notes: formData.notes,
-      branchId: 'MAIN'
-    };
-    await db.recordCashFlow(entry);
-    NotificationService.success(isAr ? 'تم تسجيل العملية المالية بنجاح' : 'Financial transaction recorded!');
-    setFormData({ amount: '', type: 'خرج', category: 'مصاريف تشغيلية', notes: '' });
-    // Refresh history
-    const data = await db.getCashFlow();
-    setHistory(data);
+    try {
+      await CashFlowRepository.record(
+        formData.type,
+        formData.category,
+        parseFloat(formData.amount),
+        formData.category,
+        formData.notes
+      );
+      addToast(isAr ? 'تم تسجيل العملية المالية بنجاح' : 'Financial transaction recorded!', 'success');
+      setFormData({ amount: '', type: 'خرج', category: 'مصاريف تشغيلية', notes: '' });
+      // Refresh history
+      const data = await db.getCashFlow();
+      setHistory(data);
+    } catch (err: any) {
+      addToast(isAr ? `فشل الحفظ: ${err.message}` : `Save failed: ${err.message}`, 'error');
+    }
   };
   
   const filteredHistory = useMemo(() => {

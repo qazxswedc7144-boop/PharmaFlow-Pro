@@ -1,5 +1,5 @@
 
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { FinancialHealthSnapshot, SystemAlert, Sale, Purchase, Product, CashFlow, UnifiedInvoice } from '@/types';
 import { IS_PREVIEW } from '@/constants';
 import { AnomalyScoringEngine } from '@/services/audit/AnomalyScoringEngine';
@@ -336,7 +336,12 @@ export class FinancialHealthService {
   }
 
   static async getLatestSnapshot(): Promise<FinancialHealthSnapshot | undefined> {
-    return await db.financialHealthSnapshots.orderBy('date').reverse().first();
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return undefined;
+    return await db.financialHealthSnapshots
+      .where('tenantId').equals(tenantId)
+      .reverse()
+      .first();
   }
 
   static async getActiveAlerts(): Promise<SystemAlert[]> {
