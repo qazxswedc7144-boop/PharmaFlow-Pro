@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDownLeft, ArrowLeft, ArrowUpRight, Download, FileText, Search, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowLeft, ArrowUpRight, FileText, Search, Wallet } from 'lucide-react';
 
 type Movement = {
   id: string;
