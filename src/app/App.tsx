@@ -27,7 +27,7 @@ import { IS_PREVIEW } from '@/constants';
 import { 
   X, AlertTriangle, RefreshCw, LogOut, ShieldCheck, Building2,
   Users, BarChart2, ArrowRightLeft,
-  Landmark, Sliders, Settings
+  Landmark, Sliders, Settings, Wallet
 } from 'lucide-react';
 
 import {
@@ -106,6 +106,7 @@ const InventoryAuditModule = lazyWithRetry(() => import('@features/inventory/pag
 const AuditHistoryModule = lazyWithRetry(() => import('@features/settings/pages/AuditHistoryModule')); 
 const SettingsModule = lazyWithRetry(() => import('@features/settings/pages/SettingsModule'));
 const AccountingModule = lazyWithRetry(() => import('@features/accounting/pages/AccountingModule'));
+const CashboxesModule = lazyWithRetry(() => import('@features/accounting/pages/CashboxesModule'));
 const ReconciliationModule = lazyWithRetry(() => import('@features/accounting/pages/ReconciliationModule'));
 const SystemHealthModule = lazyWithRetry(() => import('@features/settings/pages/SystemHealthModule'));
 const InvoicesArchiveModule = lazyWithRetry(() => import('@features/sales/pages/InvoicesArchiveModule'));
@@ -530,7 +531,7 @@ function MainLayout() {
     const validViews = [
       'dashboard', 'purchases', 'sales', 'inventory', 'inventory-audit',
       'suppliers', 'logs', 'audit-history', 'settings', 'accounting',
-      'reconciliation', 'system-health', 'invoices-archive', 'invoice-history',
+      'reconciliation', 'cashboxes', 'system-health', 'invoices-archive', 'invoice-history',
       'adjustments-archive', 'supplier-payment', 'customer-receipt', 'vouchers',
       'aging-report', 'partners', 'privacy', 'terms', 'reports', 'advanced-reports',
       'login', '403', 'backup', 'saas-portal', 'security-audit',
@@ -545,7 +546,7 @@ function MainLayout() {
     const getViewPermission = (v: string): Permission | undefined => {
       if (v === 'sales') return 'POS_ACCESS';
       if (v === 'purchases') return 'PURCHASE_ACCESS';
-      if (v === 'accounting' || v === 'reconciliation' || v === 'adjustments-registry' || v === 'consolidation') return 'FINANCIAL_ACCESS';
+      if (v === 'accounting' || v === 'cashboxes' || v === 'reconciliation' || v === 'adjustments-registry' || v === 'consolidation') return 'FINANCIAL_ACCESS';
       if (v === 'reports' || v === 'financial-dashboard' || v === 'advanced-reports' || v.startsWith('reports/')) return 'VIEW_REPORTS';
       if (v === 'settings' || v === 'backup' || v === 'system-health' || v === 'audit-history' || v === 'invoice-history') return 'MANAGE_SYSTEM';
       if (v === 'partners') return 'MANAGE_PARTNERS';
@@ -749,6 +750,7 @@ function MainLayout() {
     if (currentView === 'customer-receipt') return 'سند قبض عميل';
     if (currentView === 'aging-report') return 'تقرير تعمير الذمم';
     if (currentView === 'accounting') return 'دفتر الأستاذ العام';
+    if (currentView === 'cashboxes') return 'إدارة الصناديق';
     if (currentView === 'consolidation') return 'الاندماج المالي الموحد';
     if (currentView === 'branches') return 'إدارة الفروع والصيدليات';
     if (currentView === 'branch-transfers') return 'التحويل الدوائي البيني';
@@ -882,6 +884,18 @@ function MainLayout() {
                       <span>المركز المالي الموحد</span>
                     </div>
                     {currentView === 'consolidation' && <motion.div layoutId="active-nav-fi1" className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />}
+                  </button>
+
+                  {/* إدارة الصناديق */}
+                  <button
+                    onClick={() => handleNav('cashboxes')}
+                    className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl text-[11px] font-black transition-all group ${currentView === 'cashboxes' ? 'bg-[#1E4D4D] text-white shadow-lg shadow-emerald-950/10' : 'text-slate-500 hover:bg-slate-50 hover:text-[#1E4D4D]'}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className={`${currentView === 'cashboxes' ? 'text-emerald-400' : 'text-slate-400 group-hover:text-[#1E4D4D]'}`}><Wallet size={15} /></span>
+                      <span>إدارة الصناديق</span>
+                    </div>
+                    {currentView === 'cashboxes' && <motion.div layoutId="active-nav-cashboxes" className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />}
                   </button>
 
                   {/* 2. التسويات */}
@@ -1030,6 +1044,7 @@ function MainLayout() {
                   case 'inventory': return <InventoryModule onNavigate={handleNav} />;
                   case 'inventory-audit': return <InventoryAuditModule lang="ar" onNavigate={handleNav} from={viewParams?.from} />;
                   case 'accounting': return <ProtectedRoute permission="FINANCIAL_ACCESS"><AccountingModule onNavigate={handleNav} /></ProtectedRoute>;
+                  case 'cashboxes': return <ProtectedRoute permission="FINANCIAL_ACCESS"><CashboxesModule onNavigate={handleNav} /></ProtectedRoute>;
                   case 'audit-history': return <RoleGuard permission="MANAGE_SYSTEM"><AuditHistoryModule onNavigate={handleNav} recordId={viewParams?.id} tableName={viewParams?.tableName} initialFilter={viewParams?.filter} from={viewParams?.from} /></RoleGuard>;
                   case 'reconciliation': return <RoleGuard permission="FINANCIAL_ACCESS"><ReconciliationModule onNavigate={handleNav} /></RoleGuard>;
                   case 'system-health': return <ProtectedRoute permission="MANAGE_SYSTEM"><SystemHealthModule onNavigate={handleNav} /></ProtectedRoute>;

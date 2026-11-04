@@ -450,6 +450,11 @@ export class PharmaFlowDB extends Dexie {
       cashFlow: '&id, transaction_id, date, type, cashboxId, userId'
     });
 
+    // Version 35: Cashbox opening-balance traceability
+    this.version(35).stores({
+      cashboxes: '&id, name, accountId, branchId, isActive, openingBalance, openingBalanceJournalId'
+    });
+
     // Handle structural integrity and recovery
     this.on('versionchange', () => {
       console.warn("Database structure updated in another tab. Switching to resilient mode.");
