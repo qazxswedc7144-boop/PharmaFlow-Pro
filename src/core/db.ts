@@ -654,7 +654,17 @@ export class PharmaFlowDB extends Dexie {
   }
   
   async recordCashFlow(data: Record<string, unknown>) {
-    return await this.cashFlow.add({ ...data, id: this.generateId('CF') });
+    const session = getCurrentUserSession();
+    const userId = (data.userId as string | undefined) ?? session.userId;
+    const assignedUser = userId
+      ? await this.users.get(userId).catch(() => undefined)
+      : undefined;
+    return await this.cashFlow.add({
+      ...data,
+      id: this.generateId('CF'),
+      userId,
+      cashboxId: (data.cashboxId as string | undefined) ?? assignedUser?.cashboxId
+    });
   }
 
   async getCashFlow() {
