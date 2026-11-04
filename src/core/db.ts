@@ -124,6 +124,8 @@ export class PharmaFlowDB extends Dexie {
   vouchers!: Table<Voucher>;
   auditLogs!: Table<AuditLog>;
   settings!: Table<{ key: string; value: any }>;
+  users!: Table<any, string>;
+  userPermissions!: Table<any, string>;
   systemSettings!: Table<{ key: string; value: any }>;
   medicineBatches!: Table<any>;
   exchangeRates!: Table<any>;
@@ -432,6 +434,12 @@ export class PharmaFlowDB extends Dexie {
       integrity_audit_logs: '&id, operationId, idempotencyKey, fingerprint, tenantId, branchId, status, startedAt, [tenantId+branchId+status]',
       integrity_repair_records: '&id, repairId, status, tenantId, branchId, timestamp, [tenantId+status]',
       idempotency_records: '&key, status, tenantId, branchId, operationType, fingerprint, createdAt, [tenantId+branchId+status]'
+    });
+
+    // Version 33: Users and user permissions schema
+    this.version(33).stores({
+      users: '&id, username, role, status, branch, createdAt',
+      userPermissions: '&id, userId'
     });
 
     // Handle structural integrity and recovery
@@ -1441,7 +1449,7 @@ function getMockTable(tableName: string) {
 export const ALL_SCHEMA_TABLE_NAMES = [
   'products', 'invoices', 'invoiceItems', 'accounts', 'journalEntries', 'journalLines',
   'inventoryTransactions', 'accountingPeriods', 'customers', 'suppliers', 'vouchers',
-  'auditLogs', 'settings', 'systemSettings', 'medicineBatches', 'exchangeRates',
+  'auditLogs', 'settings', 'users', 'userPermissions', 'systemSettings', 'medicineBatches', 'exchangeRates',
   'systemBackups', 'branches', 'branchSettings', 'branchInventory', 'branchTransfers',
   'branchTransferItems', 'branchUsers', 'sales', 'purchases', 'categories', 'receipts',
   'payments', 'settlements', 'cashFlow', 'priceHistory', 'inventory', 'invoiceAdjustments',
