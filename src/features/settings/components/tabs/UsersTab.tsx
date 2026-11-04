@@ -23,6 +23,35 @@ export const UsersTab: React.FC = () => {
   const [editingUser, setEditingUser] = useState<any>(null);
   const users = useLiveQuery(() => db.users.toArray(), []) || [];
   const cashboxes = useLiveQuery(() => db.cashboxes.toArray(), []) || [];
+  const cashMovements = useLiveQuery(async () => {
+    if (!selectedUser?.id) return [];
+    const [byCashbox, byUser] = await Promise.all([
+      selectedUser.cashboxId
+        ? db.cashFlow.where('cashboxId').equals(selectedUser.cashboxId).toArray()
+        : Promise.resolve([]),
+      db.cashFlow.where('userId').equals(selectedUser.id).toArray()
+    ]);
+    return Array.from(new Map([...byCashbox, ...byUser].map((movement: any) => [movement.id, movement])).values());
+  }, [selectedUser?.id, selectedUser?.cashboxId]) || [];
+  const reportMovements = useMemo(() => {
+    let runningBalance = 0;
+    return [...cashMovements]
+      .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
+      .map((item: any) => {
+        const direction = item.type === 'دخل' ? 'in' : 'out';
+        runningBalance += direction === 'in' ? Number(item.amount) || 0 : -(Number(item.amount) || 0);
+        const parsedDate = new Date(item.date);
+        return {
+          id: String(item.transaction_id || item.id),
+          date: Number.isNaN(parsedDate.getTime()) ? String(item.date || '').slice(0, 10) : parsedDate.toISOString().slice(0, 10),
+          amount: Number(item.amount) || 0,
+          direction,
+          note: item.notes || item.name || item.category || '—',
+          balance: runningBalance
+        };
+      });
+  }, [cashMovements]);
+  const reportBalance = reportMovements[reportMovements.length - 1]?.balance ?? 0;
   const defaultCashboxId = cashboxes.find((cashbox: any) => cashbox.name === 'الصندوق الرئيسي')?.id || cashboxes[0]?.id || 'cashbox-main';
 
   const [formData, setFormData] = useState({
@@ -119,6 +148,8 @@ export const UsersTab: React.FC = () => {
     return (
       <SafeMovementReportUI
         user={selectedUser}
+        movements={reportMovements}
+        balance={reportBalance}
         onBack={() => setActiveView('users')}
       />
     );
