@@ -468,7 +468,8 @@ export class PharmaFlowDB extends Dexie {
     const targetTables = [
       'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
       'accounts', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
-      'branchTransfers', 'branchInventory', 'inventoryCorrectionCases'
+      'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
+      'cashboxes', 'cashFlow', 'users', 'userPermissions'
     ];
     targetTables.forEach(tableName => {
       try {

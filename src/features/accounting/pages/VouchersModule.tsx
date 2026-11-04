@@ -4,8 +4,7 @@ import { SupplierRepository } from '@/database/repositories/SupplierRepository';
 import { voucherService } from '@features/accounting/services/voucherService';
 import { useUI } from '@/contexts/AppContext';
 import { Receipt, Payment, Supplier } from '@/types';
-import PrintMenu from '@/components/shared/PrintMenu';
-import { ArrowDownCircle, ArrowUpRight, Trash2, Calendar, CreditCard, Wallet, X, ChevronLeft, ArrowRight } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpRight, Calendar, CreditCard, Wallet, X, ChevronLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface VouchersModuleProps {
@@ -130,19 +129,7 @@ const VouchersModule: React.FC<VouchersModuleProps> = ({ onNavigate, initialType
     }
   };
 
-  const handleDelete = async (item: (Receipt & { type?: string }) | (Payment & { type?: string })) => {
-    if (!window.confirm('هل أنت متأكد من حذف هذا السند؟')) return;
-    try {
-      const isReceipt = 'customer_id' in item;
-      const partnerId = isReceipt ? item.customer_id : item.supplier_id;
-      await voucherService.cancelVoucher({ id: item.id, type: isReceipt ? 'RECEIPT' : 'PAYMENT', partnerId, amount: item.amount, reason: 'حذف من قبل المستخدم عبر واجهة السندات' });
-      addToast('تم الحذف بنجاح ✅', 'success');
-      refreshGlobal();
-    } catch (e: unknown) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      addToast(`فشل الحذف: ${errMsg}`, 'error');
-    }
-  };
+  // handleDelete removed as it was unused
 
   const filteredHistory = useMemo(() => {
     if (!searchTerm.trim()) return history;

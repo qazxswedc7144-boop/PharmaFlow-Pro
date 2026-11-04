@@ -43,7 +43,7 @@ export const CashFlowRepository = {
       name,
       amount,
       notes,
-      branchId: 'MAIN',
+      branchId: session.branchId || 'MAIN',
       userId,
       cashboxId: context?.cashboxId ?? assignedUser?.cashboxId
     };

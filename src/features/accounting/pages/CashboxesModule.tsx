@@ -38,12 +38,15 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [boxes, accountRows, branchRows] = await Promise.all([
-        db.cashboxes.toArray(), db.accounts.toArray(), db.branches.toArray()
+      const { tenantId } = session;
+      const [allBoxes, allAccounts, allBranches] = await Promise.all([
+        db.cashboxes.toArray(),
+        db.accounts.toArray(),
+        db.branches.toArray()
       ]);
-      setCashboxes(boxes);
-      setAccounts(accountRows);
-      setBranches(branchRows.map((b: any) => ({ id: b.id, name: b.name || b.branchName || b.code || b.id })));
+      setCashboxes(allBoxes.filter((b: any) => b.tenantId === tenantId));
+      setAccounts(allAccounts.filter((a: any) => a.tenantId === tenantId));
+      setBranches(allBranches.filter((b: any) => b.tenantId === tenantId).map((b: any) => ({ id: b.id, name: b.name || b.branchName || b.code || b.id })));
       setError('');
     } catch (e: any) {
       setError(e?.message || 'تعذر تحميل بيانات الصناديق.');

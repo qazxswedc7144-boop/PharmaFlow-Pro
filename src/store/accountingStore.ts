@@ -9,7 +9,7 @@ interface AccountingState {
   journalEntries: AccountingEntry[];
   accounts: Account[];
   loadAccounting: () => Promise<void>;
-  addInvoice: (invoice: { type?: 'SALE' | 'PURCHASE'; payload?: any; options?: WorkflowInvoiceOptions; [key: string]: any }, type?: 'SALE' | 'PURCHASE') => Promise<unknown>;
+  addInvoice: (invoice: { type?: 'SALE' | 'PURCHASE'; payload?: any; options?: WorkflowInvoiceOptions; [key: string]: any }, type?: 'SALE' | 'PURCHASE') => Promise<{ success: boolean; refId: string } | any>;
   addPartner: (partner: unknown, type: 'C' | 'S') => Promise<unknown>;
 }
 

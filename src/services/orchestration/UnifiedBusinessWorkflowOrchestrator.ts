@@ -4,7 +4,7 @@ import { InvoiceItem, InvoiceStatus, Receipt, Payment, TransferStatus, JournalLi
 import { TransactionService } from '@/services/transactions/TransactionService';
 import { FaultService } from '@/services/integrity/FaultService';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
-import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+
 import { AccountingEngine } from '@features/accounting/services/AccountingEngine';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { SupplierRepository } from '@/database/repositories/SupplierRepository';

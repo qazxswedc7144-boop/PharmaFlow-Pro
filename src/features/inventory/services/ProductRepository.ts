@@ -161,7 +161,7 @@ export const ProductRepository = {
     }
 
     // A new product may receive an opening balance once, through the inventory movement path.
-    const initialStock = Number(product.stock ?? product.StockQuantity ?? product.quantity ?? 0);
+    const initialStock = Number(product.stock ?? product.StockQuantity ?? (product as any).quantity ?? 0);
     product.stock = Number.isFinite(initialStock) ? initialStock : 0;
     if (product.stock > 0) {
       await db.saveProduct(product);

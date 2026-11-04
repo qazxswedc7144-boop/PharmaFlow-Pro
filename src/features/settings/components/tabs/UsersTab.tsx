@@ -4,7 +4,7 @@ import {
   ArrowRight, Shield, KeyRound, Wallet, Plus, Building2, BriefcaseBusiness
 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { authService } from '@features/auth/services/authService';
 import { useUIStore } from '@/store/useUIStore';
 import SafeMovementReportUI from './SafeMovementReportUI';
@@ -21,8 +21,18 @@ export const UsersTab: React.FC = () => {
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
-  const users = useLiveQuery(() => db.users.toArray(), []) || [];
-  const cashboxes = useLiveQuery(() => db.cashboxes.toArray(), []) || [];
+
+  const users = useLiveQuery(async () => {
+    const session = getCurrentUserSession();
+    const all = await db.users.toArray();
+    // Filter by tenantId and optionally branchId if users are branch-specific
+    return all.filter(u => u.tenantId === session.tenantId);
+  }, []) || [];
+  const cashboxes = useLiveQuery(async () => {
+    const session = getCurrentUserSession();
+    const all = await db.cashboxes.toArray();
+    return all.filter(c => c.tenantId === session.tenantId);
+  }, []) || [];
   const cashMovements = useLiveQuery(async () => {
     if (!selectedUser?.id) return [];
     const [byCashbox, byUser] = await Promise.all([
@@ -38,7 +48,7 @@ export const UsersTab: React.FC = () => {
     return [...cashMovements]
       .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime())
       .map((item: any) => {
-        const direction = item.type === 'دخل' ? 'in' : 'out';
+        const direction = (item.type === 'دخل' ? 'in' : 'out') as 'in' | 'out';
         runningBalance += direction === 'in' ? Number(item.amount) || 0 : -(Number(item.amount) || 0);
         const parsedDate = new Date(item.date);
         return {

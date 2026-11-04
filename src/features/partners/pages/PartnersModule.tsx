@@ -2,11 +2,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { db } from '@/core/db';
 import { useUI, useAccounting } from '@/contexts/AppContext';
-import { Card, Button, Modal, Input } from '@/components/shared/SharedUI';
+import { Button, Modal, Input } from '@/components/shared/SharedUI';
 import { 
   Users, Search, MoreVertical, Phone, ArrowRight, 
-  MapPin, CreditCard, UserPlus, ChevronLeft,
-  TrendingUp, TrendingDown, UserCircle, Truck, Building2, BookOpen
+  UserPlus, ChevronLeft,
+  Truck, Building2, BookOpen
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 

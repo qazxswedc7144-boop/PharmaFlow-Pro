@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { Search, SlidersHorizontal } from 'lucide-react';
 import { LoadingSkeleton } from '../components/shared/SettingsUI';
 import { SETTINGS_GROUPS, SETTINGS_SECTIONS } from '../data/settingsSectionsMetadata';
-import { SettingsSectionItem } from '../types/settingsNavigation.types';
+
 import { SettingsHeader } from '../components/navigation/SettingsHeader';
 import { SettingsGroupCard } from '../components/navigation/SettingsGroupCard';
 import { SettingsSidebar } from '../components/navigation/SettingsSidebar';
