@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Users, UserPlus, ShieldCheck, CheckCircle2, Edit3, Trash2, X,
+  Users, UserPlus, Edit3, Trash2, X,
   ArrowRight, Shield, KeyRound, Wallet, Plus, Building2, BriefcaseBusiness
 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
