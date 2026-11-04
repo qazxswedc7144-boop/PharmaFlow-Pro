@@ -115,25 +115,39 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
 
       await db.safeTransaction('rw', ['cashboxes', 'accounts', 'journalEntries', 'journalLines'], async (tx) => {
         const boxesTable = tx.table('cashboxes');
-        if (await boxesTable.where('accountId').equals(cashAccount.id).first()) {
+        const accountsTable = tx.table('accounts');
+        const currentCashAccount = await accountsTable.get(cashAccount.id);
+        const currentOpeningAccount = amount > 0 ? await accountsTable.get(createForm.openingAccountId) : undefined;
+        if (!currentCashAccount || currentCashAccount.type !== 'ASSET' || currentCashAccount.isActive === false ||
+            (currentCashAccount.tenantId && currentCashAccount.tenantId !== tenantId) ||
+            (currentCashAccount.branchId && currentCashAccount.branchId !== branchId)) {
+          throw new Error('الحساب النقدي لم يعد صالحاً أو لا يتبع المؤسسة والفرع المحددين.');
+        }
+        if (amount > 0 && (!currentOpeningAccount || currentOpeningAccount.type !== 'EQUITY' ||
+            currentOpeningAccount.isActive === false ||
+            (currentOpeningAccount.tenantId && currentOpeningAccount.tenantId !== tenantId) ||
+            (currentOpeningAccount.branchId && currentOpeningAccount.branchId !== branchId))) {
+          throw new Error('حساب الأرصدة الافتتاحية لم يعد صالحاً أو لا يتبع المؤسسة والفرع المحددين.');
+        }
+        if (await boxesTable.where('accountId').equals(currentCashAccount.id).first()) {
           throw new Error('هذا الحساب مرتبط بصندوق آخر بالفعل. اختر حساباً غير مستخدم.');
         }
         const now = new Date().toISOString();
         const box: Cashbox = {
-          id, name: createForm.name.trim(), accountId: cashAccount.id, branchId,
+          id, name: createForm.name.trim(), accountId: currentCashAccount.id, branchId,
           isActive: true, openingBalance: amount, createdAt: now, tenantId
         };
-        if (amount > 0 && openingAccount) {
+        if (amount > 0 && currentOpeningAccount) {
           const lines = [
             {
               id: `${transactionUuid}-L1`, lineId: `${transactionUuid}-L1`, entryId: transactionUuid,
-              accountId: cashAccount.id, accountCode: cashAccount.code, accountName: cashAccount.name,
+              accountId: currentCashAccount.id, accountCode: currentCashAccount.code, accountName: currentCashAccount.name,
               debit: amount, credit: 0, type: 'DEBIT' as const, amount,
               description: `الرصيد الافتتاحي للصندوق: ${box.name}`
             },
             {
               id: `${transactionUuid}-L2`, lineId: `${transactionUuid}-L2`, entryId: transactionUuid,
-              accountId: openingAccount.id, accountCode: openingAccount.code, accountName: openingAccount.name,
+              accountId: currentOpeningAccount.id, accountCode: currentOpeningAccount.code, accountName: currentOpeningAccount.name,
               debit: 0, credit: amount, type: 'CREDIT' as const, amount,
               description: `مقابل الرصيد الافتتاحي للصندوق: ${box.name}`
             }
