@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { db, getCurrentUserSession } from '@/core/db';
 import { Account, Cashbox } from '@/types';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+import { PeriodLockEngine } from '@/services/transactions/PeriodLockEngine';
 import { cashboxTransferWorkflow } from '../workflows/CashboxTransferWorkflow';
 import { generateTransactionUuid } from '@/utils/uuid';
 import { BackButton } from '@/components/shared/BackButton';
@@ -106,6 +107,7 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
       if (!cashAccount || cashAccount.type !== 'ASSET' || cashAccount.isActive === false) {
         throw new Error('الحساب المرتبط يجب أن يكون حساب أصول نشطاً.');
       }
+      if (amount > 0) await PeriodLockEngine.validateOperation(today(), 'الرصيد الافتتاحي للصندوق');
       if (amount > 0 && !createForm.openingAccountId) {
         throw new Error('اختر حساب الأرصدة الافتتاحية (حقوق الملكية) لإثبات الطرف المقابل.');
       }
