@@ -1,5 +1,5 @@
 
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { CashFlow } from '@/types';
 
 /**
@@ -20,7 +20,19 @@ export const CashFlowRepository = {
   /**
    * تسجيل حركة نقدية جديدة
    */
-  record: async (type: 'دخل' | 'خرج', category: string, amount: number, name: string, notes?: string) => {
+  record: async (
+    type: 'دخل' | 'خرج',
+    category: string,
+    amount: number,
+    name: string,
+    notes?: string,
+    context?: { userId?: string; cashboxId?: string }
+  ) => {
+    const session = getCurrentUserSession();
+    const userId = context?.userId ?? session.userId;
+    const assignedUser = userId
+      ? await db.users.get(userId).catch(() => undefined)
+      : undefined;
     const id = db.generateId('CF');
     const entry: CashFlow = {
       id,
@@ -31,7 +43,9 @@ export const CashFlowRepository = {
       name,
       amount,
       notes,
-      branchId: 'MAIN'
+      branchId: 'MAIN',
+      userId,
+      cashboxId: context?.cashboxId ?? assignedUser?.cashboxId
     };
     return await db.recordCashFlow(entry);
   }
