@@ -381,6 +381,16 @@ export interface ToastMessage {
   type: 'success' | 'error' | 'info' | 'warning';
 }
 
+export interface Cashbox extends SyncableEntity {
+  id: string;
+  name: string;
+  accountId: string;
+  branchId: string;
+  isActive: boolean;
+  openingBalance?: number;
+  openingBalanceJournalId?: string;
+}
+
 export interface CashFlow extends SyncableEntity {
   transaction_id: string;
   date: string;
