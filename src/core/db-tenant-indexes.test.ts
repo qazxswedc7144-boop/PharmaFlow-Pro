@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { PharmaFlowDB } from './core/db';
+import { PharmaFlowDB } from './db';
 
 describe('Tenant-scoped Dexie indexes', () => {
   const databaseName = 'PharmaFlowTenantIndexSchemaTest';
