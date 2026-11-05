@@ -35,6 +35,13 @@ function ensureItemPrimaryKey(table: any, item: any) {
   return item;
 }
 
+function extractPrimaryKey(table: any, record: any): any {
+  const keyPath = table?.schema?.primKey?.keyPath;
+  if (typeof keyPath === 'string') return record?.[keyPath];
+  if (Array.isArray(keyPath)) return keyPath.map((part: string) => record?.[part]);
+  return undefined;
+}
+
 const TENANT_SCOPED_TABLES = new Set([
   'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
   'accounts', 'journalLines', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
@@ -217,7 +224,7 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
           if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== session.tenantId)) {
             throw new Error(`FAIL_CLOSED: Cross-tenant bulk upsert rejected on '${this.name}'.`);
           }
-          const key = Array.isArray(keys) ? keys[index] : this.schema.primKey.extract(item);
+          const key = Array.isArray(keys) ? keys[index] : extractPrimaryKey(this, item);
           const existing = key === undefined || key === null ? undefined : await originalGet.call(this, key);
           if (existing && (!existing.tenantId || existing.tenantId !== session.tenantId)) {
             throw new Error(`FAIL_CLOSED: Unauthorized bulk upsert target on '${this.name}'.`);
@@ -269,7 +276,7 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
         for (const record of records) {
           if (record?.tenantId === session.tenantId) {
             assertTenantUnchanged(this, session.tenantId, 'Clear');
-            const key = this.schema.primKey.extract(record);
+            const key = extractPrimaryKey(this, record);
             await originalDelete.call(this, key);
           }
         }
@@ -1990,7 +1997,7 @@ function wrapTable(realTable: any, tableName: string): any {
               }
               const value = { ...item, tenantId: session.tenantId, userId: item.userId || session.userId };
               ensureItemPrimaryKey(tObj, value);
-              const key = Array.isArray(keys) ? keys[index] : tObj.schema.primKey.extract(value);
+              const key = Array.isArray(keys) ? keys[index] : extractPrimaryKey(tObj, value);
               if (!addOnly && key !== undefined && key !== null) {
                 const existing = await rawGet(key);
                 if (existing && (!existing.tenantId || existing.tenantId !== session.tenantId)) {
@@ -2036,7 +2043,7 @@ function wrapTable(realTable: any, tableName: string): any {
             for (const record of records) {
               if (record?.tenantId === session.tenantId) {
                 assertScope(session.tenantId, 'Clear');
-                await rawDelete(tObj.schema.primKey.extract(record));
+                await rawDelete(extractPrimaryKey(tObj, record));
               }
             }
           });
