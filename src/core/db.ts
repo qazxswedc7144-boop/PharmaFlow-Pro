@@ -1520,46 +1520,45 @@ export class PharmaFlowDB extends Dexie {
 let isDbBlocked = false;
 const memDb: Record<string, Map<string, any>> = {};
 
-function createMockCollection(results: any[]) {
+function createMockCollection(results: any[], mutationGuard?: (item: any, changes: any) => void) {
+  const cloneRecord = (record: any) => record && typeof record === 'object' ? { ...record } : record;
   const coll: any = {
-    toArray: () => Promise.resolve([...results]),
+    toArray: () => Promise.resolve(results.map(cloneRecord)),
     count: () => Promise.resolve(results.length),
-    first: () => Promise.resolve(results[0] || null),
-    last: () => Promise.resolve(results[results.length - 1] || null),
-    limit: (n: number) => createMockCollection(results.slice(0, n)),
-    offset: (n: number) => createMockCollection(results.slice(n)),
-    reverse: () => createMockCollection([...results].reverse()),
-    filter: (fn: any) => createMockCollection(results.filter(fn)),
-    and: (fn: any) => createMockCollection(results.filter(fn)),
+    first: () => Promise.resolve(cloneRecord(results[0]) || null),
+    last: () => Promise.resolve(cloneRecord(results[results.length - 1]) || null),
+    limit: (n: number) => createMockCollection(results.slice(0, n), mutationGuard),
+    offset: (n: number) => createMockCollection(results.slice(n), mutationGuard),
+    reverse: () => createMockCollection([...results].reverse(), mutationGuard),
+    filter: (fn: any) => createMockCollection(results.filter(fn), mutationGuard),
+    and: (fn: any) => createMockCollection(results.filter(fn), mutationGuard),
     sortBy: (keyPath: string) => {
-      const sorted = [...results].sort((a, b) => {
-        if (a[keyPath] < b[keyPath]) return -1;
-        if (a[keyPath] > b[keyPath]) return 1;
-        return 0;
-      });
-      return Promise.resolve(sorted);
+      const sorted = [...results].sort((a, b) => a[keyPath] < b[keyPath] ? -1 : a[keyPath] > b[keyPath] ? 1 : 0);
+      return Promise.resolve(sorted.map(cloneRecord));
     },
-    clone: () => createMockCollection([...results]),
-    distinct: () => createMockCollection(Array.from(new Set(results))),
+    clone: () => createMockCollection([...results], mutationGuard),
+    distinct: () => createMockCollection(Array.from(new Set(results)), mutationGuard),
     keys: () => Promise.resolve(results.map(r => r.id || r.key)),
     primaryKeys: () => Promise.resolve(results.map(r => r.id || r.key)),
     uniqueKeys: () => Promise.resolve(Array.from(new Set(results.map(r => r.id || r.key)))),
     modify: (changesOrFn: any) => {
       let count = 0;
       results.forEach(item => {
-        if (typeof changesOrFn === 'function') {
-          changesOrFn(item);
-          count++;
-        } else if (typeof changesOrFn === 'object' && changesOrFn !== null) {
-          Object.assign(item, changesOrFn);
-          count++;
+        mutationGuard?.(item, changesOrFn);
+        const previousTenantId = item?.tenantId;
+        if (typeof changesOrFn === 'function') changesOrFn(item);
+        else if (typeof changesOrFn === 'object' && changesOrFn !== null) Object.assign(item, changesOrFn);
+        if (mutationGuard && item?.tenantId !== previousTenantId) {
+          item.tenantId = previousTenantId;
+          throw new Error('FAIL_CLOSED: tenantId modification is forbidden.');
         }
+        count++;
       });
       return Promise.resolve(count);
     },
     delete: () => Promise.resolve(results.length),
     each: (fn: (item: any) => void) => {
-      results.forEach(fn);
+      results.forEach(item => fn(cloneRecord(item)));
       return Promise.resolve();
     }
   };
@@ -1571,160 +1570,191 @@ function getMockTable(tableName: string) {
     memDb[tableName] = new Map();
   }
   const store = memDb[tableName];
+  const tenantScoped = TENANT_SCOPED_TABLES.has(tableName);
+  const getVisibleRows = () => {
+    const rows = Array.from(store.values());
+    if (!tenantScoped) return rows;
+    const tenantId = getCurrentUserSession().tenantId;
+    if (!tenantId) throw new Error(`FAIL_CLOSED: In-memory read blocked on '${tableName}' without an active tenant session.`);
+    return rows.filter(item => item?.tenantId === tenantId);
+  };
+  const assertWritable = (item: any, key?: any) => {
+    if (!tenantScoped) return item;
+    const tenantId = getCurrentUserSession().tenantId;
+    if (!tenantId) throw new Error(`FAIL_CLOSED: In-memory write blocked on '${tableName}' without an active tenant session.`);
+    if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== tenantId)) {
+      throw new Error(`FAIL_CLOSED: In-memory cross-tenant write blocked on '${tableName}'.`);
+    }
+    const id = key ?? item.id ?? item.key;
+    const existing = id !== undefined ? store.get(String(id)) : undefined;
+    if (existing && existing.tenantId !== tenantId) {
+      throw new Error(`FAIL_CLOSED: In-memory cross-tenant write blocked on '${tableName}'.`);
+    }
+    return { ...item, tenantId };
+  };
+  const createVisibleCollection = (rows: any[]) => createMockCollection(rows, tenantScoped ? (item, changes) => {
+    const tenantId = getCurrentUserSession().tenantId;
+    if (!tenantId || item?.tenantId !== tenantId) {
+      throw new Error(`FAIL_CLOSED: In-memory collection mutation blocked on '${tableName}'.`);
+    }
+    if (typeof changes === 'object' && changes !== null && changes.tenantId !== undefined && changes.tenantId !== item.tenantId) {
+      throw new Error('FAIL_CLOSED: tenantId modification is forbidden.');
+    }
+  } : undefined);
 
   const whereMock = (indexOrProp?: any) => {
     // If an object criteria is passed, e.g. table.where({ code: '101' })
     if (typeof indexOrProp === 'object' && indexOrProp !== null) {
       const entries = Object.entries(indexOrProp);
-      const results = Array.from(store.values()).filter(item => {
+      const results = getVisibleRows().filter(item => {
         if (typeof item === 'object' && item !== null) {
           return entries.every(([k, v]) => String(item[k]).toLowerCase() === String(v).toLowerCase());
         }
         return false;
       });
-      return createMockCollection(results);
+      return createVisibleCollection(results);
     }
 
     const prop = typeof indexOrProp === 'string' ? indexOrProp : '';
 
     return {
       equals: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return String(item[prop]).toLowerCase() === String(val).toLowerCase();
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       equalsIgnoreCase: (val: any) => {
         const strVal = String(val).toLowerCase();
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return String(item[prop] ?? '').toLowerCase() === strVal;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       startsWith: (val: any) => {
         const prefix = String(val);
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return String(item[prop] ?? '').startsWith(prefix);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       startsWithIgnoreCase: (val: any) => {
         const prefix = String(val).toLowerCase();
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return String(item[prop] ?? '').toLowerCase().startsWith(prefix);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       startsWithAnyOf: (prefixes: string[]) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             const fieldVal = String(item[prop] ?? '');
             return prefixes.some(p => fieldVal.startsWith(p));
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       startsWithIgnoreCaseAnyOf: (prefixes: string[]) => {
         const lowerPrefixes = prefixes.map(p => String(p).toLowerCase());
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             const fieldVal = String(item[prop] ?? '').toLowerCase();
             return lowerPrefixes.some(p => fieldVal.startsWith(p));
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       above: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] > val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       aboveOrEqual: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] >= val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       below: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] < val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       belowOrEqual: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] <= val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       anyOf: (vals: any[]) => {
         const valSet = new Set(vals);
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return valSet.has(item[prop]);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       anyOfIgnoreCase: (vals: string[]) => {
         const valSet = new Set(vals.map(v => String(v).toLowerCase()));
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return valSet.has(String(item[prop] ?? '').toLowerCase());
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       noneOf: (vals: any[]) => {
         const valSet = new Set(vals);
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return !valSet.has(item[prop]);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       notEqual: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] !== val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       between: (a: any, b: any, includeLower = true, includeUpper = true) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             const v = item[prop];
             const lowerOk = includeLower ? v >= a : v > a;
@@ -1733,94 +1763,104 @@ function getMockTable(tableName: string) {
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       inAnyRange: (ranges: [any, any][]) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             const v = item[prop];
             return ranges.some(([a, b]) => v >= a && v <= b);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       }
     };
   };
 
   const mockTable: any = {
     name: tableName,
-    toArray: () => Promise.resolve(Array.from(store.values())),
+    toArray: () => Promise.resolve(getVisibleRows().map((item: any) => ({ ...item }))),
     get: (key: any) => {
-      if (typeof key === 'object' && key !== null) {
-        // Handle compound or query key search
-        const found = Array.from(store.values()).find(item => {
-          return Object.entries(key).every(([k, v]) => item[k] === v);
-        });
-        return Promise.resolve(found || null);
-      }
-      return Promise.resolve(store.get(String(key)) || null);
+      const rows = getVisibleRows();
+      const found = typeof key === 'object' && key !== null
+        ? rows.find(item => Object.entries(key).every(([k, v]) => item[k] === v))
+        : rows.find(item => String(item.id ?? item.key) === String(key));
+      return Promise.resolve(found ? { ...found } : null);
     },
+    bulkGet: async (keys: any[]) => Promise.all(keys.map((key: any) => mockTable.get(key))),
     put: (item: any) => {
-      const id = item.id || item.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
-      const activeItem = { ...item, id };
-      store.set(String(id), activeItem);
+      const safeItem = assertWritable(item);
+      const id = safeItem.id || safeItem.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
+      store.set(String(id), { ...safeItem, id });
       return Promise.resolve(id);
     },
     add: (item: any) => {
-      const id = item.id || item.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
-      const activeItem = { ...item, id };
-      store.set(String(id), activeItem);
+      const safeItem = assertWritable(item);
+      const id = safeItem.id || safeItem.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
+      if (store.has(String(id))) throw new Error(`ConstraintError: Duplicate key in '${tableName}'.`);
+      store.set(String(id), { ...safeItem, id });
       return Promise.resolve(id);
     },
     update: (key: any, changes: any) => {
       const existing = store.get(String(key));
-      if (existing) {
-        store.set(String(key), { ...existing, ...changes });
-        return Promise.resolve(1);
+      if (!existing) return Promise.resolve(0);
+      if (tenantScoped && existing.tenantId !== getCurrentUserSession().tenantId) {
+        throw new Error(`FAIL_CLOSED: In-memory cross-tenant update blocked on '${tableName}'.`);
       }
-      return Promise.resolve(0);
+      if (tenantScoped && changes?.tenantId !== undefined && changes.tenantId !== existing.tenantId) {
+        throw new Error('FAIL_CLOSED: tenantId modification is forbidden.');
+      }
+      store.set(String(key), { ...existing, ...changes, ...(tenantScoped ? { tenantId: existing.tenantId } : {}) });
+      return Promise.resolve(1);
     },
     delete: (key: any) => {
+      const existing = store.get(String(key));
+      if (tenantScoped && (!getCurrentUserSession().tenantId || !existing || existing.tenantId !== getCurrentUserSession().tenantId)) {
+        throw new Error(`FAIL_CLOSED: In-memory cross-tenant delete blocked on '${tableName}'.`);
+      }
       store.delete(String(key));
       return Promise.resolve(null);
     },
-    bulkAdd: (items: any[]) => {
-      items.forEach(item => {
-        const id = item.id || item.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
-        store.set(String(id), { ...item, id });
-      });
-      return Promise.resolve(items);
+    bulkAdd: async (items: any[]) => {
+      if (!Array.isArray(items)) throw new TypeError('bulkAdd expects an array.');
+      const safeItems = items.map(item => assertWritable(item));
+      for (const item of safeItems) {
+        const id = item.id || item.key;
+        if (id !== undefined && store.has(String(id))) throw new Error(`ConstraintError: Duplicate key in '${tableName}'.`);
+      }
+      return Promise.all(safeItems.map(item => mockTable.add(item)));
     },
-    bulkPut: (items: any[]) => {
-      items.forEach(item => {
-        const id = item.id || item.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
-        store.set(String(id), { ...item, id });
-      });
-      return Promise.resolve(items);
+    bulkPut: async (items: any[]) => {
+      if (!Array.isArray(items)) throw new TypeError('bulkPut expects an array.');
+      const safeItems = items.map(item => assertWritable(item));
+      return Promise.all(safeItems.map(item => mockTable.put(item)));
     },
-    bulkDelete: (keys: any[]) => {
-      keys.forEach(k => store.delete(String(k)));
-      return Promise.resolve();
+    bulkDelete: async (keys: any[]) => {
+      if (!Array.isArray(keys)) throw new TypeError('bulkDelete expects an array of keys.');
+      if (tenantScoped) {
+        const tenantId = getCurrentUserSession().tenantId;
+        if (!tenantId) throw new Error(`FAIL_CLOSED: In-memory bulk delete blocked on '${tableName}'.`);
+        for (const key of keys) {
+          const record = store.get(String(key));
+          if (record && record.tenantId !== tenantId) throw new Error(`FAIL_CLOSED: In-memory cross-tenant bulk delete blocked on '${tableName}'.`);
+        }
+      }
+      return Promise.all(keys.map(key => mockTable.delete(key)));
     },
-    clear: () => {
-      store.clear();
-      return Promise.resolve();
+    clear: async () => {
+      if (!tenantScoped) { store.clear(); return; }
+      const tenantId = getCurrentUserSession().tenantId;
+      if (!tenantId) throw new Error(`FAIL_CLOSED: In-memory clear blocked on '${tableName}'.`);
+      for (const [key, record] of store.entries()) if (record?.tenantId === tenantId) store.delete(key);
     },
-    count: () => Promise.resolve(store.size),
+    count: () => Promise.resolve(getVisibleRows().length),
     where: whereMock,
     orderBy: (prop: string) => {
-      const results = Array.from(store.values()).sort((a, b) => {
-        if (a[prop] < b[prop]) return -1;
-        if (a[prop] > b[prop]) return 1;
-        return 0;
-      });
-      return createMockCollection(results);
+      const results = getVisibleRows().sort((a, b) => a[prop] < b[prop] ? -1 : a[prop] > b[prop] ? 1 : 0);
+      return createVisibleCollection(results);
     },
-    filter: (fn: any) => {
-      const results = Array.from(store.values()).filter(fn);
-      return createMockCollection(results);
-    }
+    filter: (fn: any) => createVisibleCollection(getVisibleRows().filter(fn))
   };
 
   return mockTable;
