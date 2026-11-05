@@ -38,11 +38,31 @@ export function getCurrentContext(overrideContext?: ConfigurationContext): Confi
   const session = TokenProvider.getCurrentSession();
   const user = session.user;
 
+  let deviceId = typeof session.deviceId === 'string' && session.deviceId.trim()
+    ? session.deviceId
+    : undefined;
+
+  // DeviceManager persists its stable identity under this key. Never invent a
+  // shared fallback ID: doing so would merge DEVICE-scoped settings across devices.
+  if (!deviceId && typeof localStorage !== 'undefined') {
+    try {
+      const rawIdentity = localStorage.getItem('pharmaflow_device_identity');
+      if (rawIdentity) {
+        const identity = JSON.parse(rawIdentity);
+        if (typeof identity?.deviceId === 'string' && identity.deviceId.trim()) {
+          deviceId = identity.deviceId;
+        }
+      }
+    } catch {
+      // An unavailable or malformed local identity leaves DEVICE scope unavailable.
+    }
+  }
+
   const defaultContext: ConfigurationContext = {
     tenantId: session.tenantId || user?.tenant_id || user?.tenantId || undefined,
     branchId: session.branchId || user?.branch_id || user?.branchId || undefined,
     userId: user?.id || user?.user_id || undefined,
-    deviceId: session.deviceId || 'default-device'
+    deviceId
   };
 
   if (overrideContext) {
