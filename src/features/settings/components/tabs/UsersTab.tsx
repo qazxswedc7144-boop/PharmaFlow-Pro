@@ -74,7 +74,7 @@ export const UsersTab: React.FC = () => {
     const currentUser = authService.getCurrentUser();
     const role = String(currentUser?.Role || '').trim().toLowerCase();
     const isAdmin = [
-      'admin', 'superadmin', 'super_admin', 'administrator',
+      'admin', 'superadmin', 'super_admin', 'platform_owner', 'platformowner', 'administrator',
       'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
     ].includes(role);
 
