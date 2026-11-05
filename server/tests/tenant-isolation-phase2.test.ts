@@ -91,6 +91,7 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
     it('blocks updates to another tenant record', async () => {
       setSession(TENANT_A);
       await db.products.add({ id: 'product-A', name: 'Safe Product' } as any);
+      expect((await db.products.get('product-A'))?.tenantId).toBe(TENANT_A);
 
       setSession(TENANT_B);
       await expect(db.products.update('product-A', { name: 'Hacked' }))
@@ -385,6 +386,7 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       await db.userPermissions.add({
         id: 'permission-A', userId: 'user-A', permissions: {}
       } as any);
+      expect((await db.userPermissions.get('permission-A'))?.tenantId).toBe(TENANT_A);
 
       setSession(TENANT_B);
       await expect(db.userPermissions.update('permission-A', { permissions: { Admin: true } } as any))
