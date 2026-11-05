@@ -384,6 +384,37 @@ function installTenantCollectionGuards(dbInstance: Dexie) {
     return forEachVisibleRecord(this, 'Collection iteration', callback);
   };
 
+  // Dexie also exposes key-only iterators. They must use the same tenant-filtered
+  // cursor path because keys and primary keys can disclose cross-tenant metadata.
+  if (typeof CollectionProto.eachKey === 'function') {
+    CollectionProto.eachKey = function(this: any, callback: (key: any, cursor: any) => any) {
+      if (typeof callback !== 'function') throw new TypeError('Collection.eachKey requires a callback.');
+      return forEachVisibleRecord(this, 'Collection key iteration', (_record, cursor) =>
+        callback(cursor?.key, cursor)
+      );
+    };
+  }
+  if (typeof CollectionProto.eachPrimaryKey === 'function') {
+    CollectionProto.eachPrimaryKey = function(this: any, callback: (key: any, cursor: any) => any) {
+      if (typeof callback !== 'function') throw new TypeError('Collection.eachPrimaryKey requires a callback.');
+      return forEachVisibleRecord(this, 'Collection primary-key iteration', (_record, cursor) =>
+        callback(cursor?.primaryKey, cursor)
+      );
+    };
+  }
+  if (typeof CollectionProto.eachUniqueKey === 'function') {
+    CollectionProto.eachUniqueKey = function(this: any, callback: (key: any, cursor: any) => any) {
+      if (typeof callback !== 'function') throw new TypeError('Collection.eachUniqueKey requires a callback.');
+      const seen: any[] = [];
+      return forEachVisibleRecord(this, 'Collection unique-key iteration', (_record, cursor) => {
+        const key = cursor?.key;
+        if (key === undefined || seen.some(previous => Dexie.cmp(previous, key) === 0)) return;
+        seen.push(key);
+        return callback(key, cursor);
+      });
+    };
+  }
+
   if (typeof CollectionProto.sortBy === 'function') {
     CollectionProto.sortBy = function(this: any, keyPath: string, callback?: (records: any[]) => any) {
       return this.toArray().then((records: any[]) => {
