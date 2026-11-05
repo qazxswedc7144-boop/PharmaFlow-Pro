@@ -37,15 +37,25 @@ export class ConfigurationService {
 
   private assertMutationAuthorized(scope: ConfigScope, context: ConfigurationContext, operation: 'تعديل' | 'حذف'): void {
     const user = authService.getCurrentUser();
-    if (!user?.id) {
-      throw new Error(`[ConfigurationService] غير مصرح لك: يجب تسجيل الدخول قبل ${operation} الإعدادات.`);
+    if (!authService.isSignedIn() || !user?.id) {
+      throw new Error(`[ConfigurationService] غير مصرح لك: يجب تسجيل الدخول بجلسة صالحة قبل ${operation} الإعدادات.`);
     }
 
     assertScopedContext(scope, context);
 
+    // Every tenant-owned setting must be bound to the tenant in the authenticated
+    // session. A missing tenant claim is not permission to skip the comparison.
+    if (scope !== 'SYSTEM' && scope !== 'RUNTIME') {
+      if (!user.tenantId || context.tenantId !== user.tenantId) {
+        throw new Error('[ConfigurationService] سياق المؤسسة لا يطابق المؤسسة في جلسة المصادقة.');
+      }
+    }
+
     const role = String(user.Role || '').trim().toLowerCase();
     const isSuperAdmin = ['superadmin', 'super_admin', 'platform_owner', 'مدير النظام'].includes(role);
-    const isAdmin = isSuperAdmin || ['admin', 'administrator', 'tenant_admin', 'tenant-admin', 'owner', 'مدير'].includes(role);
+    const isAdmin = isSuperAdmin || [
+      'admin', 'administrator', 'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام'
+    ].includes(role);
 
     if (scope === 'SYSTEM' && !isSuperAdmin) {
       throw new Error('[ConfigurationService] يتطلب هذا الإعداد صلاحية SuperAdmin.');
@@ -57,10 +67,6 @@ export class ConfigurationService {
 
     if (scope === 'USER' && context.userId !== user.id) {
       throw new Error('[ConfigurationService] لا يمكنك تعديل إعدادات مستخدم آخر.');
-    }
-
-    if (scope === 'DEVICE' && user.tenantId && context.tenantId !== user.tenantId) {
-      throw new Error('[ConfigurationService] سياق الجهاز لا يتبع المؤسسة الحالية.');
     }
   }
   private isInitialized = false;
