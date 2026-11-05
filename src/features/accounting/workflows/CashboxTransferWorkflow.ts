@@ -41,24 +41,36 @@ export class CashboxTransferWorkflow {
     if (!input.date || Number.isNaN(new Date(input.date).getTime())) {
       throw new Error('تاريخ التحويل غير صالح.');
     }
-    const session = getCurrentUserSession();
-    if (!session.tenantId || !session.branchId) {
-      throw new Error('فشلت العملية: لا توجد جلسة مستخدم نشطة أو صلاحيات كافية.');
-    }
-    if (input.tenantId !== session.tenantId || input.branchId !== session.branchId) {
-      console.error('[SECURITY] Cashbox transfer attempt with mismatched session context:', { input, session });
-      throw new Error('خطأ أمني: سياق المؤسسة أو الفرع غير مطابق للجلسة النشطة.');
-    }
+    const assertActiveSession = () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId || !session.branchId) {
+        throw new Error('فشلت العملية: لا توجد جلسة مستخدم نشطة أو صلاحيات كافية.');
+      }
+      if (input.tenantId !== session.tenantId || input.branchId !== session.branchId) {
+        console.error('[SECURITY] Cashbox transfer attempt with mismatched session context:', {
+          requestedTenantId: input.tenantId,
+          requestedBranchId: input.branchId,
+          activeTenantId: session.tenantId,
+          activeBranchId: session.branchId
+        });
+        throw new Error('خطأ أمني: سياق المؤسسة أو الفرع غير مطابق للجلسة النشطة.');
+      }
+    };
+    assertActiveSession();
     if (!input.transactionUuid?.trim()) {
       throw new Error('معرّف العملية مطلوب لضمان العزل ومنع التكرار.');
     }
 
     await PeriodLockEngine.validateOperation(input.date, 'التحويل بين الصناديق');
+    // Revalidate after the asynchronous period check, before opening the write transaction.
+    assertActiveSession();
 
     return db.safeTransaction(
       'rw',
       ['cashboxes', 'accounts', 'journalEntries', 'journalLines'],
       async (tx) => {
+        // A session can change while asynchronous work is in flight; fail closed inside the transaction too.
+        assertActiveSession();
         const cashboxes = tx.table('cashboxes');
         const accounts = tx.table('accounts');
         const entries = tx.table('journalEntries');
@@ -73,8 +85,8 @@ export class CashboxTransferWorkflow {
           throw new Error('لا يمكن التحويل من صندوق معطل أو إلى صندوق معطل.');
         }
         for (const box of [source, destination]) {
-          if (box.tenantId && box.tenantId !== input.tenantId) {
-            throw new Error('الصندوق خارج نطاق المؤسسة الحالية.');
+          if (box.tenantId !== input.tenantId) {
+            throw new Error('الصندوق لا يحمل مؤسسة مطابقة للمؤسسة الحالية أو أنه خارج نطاقها.');
           }
           if (box.branchId !== input.branchId) {
             throw new Error('التحويل الداخلي يتطلب صندوقين تابعين للفرع المحدد.');
@@ -93,11 +105,13 @@ export class CashboxTransferWorkflow {
           if (!account || account.isActive === false || account.type !== 'ASSET') {
             throw new Error('يجب ربط كل صندوق بحساب أصول نشط وصالح.');
           }
-          if (account.tenantId && account.tenantId !== input.tenantId) {
-            throw new Error('أحد الحسابات المرتبطة خارج نطاق المؤسسة الحالية.');
+          if (account.tenantId !== input.tenantId) {
+            throw new Error('أحد الحسابات المرتبطة لا يحمل مؤسسة مطابقة أو أنه خارج نطاق المؤسسة الحالية.');
           }
         }
 
+        // Final context check immediately before any accounting write.
+        assertActiveSession();
         const journalId = input.transactionUuid;
         const existing = await entries.get(journalId);
         if (existing) {
