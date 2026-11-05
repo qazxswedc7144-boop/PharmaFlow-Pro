@@ -114,8 +114,8 @@ function assertTenantAdminForUserManagement(tableName: string): void {
   const current = getCurrentUserSession();
   const role = String(session.user?.role || session.user?.Role || '').trim().toLowerCase();
   const allowedRoles = [
-    'admin', 'superadmin', 'super_admin', 'platform_owner', 'platformowner', 'administrator',
-    'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
+    'admin', 'superadmin', 'super_admin', 'platform_owner', 'platformowner', 'administrator', 'local-admin',
+    'tenant_admin', 'tenantadmin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
   ];
 
   if (!session.isAuthenticated || !session.token || !current.tenantId || !session.user?.id && !(session.user as any)?.user_id || !allowedRoles.includes(role)) {
