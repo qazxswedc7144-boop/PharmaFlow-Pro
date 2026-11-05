@@ -62,25 +62,36 @@ export class FinancialHealthService {
    */
   static async refreshHealthMonitor(): Promise<FinancialHealthSnapshot> {
     const session = getCurrentUserSession();
-    if (!session.tenantId) {
+    const tenantId = session.tenantId;
+    if (!tenantId) {
       throw new Error('FAIL_CLOSED: لا يمكن تحديث المؤشر المالي دون جلسة مؤسسة نشطة.');
     }
+    const assertTenantSession = () => {
+      if (getCurrentUserSession().tenantId !== tenantId) {
+        throw new Error('FAIL_CLOSED: تغيرت المؤسسة النشطة أثناء تحديث المؤشر المالي.');
+      }
+    };
     const now = new Date().toISOString();
     const today = now.split('T')[0] || '';
 
-    // 1. Fetch raw data
-    const rawSales = await db.getSales();
-    const rawPurchases = await db.getPurchases();
+    // Read all source records using the captured tenant context.
+    const [rawSales, rawPurchases, products, cashFlow] = await Promise.all([
+      db.invoices.where('tenantId').equals(tenantId).filter(invoice => invoice.type === 'SALE').toArray(),
+      db.invoices.where('tenantId').equals(tenantId).filter(invoice => invoice.type === 'PURCHASE').toArray(),
+      db.products.where('tenantId').equals(tenantId).toArray(),
+      db.cashFlow.where('tenantId').equals(tenantId).toArray()
+    ]);
+    assertTenantSession();
+
     const sales = rawSales.map(mapInvoiceToSale);
     const purchases = rawPurchases.map(mapInvoiceToPurchase);
-    const products = await db.getProducts();
-    const cashFlow = await db.getCashFlow();
 
     // 2. Calculate KPIs
     const kpis = await this.calculateKPIs(sales, purchases, products, cashFlow);
+    assertTenantSession();
 
     // 3. Detect Risks & Generate Alerts
-    await this.detectRisks(kpis, sales, purchases, products);
+    await this.detectRisks(kpis, sales, purchases, products, tenantId, assertTenantSession);
 
     // 4. Calculate Health Score
     const breakdown = this.calculateBreakdown(kpis);
@@ -102,7 +113,7 @@ export class FinancialHealthService {
       metrics: kpis,
       breakdown,
       insights,
-      tenantId: session.tenantId
+      tenantId
     };
 
     // Save snapshot (one per day usually, but we'll save this one)
@@ -171,8 +182,14 @@ export class FinancialHealthService {
     };
   }
 
-  private static async detectRisks(kpis: HealthKPIs, sales: Sale[], purchases: Purchase[], products: Product[]) {
-    if (!session.tenantId) return;
+  private static async detectRisks(
+    kpis: HealthKPIs,
+    sales: Sale[],
+    purchases: Purchase[],
+    products: Product[],
+    tenantId: string,
+    assertTenantSession: () => void
+  ) {
     const alerts: SystemAlert[] = [];
     const now = new Date().toISOString();
 
@@ -191,7 +208,7 @@ export class FinancialHealthService {
         message: 'تحذير: ذمم العملاء تجاوزت 40% من إجمالي المبيعات. خطر في السيولة.',
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
@@ -212,7 +229,7 @@ export class FinancialHealthService {
         message: 'تنبيه: توجد فواتير مشتريات متأخرة السداد لأكثر من 30 يوماً.',
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
@@ -225,7 +242,7 @@ export class FinancialHealthService {
         message: 'حرج: رصيد الصندوق سالب! يرجى مراجعة العمليات المالية فوراً.',
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
@@ -251,7 +268,7 @@ export class FinancialHealthService {
         message: `تنبيه: يوجد ${stagnantProducts.length} أصناف راكدة لم يتم بيعها منذ 90 يوماً.`,
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
@@ -266,20 +283,22 @@ export class FinancialHealthService {
         message: 'تحذير: هامش الربح الصافي أقل من 5%. كفاءة التشغيل منخفضة.',
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
     // Save alerts (only if not already present and unread to avoid flooding).
     // Older records may store the flag as numeric 0; current records use boolean false.
     const existingAlerts = await db.systemAlerts
-      .where('tenantId').equals(session.tenantId)
+      .where('tenantId').equals(tenantId)
       .filter(a => a.isRead === false || (a.isRead as any) === 0)
       .toArray();
+    assertTenantSession();
     
     for (const alert of alerts) {
       const isDuplicate = existingAlerts.some(a => a.message === alert.message && a.severity === alert.severity);
       if (!isDuplicate) {
+        assertTenantSession();
         await db.systemAlerts.put(alert);
         
         // If critical, check threshold via AlertCenter logic
@@ -287,11 +306,12 @@ export class FinancialHealthService {
           // We don't call addAlert here to avoid recursion, but we trigger the threshold check
           const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
           const criticalCount = await db.systemAlerts
-            .where('tenantId').equals(session.tenantId)
+            .where('tenantId').equals(tenantId)
             .filter(a => a.severity === 'CRITICAL' && a.timestamp > oneDayAgo)
             .count();
-            
+
           if (criticalCount >= 10) {
+            assertTenantSession();
             console.error("CRITICAL THRESHOLD REACHED via Financial Health Monitor 🛡️");
             if (!IS_PREVIEW) {
               await AnomalyScoringEngine.calculateCurrentRiskScore();
