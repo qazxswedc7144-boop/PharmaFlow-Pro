@@ -155,6 +155,43 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       expect((await db.products.where('tenantId').equals(TENANT_B).toArray())).toHaveLength(0);
     });
 
+    it('installs Collection guards on every PharmaFlowDB instance and blocks session switches mid-read', async () => {
+      const databaseName = `pharmaflow-tenant-collection-instance-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const isolatedDb = new PharmaFlowDB(databaseName);
+      try {
+        await isolatedDb.open();
+
+        setSession(TENANT_A);
+        await isolatedDb.products.add({ id: 'instance-product-A', name: 'Shared Instance Product' } as any);
+        setSession(TENANT_B);
+        await isolatedDb.products.add({ id: 'instance-product-B', name: 'Shared Instance Product' } as any);
+
+        setSession(TENANT_A);
+        const query = isolatedDb.products.where('name').equals('Shared Instance Product');
+        expect((await query.toArray()).map(product => product.id)).toEqual(['instance-product-A']);
+        expect(await isolatedDb.products.where('name').equals('Shared Instance Product').count()).toBe(1);
+        expect((await isolatedDb.products.where('name').equals('Shared Instance Product').first())?.id)
+          .toBe('instance-product-A');
+        expect((await isolatedDb.products.where('name').equals('Shared Instance Product').last())?.id)
+          .toBe('instance-product-A');
+
+        const iteratedIds: string[] = [];
+        await isolatedDb.products.where('name').equals('Shared Instance Product')
+          .each(product => { iteratedIds.push(product.id); });
+        expect(iteratedIds).toEqual(['instance-product-A']);
+        expect(await isolatedDb.products.where('name').equals('Shared Instance Product').primaryKeys())
+          .toEqual(['instance-product-A']);
+
+        await expect(
+          isolatedDb.products.where('name').equals('Shared Instance Product')
+            .each(() => { setSession(TENANT_B); })
+        ).rejects.toThrow(/FAIL_CLOSED: Tenant session changed during Collection iteration/);
+      } finally {
+        isolatedDb.close();
+        await isolatedDb.delete();
+      }
+    });
+
     it('stamps newly bulk-added and bulk-upserted records and rejects bulk writes without a tenant', async () => {
       setSession(TENANT_A);
       await db.users.bulkAdd([{ id: 'bulk-user-A', username: 'bulk-a' }] as any);
