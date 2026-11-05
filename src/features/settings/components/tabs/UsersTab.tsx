@@ -7,6 +7,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, getCurrentUserSession } from '@/core/db';
 import { authService } from '@features/auth/services/authService';
 import { useUIStore } from '@/store/useUIStore';
+import { useAuthStore } from '@/store/authStore';
 import SafeMovementReportUI from './SafeMovementReportUI';
 
 type PermissionSet = { read: boolean; add: boolean; edit: boolean; delete: boolean };
@@ -17,33 +18,30 @@ const EMPTY_PERMISSIONS = MODULES.reduce<Record<string, PermissionSet>>((all, na
 }, {});
 
 export const UsersTab: React.FC = () => {
+  const activeTenantId = useAuthStore(state => state.tenantId);
   const [activeView, setActiveView] = useState<'users' | 'permissions' | 'cash-report'>('users');
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
 
   const users = useLiveQuery(async () => {
-    const session = getCurrentUserSession();
-    if (!session.tenantId) return [];
-    return await db.users.where('tenantId').equals(session.tenantId).toArray();
-  }, []) || [];
+    if (!activeTenantId) return [];
+    return await db.users.where('tenantId').equals(activeTenantId).toArray();
+  }, [activeTenantId])?.filter(user => user.tenantId === activeTenantId) || [];
   const cashboxes = useLiveQuery(async () => {
-    const session = getCurrentUserSession();
-    if (!session.tenantId) return [];
-    return await db.cashboxes.where('tenantId').equals(session.tenantId).toArray();
-  }, []) || [];
+    if (!activeTenantId) return [];
+    return await db.cashboxes.where('tenantId').equals(activeTenantId).toArray();
+  }, [activeTenantId])?.filter(cashbox => cashbox.tenantId === activeTenantId) || [];
   const cashMovements = useLiveQuery(async () => {
     if (!selectedUser?.id) return [];
-    const session = getCurrentUserSession();
-    if (!session.tenantId) return [];
+    if (!activeTenantId) return [];
 
-    // Filter by tenantId to prevent leakage if indexes exist, otherwise filter in memory
-    const tenantMovements = await db.cashFlow.where('tenantId').equals(session.tenantId).toArray();
+    const tenantMovements = await db.cashFlow.where('tenantId').equals(activeTenantId).toArray();
     return tenantMovements.filter((movement: any) =>
       (selectedUser.cashboxId && movement.cashboxId === selectedUser.cashboxId) ||
       movement.userId === selectedUser.id
     );
-  }, [selectedUser?.id, selectedUser?.cashboxId]) || [];
+  }, [selectedUser?.id, selectedUser?.cashboxId, activeTenantId]) || [];
   const reportMovements = useMemo(() => {
     let runningBalance = 0;
     return [...cashMovements]
@@ -89,7 +87,7 @@ export const UsersTab: React.FC = () => {
           setModulesPermissions({ ...EMPTY_PERMISSIONS, ...(perms?.permissions || {}) });
         });
     }
-  }, [selectedUser]);
+  }, [selectedUser, activeTenantId]);
 
   const toggleAction = (moduleName: string, action: keyof PermissionSet) => {
     setModulesPermissions((prev) => {
