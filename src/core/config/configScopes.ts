@@ -38,23 +38,69 @@ export function getCurrentContext(overrideContext?: ConfigurationContext): Confi
   const session = TokenProvider.getCurrentSession();
   const user = session.user;
 
-  let deviceId = session.deviceId || 'default-device';
-
   const defaultContext: ConfigurationContext = {
-    tenantId: session.tenantId || user?.tenant_id || user?.tenantId,
-    branchId: user?.branch_id || user?.branchId || undefined,
-    userId: user?.id || user?.user_id,
-    deviceId
+    tenantId: session.tenantId || user?.tenant_id || user?.tenantId || undefined,
+    branchId: session.branchId || user?.branch_id || user?.branchId || undefined,
+    userId: user?.id || user?.user_id || undefined,
+    deviceId: session.deviceId || 'default-device'
   };
 
-  return {
-    tenantId: overrideContext?.tenantId || defaultContext.tenantId,
-    branchId: overrideContext?.branchId || defaultContext.branchId,
-    userId: overrideContext?.userId || defaultContext.userId,
-    deviceId: overrideContext?.deviceId || defaultContext.deviceId
-  };
+  if (overrideContext) {
+    const fields: Array<keyof ConfigurationContext> = [
+      'tenantId',
+      'branchId',
+      'userId',
+      'deviceId'
+    ];
+
+    for (const field of fields) {
+      const requestedValue = overrideContext[field];
+      if (requestedValue !== undefined && requestedValue !== defaultContext[field]) {
+        throw new Error(
+          `[ConfigurationContext] Untrusted ${field} override does not match the authenticated session.`
+        );
+      }
+    }
+  }
+
+  return defaultContext;
 }
 
+/**
+ * Ensures that a persisted scope has the identifiers required to isolate it.
+ * Legacy records without these identifiers remain stored but are not addressable.
+ */
+export function assertScopedContext(scope: ConfigScope, context: ConfigurationContext): void {
+  const requiredFields: Array<keyof ConfigurationContext> = [];
+
+  switch (scope) {
+    case 'TENANT':
+      requiredFields.push('tenantId');
+      break;
+    case 'BRANCH':
+      requiredFields.push('tenantId', 'branchId');
+      break;
+    case 'USER':
+      requiredFields.push('tenantId', 'userId');
+      break;
+    case 'DEVICE':
+      requiredFields.push('tenantId', 'deviceId');
+      break;
+    case 'SYSTEM':
+    case 'RUNTIME':
+      return;
+    default:
+      throw new Error(`[ConfigurationContext] Unsupported configuration scope: ${scope}`);
+  }
+
+  for (const field of requiredFields) {
+    if (typeof context[field] !== 'string' || !context[field]!.trim()) {
+      throw new Error(
+        `[ConfigurationContext] Missing required ${field} for ${scope} configuration.`
+      );
+    }
+  }
+}
 /**
  * Builds a deterministic storage key prefix for scoped config records in Dexie.
  * Format: scope:tenantId:branchId:userId:deviceId:canonicalKey
@@ -64,6 +110,7 @@ export function buildScopedStorageKey(
   scope: ConfigScope,
   context: ConfigurationContext
 ): string {
+  assertScopedContext(scope, context);
   const t = context.tenantId || 'global';
   const b = context.branchId || 'global';
   const u = context.userId || 'global';
