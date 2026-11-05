@@ -182,6 +182,22 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
         expect(await isolatedDb.products.where('name').equals('Shared Instance Product').primaryKeys())
           .toEqual(['instance-product-A']);
 
+        const allProducts = isolatedDb.products.toCollection();
+        expect(await allProducts.keys()).toEqual(['instance-product-A']);
+        expect(await allProducts.uniqueKeys()).toEqual(['instance-product-A']);
+
+        const eachKeyValues: string[] = [];
+        await allProducts.eachKey(key => { eachKeyValues.push(String(key)); });
+        expect(eachKeyValues).toEqual(['instance-product-A']);
+
+        const eachPrimaryKeyValues: string[] = [];
+        await allProducts.eachPrimaryKey(key => { eachPrimaryKeyValues.push(String(key)); });
+        expect(eachPrimaryKeyValues).toEqual(['instance-product-A']);
+
+        const eachUniqueKeyValues: string[] = [];
+        await allProducts.eachUniqueKey(key => { eachUniqueKeyValues.push(String(key)); });
+        expect(eachUniqueKeyValues).toEqual(['instance-product-A']);
+
         await expect(
           isolatedDb.products.where('name').equals('Shared Instance Product')
             .each(() => { setSession(TENANT_B); })
