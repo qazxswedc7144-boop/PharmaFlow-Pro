@@ -66,6 +66,31 @@ describe('ConfigurationRepository legacy preservation', () => {
     expect(mockDb.rows.has('system.name:legacy-copy')).toBe(true);
   });
 
+  it('rejects a DEVICE record whose embedded branch/user context does not match its storage key', async () => {
+    const storedKey = 'device:tenant-a:branch-a:user-a:device-a:system.name';
+    mockDb.rows.set(storedKey, {
+      key: storedKey,
+      value: {
+        ...tenantRecord,
+        scope: 'DEVICE',
+        context: {
+          tenantId: 'tenant-a',
+          branchId: 'branch-b',
+          userId: 'user-a',
+          deviceId: 'device-a'
+        }
+      }
+    });
+
+    const repository = new ConfigurationRepository();
+    await expect(repository.getRecord('system.name', 'DEVICE', {
+      tenantId: 'tenant-a',
+      branchId: 'branch-a',
+      userId: 'user-a',
+      deviceId: 'device-a'
+    })).resolves.toBeNull();
+  });
+
   it('writes only the tenant-scoped key and does not create a global canonical copy', async () => {
     const repository = new ConfigurationRepository();
     await repository.saveRecord(tenantRecord);
