@@ -283,8 +283,7 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
       });
     };
   }
-
-
+}
 
 /**
  * Install tenant Collection guards on the constructors owned by this Dexie
