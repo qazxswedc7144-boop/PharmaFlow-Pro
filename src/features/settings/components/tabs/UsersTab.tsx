@@ -79,8 +79,14 @@ export const UsersTab: React.FC = () => {
       'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
     ].includes(role);
 
-    if (!currentUser?.id || !session.tenantId || !isAdmin) {
-      useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين أو لا توجد مؤسسة نشطة.', 'error');
+    if (
+      !authService.isSignedIn() ||
+      !currentUser?.id ||
+      !session.tenantId ||
+      currentUser.tenantId !== session.tenantId ||
+      !isAdmin
+    ) {
+      useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين أو لا توجد جلسة ومؤسسة نشطة صالحة.', 'error');
       return null;
     }
 
