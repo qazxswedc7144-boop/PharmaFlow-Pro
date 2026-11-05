@@ -159,8 +159,8 @@ export const UsersTab: React.FC = () => {
         });
         useUIStore.getState().addToast('تم تحديث ملف المستخدم. لم يتم تغيير كلمة مرور الدخول.', 'success');
       } else {
-        // This screen creates a local staff profile only. The API currently exposes no
-        // tenant-admin user-provisioning endpoint, so do not persist the entered password.
+        // This screen creates a local staff profile only. The existing organization
+        // endpoint uses a placeholder password hash and is not safe for provisioning.
         const profileData = {
           name: formData.name,
           username: formData.username,
