@@ -68,6 +68,28 @@ export const UsersTab: React.FC = () => {
   const reportBalance = reportMovements[reportMovements.length - 1]?.balance ?? 0;
   const defaultCashboxId = cashboxes.find((cashbox: any) => cashbox.name === 'الصندوق الرئيسي')?.id || cashboxes[0]?.id || 'cashbox-main';
 
+  const getAuthorizedTenantSession = (targetUser?: any) => {
+    const session = getCurrentUserSession();
+    const currentUser = authService.getCurrentUser();
+    const role = String(currentUser?.Role || '').trim().toLowerCase();
+    const isAdmin = [
+      'admin', 'superadmin', 'super_admin', 'administrator',
+      'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير النظام'
+    ].includes(role);
+
+    if (!currentUser?.id || !session.tenantId || !isAdmin) {
+      useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين أو لا توجد مؤسسة نشطة.', 'error');
+      return null;
+    }
+
+    if (targetUser && (!targetUser.tenantId || targetUser.tenantId !== session.tenantId)) {
+      useUIStore.getState().addToast('رفضت العملية: المستخدم لا يحمل سياق المؤسسة الحالية.', 'error');
+      return null;
+    }
+
+    return session;
+  };
+
   const [formData, setFormData] = useState({
     name: '', username: '', password: '', role: 'صيدلي مسؤول',
     branch: 'الفرع الرئيسي', status: 'active', cashboxId: 'cashbox-main'
@@ -121,25 +143,38 @@ export const UsersTab: React.FC = () => {
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    const currentUser = authService.getCurrentUser();
-    const userRole = (currentUser?.Role || '').toLowerCase();
-    if (!userRole.includes('admin') && !userRole.includes('مدير')) {
-      useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين. يتطلب صلاحيات مدير.', 'error');
-      return;
-    }
+    const session = getAuthorizedTenantSession(editingUser || undefined);
+    if (!session) return;
 
     try {
       if (editingUser) {
+        // Passwords must be provisioned and hashed by the trusted server, never stored in Dexie.
         await db.users.update(editingUser.id, {
           name: formData.name, role: formData.role, branch: formData.branch,
           status: formData.status, cashboxId: formData.cashboxId || defaultCashboxId,
-          ...(formData.password ? { password: formData.password } : {})
+          tenantId: session.tenantId
         });
-        useUIStore.getState().addToast('تم تحديث بيانات المستخدم بنجاح', 'success');
+        useUIStore.getState().addToast('تم تحديث ملف المستخدم. لم يتم تغيير كلمة مرور الدخول.', 'success');
       } else {
-        await db.users.add({ ...formData, cashboxId: formData.cashboxId || defaultCashboxId, id: Date.now().toString(), createdAt: new Date().toISOString() });
-        useUIStore.getState().addToast('تمت إضافة المستخدم بنجاح', 'success');
+        // This screen creates a local staff profile only. The API currently exposes no
+        // tenant-admin user-provisioning endpoint, so do not persist the entered password.
+        const profileData = {
+          name: formData.name,
+          username: formData.username,
+          role: formData.role,
+          branch: formData.branch,
+          status: formData.status
+        };
+        await db.users.add({
+          ...profileData,
+          tenantId: session.tenantId,
+          cashboxId: formData.cashboxId || defaultCashboxId,
+          id: crypto.randomUUID(),
+          createdAt: new Date().toISOString()
+        });
+        useUIStore.getState().addToast('تم حفظ ملف الموظف محلياً. إنشاء حساب دخول وكلمة مروره يحتاج إلى خدمة خادم آمنة.', 'success');
       }
+      setFormData((current) => ({ ...current, password: '' }));
       setIsModalOpen(false);
     } catch (err: any) {
       useUIStore.getState().addToast(`فشل حفظ المستخدم: ${err.message}`, 'error');
@@ -148,6 +183,8 @@ export const UsersTab: React.FC = () => {
 
   const handleDeleteUser = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const targetUser = users.find((user: any) => user.id === id);
+    if (!targetUser || !getAuthorizedTenantSession(targetUser)) return;
     if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
       try {
         await db.users.delete(id);
@@ -160,11 +197,8 @@ export const UsersTab: React.FC = () => {
 
   const handleSavePermissions = async () => {
     if (!selectedUser) return;
-    const session = getCurrentUserSession();
-    if (selectedUser.tenantId && selectedUser.tenantId !== session.tenantId) {
-      useUIStore.getState().addToast('خطأ أمني: لا يمكنك تعديل صلاحيات مستخدم في مؤسسة أخرى', 'error');
-      return;
-    }
+    const session = getAuthorizedTenantSession(selectedUser);
+    if (!session) return;
 
     try {
       const existing = await db.userPermissions
@@ -314,7 +348,7 @@ export const UsersTab: React.FC = () => {
             <form onSubmit={handleSaveUser} className="space-y-4">
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">الاسم الثلاثي</label><input type="text" required placeholder="الاسم الكامل" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10" /></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">اسم المستخدم</label><input type="text" required disabled={!!editingUser} dir="ltr" placeholder="username" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-left text-sm outline-none transition focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10 disabled:opacity-50" /></div>
-              <div><label className="mb-1.5 block text-xs font-bold text-slate-700">كلمة السر {editingUser ? '(اتركها فارغة دون تغيير)' : ''}</label><input type="password" required={!editingUser} placeholder="••••••••" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none transition focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10" /></div>
+              <div><label className="mb-1.5 block text-xs font-bold text-slate-700">كلمة المرور (لا تُحفظ محلياً)</label><input type="password" autoComplete="new-password" required={false} placeholder="تُدار عبر خدمة الحسابات الآمنة" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none transition focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10" /><p className="mt-1 text-[11px] text-amber-700">لن تُحفظ كلمة المرور في قاعدة البيانات المحلية؛ إنشاء بيانات الدخول يحتاج إلى API آمن.</p></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">الصندوق المالي</label><select value={formData.cashboxId || defaultCashboxId} onChange={(e) => setFormData({ ...formData, cashboxId: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#1E4D4D] focus:bg-white">{cashboxes.length === 0 ? <option value="cashbox-main">الصندوق الرئيسي</option> : cashboxes.filter((cashbox: any) => cashbox.isActive !== false).map((cashbox: any) => <option key={cashbox.id} value={cashbox.id}>{cashbox.name}</option>)}</select></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">المسمى الوظيفي</label><select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#1E4D4D] focus:bg-white"><option value="صيدلي مسؤول">صيدلي مسؤول</option><option value="كاشير مبيعات">كاشير مبيعات</option><option value="مدير نظام">مدير نظام</option></select></div>
               <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3.5"><span><span className="block text-sm font-bold text-slate-700">حالة الحساب</span><span className="mt-1 block text-xs text-slate-500">{formData.status === 'active' ? 'الحساب نشط ويمكنه الدخول' : 'الحساب معطل'}</span></span><input type="checkbox" checked={formData.status === 'active'} onChange={(e) => setFormData({ ...formData, status: e.target.checked ? 'active' : 'inactive' })} className="h-5 w-5 accent-emerald-600" /></label>
