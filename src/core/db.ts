@@ -1805,8 +1805,9 @@ function getMockTable(tableName: string) {
     update: (key: any, changes: any) => {
       const existing = store.get(String(key));
       if (!existing) return Promise.resolve(0);
-      if (tenantScoped && existing.tenantId !== getCurrentUserSession().tenantId) {
-        throw new Error(`FAIL_CLOSED: In-memory cross-tenant update blocked on '${tableName}'.`);
+      const activeTenantId = getCurrentUserSession().tenantId;
+      if (tenantScoped && (!activeTenantId || !existing.tenantId || existing.tenantId !== activeTenantId)) {
+        throw new Error(`FAIL_CLOSED: In-memory cross-tenant or orphaned update blocked on '${tableName}'.`);
       }
       if (tenantScoped && changes?.tenantId !== undefined && changes.tenantId !== existing.tenantId) {
         throw new Error('FAIL_CLOSED: tenantId modification is forbidden.');
