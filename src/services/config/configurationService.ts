@@ -52,7 +52,7 @@ export class ConfigurationService {
     }
 
     const role = String(user.Role || '').trim().toLowerCase();
-    const isSuperAdmin = ['superadmin', 'super_admin', 'platform_owner', 'مدير النظام'].includes(role);
+    const isSuperAdmin = ['superadmin', 'super_admin', 'platform_owner', 'platformowner', 'مدير النظام'].includes(role);
     const isAdmin = isSuperAdmin || [
       'admin', 'administrator', 'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام'
     ].includes(role);
