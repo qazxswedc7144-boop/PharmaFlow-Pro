@@ -103,14 +103,9 @@ export class ConfigurationRepository {
         return record;
       }
 
-      return {
-        key: canonicalKey,
-        value: item.value,
-        scope,
-        context,
-        version: 1,
-        updatedAt: new Date().toISOString()
-      };
+      // A scoped key by itself is not proof of record ownership. Only a
+      // complete ConfigurationRecord with matching embedded scope/context is trusted.
+      return null;
     } catch (error) {
       console.warn(`[ConfigurationRepository] Error getting record for ${key}:`, error);
       // A failed read is not equivalent to a missing record; surface it so callers
