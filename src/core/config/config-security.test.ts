@@ -54,7 +54,12 @@ describe('Settings tenant isolation', () => {
 
     expect(resolveConfigValue('system.name', records, { tenantId: 'tenant-a' })).toBe('tenant-a-value');
     expect(resolveConfigValue('system.name', records, { tenantId: 'tenant-b' })).toBe('PharmaFlow Pro');
-    expect(resolveConfigValue('system.name', [records[0]], { tenantId: 'tenant-a' })).toBe('PharmaFlow Pro');
+
+    const legacyRecord = records[0];
+    if (!legacyRecord) {
+      throw new Error('Expected the legacy record fixture to exist.');
+    }
+    expect(resolveConfigValue('system.name', [legacyRecord], { tenantId: 'tenant-a' })).toBe('PharmaFlow Pro');
   });
 
   it('requires both tenant and branch identifiers for branch-scoped records', () => {
