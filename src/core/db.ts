@@ -73,6 +73,18 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
       return originalBulkAdd.call(this, items, keys, options);
     };
   }
+
+  const originalClear = TableProto.clear;
+  if (originalClear) {
+    TableProto.clear = function(this: any) {
+      if (this?.name === 'users' || this?.name === 'userPermissions') {
+        return Promise.reject(new Error(
+          `FAIL_CLOSED: Bulk clear is forbidden on '${this.name}'; use tenant-verified record deletion.`
+        ));
+      }
+      return originalClear.call(this);
+    };
+  }
 }
 
 export function getCurrentUserSession() {
