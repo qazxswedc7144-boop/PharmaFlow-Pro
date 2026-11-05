@@ -169,17 +169,19 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
 
     it('clearOldAlerts deletes only alerts belonging to the active tenant', async () => {
       setSession(TENANT_A);
-      await db.systemAlerts.add({ id: 'alert-A', type: 'FINANCIAL', message: 'A', isRead: false } as any);
+      await db.systemAlerts.add({ id: 'alert-A', type: 'STOCK', message: 'Medicine A', isRead: false } as any);
+      await db.systemAlerts.add({ id: 'financial-A', type: 'FINANCIAL', message: 'Financial A', isRead: false } as any);
 
       setSession(TENANT_B);
-      await db.systemAlerts.add({ id: 'alert-B', type: 'FINANCIAL', message: 'B', isRead: false } as any);
+      await db.systemAlerts.add({ id: 'alert-B', type: 'STOCK', message: 'Medicine B', isRead: false } as any);
 
       setSession(TENANT_A);
       await db.clearOldAlerts();
 
       const remaining = await db.systemAlerts.toArray();
-      expect(remaining.map((alert: any) => alert.id)).toEqual(['alert-B']);
-      expect(remaining[0].tenantId).toBe(TENANT_B);
+      expect(remaining.map((alert: any) => alert.id).sort()).toEqual(['alert-B', 'financial-A']);
+      expect(remaining.find((alert: any) => alert.id === 'alert-B')?.tenantId).toBe(TENANT_B);
+      expect(remaining.find((alert: any) => alert.id === 'financial-A')?.tenantId).toBe(TENANT_A);
     });
   });
 
