@@ -284,25 +284,36 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
     };
   }
 
-  // Dexie query results are Collections, not Tables. Guarding Table.get/toArray
-  // alone leaves where(...).toArray(), toCollection(), first(), count(), and each()
-  // as alternate read paths. Filter every tenant-scoped Collection before exposing
-  // records, and pin the result to the same tenant session for the whole read.
-  const CollectionProto = (Dexie as any).Collection?.prototype;
+
+
+/**
+ * Install tenant Collection guards on the constructors owned by this Dexie
+ * instance. Dexie creates per-instance Collection classes; patching the static
+ * Dexie.Collection prototype does not protect Collections created by db.where().
+ */
+const patchedTenantCollectionPrototypes = new WeakSet<object>();
+
+function installTenantCollectionGuards(dbInstance: Dexie) {
+  const CollectionProto = (dbInstance as any).Collection?.prototype;
   if (!CollectionProto) {
-    throw new Error('[SECURITY] Dexie Collection prototype is unavailable; tenant collection guards cannot initialize.');
+    throw new Error('[SECURITY] Instance Dexie Collection prototype is unavailable; tenant collection guards cannot initialize.');
   }
-  const originalCollectionToArray = CollectionProto.toArray;
-  const originalCollectionEach = CollectionProto.each;
-  const requiredCollectionMethods = { toArray: originalCollectionToArray, each: originalCollectionEach };
-  const missingCollectionMethods = Object.entries(requiredCollectionMethods)
-    .filter(([, method]) => typeof method !== 'function')
-    .map(([name]) => name);
-  if (missingCollectionMethods.length > 0) {
-    throw new Error(`[SECURITY] Dexie tenant collection guards could not initialize; missing methods: ${missingCollectionMethods.join(', ')}`);
+  if (patchedTenantCollectionPrototypes.has(CollectionProto)) return;
+
+  const originalToArray = CollectionProto.toArray;
+  const originalEach = CollectionProto.each;
+  if (typeof originalToArray !== 'function' || typeof originalEach !== 'function') {
+    throw new Error('[SECURITY] Instance Dexie Collection guards cannot initialize; required methods are missing.');
   }
 
   const collectionTable = (collection: any) => collection?._ctx?.table;
+  const hasTenantIndex = (table: any) => (table?.schema?.indexes || []).some((index: any) =>
+    index?.keyPath === 'tenantId'
+  );
+  const isTenantScoped = (table: any) => TENANT_SCOPED_TABLES.has(table?.name) ||
+    hasTenantIndex(table) || (table?.schema?.indexes || []).some((index: any) =>
+      Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId')
+    );
   const collectionSession = (collection: any, operation: string) => {
     const table = collectionTable(collection);
     if (!isTenantScoped(table)) return null;
@@ -311,10 +322,14 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
   const assertCollectionSession = (scope: any, operation: string) => {
     if (scope) assertTenantUnchanged(scope.table, scope.session.tenantId, operation);
   };
-  const forEachVisibleRecord = (collection: any, operation: string, callback: (record: any, cursor: any) => any) => {
+  const forEachVisibleRecord = (
+    collection: any,
+    operation: string,
+    callback: (record: any, cursor: any) => any
+  ) => {
     const scope = collectionSession(collection, operation);
-    if (!scope) return originalCollectionEach.call(collection, callback);
-    return originalCollectionEach.call(collection, (record: any, cursor: any) => {
+    if (!scope) return originalEach.call(collection, callback);
+    return originalEach.call(collection, (record: any, cursor: any) => {
       assertCollectionSession(scope, operation);
       if (!record || record.tenantId !== scope.session.tenantId) return;
       return callback(record, cursor);
@@ -326,8 +341,8 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
 
   CollectionProto.toArray = function(this: any, callback?: (records: any[]) => any) {
     const scope = collectionSession(this, 'Collection read');
-    if (!scope) return originalCollectionToArray.call(this, callback);
-    return originalCollectionToArray.call(this).then((records: any[]) => {
+    if (!scope) return originalToArray.call(this, callback);
+    return originalToArray.call(this).then((records: any[]) => {
       assertCollectionSession(scope, 'Collection read');
       const visible = records.filter(record => record?.tenantId === scope.session.tenantId);
       if (typeof callback === 'function') callback(visible);
@@ -337,71 +352,59 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
 
   if (typeof CollectionProto.first === 'function') {
     CollectionProto.first = function(this: any, callback?: (record: any) => any) {
-      let found: any;
-      return forEachVisibleRecord(this, 'Collection first read', record => {
-        found = record;
-        return false;
-      }).then(() => {
-        if (typeof callback === 'function') callback(found);
-        return found;
+      return this.toArray().then((records: any[]) => {
+        const first = records[0];
+        if (typeof callback === 'function') callback(first);
+        return first;
       });
     };
   }
 
   if (typeof CollectionProto.last === 'function') {
     CollectionProto.last = function(this: any, callback?: (record: any) => any) {
-      let found: any;
-      const reversed = this.reverse();
-      return forEachVisibleRecord(reversed, 'Collection last read', record => {
-        found = record;
-        return false;
-      }).then(() => {
-        if (typeof callback === 'function') callback(found);
-        return found;
+      return this.reverse().toArray().then((records: any[]) => {
+        const last = records[0];
+        if (typeof callback === 'function') callback(last);
+        return last;
       });
     };
   }
 
   if (typeof CollectionProto.count === 'function') {
     CollectionProto.count = function(this: any, callback?: (count: number) => any) {
-      let count = 0;
-      return forEachVisibleRecord(this, 'Collection count', () => { count += 1; })
-        .then(() => {
-          if (typeof callback === 'function') callback(count);
-          return count;
-        });
+      return this.toArray().then((records: any[]) => {
+        const count = records.length;
+        if (typeof callback === 'function') callback(count);
+        return count;
+      });
     };
   }
 
-  if (typeof CollectionProto.each === 'function') {
-    CollectionProto.each = function(this: any, callback: (record: any, cursor: any) => any) {
-      if (typeof callback !== 'function') throw new TypeError('Collection.each requires a callback.');
-      return forEachVisibleRecord(this, 'Collection iteration', callback);
-    };
-  }
+  CollectionProto.each = function(this: any, callback: (record: any, cursor: any) => any) {
+    if (typeof callback !== 'function') throw new TypeError('Collection.each requires a callback.');
+    return forEachVisibleRecord(this, 'Collection iteration', callback);
+  };
 
   if (typeof CollectionProto.sortBy === 'function') {
     CollectionProto.sortBy = function(this: any, keyPath: string, callback?: (records: any[]) => any) {
-      const scope = collectionSession(this, 'Collection sort');
-      if (!scope) return originalCollectionToArray.call(this).then((records: any[]) => {
-        const sorted = records.sort((a, b) => a?.[keyPath] < b?.[keyPath] ? -1 : a?.[keyPath] > b?.[keyPath] ? 1 : 0);
-        if (typeof callback === 'function') callback(sorted);
-        return sorted;
-      });
-      return originalCollectionToArray.call(this).then((records: any[]) => {
-        assertCollectionSession(scope, 'Collection sort');
-        const sorted = records
-          .filter(record => record?.tenantId === scope.session.tenantId)
-          .sort((a, b) => a?.[keyPath] < b?.[keyPath] ? -1 : a?.[keyPath] > b?.[keyPath] ? 1 : 0);
+      return this.toArray().then((records: any[]) => {
+        const sorted = records.sort((a, b) =>
+          a?.[keyPath] < b?.[keyPath] ? -1 : a?.[keyPath] > b?.[keyPath] ? 1 : 0
+        );
         if (typeof callback === 'function') callback(sorted);
         return sorted;
       });
     };
   }
 
-  // Keys are metadata too: do not let a caller infer another tenant's records
-  // through counts or primary/index key enumeration.
-  const collectCursorValues = (collection: any, property: 'key' | 'primaryKey', operation: string, unique: boolean) => {
+  // Keys are metadata too: prevent enumeration of another tenant's index or
+  // primary keys through Collection.keys()/primaryKeys()/uniqueKeys().
+  const collectCursorValues = (
+    collection: any,
+    property: 'key' | 'primaryKey',
+    operation: string,
+    unique: boolean
+  ) => {
     const values: any[] = [];
     const seen = new Set<any>();
     return forEachVisibleRecord(collection, operation, (_record, cursor) => {
@@ -413,14 +416,22 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
     }).then(() => values);
   };
   if (typeof CollectionProto.keys === 'function') {
-    CollectionProto.keys = function(this: any) { return collectCursorValues(this, 'key', 'Collection key read', false); };
+    CollectionProto.keys = function(this: any) {
+      return collectCursorValues(this, 'key', 'Collection key read', false);
+    };
   }
   if (typeof CollectionProto.primaryKeys === 'function') {
-    CollectionProto.primaryKeys = function(this: any) { return collectCursorValues(this, 'primaryKey', 'Collection primary-key read', false); };
+    CollectionProto.primaryKeys = function(this: any) {
+      return collectCursorValues(this, 'primaryKey', 'Collection primary-key read', false);
+    };
   }
   if (typeof CollectionProto.uniqueKeys === 'function') {
-    CollectionProto.uniqueKeys = function(this: any) { return collectCursorValues(this, 'key', 'Collection unique-key read', true); };
+    CollectionProto.uniqueKeys = function(this: any) {
+      return collectCursorValues(this, 'key', 'Collection unique-key read', true);
+    };
   }
+
+  patchedTenantCollectionPrototypes.add(CollectionProto);
 }
 
 export function getCurrentUserSession() {
@@ -903,6 +914,8 @@ export class PharmaFlowDB extends Dexie {
         }
       });
     });
+
+    installTenantCollectionGuards(this);
   }
 
   async getOrphanedTenantRecordCount(): Promise<number> {
