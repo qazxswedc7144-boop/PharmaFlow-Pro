@@ -155,7 +155,7 @@ export const UsersTab: React.FC = () => {
     try {
       if (editingUser) {
         // Re-read ownership inside the write transaction to prevent stale-session races.
-        await db.transaction('rw', db.users, async () => {
+        await db.transaction('rw', db.users, db.cashboxes, async () => {
           const activeSession = getAuthorizedTenantSession();
           if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
           const persistedUser = await db.users.get(editingUser.id);
@@ -188,7 +188,7 @@ export const UsersTab: React.FC = () => {
           branch: formData.branch,
           status: formData.status
         };
-        await db.transaction('rw', db.users, async () => {
+        await db.transaction('rw', db.users, db.cashboxes, async () => {
           const activeSession = getAuthorizedTenantSession();
           if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
           const requestedCashboxId = formData.cashboxId || defaultCashboxId;
