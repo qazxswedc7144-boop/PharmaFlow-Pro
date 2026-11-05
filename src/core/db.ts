@@ -2203,6 +2203,29 @@ function wrapTable(realTable: any, tableName: string): any {
         };
       }
 
+      if (tenantScoped && tProp === 'update') {
+        return async (key: any, changes: any) => {
+          const session = requireScope('Update');
+          const existing = await rawGet(key);
+          assertScope(session.tenantId, 'Update');
+          if (!existing) return 0;
+          if (!existing.tenantId || existing.tenantId !== session.tenantId) {
+            throw new Error(`FAIL_CLOSED: Unauthorized data modification attempt on '${tableName}'.`);
+          }
+          if (
+            changes &&
+            typeof changes === 'object' &&
+            Object.prototype.hasOwnProperty.call(changes, 'tenantId') &&
+            changes.tenantId !== existing.tenantId
+          ) {
+            throw new Error('FAIL_CLOSED: tenantId modification is strictly forbidden.');
+          }
+          const updated = await tObj.update(key, changes);
+          assertScope(session.tenantId, 'Update');
+          return updated;
+        };
+      }
+
       if (tenantScoped && tProp === 'bulkGet') {
         return async (keys: any[]) => {
           const session = requireScope('Bulk read');
