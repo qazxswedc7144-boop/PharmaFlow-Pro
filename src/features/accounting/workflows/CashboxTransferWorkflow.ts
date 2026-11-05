@@ -108,6 +108,9 @@ export class CashboxTransferWorkflow {
           if (account.tenantId !== input.tenantId) {
             throw new Error('أحد الحسابات المرتبطة لا يحمل مؤسسة مطابقة أو أنه خارج نطاق المؤسسة الحالية.');
           }
+          if (account.branchId && account.branchId !== input.branchId) {
+            throw new Error('أحد الحسابات المرتبطة لا يتبع الفرع المحدد للتحويل.');
+          }
         }
 
         // Final context check immediately before any accounting write.
