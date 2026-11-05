@@ -3,6 +3,7 @@ import Dexie, { type Table, type Transaction } from 'dexie';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 
 import { configurationService } from '@/services/config/configurationService';
+import { normalizeRole } from '@/utils/permissions';
 
 function ensureItemPrimaryKey(table: any, item: any) {
   if (!item || typeof item !== 'object') return item;
@@ -67,19 +68,134 @@ function assertTenantUnchanged(table: any, expectedTenantId: string, operation: 
 }
 
 
+type TenantSessionIdentity = {
+  authSession: ReturnType<typeof TokenProvider.getCurrentSession>;
+  user: any;
+  userId: string;
+  tenantId: string;
+  token: string;
+};
+
+type SelfCredentialUpgradeCapability = {
+  userId: string;
+  tenantId: string;
+  token: string;
+  expectedLegacyPassword: string;
+  passwordHash: string;
+  consumed: boolean;
+};
+
+// Capabilities are bound to one Dexie transaction and one exact update.
+const selfCredentialUpgradeCapabilities = new WeakMap<Transaction, SelfCredentialUpgradeCapability>();
+
+function resolveTenantSessionIdentity(): TenantSessionIdentity | null {
+  try {
+    const authSession = TokenProvider.getCurrentSession();
+    const user = authSession?.user as any;
+    if (!authSession?.isAuthenticated || typeof authSession.token !== 'string' || !authSession.token.trim() || !user) {
+      return null;
+    }
+
+    const primaryUserId = typeof user.id === 'string' ? user.id.trim() : '';
+    const legacyUserId = typeof user.user_id === 'string' ? user.user_id.trim() : '';
+    const userId = primaryUserId || legacyUserId;
+    const sessionTenantId = typeof authSession.tenantId === 'string' ? authSession.tenantId.trim() : '';
+    const primaryUserTenantId = typeof user.tenantId === 'string' ? user.tenantId.trim() : '';
+    const legacyUserTenantId = typeof user.tenant_id === 'string' ? user.tenant_id.trim() : '';
+    const userTenantId = primaryUserTenantId || legacyUserTenantId;
+    const current = getCurrentUserSession();
+
+    if (
+      !userId ||
+      (primaryUserId && legacyUserId && primaryUserId !== legacyUserId) ||
+      !sessionTenantId ||
+      !userTenantId ||
+      (primaryUserTenantId && legacyUserTenantId && primaryUserTenantId !== legacyUserTenantId) ||
+      userTenantId !== sessionTenantId ||
+      current.userId !== userId ||
+      current.tenantId !== sessionTenantId
+    ) {
+      return null;
+    }
+
+    return { authSession, user, userId, tenantId: sessionTenantId, token: authSession.token };
+  } catch {
+    return null;
+  }
+}
+
+function getCanonicalSessionRole(identity: TenantSessionIdentity): string | null {
+  const primaryRole = typeof identity.user.role === 'string' && identity.user.role.trim()
+    ? identity.user.role
+    : undefined;
+  const legacyRole = typeof identity.user.Role === 'string' && identity.user.Role.trim()
+    ? identity.user.Role
+    : undefined;
+
+  if (primaryRole && legacyRole && normalizeRole(primaryRole) !== normalizeRole(legacyRole)) {
+    return null;
+  }
+  return normalizeRole(primaryRole || legacyRole);
+}
+
 function assertTenantAdminForUserManagement(tableName: string): void {
   if (tableName !== 'users' && tableName !== 'userPermissions') return;
-  const authSession = TokenProvider.getCurrentSession();
-  const current = getCurrentUserSession();
-  const role = String(authSession.user?.role || authSession.user?.Role || '').trim().toLowerCase();
-  const allowedRoles = [
-    'admin', 'superadmin', 'super_admin', 'platform_owner', 'platformowner', 'administrator', 'local-admin',
-    'tenant_admin', 'tenantadmin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
-  ];
-  const userId = authSession.user?.id || (authSession.user as any)?.user_id;
-  if (!authSession.isAuthenticated || !authSession.token || !current.tenantId || !userId || !allowedRoles.includes(role)) {
+
+  const identity = resolveTenantSessionIdentity();
+  const role = identity ? getCanonicalSessionRole(identity) : null;
+  const allowedRoles = new Set(['admin', 'tenant_admin', 'owner', 'platform_owner']);
+
+  if (!identity || !role || !allowedRoles.has(role)) {
     throw new Error(`FAIL_CLOSED: Tenant administrator authorization required for '${tableName}'.`);
   }
+}
+
+function consumeSelfCredentialUpgradeCapability(
+  tableName: string,
+  modifications: any,
+  primaryKey: any,
+  record: any,
+  transaction: Transaction | undefined,
+  currentSession: ReturnType<typeof getCurrentUserSession>
+): boolean {
+  if (tableName !== 'users' || !transaction) return false;
+
+  const capability = selfCredentialUpgradeCapabilities.get(transaction);
+  if (!capability || capability.consumed) return false;
+
+  const identity = resolveTenantSessionIdentity();
+  const keys = modifications && typeof modifications === 'object'
+    ? Object.keys(modifications).sort()
+    : [];
+  const isExactCredentialUpdate =
+    keys.length === 2 &&
+    keys[0] === 'password' &&
+    keys[1] === 'passwordHash' &&
+    modifications.password === undefined &&
+    modifications.passwordHash === capability.passwordHash;
+  const isExactTarget =
+    String(primaryKey) === capability.userId &&
+    String(record?.id || record?.user_id || '') === capability.userId &&
+    record?.tenantId === capability.tenantId &&
+    record?.password === capability.expectedLegacyPassword &&
+    !record?.passwordHash;
+
+  if (
+    !identity ||
+    identity.user.offlineOnly !== true ||
+    identity.token !== capability.token ||
+    identity.userId !== capability.userId ||
+    identity.tenantId !== capability.tenantId ||
+    currentSession.userId !== capability.userId ||
+    currentSession.tenantId !== capability.tenantId ||
+    !isExactCredentialUpdate ||
+    !isExactTarget
+  ) {
+    return false;
+  }
+
+  capability.consumed = true;
+  return true;
 }
 
 if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
@@ -959,9 +1075,11 @@ export class PharmaFlowDB extends Dexie {
         }
       });
 
-      table.hook('updating', (mods: any, _primKey: any, obj: any) => {
-        assertTenantAdminForUserManagement(tableName);
+      table.hook('updating', (mods: any, _primKey: any, obj: any, transaction: Transaction) => {
         const session = getCurrentUserSession();
+        const isSelfCredentialUpgrade = tableName === 'users' &&
+          consumeSelfCredentialUpgradeCapability(tableName, mods, _primKey, obj, transaction, session);
+        if (!isSelfCredentialUpgrade) assertTenantAdminForUserManagement(tableName);
         if (!session.tenantId) {
           console.error(`[SECURITY] Update blocked on table '${tableName}': No active tenant session.`);
           throw new Error("FAIL_CLOSED: Update forbidden without active tenant session.");
@@ -2136,6 +2254,99 @@ if (!(globalThis as any).__PHARMA_FLOW_DB_INSTANCE__) {
   (globalThis as any).__PHARMA_FLOW_DB_INSTANCE__ = new PharmaFlowDB('PharmaFlowPRO');
 }
 export const dbInstance = (globalThis as any).__PHARMA_FLOW_DB_INSTANCE__ as PharmaFlowDB;
+
+/**
+ * Upgrade the authenticated offline user's own legacy plaintext credential.
+ * The exception is bound to one read-write transaction and one exact update.
+ */
+export async function upgradeOwnLegacyPassword(
+  userId: string,
+  tenantId: string,
+  expectedLegacyPassword: string,
+  passwordHash: string
+): Promise<void> {
+  const initialIdentity = resolveTenantSessionIdentity();
+  if (
+    !initialIdentity ||
+    initialIdentity.user.offlineOnly !== true ||
+    !initialIdentity.token.startsWith('offline-local-') ||
+    initialIdentity.userId !== userId ||
+    initialIdentity.tenantId !== tenantId ||
+    typeof expectedLegacyPassword !== 'string' ||
+    expectedLegacyPassword.length === 0 ||
+    typeof passwordHash !== 'string' ||
+    !passwordHash.startsWith('pbkdf2-sha256$')
+  ) {
+    throw new Error('SELF_PASSWORD_UPGRADE_FORBIDDEN: Authenticated offline self-upgrade context is required.');
+  }
+
+  await dbInstance.transaction('rw', dbInstance.users, async () => {
+    const transaction = Dexie.currentTransaction;
+    if (!transaction) {
+      throw new Error('SELF_PASSWORD_UPGRADE_TRANSACTION_REQUIRED: Dexie transaction context is missing.');
+    }
+
+    const activeIdentity = resolveTenantSessionIdentity();
+    if (
+      !activeIdentity ||
+      activeIdentity.user.offlineOnly !== true ||
+      activeIdentity.token !== initialIdentity.token ||
+      activeIdentity.userId !== userId ||
+      activeIdentity.tenantId !== tenantId
+    ) {
+      throw new Error('SELF_PASSWORD_UPGRADE_SESSION_CHANGED: The authenticated session changed during upgrade.');
+    }
+
+    const record = await dbInstance.users.get(userId);
+    if (
+      !record ||
+      String(record.id || record.user_id || '') !== userId ||
+      record.tenantId !== tenantId ||
+      record.password !== expectedLegacyPassword ||
+      record.passwordHash
+    ) {
+      throw new Error('SELF_PASSWORD_UPGRADE_REJECTED: The legacy credential or target record is no longer valid.');
+    }
+
+    const capability: SelfCredentialUpgradeCapability = {
+      userId,
+      tenantId,
+      token: initialIdentity.token,
+      expectedLegacyPassword,
+      passwordHash,
+      consumed: false
+    };
+    selfCredentialUpgradeCapabilities.set(transaction, capability);
+
+    try {
+      const updatedCount = await dbInstance.users.update(userId, {
+        passwordHash,
+        password: undefined
+      });
+      if (updatedCount !== 1 || !capability.consumed) {
+        throw new Error('SELF_PASSWORD_UPGRADE_REJECTED: The scoped credential update was not accepted.');
+      }
+
+      const updatedRecord = await dbInstance.users.get(userId);
+      const finalIdentity = resolveTenantSessionIdentity();
+      if (
+        !updatedRecord ||
+        updatedRecord.tenantId !== tenantId ||
+        updatedRecord.passwordHash !== passwordHash ||
+        updatedRecord.password !== undefined ||
+        !finalIdentity ||
+        finalIdentity.user.offlineOnly !== true ||
+        finalIdentity.token !== initialIdentity.token ||
+        finalIdentity.userId !== userId ||
+        finalIdentity.tenantId !== tenantId
+      ) {
+        throw new Error('SELF_PASSWORD_UPGRADE_VERIFICATION_FAILED: The upgraded credential did not pass post-write verification.');
+      }
+    } finally {
+      selfCredentialUpgradeCapabilities.delete(transaction);
+    }
+  });
+}
 
 export async function openUserDatabase(_tenantId?: string, _userId?: string): Promise<PharmaFlowDB> {
   if (!dbInstance.isOpen()) {

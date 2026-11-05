@@ -35,10 +35,14 @@ export function normalizeRole(role: string | null | undefined): string {
       return 'owner';
     case 'tenant_admin':
     case 'tenantadmin':
+    case 'tenant-admin':
       return 'tenant_admin';
     case 'admin':
     case 'administrator':
     case 'local-admin':
+    case 'مدير':
+    case 'مدير نظام':
+    case 'مدير النظام':
       return 'admin';
     case 'accountant':
       return 'accountant';

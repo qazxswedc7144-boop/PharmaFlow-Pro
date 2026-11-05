@@ -1,6 +1,6 @@
 import Dexie from 'dexie';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { db, PharmaFlowDB } from '@/core/db';
+import { db, dbInstance, PharmaFlowDB, upgradeOwnLegacyPassword } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { FinancialHealthService } from '@/features/accounting/services/FinancialHealthService';
 import { cashboxTransferWorkflow } from '@/features/accounting/workflows/CashboxTransferWorkflow';
@@ -40,6 +40,28 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
 
   const setUnauthenticatedSession = (tenantId = TENANT_A) => {
     setSession(tenantId, BRANCH_A, 'ADMIN', false);
+  };
+
+  const setOfflineSession = (userId: string, tenantId: string) => {
+    (TokenProvider.getCurrentSession as any).mockReturnValue({
+      tenantId,
+      branchId: BRANCH_A,
+      user: {
+        id: userId,
+        user_id: userId,
+        tenantId,
+        tenant_id: tenantId,
+        branchId: BRANCH_A,
+        role: 'CASHIER',
+        Role: 'CASHIER',
+        offlineOnly: true
+      },
+      token: 'offline-local-test-token',
+      isAuthenticated: true,
+      isOfflineSession: true,
+      roles: ['CASHIER'],
+      permissions: []
+    });
   };
 
   beforeEach(async () => {
@@ -260,6 +282,145 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       setAdminSession(TENANT_A);
       expect((await db.users.get('managed-user-A'))?.name).toBeUndefined();
       expect((await db.userPermissions.get('managed-permission-A'))?.permissions).toEqual({});
+    });
+
+    it('accepts normalized Administrator role while requiring matching identity and tenant', async () => {
+      const administratorSession = {
+        tenantId: TENANT_A,
+        branchId: BRANCH_A,
+        user: {
+          id: 'admin-canonical-A',
+          user_id: 'admin-canonical-A',
+          tenantId: TENANT_A,
+          tenant_id: TENANT_A,
+          role: 'Administrator',
+          Role: 'Administrator'
+        },
+        token: 'admin-canonical-token',
+        isAuthenticated: true,
+        roles: ['Administrator'],
+        permissions: []
+      };
+      (TokenProvider.getCurrentSession as any).mockReturnValue(administratorSession);
+
+      await db.users.add({ id: 'canonical-admin-created-user', username: 'canonical-admin' } as any);
+      expect((await db.users.get('canonical-admin-created-user'))?.tenantId).toBe(TENANT_A);
+
+      for (const [index, role] of ['tenant-admin', 'مدير'] .entries()) {
+        (TokenProvider.getCurrentSession as any).mockReturnValue({
+          ...administratorSession,
+          user: { ...administratorSession.user, role, Role: role }
+        });
+        await db.userPermissions.add({
+          id: `normalized-admin-alias-${index}`,
+          userId: 'same-tenant-user',
+          permissions: {}
+        } as any);
+      }
+
+      (TokenProvider.getCurrentSession as any).mockReturnValue({
+        ...administratorSession,
+        user: { ...administratorSession.user, tenantId: TENANT_B, tenant_id: TENANT_B }
+      });
+      await expect(db.users.add({ id: 'mismatched-admin-tenant', username: 'blocked' } as any))
+        .rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+
+      (TokenProvider.getCurrentSession as any).mockReturnValue({
+        ...administratorSession,
+        user: { ...administratorSession.user, user_id: 'different-user-id' }
+      });
+      await expect(db.userPermissions.add({ id: 'mismatched-admin-identity', userId: 'x' } as any))
+        .rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+
+      (TokenProvider.getCurrentSession as any).mockReturnValue({
+        ...administratorSession,
+        user: { ...administratorSession.user, role: 'CASHIER', Role: 'ADMIN' }
+      });
+      await expect(db.users.add({ id: 'conflicting-admin-roles', username: 'blocked' } as any))
+        .rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+
+      (TokenProvider.getCurrentSession as any).mockReturnValue({
+        ...administratorSession,
+        token: '   '
+      });
+      await expect(db.users.add({ id: 'missing-admin-token', username: 'blocked' } as any))
+        .rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+    });
+  });
+
+  describe('3.1. Self-service legacy password upgrade', () => {
+    it('allows a non-admin to upgrade only their own verified legacy credential', async () => {
+      setAdminSession(TENANT_A);
+      await db.users.add({
+        id: 'offline-cashier-A',
+        username: 'offline-cashier',
+        role: 'CASHIER',
+        password: 'LegacyPass123'
+      } as any);
+
+      setOfflineSession('offline-cashier-A', TENANT_A);
+      const upgradedHash = await hashLocalPassword('LegacyPass123');
+      await upgradeOwnLegacyPassword('offline-cashier-A', TENANT_A, 'LegacyPass123', upgradedHash);
+
+      const upgradedUser = await dbInstance.users.get('offline-cashier-A');
+      expect(upgradedUser?.passwordHash).toBe(upgradedHash);
+      expect(upgradedUser?.password).toBeUndefined();
+      expect(upgradedUser?.role).toBe('CASHIER');
+      expect(upgradedUser?.tenantId).toBe(TENANT_A);
+
+      await expect(db.users.update('offline-cashier-A', {
+        passwordHash: 'attacker-controlled-hash',
+        password: undefined,
+        role: 'ADMIN'
+      } as any)).rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+    });
+
+    it('rejects stale credentials and attempts to target another user', async () => {
+      setAdminSession(TENANT_A);
+      await db.users.add({
+        id: 'offline-cashier-A',
+        username: 'offline-cashier',
+        role: 'CASHIER',
+        password: 'LegacyPass123'
+      } as any);
+
+      setOfflineSession('offline-cashier-A', TENANT_A);
+      const upgradedHash = await hashLocalPassword('LegacyPass123');
+
+      await expect(upgradeOwnLegacyPassword('another-user', TENANT_A, 'LegacyPass123', upgradedHash))
+        .rejects.toThrow(/SELF_PASSWORD_UPGRADE_FORBIDDEN/);
+      await expect(upgradeOwnLegacyPassword('offline-cashier-A', TENANT_A, 'WrongLegacyPassword', upgradedHash))
+        .rejects.toThrow(/SELF_PASSWORD_UPGRADE_REJECTED/);
+
+      const unchanged = await dbInstance.users.get('offline-cashier-A');
+      expect(unchanged?.password).toBe('LegacyPass123');
+      expect(unchanged?.passwordHash).toBeUndefined();
+    });
+
+    it('serializes concurrent self-upgrades and does not leak capability to unrelated writes', async () => {
+      setAdminSession(TENANT_A);
+      await db.users.add({
+        id: 'offline-cashier-A',
+        username: 'offline-cashier',
+        role: 'CASHIER',
+        password: 'LegacyPass123'
+      } as any);
+
+      setOfflineSession('offline-cashier-A', TENANT_A);
+      const upgradedHash = await hashLocalPassword('LegacyPass123');
+      const results = await Promise.allSettled([
+        upgradeOwnLegacyPassword('offline-cashier-A', TENANT_A, 'LegacyPass123', upgradedHash),
+        upgradeOwnLegacyPassword('offline-cashier-A', TENANT_A, 'LegacyPass123', upgradedHash),
+        db.users.update('offline-cashier-A', { role: 'ADMIN' } as any)
+      ]);
+
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter(result => result.status === 'rejected')).toHaveLength(2);
+
+      const finalUser = await dbInstance.users.get('offline-cashier-A');
+      expect(finalUser?.passwordHash).toBe(upgradedHash);
+      expect(finalUser?.password).toBeUndefined();
+      expect(finalUser?.role).toBe('CASHIER');
     });
   });
 

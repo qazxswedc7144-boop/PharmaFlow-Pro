@@ -4,7 +4,7 @@ import { configurationService } from '@/services/config/configurationService';
 import { useAuthStore } from '@/store/authStore';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { User } from '@/types/auth.types';
-import { db } from '@/core/db';
+import { db, upgradeOwnLegacyPassword } from '@/core/db';
 import { hashLocalPassword, verifyLocalPassword } from '@features/auth/services/localPasswordService';
 
 interface AuthContextType {
@@ -214,7 +214,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (verified.needsUpgrade) {
                 try {
                   const upgradedHash = await hashLocalPassword(password);
-                  await db.users.update(localUser.id, { passwordHash: upgradedHash, password: undefined });
+                  await upgradeOwnLegacyPassword(String(localUser.id), String(localUser.tenantId), password, upgradedHash);
                 } catch (upgradeError) {
                   TokenProvider.clearSession();
                   throw upgradeError;
