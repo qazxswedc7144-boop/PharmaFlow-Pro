@@ -283,6 +283,144 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
       });
     };
   }
+
+  // Dexie query results are Collections, not Tables. Guarding Table.get/toArray
+  // alone leaves where(...).toArray(), toCollection(), first(), count(), and each()
+  // as alternate read paths. Filter every tenant-scoped Collection before exposing
+  // records, and pin the result to the same tenant session for the whole read.
+  const CollectionProto = (Dexie as any).Collection?.prototype;
+  if (!CollectionProto) {
+    throw new Error('[SECURITY] Dexie Collection prototype is unavailable; tenant collection guards cannot initialize.');
+  }
+  const originalCollectionToArray = CollectionProto.toArray;
+  const originalCollectionEach = CollectionProto.each;
+  const requiredCollectionMethods = { toArray: originalCollectionToArray, each: originalCollectionEach };
+  const missingCollectionMethods = Object.entries(requiredCollectionMethods)
+    .filter(([, method]) => typeof method !== 'function')
+    .map(([name]) => name);
+  if (missingCollectionMethods.length > 0) {
+    throw new Error(`[SECURITY] Dexie tenant collection guards could not initialize; missing methods: ${missingCollectionMethods.join(', ')}`);
+  }
+
+  const collectionTable = (collection: any) => collection?._ctx?.table;
+  const collectionSession = (collection: any, operation: string) => {
+    const table = collectionTable(collection);
+    if (!isTenantScoped(table)) return null;
+    return { table, session: requireTenantForTable(table, operation) };
+  };
+  const assertCollectionSession = (scope: any, operation: string) => {
+    if (scope) assertTenantUnchanged(scope.table, scope.session.tenantId, operation);
+  };
+  const forEachVisibleRecord = (collection: any, operation: string, callback: (record: any, cursor: any) => any) => {
+    const scope = collectionSession(collection, operation);
+    if (!scope) return originalCollectionEach.call(collection, callback);
+    return originalCollectionEach.call(collection, (record: any, cursor: any) => {
+      assertCollectionSession(scope, operation);
+      if (!record || record.tenantId !== scope.session.tenantId) return;
+      return callback(record, cursor);
+    }).then((result: any) => {
+      assertCollectionSession(scope, operation);
+      return result;
+    });
+  };
+
+  CollectionProto.toArray = function(this: any, callback?: (records: any[]) => any) {
+    const scope = collectionSession(this, 'Collection read');
+    if (!scope) return originalCollectionToArray.call(this, callback);
+    return originalCollectionToArray.call(this).then((records: any[]) => {
+      assertCollectionSession(scope, 'Collection read');
+      const visible = records.filter(record => record?.tenantId === scope.session.tenantId);
+      if (typeof callback === 'function') callback(visible);
+      return visible;
+    });
+  };
+
+  if (typeof CollectionProto.first === 'function') {
+    CollectionProto.first = function(this: any, callback?: (record: any) => any) {
+      let found: any;
+      return forEachVisibleRecord(this, 'Collection first read', record => {
+        found = record;
+        return false;
+      }).then(() => {
+        if (typeof callback === 'function') callback(found);
+        return found;
+      });
+    };
+  }
+
+  if (typeof CollectionProto.last === 'function') {
+    CollectionProto.last = function(this: any, callback?: (record: any) => any) {
+      let found: any;
+      const reversed = this.reverse();
+      return forEachVisibleRecord(reversed, 'Collection last read', record => {
+        found = record;
+        return false;
+      }).then(() => {
+        if (typeof callback === 'function') callback(found);
+        return found;
+      });
+    };
+  }
+
+  if (typeof CollectionProto.count === 'function') {
+    CollectionProto.count = function(this: any, callback?: (count: number) => any) {
+      let count = 0;
+      return forEachVisibleRecord(this, 'Collection count', () => { count += 1; })
+        .then(() => {
+          if (typeof callback === 'function') callback(count);
+          return count;
+        });
+    };
+  }
+
+  if (typeof CollectionProto.each === 'function') {
+    CollectionProto.each = function(this: any, callback: (record: any, cursor: any) => any) {
+      if (typeof callback !== 'function') throw new TypeError('Collection.each requires a callback.');
+      return forEachVisibleRecord(this, 'Collection iteration', callback);
+    };
+  }
+
+  if (typeof CollectionProto.sortBy === 'function') {
+    CollectionProto.sortBy = function(this: any, keyPath: string, callback?: (records: any[]) => any) {
+      const scope = collectionSession(this, 'Collection sort');
+      if (!scope) return originalCollectionToArray.call(this).then((records: any[]) => {
+        const sorted = records.sort((a, b) => a?.[keyPath] < b?.[keyPath] ? -1 : a?.[keyPath] > b?.[keyPath] ? 1 : 0);
+        if (typeof callback === 'function') callback(sorted);
+        return sorted;
+      });
+      return originalCollectionToArray.call(this).then((records: any[]) => {
+        assertCollectionSession(scope, 'Collection sort');
+        const sorted = records
+          .filter(record => record?.tenantId === scope.session.tenantId)
+          .sort((a, b) => a?.[keyPath] < b?.[keyPath] ? -1 : a?.[keyPath] > b?.[keyPath] ? 1 : 0);
+        if (typeof callback === 'function') callback(sorted);
+        return sorted;
+      });
+    };
+  }
+
+  // Keys are metadata too: do not let a caller infer another tenant's records
+  // through counts or primary/index key enumeration.
+  const collectCursorValues = (collection: any, property: 'key' | 'primaryKey', operation: string, unique: boolean) => {
+    const values: any[] = [];
+    const seen = new Set<any>();
+    return forEachVisibleRecord(collection, operation, (_record, cursor) => {
+      const value = cursor?.[property];
+      if (value !== undefined && (!unique || !seen.has(value))) {
+        values.push(value);
+        seen.add(value);
+      }
+    }).then(() => values);
+  };
+  if (typeof CollectionProto.keys === 'function') {
+    CollectionProto.keys = function(this: any) { return collectCursorValues(this, 'key', 'Collection key read', false); };
+  }
+  if (typeof CollectionProto.primaryKeys === 'function') {
+    CollectionProto.primaryKeys = function(this: any) { return collectCursorValues(this, 'primaryKey', 'Collection primary-key read', false); };
+  }
+  if (typeof CollectionProto.uniqueKeys === 'function') {
+    CollectionProto.uniqueKeys = function(this: any) { return collectCursorValues(this, 'key', 'Collection unique-key read', true); };
+  }
 }
 
 export function getCurrentUserSession() {
@@ -778,10 +916,19 @@ export class PharmaFlowDB extends Dexie {
       }
     }
     let total = 0;
+    const nativeDb = (this as any).backendDB?.();
+    if (!nativeDb) throw new Error('ORPHAN_AUDIT_UNAVAILABLE: Native IndexedDB handle is unavailable.');
     for (const tableName of scopedNames) {
-      if (!this.tables.some(table => table.name === tableName)) continue;
-      const table = this.table(tableName);
-      const records = await table.toCollection().toArray();
+      if (!nativeDb.objectStoreNames.contains(tableName)) continue;
+      // Privileged aggregate-only audit: raw records never leave this method;
+      // only the number of orphaned rows is returned to the administration UI.
+      const records = await new Promise<any[]>((resolve, reject) => {
+        const transaction = nativeDb.transaction(tableName, 'readonly');
+        const request = transaction.objectStore(tableName).getAll();
+        request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+        request.onerror = () => reject(request.error || transaction.error || new Error('Orphan audit read failed.'));
+        transaction.onabort = () => reject(transaction.error || new Error('Orphan audit transaction aborted.'));
+      });
       total += records.filter((record: any) => !record?.tenantId).length;
     }
     return total;

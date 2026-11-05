@@ -127,7 +127,15 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       await db.products.add({ id: 'product-bulk-A', name: 'A Product' } as any);
 
       setSession(TENANT_B);
-      await db.products.add({ id: 'product-bulk-B', name: 'B Product' } as any);
+      await db.products.add({ id: 'product-bulk-B', name: 'Shared Product Name' } as any);
+      setSession(TENANT_A);
+      await db.products.add({ id: 'product-bulk-query-A', name: 'Shared Product Name' } as any);
+      expect((await db.products.where('name').equals('Shared Product Name').toArray()).map(p => p.id))
+        .toEqual(['product-bulk-query-A']);
+      expect(await db.products.where('name').equals('Shared Product Name').count()).toBe(1);
+      expect((await db.products.where('name').equals('Shared Product Name').first())?.id).toBe('product-bulk-query-A');
+
+      setSession(TENANT_B);
       await expect(db.products.get('product-bulk-A'))
         .rejects.toThrow(/FAIL_CLOSED: Unauthorized direct read/);
       await expect(db.products.bulkGet(['product-bulk-A']))
@@ -202,8 +210,15 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
         const upgradedDb = new PharmaFlowDB(legacyName);
         try {
           await upgradedDb.open();
-          const migratedUsers = await upgradedDb.users.toCollection().toArray();
-          const migratedCashboxes = await upgradedDb.cashboxes.toCollection().toArray();
+          const nativeDb = (upgradedDb as any).backendDB();
+          const readLegacyStore = (storeName: string) => new Promise<any[]>((resolve, reject) => {
+            const transaction = nativeDb.transaction(storeName, 'readonly');
+            const request = transaction.objectStore(storeName).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+          });
+          const migratedUsers = await readLegacyStore('users');
+          const migratedCashboxes = await readLegacyStore('cashboxes');
           expect(migratedUsers).toHaveLength(1);
           expect(migratedUsers[0].id).toBe('legacy-user-36');
           expect(migratedUsers[0].tenantId).toBeUndefined();
