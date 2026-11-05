@@ -22,33 +22,28 @@ export const UsersTab: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
 
-  const users = useLiveQuery(async () => {
-    const session = getCurrentUserSession();
-    if (!session.tenantId) return [];
-    const all = await db.users.toArray();
-    // Filter by tenantId and optionally branchId if users are branch-specific
-    return all.filter(u => u.tenantId === session.tenantId);
-  }, []) || [];
-  const cashboxes = useLiveQuery(async () => {
-    const session = getCurrentUserSession();
-    if (!session.tenantId) return [];
-    const all = await db.cashboxes.toArray();
-    return all.filter(c => c.tenantId === session.tenantId);
-  }, []) || [];
-  const cashMovements = useLiveQuery(async () => {
-    if (!selectedUser?.id) return [];
-    const session = getCurrentUserSession();
-    if (!session.tenantId) return [];
+  const activeTenantId = getCurrentUserSession().tenantId;
 
-    // Filter by tenantId to prevent leakage if indexes exist, otherwise filter in memory
+  const users = useLiveQuery(async () => {
+    if (!activeTenantId) return [];
+    // Query the tenant index directly; never load other tenants' staff into memory.
+    return db.users.where('tenantId').equals(activeTenantId).toArray();
+  }, [activeTenantId]) || [];
+  const cashboxes = useLiveQuery(async () => {
+    if (!activeTenantId) return [];
+    return db.cashboxes.where('tenantId').equals(activeTenantId).toArray();
+  }, [activeTenantId]) || [];
+  const cashMovements = useLiveQuery(async () => {
+    if (!selectedUser?.id || !activeTenantId) return [];
+
     const [byCashbox, byUser] = await Promise.all([
       selectedUser.cashboxId
-        ? db.cashFlow.where('cashboxId').equals(selectedUser.cashboxId).filter((c: any) => c.tenantId === session.tenantId).toArray()
+        ? db.cashFlow.where('[tenantId+cashboxId]').equals([activeTenantId, selectedUser.cashboxId]).toArray()
         : Promise.resolve([]),
-      db.cashFlow.where('userId').equals(selectedUser.id).filter((c: any) => c.tenantId === session.tenantId).toArray()
+      db.cashFlow.where('[tenantId+userId]').equals([activeTenantId, selectedUser.id]).toArray()
     ]);
     return Array.from(new Map([...byCashbox, ...byUser].map((movement: any) => [movement.id, movement])).values());
-  }, [selectedUser?.id, selectedUser?.cashboxId]) || [];
+  }, [activeTenantId, selectedUser?.id, selectedUser?.cashboxId]) || [];
   const reportMovements = useMemo(() => {
     let runningBalance = 0;
     return [...cashMovements]
@@ -106,23 +101,20 @@ export const UsersTab: React.FC = () => {
 
   useEffect(() => {
     if (selectedUser) {
-      const session = getCurrentUserSession();
-      // Security: Ensure selectedUser belongs to current tenant before fetching perms
-      if (!session.tenantId || !selectedUser.tenantId || selectedUser.tenantId !== session.tenantId) {
+      if (!activeTenantId || !selectedUser.tenantId || selectedUser.tenantId !== activeTenantId) {
         setSelectedUser(null);
         setActiveView('users');
         return;
       }
 
       db.userPermissions
-        .where('userId').equals(selectedUser.id)
-        .and(p => p.tenantId === session.tenantId)
+        .where('[tenantId+userId]').equals([activeTenantId, selectedUser.id])
         .first()
         .then((perms) => {
           setModulesPermissions({ ...EMPTY_PERMISSIONS, ...(perms?.permissions || {}) });
         });
     }
-  }, [selectedUser]);
+  }, [selectedUser, activeTenantId]);
 
   const toggleAction = (moduleName: string, action: keyof PermissionSet) => {
     setModulesPermissions((prev) => {
