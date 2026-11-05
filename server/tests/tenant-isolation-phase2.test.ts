@@ -17,12 +17,29 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
   const TENANT_B = 'tenant-B';
   const BRANCH_A = 'branch-A';
 
-  const setSession = (tenantId?: string, branchId = BRANCH_A) => {
+  const setSession = (
+    tenantId?: string,
+    branchId = BRANCH_A,
+    role = 'CASHIER',
+    isAuthenticated = Boolean(tenantId)
+  ) => {
     (TokenProvider.getCurrentSession as any).mockReturnValue({
       tenantId,
       branchId: tenantId ? branchId : undefined,
-      user: tenantId ? { id: 'user-1', tenantId, branchId } : null
+      user: tenantId ? { id: 'user-1', tenantId, branchId, role, Role: role } : null,
+      token: isAuthenticated ? `test-token-${role}` : null,
+      isAuthenticated,
+      roles: tenantId ? [role] : [],
+      permissions: []
     });
+  };
+
+  const setAdminSession = (tenantId: string, branchId = BRANCH_A) => {
+    setSession(tenantId, branchId, 'ADMIN', true);
+  };
+
+  const setUnauthenticatedSession = (tenantId = TENANT_A) => {
+    setSession(tenantId, BRANCH_A, 'ADMIN', false);
   };
 
   beforeEach(async () => {
@@ -210,7 +227,7 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
     });
 
     it('stamps newly bulk-added and bulk-upserted records and rejects bulk writes without a tenant', async () => {
-      setSession(TENANT_A);
+      setAdminSession(TENANT_A);
       await db.users.bulkAdd([{ id: 'bulk-user-A', username: 'bulk-a' }] as any);
       await db.users.bulkPut([{ id: 'bulk-user-B', username: 'bulk-b' }] as any);
       expect((await db.users.where('id').equals('bulk-user-A').first())?.tenantId).toBe(TENANT_A);
@@ -221,6 +238,28 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
         .rejects.toThrow(/FAIL_CLOSED/);
       await expect(db.users.bulkPut([{ id: 'bulk-user-no-session-2', username: 'x' }] as any))
         .rejects.toThrow(/FAIL_CLOSED/);
+    });
+
+    it('rejects user-management writes from authenticated non-admin and unauthenticated sessions', async () => {
+      setAdminSession(TENANT_A);
+      await db.users.add({ id: 'managed-user-A', username: 'managed-a' } as any);
+      await db.userPermissions.add({ id: 'managed-permission-A', userId: 'managed-user-A', permissions: {} } as any);
+
+      setSession(TENANT_A, BRANCH_A, 'CASHIER', true);
+      await expect(db.users.update('managed-user-A', { name: 'Unauthorized edit' }))
+        .rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+      await expect(db.userPermissions.add({ id: 'unauthorized-permission', userId: 'managed-user-A' } as any))
+        .rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+
+      setUnauthenticatedSession(TENANT_A);
+      await expect(db.users.add({ id: 'unauthenticated-user', username: 'unauthenticated' } as any))
+        .rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+      await expect(db.userPermissions.delete('managed-permission-A'))
+        .rejects.toThrow(/FAIL_CLOSED: Tenant administrator authorization required/);
+
+      setAdminSession(TENANT_A);
+      expect((await db.users.get('managed-user-A'))?.name).toBeUndefined();
+      expect((await db.userPermissions.get('managed-permission-A'))?.permissions).toEqual({});
     });
   });
 
@@ -313,6 +352,7 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       const alertsA = await FinancialHealthService.getActiveAlerts();
       expect(alertsA).toHaveLength(1);
       expect(alertsA[0].message).toBe('A-Danger');
+      expect(alertsA[0].tenantId).toBe(TENANT_A);
     });
 
     it('stamps snapshots with tenantId and returns only the active tenant snapshot', async () => {
@@ -448,24 +488,24 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
 
   describe('5. User permissions isolation', () => {
     it('blocks updates to permissions owned by another tenant', async () => {
-      setSession(TENANT_A);
+      setAdminSession(TENANT_A);
       await db.userPermissions.add({
         id: 'permission-A', userId: 'user-A', permissions: {}
       } as any);
       expect((await db.userPermissions.get('permission-A'))?.tenantId).toBe(TENANT_A);
 
-      setSession(TENANT_B);
+      setAdminSession(TENANT_B);
       await expect(db.userPermissions.update('permission-A', { permissions: { Admin: true } } as any))
         .rejects.toThrow(/FAIL_CLOSED: Unauthorized data modification attempt/);
     });
 
     it('supports tenant-scoped permission lookup through the compound index', async () => {
-      setSession(TENANT_A);
+      setAdminSession(TENANT_A);
       await db.userPermissions.add({
         id: 'permission-A', userId: 'same-user-id', permissions: { Sales: true }
       } as any);
 
-      setSession(TENANT_B);
+      setAdminSession(TENANT_B);
       await db.userPermissions.add({
         id: 'permission-B', userId: 'same-user-id', permissions: { Accounting: true }
       } as any);
