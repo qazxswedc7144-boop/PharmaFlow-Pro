@@ -258,7 +258,7 @@ export class AIInsightsEngine {
 
   private static async storeHealthSnapshot(score: number, kpis: any, cashFlow: any) {
     const snapshot: FinancialHealthSnapshot = {
-      id: `FHS-${Date.now()}`,
+      id: db.generateId('FHS'),
       date: new Date().toISOString().split('T')[0] || '',
       score,
       metrics: {
