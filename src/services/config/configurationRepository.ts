@@ -14,11 +14,22 @@ export class ConfigurationRepository {
       const result: ConfigurationRecord<any>[] = [];
 
       for (const item of rawRecords) {
-        if (!item || !item.key) continue;
+        if (!item || typeof item.key !== 'string' || !item.key) continue;
         if (item.key.startsWith('__')) continue; // Skip internal system flags
 
-        if (item.value && typeof item.value === 'object' && 'scope' in item.value && 'context' in item.value) {
+        if (item.value && typeof item.value === 'object' && !Array.isArray(item.value) &&
+            'scope' in item.value && 'context' in item.value) {
           const record = item.value as ConfigurationRecord<any>;
+          if (
+            typeof record.key !== 'string' ||
+            !record.key.trim() ||
+            !['SYSTEM', 'TENANT', 'BRANCH', 'USER', 'DEVICE', 'RUNTIME'].includes(record.scope) ||
+            !record.context ||
+            typeof record.context !== 'object' ||
+            Array.isArray(record.context)
+          ) {
+            continue;
+          }
           try {
             // Only records stored under their exact scope-derived key are active.
             // Historical canonical-key copies remain preserved but quarantined.
@@ -65,10 +76,12 @@ export class ConfigurationRepository {
       if (item.value && typeof item.value === 'object' && 'scope' in item.value) {
         const record = item.value as ConfigurationRecord<any>;
         if (
+          typeof record.key !== 'string' ||
           normalizeConfigKey(record.key) !== canonicalKey ||
           record.scope !== scope ||
           !record.context ||
-          typeof record.context !== 'object'
+          typeof record.context !== 'object' ||
+          Array.isArray(record.context)
         ) {
           return null;
         }
