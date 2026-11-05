@@ -688,7 +688,8 @@ export class PharmaFlowDB extends Dexie {
   async clearOldAlerts() {
     const { tenantId } = getCurrentUserSession();
     if (!tenantId) throw new Error('FAIL_CLOSED: Cannot clear alerts without an active tenant session.');
-    return await this.systemAlerts.where('tenantId').equals(tenantId).delete();
+    return await this.systemAlerts.where('tenantId').equals(tenantId)
+      .filter((alert: any) => alert.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(alert.Type)).delete();
   }
   
   async saveCustomer(customer: Customer) { return await this.customers.put(customer); }
@@ -1874,7 +1875,8 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'clearOldAlerts') return async () => {
       const session = getCurrentUserSession();
       if (!session.tenantId) throw new Error('FAIL_CLOSED: Cannot clear alerts without an active tenant session.');
-      return await target.systemAlerts.where('tenantId').equals(session.tenantId).delete();
+      return await target.systemAlerts.where('tenantId').equals(session.tenantId)
+        .filter((alert: any) => alert.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(alert.Type)).delete();
     };
     if (prop === 'getDailyAuditTask') return async (date: string) => dbProxy.dailyAuditTasks.where('date').equals(date).first();
     if (prop === 'createDailyAuditTask') return async (task: any) => dbProxy.dailyAuditTasks.add(task);
