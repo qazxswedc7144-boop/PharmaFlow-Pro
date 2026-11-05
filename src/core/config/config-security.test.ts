@@ -98,6 +98,39 @@ describe('Settings tenant isolation', () => {
       .toBe('tenant:tenant-a:system.name');
   });
 
+  it('does not assign a shared fallback device identity when none is registered', () => {
+    vi.mocked(TokenProvider.getCurrentSession).mockReturnValue({
+      ...session,
+      deviceId: null
+    } as any);
+    vi.stubGlobal('localStorage', { getItem: () => null });
+
+    try {
+      expect(getCurrentContext().deviceId).toBeUndefined();
+      expect(() => assertScopedContext('DEVICE', getCurrentContext())).toThrow(/Missing required deviceId/i);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('uses the persistent DeviceManager identity when the auth session omits deviceId', () => {
+    vi.mocked(TokenProvider.getCurrentSession).mockReturnValue({
+      ...session,
+      deviceId: null
+    } as any);
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => key === 'pharmaflow_device_identity'
+        ? JSON.stringify({ deviceId: 'DEV-PERSISTED-01' })
+        : null
+    });
+
+    try {
+      expect(getCurrentContext().deviceId).toBe('DEV-PERSISTED-01');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('requires tenant and user identity for user-scoped records', () => {
     expect(() => assertScopedContext('USER', { userId: 'user-a' })).toThrow(/Missing required tenantId/i);
     expect(() => assertScopedContext('USER', { tenantId: 'tenant-a' })).toThrow(/Missing required userId/i);
