@@ -1,7 +1,7 @@
 // src/services/config/configurationRepository.ts
 import { db } from '@/core/db';
 import { ConfigurationRecord, ConfigurationContext, ConfigScope } from '@/core/config/types';
-import { buildScopedStorageKey } from '@/core/config/configScopes';
+import { assertScopedContext, buildScopedStorageKey } from '@/core/config/configScopes';
 import { normalizeConfigKey } from '@/core/config/configKeys';
 
 export class ConfigurationRepository {
@@ -18,18 +18,24 @@ export class ConfigurationRepository {
         if (item.key.startsWith('__')) continue; // Skip internal system flags
 
         if (item.value && typeof item.value === 'object' && 'scope' in item.value && 'context' in item.value) {
-          result.push(item.value as ConfigurationRecord<any>);
-        } else if (item.value !== undefined) {
-          // Wrap legacy raw value as a SYSTEM/TENANT record
-          result.push({
-            key: normalizeConfigKey(item.key),
-            value: item.value,
-            scope: 'TENANT',
-            context: {},
-            version: 1,
-            updatedAt: new Date().toISOString()
-          });
+          const record = item.value as ConfigurationRecord<any>;
+          try {
+            // Only records stored under their exact scope-derived key are active.
+            // Historical canonical-key copies remain preserved but quarantined.
+            const expectedStorageKey = buildScopedStorageKey(
+              normalizeConfigKey(record.key),
+              record.scope,
+              record.context || {}
+            );
+            if (item.key === expectedStorageKey) {
+              result.push(record);
+            }
+          } catch {
+            // Invalid or incomplete legacy context: preserve, but never resolve.
+          }
         }
+        // Unscoped legacy values are intentionally left untouched and excluded from
+        // resolution until an explicit, ownership-verified migration is available.
       }
 
       return result;
@@ -48,41 +54,35 @@ export class ConfigurationRepository {
     context: ConfigurationContext
   ): Promise<ConfigurationRecord<any> | null> {
     const canonicalKey = normalizeConfigKey(key);
+    assertScopedContext(scope, context);
     const storageKey = buildScopedStorageKey(canonicalKey, scope, context);
 
     try {
       const item = await db.settings.get(storageKey);
-      if (item && item.value) {
-        if (typeof item.value === 'object' && 'scope' in item.value) {
-          return item.value as ConfigurationRecord<any>;
+      if (!item || item.value === undefined || item.value === null) return null;
+
+      if (item.value && typeof item.value === 'object' && 'scope' in item.value) {
+        const record = item.value as ConfigurationRecord<any>;
+        if (record.scope !== scope) return null;
+        if (scope !== 'SYSTEM' && scope !== 'RUNTIME') {
+          const expectedFields: Array<keyof ConfigurationContext> =
+            scope === 'TENANT' ? ['tenantId'] :
+            scope === 'BRANCH' ? ['tenantId', 'branchId'] :
+            scope === 'USER' ? ['tenantId', 'userId'] :
+            ['tenantId', 'deviceId'];
+          if (expectedFields.some(field => record.context?.[field] !== context[field])) return null;
         }
-        return {
-          key: canonicalKey,
-          value: item.value,
-          scope,
-          context,
-          version: 1,
-          updatedAt: new Date().toISOString()
-        };
+        return record;
       }
 
-      // Fallback: check raw canonical key
-      const plainItem = await db.settings.get(canonicalKey);
-      if (plainItem && plainItem.value !== undefined) {
-        if (typeof plainItem.value === 'object' && 'scope' in plainItem.value) {
-          return plainItem.value as ConfigurationRecord<any>;
-        }
-        return {
-          key: canonicalKey,
-          value: plainItem.value,
-          scope: 'TENANT',
-          context,
-          version: 1,
-          updatedAt: new Date().toISOString()
-        };
-      }
-
-      return null;
+      return {
+        key: canonicalKey,
+        value: item.value,
+        scope,
+        context,
+        version: 1,
+        updatedAt: new Date().toISOString()
+      };
     } catch (error) {
       console.warn(`[ConfigurationRepository] Error getting record for ${key}:`, error);
       return null;
@@ -94,6 +94,7 @@ export class ConfigurationRepository {
    */
   async saveRecord(record: ConfigurationRecord<any>): Promise<void> {
     const canonicalKey = normalizeConfigKey(record.key);
+    assertScopedContext(record.scope, record.context);
     const storageKey = buildScopedStorageKey(canonicalKey, record.scope, record.context);
 
     const recordToSave: ConfigurationRecord<any> = {
@@ -110,11 +111,6 @@ export class ConfigurationRepository {
         value: recordToSave
       });
 
-      // 2. Also save plain canonical key for backward compatibility
-      await db.settings.put({
-        key: canonicalKey,
-        value: recordToSave.value
-      });
     });
   }
 
@@ -127,11 +123,11 @@ export class ConfigurationRepository {
     context: ConfigurationContext
   ): Promise<void> {
     const canonicalKey = normalizeConfigKey(key);
+    assertScopedContext(scope, context);
     const storageKey = buildScopedStorageKey(canonicalKey, scope, context);
 
     await db.transaction('rw', 'settings', async () => {
       await db.settings.delete(storageKey);
-      await db.settings.delete(canonicalKey);
     });
   }
 }
