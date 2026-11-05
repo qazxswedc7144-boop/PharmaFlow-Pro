@@ -152,16 +152,25 @@ export const UsersTab: React.FC = () => {
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    const session = getAuthorizedTenantSession(editingUser || undefined);
-    if (!session) return;
+    if (!getAuthorizedTenantSession(editingUser || undefined)) return;
 
     try {
       if (editingUser) {
-        // Passwords must be provisioned and hashed by the trusted server, never stored in Dexie.
-        await db.users.update(editingUser.id, {
-          name: formData.name, role: formData.role, branch: formData.branch,
-          status: formData.status, cashboxId: formData.cashboxId || defaultCashboxId,
-          tenantId: session.tenantId
+        // Re-read ownership inside the write transaction to prevent stale-session races.
+        await db.transaction('rw', db.users, async () => {
+          const activeSession = getAuthorizedTenantSession();
+          if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+          const persistedUser = await db.users.get(editingUser.id);
+          if (!persistedUser || persistedUser.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض التعديل: المستخدم لا يتبع المؤسسة النشطة.');
+          }
+
+          // Passwords must be provisioned and hashed by the trusted server, never stored in Dexie.
+          await db.users.update(editingUser.id, {
+            name: formData.name, role: formData.role, branch: formData.branch,
+            status: formData.status, cashboxId: formData.cashboxId || defaultCashboxId,
+            tenantId: persistedUser.tenantId
+          });
         });
         useUIStore.getState().addToast('تم تحديث ملف المستخدم. لم يتم تغيير كلمة مرور الدخول.', 'success');
       } else {
@@ -174,12 +183,16 @@ export const UsersTab: React.FC = () => {
           branch: formData.branch,
           status: formData.status
         };
-        await db.users.add({
-          ...profileData,
-          tenantId: session.tenantId,
-          cashboxId: formData.cashboxId || defaultCashboxId,
-          id: crypto.randomUUID(),
-          createdAt: new Date().toISOString()
+        await db.transaction('rw', db.users, async () => {
+          const activeSession = getAuthorizedTenantSession();
+          if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+          await db.users.add({
+            ...profileData,
+            tenantId: activeSession.tenantId,
+            cashboxId: formData.cashboxId || defaultCashboxId,
+            id: crypto.randomUUID(),
+            createdAt: new Date().toISOString()
+          });
         });
         useUIStore.getState().addToast('تم حفظ ملف الموظف محلياً. إنشاء حساب دخول وكلمة مروره يحتاج إلى خدمة خادم آمنة.', 'success');
       }
@@ -196,35 +209,54 @@ export const UsersTab: React.FC = () => {
     if (!targetUser || !getAuthorizedTenantSession(targetUser)) return;
     if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
       try {
-        await db.users.delete(id);
+        await db.transaction('rw', db.users, async () => {
+          const activeSession = getAuthorizedTenantSession();
+          if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+          const persistedUser = await db.users.get(id);
+          if (!persistedUser || persistedUser.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض الحذف: المستخدم لا يتبع المؤسسة النشطة.');
+          }
+          await db.users.delete(id);
+        });
         useUIStore.getState().addToast('تم حذف المستخدم', 'success');
-      } catch {
-        useUIStore.getState().addToast('فشل حذف المستخدم', 'error');
+      } catch (err: any) {
+        useUIStore.getState().addToast(`فشل حذف المستخدم: ${err.message}`, 'error');
       }
     }
   };
 
   const handleSavePermissions = async () => {
     if (!selectedUser) return;
-    const session = getAuthorizedTenantSession(selectedUser);
-    if (!session) return;
+    if (!getAuthorizedTenantSession(selectedUser)) return;
 
     try {
-      const existing = await db.userPermissions
-        .where('userId').equals(selectedUser.id)
-        .and(p => p.tenantId === session.tenantId)
-        .first();
-      
-      if (existing) {
-        await db.userPermissions.update(existing.id, { permissions: modulesPermissions });
-      } else {
-        await db.userPermissions.add({ 
-          id: Date.now().toString(), 
-          userId: selectedUser.id, 
-          permissions: modulesPermissions, 
-          tenantId: session.tenantId 
-        });
-      }
+      await db.transaction('rw', db.users, db.userPermissions, async () => {
+        const activeSession = getAuthorizedTenantSession();
+        if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+        const persistedUser = await db.users.get(selectedUser.id);
+        if (!persistedUser || persistedUser.tenantId !== activeSession.tenantId) {
+          throw new Error('رفض تعديل الصلاحيات: المستخدم لا يتبع المؤسسة النشطة.');
+        }
+
+        const existing = await db.userPermissions
+          .where('userId').equals(selectedUser.id)
+          .and(permission => permission.tenantId === activeSession.tenantId)
+          .first();
+
+        if (existing) {
+          if (existing.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض تعديل الصلاحيات: سجل الصلاحيات لا يتبع المؤسسة النشطة.');
+          }
+          await db.userPermissions.update(existing.id, { permissions: modulesPermissions });
+        } else {
+          await db.userPermissions.add({
+            id: crypto.randomUUID(),
+            userId: selectedUser.id,
+            permissions: modulesPermissions,
+            tenantId: activeSession.tenantId
+          });
+        }
+      });
       useUIStore.getState().addToast('تم حفظ الصلاحيات بنجاح', 'success');
     } catch (err: any) {
       useUIStore.getState().addToast(`فشل حفظ الصلاحيات: ${err.message}`, 'error');
