@@ -100,7 +100,9 @@ export class ConfigurationRepository {
       };
     } catch (error) {
       console.warn(`[ConfigurationRepository] Error getting record for ${key}:`, error);
-      return null;
+      // A failed read is not equivalent to a missing record; surface it so callers
+      // cannot silently replace a valid setting with a default value.
+      throw error;
     }
   }
 
