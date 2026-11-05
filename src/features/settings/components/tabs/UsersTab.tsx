@@ -8,8 +8,8 @@ import { db, getCurrentUserSession } from '@/core/db';
 import { authService } from '@features/auth/services/authService';
 import { useUIStore } from '@/store/useUIStore';
 import { useAuthStore } from '@/store/authStore';
-import SafeMovementReportUI from './SafeMovementReportUI';
 import { hashLocalPassword } from '@features/auth/services/localPasswordService';
+import SafeMovementReportUI from './SafeMovementReportUI';
 
 type PermissionSet = { read: boolean; add: boolean; edit: boolean; delete: boolean };
 const MODULES = ['الحسابات', 'قبض/صرف', 'المشتريات', 'المبيعات', 'النسخ الاحتياطي', 'الصرف/التوريد المخزني'];
@@ -19,16 +19,23 @@ const EMPTY_PERMISSIONS = MODULES.reduce<Record<string, PermissionSet>>((all, na
 }, {});
 
 export const UsersTab: React.FC = () => {
-  const activeTenantId = useAuthStore(state => state.tenantId);
   const [activeView, setActiveView] = useState<'users' | 'permissions' | 'cash-report'>('users');
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
 
+  // Subscribe to the auth store so a tenant switch immediately re-scopes live queries.
+  const activeTenantId = useAuthStore(state =>
+    state.isAuthenticated && state.token
+      ? state.tenantId || state.user?.tenantId || state.user?.tenant_id || undefined
+      : undefined
+  );
+
   const users = useLiveQuery(async () => {
     if (!activeTenantId) return [];
-    return await db.users.where('tenantId').equals(activeTenantId).toArray();
-  }, [activeTenantId])?.filter(user => user.tenantId === activeTenantId) || [];
+    // Query the tenant index directly; never load other tenants' staff into memory.
+    return db.users.where('tenantId').equals(activeTenantId).toArray();
+  }, [activeTenantId]) || [];
   const [orphanedRecordsCount, setOrphanedRecordsCount] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -36,8 +43,7 @@ export const UsersTab: React.FC = () => {
       setOrphanedRecordsCount(0);
       return () => { cancelled = true; };
     }
-    // This is an administrative one-time scan on tenant change, not a live
-    // query, to avoid rescanning every inventory/accounting row on every write.
+    // Aggregate-only audit; legacy orphan records are never reassigned automatically.
     db.getOrphanedTenantRecordCount()
       .then(count => { if (!cancelled) setOrphanedRecordsCount(count); })
       .catch(error => console.error('[UsersTab] Failed to count orphaned tenant records:', error));
@@ -45,18 +51,19 @@ export const UsersTab: React.FC = () => {
   }, [activeTenantId]);
   const cashboxes = useLiveQuery(async () => {
     if (!activeTenantId) return [];
-    return await db.cashboxes.where('tenantId').equals(activeTenantId).toArray();
-  }, [activeTenantId])?.filter(cashbox => cashbox.tenantId === activeTenantId) || [];
+    return db.cashboxes.where('tenantId').equals(activeTenantId).toArray();
+  }, [activeTenantId]) || [];
   const cashMovements = useLiveQuery(async () => {
-    if (!selectedUser?.id) return [];
-    if (!activeTenantId) return [];
+    if (!selectedUser?.id || !activeTenantId) return [];
 
-    const tenantMovements = await db.cashFlow.where('tenantId').equals(activeTenantId).toArray();
-    return tenantMovements.filter((movement: any) =>
-      (selectedUser.cashboxId && movement.cashboxId === selectedUser.cashboxId) ||
-      movement.userId === selectedUser.id
-    );
-  }, [selectedUser?.id, selectedUser?.cashboxId, activeTenantId]) || [];
+    const [byCashbox, byUser] = await Promise.all([
+      selectedUser.cashboxId
+        ? db.cashFlow.where('[tenantId+cashboxId]').equals([activeTenantId, selectedUser.cashboxId]).toArray()
+        : Promise.resolve([]),
+      db.cashFlow.where('[tenantId+userId]').equals([activeTenantId, selectedUser.id]).toArray()
+    ]);
+    return Array.from(new Map([...byCashbox, ...byUser].map((movement: any) => [movement.id, movement])).values());
+  }, [activeTenantId, selectedUser?.id, selectedUser?.cashboxId]) || [];
   const reportMovements = useMemo(() => {
     let runningBalance = 0;
     return [...cashMovements]
@@ -78,6 +85,34 @@ export const UsersTab: React.FC = () => {
   const reportBalance = reportMovements[reportMovements.length - 1]?.balance ?? 0;
   const defaultCashboxId = cashboxes.find((cashbox: any) => cashbox.name === 'الصندوق الرئيسي')?.id || cashboxes[0]?.id || 'cashbox-main';
 
+  const getAuthorizedTenantSession = (targetUser?: any) => {
+    const session = getCurrentUserSession();
+    const currentUser = authService.getCurrentUser();
+    const role = String(currentUser?.Role || '').trim().toLowerCase();
+    const isAdmin = [
+      'admin', 'superadmin', 'super_admin', 'platform_owner', 'platformowner', 'administrator', 'local-admin',
+      'tenant_admin', 'tenantadmin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
+    ].includes(role);
+
+    if (
+      !authService.isSignedIn() ||
+      !currentUser?.id ||
+      !session.tenantId ||
+      currentUser.tenantId !== session.tenantId ||
+      !isAdmin
+    ) {
+      useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين أو لا توجد جلسة ومؤسسة نشطة صالحة.', 'error');
+      return null;
+    }
+
+    if (targetUser && (!targetUser.tenantId || targetUser.tenantId !== session.tenantId)) {
+      useUIStore.getState().addToast('رفضت العملية: المستخدم لا يحمل سياق المؤسسة الحالية.', 'error');
+      return null;
+    }
+
+    return session;
+  };
+
   const [formData, setFormData] = useState({
     name: '', username: '', password: '', role: 'صيدلي مسؤول',
     branch: 'الفرع الرئيسي', status: 'active', cashboxId: 'cashbox-main'
@@ -86,17 +121,14 @@ export const UsersTab: React.FC = () => {
 
   useEffect(() => {
     if (selectedUser) {
-      const session = getCurrentUserSession();
-      // Security: Ensure selectedUser belongs to current tenant before fetching perms
-      if (!session.tenantId || selectedUser.tenantId !== session.tenantId) {
-        setModulesPermissions(EMPTY_PERMISSIONS);
+      if (!activeTenantId || !selectedUser.tenantId || selectedUser.tenantId !== activeTenantId) {
         setSelectedUser(null);
         setActiveView('users');
         return;
       }
 
       db.userPermissions
-        .where('[tenantId+userId]').equals([session.tenantId, selectedUser.id])
+        .where('[tenantId+userId]').equals([activeTenantId, selectedUser.id])
         .first()
         .then((perms) => {
           setModulesPermissions({ ...EMPTY_PERMISSIONS, ...(perms?.permissions || {}) });
@@ -112,6 +144,7 @@ export const UsersTab: React.FC = () => {
   };
 
   const handleSelectUserPermissions = (user: any) => {
+    if (!getAuthorizedTenantSession(user)) return;
     setSelectedUser(user);
     setActiveView('permissions');
   };
@@ -131,29 +164,69 @@ export const UsersTab: React.FC = () => {
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
-    const currentUser = authService.getCurrentUser();
-    const userRole = (currentUser?.Role || '').toLowerCase();
-    if (!userRole.includes('admin') && !userRole.includes('مدير')) {
-      useUIStore.getState().addToast('غير مصرح لك بإدارة المستخدمين. يتطلب صلاحيات مدير.', 'error');
-      return;
-    }
+    if (!getAuthorizedTenantSession(editingUser || undefined)) return;
 
     try {
-      const passwordHash = formData.password ? await hashLocalPassword(formData.password) : undefined;
       if (editingUser) {
-        await db.users.update(editingUser.id, {
-          name: formData.name, role: formData.role, branch: formData.branch,
-          status: formData.status, cashboxId: formData.cashboxId || defaultCashboxId,
-          ...(passwordHash ? { passwordHash, password: undefined } : {})
+        // Re-read ownership inside the write transaction to prevent stale-session races.
+        await db.transaction('rw', db.users, db.cashboxes, async () => {
+          const activeSession = getAuthorizedTenantSession();
+          if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+          const persistedUser = await db.users.get(editingUser.id);
+          if (!persistedUser || persistedUser.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض التعديل: المستخدم لا يتبع المؤسسة النشطة.');
+          }
+          const requestedCashboxId = formData.cashboxId || defaultCashboxId;
+          const assignedCashbox = requestedCashboxId
+            ? await db.cashboxes.get(requestedCashboxId)
+            : undefined;
+          if (assignedCashbox && assignedCashbox.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض التعديل: الصندوق المحدد لا يتبع المؤسسة النشطة.');
+          }
+
+          // Persist only a salted PBKDF2 hash; never store plaintext credentials.
+          await db.users.update(editingUser.id, {
+            name: formData.name, role: formData.role, branch: formData.branch,
+            status: formData.status, cashboxId: requestedCashboxId,
+            tenantId: persistedUser.tenantId,
+            ...(formData.password ? { passwordHash: await hashLocalPassword(formData.password), password: undefined } : {})
+          });
         });
-        useUIStore.getState().addToast('تم تحديث بيانات المستخدم بنجاح', 'success');
+        useUIStore.getState().addToast('تم تحديث ملف المستخدم. لم يتم تغيير كلمة مرور الدخول.', 'success');
       } else {
-        if (!passwordHash) throw new Error('يجب إدخال كلمة مرور صالحة للمستخدم الجديد.');
-        const { password: _password, ...userData } = formData;
-        await db.users.add({ ...userData, passwordHash, cashboxId: formData.cashboxId || defaultCashboxId, id: Date.now().toString(), createdAt: new Date().toISOString() });
-        useUIStore.getState().addToast('تمت إضافة المستخدم بنجاح', 'success');
+        // This screen creates a local staff profile only. The existing organization
+        // endpoint uses a placeholder password hash and is not safe for provisioning.
+        if (!formData.password) throw new Error('يجب إدخال كلمة مرور صالحة للمستخدم الجديد.');
+        const passwordHash = await hashLocalPassword(formData.password);
+        const profileData = {
+          name: formData.name,
+          username: formData.username,
+          role: formData.role,
+          branch: formData.branch,
+          status: formData.status,
+          passwordHash
+        };
+        await db.transaction('rw', db.users, db.cashboxes, async () => {
+          const activeSession = getAuthorizedTenantSession();
+          if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+          const requestedCashboxId = formData.cashboxId || defaultCashboxId;
+          const assignedCashbox = requestedCashboxId
+            ? await db.cashboxes.get(requestedCashboxId)
+            : undefined;
+          if (assignedCashbox && assignedCashbox.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض الإضافة: الصندوق المحدد لا يتبع المؤسسة النشطة.');
+          }
+          await db.users.add({
+            ...profileData,
+            tenantId: activeSession.tenantId,
+            cashboxId: requestedCashboxId,
+            id: crypto.randomUUID(),
+            createdAt: new Date().toISOString()
+          });
+        });
+        useUIStore.getState().addToast('تم حفظ ملف الموظف محلياً. إنشاء حساب دخول وكلمة مروره يحتاج إلى خدمة خادم آمنة.', 'success');
       }
-      setFormData(current => ({ ...current, password: '' }));
+      setFormData((current) => ({ ...current, password: '' }));
       setIsModalOpen(false);
     } catch (err: any) {
       useUIStore.getState().addToast(`فشل حفظ المستخدم: ${err.message}`, 'error');
@@ -162,39 +235,57 @@ export const UsersTab: React.FC = () => {
 
   const handleDeleteUser = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    const targetUser = users.find((user: any) => user.id === id);
+    if (!targetUser || !getAuthorizedTenantSession(targetUser)) return;
     if (window.confirm('هل أنت متأكد من حذف هذا المستخدم؟')) {
       try {
-        await db.users.delete(id);
+        await db.transaction('rw', db.users, async () => {
+          const activeSession = getAuthorizedTenantSession();
+          if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+          const persistedUser = await db.users.get(id);
+          if (!persistedUser || persistedUser.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض الحذف: المستخدم لا يتبع المؤسسة النشطة.');
+          }
+          await db.users.delete(id);
+        });
         useUIStore.getState().addToast('تم حذف المستخدم', 'success');
-      } catch {
-        useUIStore.getState().addToast('فشل حذف المستخدم', 'error');
+      } catch (err: any) {
+        useUIStore.getState().addToast(`فشل حذف المستخدم: ${err.message}`, 'error');
       }
     }
   };
 
   const handleSavePermissions = async () => {
     if (!selectedUser) return;
-    const session = getCurrentUserSession();
-    if (!session.tenantId || selectedUser.tenantId !== session.tenantId) {
-      useUIStore.getState().addToast('خطأ أمني: لا يمكنك تعديل صلاحيات مستخدم دون تطابق المؤسسة النشطة.', 'error');
-      return;
-    }
+    if (!getAuthorizedTenantSession(selectedUser)) return;
 
     try {
-      const existing = await db.userPermissions
-        .where('[tenantId+userId]').equals([session.tenantId, selectedUser.id])
-        .first();
-      
-      if (existing) {
-        await db.userPermissions.update(existing.id, { permissions: modulesPermissions });
-      } else {
-        await db.userPermissions.add({ 
-          id: Date.now().toString(), 
-          userId: selectedUser.id, 
-          permissions: modulesPermissions, 
-          tenantId: session.tenantId 
-        });
-      }
+      await db.transaction('rw', db.users, db.userPermissions, async () => {
+        const activeSession = getAuthorizedTenantSession();
+        if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+        const persistedUser = await db.users.get(selectedUser.id);
+        if (!persistedUser || persistedUser.tenantId !== activeSession.tenantId) {
+          throw new Error('رفض تعديل الصلاحيات: المستخدم لا يتبع المؤسسة النشطة.');
+        }
+
+        const existing = await db.userPermissions
+          .where('[tenantId+userId]').equals([activeSession.tenantId, selectedUser.id])
+          .first();
+
+        if (existing) {
+          if (existing.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض تعديل الصلاحيات: سجل الصلاحيات لا يتبع المؤسسة النشطة.');
+          }
+          await db.userPermissions.update(existing.id, { permissions: modulesPermissions });
+        } else {
+          await db.userPermissions.add({
+            id: crypto.randomUUID(),
+            userId: selectedUser.id,
+            permissions: modulesPermissions,
+            tenantId: activeSession.tenantId
+          });
+        }
+      });
       useUIStore.getState().addToast('تم حفظ الصلاحيات بنجاح', 'success');
     } catch (err: any) {
       useUIStore.getState().addToast(`فشل حفظ الصلاحيات: ${err.message}`, 'error');
@@ -335,7 +426,7 @@ export const UsersTab: React.FC = () => {
             <form onSubmit={handleSaveUser} className="space-y-4">
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">الاسم الثلاثي</label><input type="text" required placeholder="الاسم الكامل" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10" /></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">اسم المستخدم</label><input type="text" required disabled={!!editingUser} dir="ltr" placeholder="username" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-left text-sm outline-none transition focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10 disabled:opacity-50" /></div>
-              <div><label className="mb-1.5 block text-xs font-bold text-slate-700">كلمة السر {editingUser ? '(اتركها فارغة دون تغيير)' : ''}</label><input type="password" required={!editingUser} placeholder="••••••••" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none transition focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10" /></div>
+              <div><label className="mb-1.5 block text-xs font-bold text-slate-700">كلمة المرور (لا تُحفظ محلياً)</label><input type="password" autoComplete="new-password" required={false} placeholder="تُدار عبر خدمة الحسابات الآمنة" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none transition focus:border-[#1E4D4D] focus:bg-white focus:ring-4 focus:ring-[#1E4D4D]/10" /><p className="mt-1 text-[11px] text-amber-700">لن تُحفظ كلمة المرور في قاعدة البيانات المحلية؛ إنشاء بيانات الدخول يحتاج إلى API آمن.</p></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">الصندوق المالي</label><select value={formData.cashboxId || defaultCashboxId} onChange={(e) => setFormData({ ...formData, cashboxId: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#1E4D4D] focus:bg-white">{cashboxes.length === 0 ? <option value="cashbox-main">الصندوق الرئيسي</option> : cashboxes.filter((cashbox: any) => cashbox.isActive !== false).map((cashbox: any) => <option key={cashbox.id} value={cashbox.id}>{cashbox.name}</option>)}</select></div>
               <div><label className="mb-1.5 block text-xs font-bold text-slate-700">المسمى الوظيفي</label><select value={formData.role} onChange={(e) => setFormData({ ...formData, role: e.target.value })} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3 text-sm outline-none focus:border-[#1E4D4D] focus:bg-white"><option value="صيدلي مسؤول">صيدلي مسؤول</option><option value="كاشير مبيعات">كاشير مبيعات</option><option value="مدير نظام">مدير نظام</option></select></div>
               <label className="flex cursor-pointer items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3.5"><span><span className="block text-sm font-bold text-slate-700">حالة الحساب</span><span className="mt-1 block text-xs text-slate-500">{formData.status === 'active' ? 'الحساب نشط ويمكنه الدخول' : 'الحساب معطل'}</span></span><input type="checkbox" checked={formData.status === 'active'} onChange={(e) => setFormData({ ...formData, status: e.target.checked ? 'active' : 'inactive' })} className="h-5 w-5 accent-emerald-600" /></label>

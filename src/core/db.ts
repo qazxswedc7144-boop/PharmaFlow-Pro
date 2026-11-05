@@ -66,6 +66,22 @@ function assertTenantUnchanged(table: any, expectedTenantId: string, operation: 
   return current;
 }
 
+
+function assertTenantAdminForUserManagement(tableName: string): void {
+  if (tableName !== 'users' && tableName !== 'userPermissions') return;
+  const authSession = TokenProvider.getCurrentSession();
+  const current = getCurrentUserSession();
+  const role = String(authSession.user?.role || authSession.user?.Role || '').trim().toLowerCase();
+  const allowedRoles = [
+    'admin', 'superadmin', 'super_admin', 'platform_owner', 'platformowner', 'administrator', 'local-admin',
+    'tenant_admin', 'tenantadmin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
+  ];
+  const userId = authSession.user?.id || (authSession.user as any)?.user_id;
+  if (!authSession.isAuthenticated || !authSession.token || !current.tenantId || !userId || !allowedRoles.includes(role)) {
+    throw new Error(`FAIL_CLOSED: Tenant administrator authorization required for '${tableName}'.`);
+  }
+}
+
 if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
   const TableProto = (Dexie as any).Table.prototype;
   const originalPut = TableProto.put;
@@ -886,7 +902,7 @@ export class PharmaFlowDB extends Dexie {
     // Version 37: Tenant-scoped lookup indexes for security-sensitive collections.
     // Index creation is additive; existing records are not assigned to a tenant here.
     this.version(37).stores({
-      users: '&id, username, role, status, branch, createdAt, cashboxId, tenantId',
+      users: '&id, username, role, status, branch, createdAt, cashboxId, tenantId, [tenantId+username]',
       userPermissions: '&id, userId, tenantId, [tenantId+userId]',
       cashboxes: '&id, name, accountId, branchId, isActive, openingBalance, openingBalanceJournalId, tenantId',
       cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId, [tenantId+cashboxId], [tenantId+userId]',
@@ -930,6 +946,7 @@ export class PharmaFlowDB extends Dexie {
       }
 
       table.hook('creating', (_primKey: any, obj: any) => {
+        assertTenantAdminForUserManagement(tableName);
         const session = getCurrentUserSession();
         if (!session.tenantId) {
           console.error(`[SECURITY] Creation blocked on table '${tableName}': No active tenant session.`);
@@ -943,6 +960,7 @@ export class PharmaFlowDB extends Dexie {
       });
 
       table.hook('updating', (mods: any, _primKey: any, obj: any) => {
+        assertTenantAdminForUserManagement(tableName);
         const session = getCurrentUserSession();
         if (!session.tenantId) {
           console.error(`[SECURITY] Update blocked on table '${tableName}': No active tenant session.`);
@@ -966,6 +984,7 @@ export class PharmaFlowDB extends Dexie {
       });
 
       table.hook('deleting', (_primKey: any, obj: any) => {
+        assertTenantAdminForUserManagement(tableName);
         const session = getCurrentUserSession();
         if (!session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
           console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey);
