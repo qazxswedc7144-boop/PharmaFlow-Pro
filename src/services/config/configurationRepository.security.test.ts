@@ -41,6 +41,13 @@ describe('ConfigurationRepository legacy preservation', () => {
     vi.clearAllMocks();
   });
 
+  it('propagates Dexie read failures instead of treating them as an empty settings store', async () => {
+    mockDb.settings.toArray.mockRejectedValueOnce(new Error('storage unavailable'));
+
+    const repository = new ConfigurationRepository();
+    await expect(repository.getAllRecords()).rejects.toThrow('storage unavailable');
+  });
+
   it('loads only correctly scoped records and preserves unscoped legacy values', async () => {
     mockDb.rows.set('tenant:tenant-a:system.name', {
       key: 'tenant:tenant-a:system.name',
