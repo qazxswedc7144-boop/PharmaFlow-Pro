@@ -63,15 +63,29 @@ export class ConfigurationRepository {
 
       if (item.value && typeof item.value === 'object' && 'scope' in item.value) {
         const record = item.value as ConfigurationRecord<any>;
-        if (normalizeConfigKey(record.key) !== canonicalKey || record.scope !== scope) return null;
-        if (scope !== 'SYSTEM' && scope !== 'RUNTIME') {
-          const expectedFields: Array<keyof ConfigurationContext> =
-            scope === 'TENANT' ? ['tenantId'] :
-            scope === 'BRANCH' ? ['tenantId', 'branchId'] :
-            scope === 'USER' ? ['tenantId', 'userId'] :
-            ['tenantId', 'deviceId'];
-          if (expectedFields.some(field => record.context?.[field] !== context[field])) return null;
+        if (
+          normalizeConfigKey(record.key) !== canonicalKey ||
+          record.scope !== scope ||
+          !record.context ||
+          typeof record.context !== 'object'
+        ) {
+          return null;
         }
+
+        // Bind the stored record to the exact key requested. This verifies every
+        // scope component (including optional DEVICE branch/user components), not
+        // only the minimum identifiers required by the scope.
+        try {
+          const recordStorageKey = buildScopedStorageKey(
+            normalizeConfigKey(record.key),
+            record.scope,
+            record.context
+          );
+          if (recordStorageKey !== storageKey) return null;
+        } catch {
+          return null;
+        }
+
         return record;
       }
 
