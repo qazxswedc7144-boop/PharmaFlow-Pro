@@ -54,7 +54,7 @@ export class TokenProvider {
       permissions: state.permissions,
       subscriptionPlan: state.subscriptionPlan,
       isAuthenticated: state.isAuthenticated,
-      isOfflineSession: typeof navigator !== 'undefined' ? !navigator.onLine : false
+      isOfflineSession: (typeof navigator !== 'undefined' ? !navigator.onLine : false) || !!(state.user as any)?.offlineOnly
     };
   }
 
@@ -65,13 +65,14 @@ export class TokenProvider {
     const session = this.getCurrentSession();
     const headers: AuthHeaders = {};
 
-    if (session.token) {
+    const offlineOnly = !!(session.user as any)?.offlineOnly;
+    if (session.token && !offlineOnly) {
       headers.Authorization = `Bearer ${session.token}`;
     }
-    if (session.tenantId) {
+    if (!offlineOnly && session.tenantId) {
       headers['x-tenant-id'] = session.tenantId;
     }
-    if (session.branchId) {
+    if (!offlineOnly && session.branchId) {
       headers['x-branch-id'] = session.branchId;
     }
 

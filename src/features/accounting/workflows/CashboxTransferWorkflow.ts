@@ -167,7 +167,7 @@ export class CashboxTransferWorkflow {
         };
 
         assertActiveSession();
-        await AccountingRepository.addEntry(entry, tx);
+        await AccountingRepository.addEntry(entry, tx, assertActiveSession);
         return { transactionUuid: input.transactionUuid, journalId, alreadyProcessed: false };
       }
     );

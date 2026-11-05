@@ -35,10 +35,62 @@ function ensureItemPrimaryKey(table: any, item: any) {
   return item;
 }
 
+const TENANT_SCOPED_TABLES = new Set([
+  'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
+  'accounts', 'journalLines', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
+  'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
+  'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments',
+  'financialHealthSnapshots', 'systemAlerts', 'accountingPeriods'
+]);
+
+function requireTenantForTable(table: any, operation: string) {
+  const session = getCurrentUserSession();
+  if (!session.tenantId) {
+    throw new Error(`FAIL_CLOSED: ${operation} forbidden on '${table.name}' without an active tenant session.`);
+  }
+  return session;
+}
+
+function assertTenantUnchanged(table: any, expectedTenantId: string, operation: string) {
+  const current = requireTenantForTable(table, operation);
+  if (current.tenantId !== expectedTenantId) {
+    throw new Error(`FAIL_CLOSED: Tenant session changed during ${operation} on '${table.name}'.`);
+  }
+  return current;
+}
+
 if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
   const TableProto = (Dexie as any).Table.prototype;
-  
   const originalPut = TableProto.put;
+  const originalAdd = TableProto.add;
+  const originalGet = TableProto.get;
+  const originalDelete = TableProto.delete;
+  const originalBulkGet = TableProto.bulkGet;
+  const originalBulkPut = TableProto.bulkPut;
+  const originalBulkAdd = TableProto.bulkAdd;
+  const originalBulkDelete = TableProto.bulkDelete;
+  const originalClear = TableProto.clear;
+  const originalToArray = TableProto.toArray;
+  const originalCount = TableProto.count;
+  const requiredTableMethods = {
+    put: originalPut, add: originalAdd, get: originalGet, delete: originalDelete,
+    bulkGet: originalBulkGet, bulkPut: originalBulkPut, bulkAdd: originalBulkAdd,
+    bulkDelete: originalBulkDelete, clear: originalClear, toArray: originalToArray, count: originalCount
+  };
+  const missingTableMethods = Object.entries(requiredTableMethods)
+    .filter(([, method]) => typeof method !== 'function')
+    .map(([name]) => name);
+  if (missingTableMethods.length > 0) {
+    throw new Error(`[SECURITY] Dexie tenant guards could not initialize; missing Table methods: ${missingTableMethods.join(', ')}`);
+  }
+  const hasTenantIndex = (table: any) => (table?.schema?.indexes || []).some((index: any) =>
+    index?.keyPath === 'tenantId'
+  );
+  const isTenantScoped = (table: any) => TENANT_SCOPED_TABLES.has(table?.name) ||
+    hasTenantIndex(table) || (table?.schema?.indexes || []).some((index: any) =>
+      Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId')
+    );
+
   if (originalPut) {
     TableProto.put = function(this: any, item: any, key?: any) {
       ensureItemPrimaryKey(this, item);
@@ -46,7 +98,6 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
     };
   }
 
-  const originalAdd = TableProto.add;
   if (originalAdd) {
     TableProto.add = function(this: any, item: any, key?: any) {
       ensureItemPrimaryKey(this, item);
@@ -54,23 +105,175 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
     };
   }
 
-  const originalBulkPut = TableProto.bulkPut;
-  if (originalBulkPut) {
-    TableProto.bulkPut = function(this: any, items: any[], keys?: any, options?: any) {
-      if (Array.isArray(items)) {
-        items.forEach(item => ensureItemPrimaryKey(this, item));
-      }
-      return originalBulkPut.call(this, items, keys, options);
+  if (originalGet) {
+    TableProto.get = function(this: any, key: any) {
+      if (!isTenantScoped(this)) return originalGet.call(this, key);
+      const session = requireTenantForTable(this, 'Read');
+      return originalGet.call(this, key).then((record: any) => {
+        assertTenantUnchanged(this, session.tenantId, 'Read');
+        if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+          throw new Error(`FAIL_CLOSED: Unauthorized direct read on '${this.name}'.`);
+        }
+        return record;
+      });
     };
   }
 
-  const originalBulkAdd = TableProto.bulkAdd;
+  if (originalBulkGet) {
+    TableProto.bulkGet = function(this: any, keys: any[]) {
+      if (!isTenantScoped(this)) return originalBulkGet.call(this, keys);
+      const session = requireTenantForTable(this, 'Bulk read');
+      return originalBulkGet.call(this, keys).then((records: any[]) => {
+        assertTenantUnchanged(this, session.tenantId, 'Bulk read');
+        return records.map((record: any) => {
+          if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Unauthorized bulk read on '${this.name}'.`);
+          }
+          return record;
+        });
+      });
+    };
+  }
+
+  if (originalToArray) {
+    TableProto.toArray = function(this: any) {
+      if (!isTenantScoped(this)) return originalToArray.call(this);
+      const session = requireTenantForTable(this, 'Read');
+      const result = hasTenantIndex(this)
+        ? this.where('tenantId').equals(session.tenantId).toArray()
+        : originalToArray.call(this).then((records: any[]) =>
+            records.filter((record: any) => record?.tenantId === session.tenantId)
+          );
+      return result.then((records: any[]) => {
+        assertTenantUnchanged(this, session.tenantId, 'Read');
+        return records;
+      });
+    };
+  }
+
+  if (originalCount) {
+    TableProto.count = function(this: any) {
+      if (!isTenantScoped(this)) return originalCount.call(this);
+      const session = requireTenantForTable(this, 'Count');
+      const result = hasTenantIndex(this)
+        ? this.where('tenantId').equals(session.tenantId).count()
+        : originalToArray.call(this).then((records: any[]) =>
+            records.filter((record: any) => record?.tenantId === session.tenantId).length
+          );
+      return result.then((count: number) => {
+        assertTenantUnchanged(this, session.tenantId, 'Count');
+        return count;
+      });
+    };
+  }
+
   if (originalBulkAdd) {
-    TableProto.bulkAdd = function(this: any, items: any[], keys?: any, options?: any) {
-      if (Array.isArray(items)) {
-        items.forEach(item => ensureItemPrimaryKey(this, item));
+    TableProto.bulkAdd = function(this: any, items: any[], keysOrOptions?: any, optionsArg?: any) {
+      if (!isTenantScoped(this)) {
+        if (Array.isArray(items)) items.forEach(item => ensureItemPrimaryKey(this, item));
+        return originalBulkAdd.call(this, items, keysOrOptions, optionsArg);
       }
-      return originalBulkAdd.call(this, items, keys, options);
+      if (!Array.isArray(items)) throw new Error('FAIL_CLOSED: Invalid bulk payload.');
+      const keys = Array.isArray(keysOrOptions) ? keysOrOptions : undefined;
+      const options = optionsArg || (keys ? undefined : keysOrOptions);
+      if (keys && keys.length !== items.length) throw new Error('Invalid bulk keys length.');
+      if (keys && this.schema.primKey.keyPath) throw new Error('bulkAdd(): keys are invalid for inbound primary keys.');
+      const session = requireTenantForTable(this, 'Bulk create');
+      const normalized = items.map((item: any) => {
+        if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== session.tenantId)) {
+          throw new Error(`FAIL_CLOSED: Cross-tenant bulk create rejected on '${this.name}'.`);
+        }
+        const value = { ...item, tenantId: session.tenantId, userId: item.userId || session.userId };
+        ensureItemPrimaryKey(this, value);
+        return value;
+      });
+      return this.db.transaction('rw', this, async () => {
+        const result: any[] = [];
+        for (let index = 0; index < normalized.length; index += 1) {
+          assertTenantUnchanged(this, session.tenantId, 'Bulk create');
+          result.push(await originalAdd.call(this, normalized[index], Array.isArray(keys) ? keys[index] : undefined));
+        }
+        return options?.allKeys === true ? result : result[result.length - 1];
+      });
+    };
+  }
+
+  if (originalBulkPut && originalGet && originalPut) {
+    TableProto.bulkPut = function(this: any, items: any[], keysOrOptions?: any, optionsArg?: any) {
+      if (!isTenantScoped(this)) {
+        if (Array.isArray(items)) items.forEach(item => ensureItemPrimaryKey(this, item));
+        return originalBulkPut.call(this, items, keysOrOptions, optionsArg);
+      }
+      if (!Array.isArray(items)) throw new Error('FAIL_CLOSED: Invalid bulk payload.');
+      const keys = Array.isArray(keysOrOptions) ? keysOrOptions : undefined;
+      const options = optionsArg || (keys ? undefined : keysOrOptions);
+      if (keys && keys.length !== items.length) throw new Error('Invalid bulk keys length.');
+      if (keys && this.schema.primKey.keyPath) throw new Error('bulkPut(): keys are invalid for inbound primary keys.');
+      const session = requireTenantForTable(this, 'Bulk upsert');
+      return this.db.transaction('rw', this, async () => {
+        const result: any[] = [];
+        for (let index = 0; index < items.length; index += 1) {
+          const item = items[index];
+          if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Cross-tenant bulk upsert rejected on '${this.name}'.`);
+          }
+          const key = Array.isArray(keys) ? keys[index] : this.schema.primKey.extract(item);
+          const existing = key === undefined || key === null ? undefined : await originalGet.call(this, key);
+          if (existing && (!existing.tenantId || existing.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Unauthorized bulk upsert target on '${this.name}'.`);
+          }
+          const value = { ...item, tenantId: session.tenantId, userId: item.userId || session.userId };
+          ensureItemPrimaryKey(this, value);
+          assertTenantUnchanged(this, session.tenantId, 'Bulk upsert');
+          result.push(await originalPut.call(this, value, Array.isArray(keys) ? keys[index] : undefined));
+        }
+        return options?.allKeys === true ? result : result[result.length - 1];
+      });
+    };
+  }
+
+  if (originalBulkDelete && originalGet && originalDelete) {
+    TableProto.bulkDelete = function(this: any, keys: any[]) {
+      if (!isTenantScoped(this)) return originalBulkDelete.call(this, keys);
+      if (!Array.isArray(keys)) throw new Error('FAIL_CLOSED: Invalid bulk delete keys.');
+      return this.db.transaction('rw', this, async () => {
+        const session = requireTenantForTable(this, 'Bulk delete');
+        for (const key of keys) {
+          assertTenantUnchanged(this, session.tenantId, 'Bulk delete');
+          const record = await originalGet.call(this, key);
+          if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Unauthorized bulk delete target on '${this.name}'.`);
+          }
+        }
+        for (const key of keys) {
+          assertTenantUnchanged(this, session.tenantId, 'Bulk delete');
+          const record = await originalGet.call(this, key);
+          if (record) {
+            assertTenantUnchanged(this, session.tenantId, 'Bulk delete');
+            await originalDelete.call(this, key);
+          }
+        }
+      });
+    };
+  }
+
+  if (originalClear && originalToArray && originalDelete) {
+    TableProto.clear = function(this: any) {
+      if (!isTenantScoped(this)) return originalClear.call(this);
+      return this.db.transaction('rw', this, async () => {
+        const session = requireTenantForTable(this, 'Clear');
+        const records = hasTenantIndex(this)
+          ? await this.where('tenantId').equals(session.tenantId).toArray()
+          : await originalToArray.call(this);
+        assertTenantUnchanged(this, session.tenantId, 'Clear');
+        for (const record of records) {
+          if (record?.tenantId === session.tenantId) {
+            assertTenantUnchanged(this, session.tenantId, 'Clear');
+            const key = this.schema.primKey.extract(record);
+            await originalDelete.call(this, key);
+          }
+        }
+      });
     };
   }
 }
@@ -477,6 +680,14 @@ export class PharmaFlowDB extends Dexie {
       accountingPeriods: '&id, Start_Date, End_Date, Is_Locked, start_date, end_date, is_locked, tenantId, [tenantId+Is_Locked]'
     });
 
+    // Version 38: Preserve tenant-less legacy data as Orphan records.
+    // Never infer ownership from whichever tenant happens to be logged in.
+    this.version(38).stores({
+      journalLines: '&id, entry_id, entryId, account_id, accountId, [entry_id+account_id], [entryId+accountId], tenantId, branchId'
+    }).upgrade(async () => {
+      // Existing tenant-less records remain untouched for manual ownership review.
+    });
+
     // Handle structural integrity and recovery
     this.on('versionchange', () => {
       console.warn("Database structure updated in another tab. Switching to resilient mode.");
@@ -486,71 +697,86 @@ export class PharmaFlowDB extends Dexie {
       isDbBlocked = true;
     });
 
-    // Register hooks to ensure tenantId and userId are set on specified tables
-    const targetTables = [
-      'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
-      'accounts', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
-      'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
-      'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments',
-      'financialHealthSnapshots', 'systemAlerts', 'accountingPeriods'
-    ];
-    targetTables.forEach(tableName => {
-      try {
-        const table = this.table(tableName);
-        if (table) {
-          table.hook('creating', (_primKey: any, obj: any) => {
-            const session = getCurrentUserSession();
-            if (!session.tenantId) {
-              console.error(`[SECURITY] Creation blocked on table '${tableName}': No active tenant session.`);
-              throw new Error("FAIL_CLOSED: Creation forbidden without active tenant session.");
-            }
-            if (obj && typeof obj === 'object') {
-              // Force tenantId from session to prevent spoofing
-              obj.tenantId = session.tenantId;
-              obj.userId = obj.userId || session.userId;
-            }
-          });
-          table.hook('updating', (mods: any, _primKey: any, obj: any) => {
-            const session = getCurrentUserSession();
-            
-            if (!session.tenantId) {
-              console.error(`[SECURITY] Update blocked on table '${tableName}': No active tenant session.`);
-              throw new Error("FAIL_CLOSED: Update forbidden without active tenant session.");
-            }
+    // Register hooks on the explicit tenant allow-list and every schema table
+    // declaring a tenantId index. Registration failures abort construction.
+    const tenantScopedTableNames = new Set(TENANT_SCOPED_TABLES);
+    for (const table of this.tables) {
+      const hasTenantIndex = (table.schema.indexes || []).some((index: any) =>
+        index?.keyPath === 'tenantId' ||
+        (Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId'))
+      );
+      if (hasTenantIndex) tenantScopedTableNames.add(table.name);
+    }
 
-            // Security: Prevent updating records that don't belong to the current tenant
-            // Or updating old records that don't have a tenantId (Orphaned)
-            if (!obj || !obj.tenantId || obj.tenantId !== session.tenantId) {
-              console.error(`[SECURITY] Cross-tenant or orphaned update blocked on table '${tableName}' for key:`, _primKey, "Target Tenant:", obj?.tenantId, "Active Session:", session.tenantId);
-              throw new Error("FAIL_CLOSED: Unauthorized data modification attempt (Cross-tenant or Orphaned).");
-            }
-
-            if (mods && typeof mods === 'object') {
-              // Prevent changing tenantId via update
-              if (mods.tenantId && mods.tenantId !== obj.tenantId) {
-                console.error(`[SECURITY] Attempt to change tenantId blocked on table '${tableName}'`);
-                throw new Error("FAIL_CLOSED: tenantId modification is strictly forbidden.");
-              }
-
-              return {
-                ...mods,
-                tenantId: session.tenantId, // Force tenantId from session
-                userId: mods.userId || (obj ? obj.userId : undefined) || session.userId
-              };
-            }
-          });
-          table.hook('deleting', (_primKey: any, obj: any) => {
-            const session = getCurrentUserSession();
-            if (!session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
-              console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey);
-              throw new Error("FAIL_CLOSED: Unauthorized data deletion attempt (Cross-tenant or Orphaned).");
-            }
-          });
-        }
-      } catch (err) {
-        console.warn(`[DB] Could not register hooks for table: ${tableName}`, err);
+    tenantScopedTableNames.forEach(tableName => {
+      const table = this.table(tableName);
+      if (!table) {
+        throw new Error(`[SECURITY] Required tenant-scoped table '${tableName}' is missing.`);
       }
+
+      table.hook('creating', (_primKey: any, obj: any) => {
+        const session = getCurrentUserSession();
+        if (!session.tenantId) {
+          console.error(`[SECURITY] Creation blocked on table '${tableName}': No active tenant session.`);
+          throw new Error("FAIL_CLOSED: Creation forbidden without active tenant session.");
+        }
+        if (obj && typeof obj === 'object') {
+          obj.tenantId = session.tenantId;
+          obj.userId = obj.userId || session.userId;
+        }
+      });
+
+      table.hook('updating', (mods: any, _primKey: any, obj: any) => {
+        const session = getCurrentUserSession();
+        if (!session.tenantId) {
+          console.error(`[SECURITY] Update blocked on table '${tableName}': No active tenant session.`);
+          throw new Error("FAIL_CLOSED: Update forbidden without active tenant session.");
+        }
+        if (!obj || !obj.tenantId || obj.tenantId !== session.tenantId) {
+          console.error(`[SECURITY] Cross-tenant or orphaned update blocked on table '${tableName}' for key:`, _primKey, "Target Tenant:", obj?.tenantId, "Active Session:", session.tenantId);
+          throw new Error("FAIL_CLOSED: Unauthorized data modification attempt (Cross-tenant or Orphaned).");
+        }
+        if (mods && typeof mods === 'object') {
+          if (Object.prototype.hasOwnProperty.call(mods, 'tenantId') && mods.tenantId !== obj.tenantId) {
+            console.error(`[SECURITY] Attempt to change tenantId blocked on table '${tableName}'`);
+            throw new Error("FAIL_CLOSED: tenantId modification is strictly forbidden.");
+          }
+          return {
+            ...mods,
+            tenantId: session.tenantId,
+            userId: mods.userId || obj.userId || session.userId
+          };
+        }
+      });
+
+      table.hook('deleting', (_primKey: any, obj: any) => {
+        const session = getCurrentUserSession();
+        if (!session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
+          console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey);
+          throw new Error("FAIL_CLOSED: Unauthorized data deletion attempt (Cross-tenant or Orphaned).");
+        }
+      });
     });
+  }
+
+  async getOrphanedTenantRecordCount(): Promise<number> {
+    if (!this.isOpen()) await this.open();
+    const scopedNames = new Set(TENANT_SCOPED_TABLES);
+    for (const table of this.tables) {
+      if ((table.schema.indexes || []).some((index: any) =>
+        index?.keyPath === 'tenantId' || (Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId'))
+      )) {
+        scopedNames.add(table.name);
+      }
+    }
+    let total = 0;
+    for (const tableName of scopedNames) {
+      if (!this.tables.some(table => table.name === tableName)) continue;
+      const table = this.table(tableName);
+      const records = await table.toCollection().toArray();
+      total += records.filter((record: any) => !record?.tenantId).length;
+    }
+    return total;
   }
 
   getExistingTableNames(): string[] {
@@ -1120,6 +1346,11 @@ export class PharmaFlowDB extends Dexie {
   // --- INITIALIZATION ---
   async init() {
     console.log("[DB] Initializing database seeds and defaults...");
+    const activeTenantId = getCurrentUserSession().tenantId;
+    if (!activeTenantId) {
+      console.warn('[DB] Skipping tenant-owned seed data: no active tenant session.');
+      return true;
+    }
     if (isDbBlocked) {
       console.log("[DB] Operating in resilient in-memory mode for init.");
       return true;
@@ -1144,7 +1375,7 @@ export class PharmaFlowDB extends Dexie {
           { id: 'acc-cash', code: '101', name: 'الصندوق الرئيسي', type: 'ASSET', balance: 0, isSystem: true, isActive: true, balance_type: 'DEBIT', balanceType: 'DEBIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() },
           { id: 'acc-sales', code: '401', name: 'إيرادات المبيعات', type: 'REVENUE', balance: 0, isSystem: true, isActive: true, balance_type: 'CREDIT', balanceType: 'CREDIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() },
           { id: 'acc-cogs', code: '501', name: 'تكلفة البضاعة المباعة', type: 'EXPENSE', balance: 0, isSystem: true, isActive: true, balance_type: 'DEBIT', balanceType: 'DEBIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() }
-        ]).catch((err) => console.warn('[DB] Accounts seed warning:', err));
+        ].map(record => ({ ...record, tenantId: activeTenantId }))).catch((err) => console.warn('[DB] Accounts seed warning:', err));
       }
 
       // Seed the default cashbox without changing existing user or cash movement records.
@@ -1171,7 +1402,7 @@ export class PharmaFlowDB extends Dexie {
           { id: 'PRD-104', name: 'أوجمنتين 1 جرام أقراص', Name: 'Augmentin 1g', barcode: '628100011004', categoryId: 'CAT-3', supplierId: 'SUP-2', stock: 60, is_active: true, Is_Active: true, price: 64.5, cost: 45.0, updatedAt: new Date().toISOString() },
           { id: 'PRD-105', name: 'بخاخ أنف أوتروفين', Name: 'Otrivin Nasal Spray', barcode: '628100011005', categoryId: 'CAT-4', supplierId: 'SUP-3', stock: 110, is_active: true, Is_Active: true, price: 16.0, cost: 10.5, updatedAt: new Date().toISOString() },
           { id: 'PRD-106', name: 'مرطب كيو في 500 جرام', Name: 'QV Cream 500g', barcode: '628100011006', categoryId: 'CAT-5', supplierId: 'SUP-3', stock: 40, is_active: true, Is_Active: true, price: 115.0, cost: 82.0, updatedAt: new Date().toISOString() }
-        ] as any[]).catch((err) => console.warn('[DB] Products seed warning:', err));
+        ].map(record => ({ ...record, tenantId: activeTenantId })) as any[]).catch((err) => console.warn('[DB] Products seed warning:', err));
       }
 
       // Seed initial invoices (sales & purchases history) for offline browsing if empty
@@ -1253,7 +1484,7 @@ export class PharmaFlowDB extends Dexie {
             createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
             updatedAt: new Date(Date.now() - 86400000 * 5).toISOString()
           }
-        ] as any[]).catch((err) => console.warn('[DB] Invoices seed warning:', err));
+        ].map(record => ({ ...record, tenantId: activeTenantId })) as any[]).catch((err) => console.warn('[DB] Invoices seed warning:', err));
       }
 
       return true;

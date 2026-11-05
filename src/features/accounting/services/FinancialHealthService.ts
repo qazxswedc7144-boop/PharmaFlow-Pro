@@ -116,8 +116,11 @@ export class FinancialHealthService {
       tenantId
     };
 
-    // Save snapshot (one per day usually, but we'll save this one)
-    await db.financialHealthSnapshots.put(snapshot);
+    // Save the snapshot inside a transaction and pin the write to the captured tenant.
+    await db.safeTransaction('rw', ['financialHealthSnapshots'], async (tx) => {
+      assertTenantSession();
+      await tx.table('financialHealthSnapshots').put(snapshot);
+    });
 
     return snapshot;
   }
@@ -289,37 +292,42 @@ export class FinancialHealthService {
 
     // Save alerts (only if not already present and unread to avoid flooding).
     // Older records may store the flag as numeric 0; current records use boolean false.
-    const existingAlerts = await db.systemAlerts
-      .where('tenantId').equals(tenantId)
-      .filter(a => a.isRead === false || (a.isRead as any) === 0)
-      .toArray();
-    assertTenantSession();
-    
-    for (const alert of alerts) {
-      const isDuplicate = existingAlerts.some(a => a.message === alert.message && a.severity === alert.severity);
-      if (!isDuplicate) {
-        assertTenantSession();
-        await db.systemAlerts.put(alert);
-        
-        // If critical, check threshold via AlertCenter logic
-        if (alert.severity === 'CRITICAL') {
-          // We don't call addAlert here to avoid recursion, but we trigger the threshold check
-          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-          const criticalCount = await db.systemAlerts
-            .where('tenantId').equals(tenantId)
-            .filter(a => a.severity === 'CRITICAL' && a.timestamp > oneDayAgo)
-            .count();
+    let criticalThresholdReached = false;
+    await db.safeTransaction('rw', ['systemAlerts'], async (tx) => {
+      assertTenantSession();
+      const alertTable = tx.table('systemAlerts');
+      const existingAlerts = await alertTable
+        .where('tenantId').equals(tenantId)
+        .filter((a: any) => a.isRead === false || (a.isRead as any) === 0)
+        .toArray();
+      assertTenantSession();
 
-          if (criticalCount >= 10) {
-            assertTenantSession();
-            console.error("CRITICAL THRESHOLD REACHED via Financial Health Monitor 🛡️");
-            if (!IS_PREVIEW) {
-              await AnomalyScoringEngine.calculateCurrentRiskScore();
-            } else {
-              console.warn("PREVIEW GUARD: Critical threshold reached in Health Monitor, but bypassing RECOVERY_MODE.");
-            }
+      for (const alert of alerts) {
+        const isDuplicate = existingAlerts.some((a: any) => a.message === alert.message && a.severity === alert.severity);
+        if (!isDuplicate) {
+          // Check the captured tenant immediately before every actual IndexedDB write.
+          assertTenantSession();
+          await alertTable.put(alert);
+
+          if (alert.severity === 'CRITICAL') {
+            const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const criticalCount = await alertTable
+              .where('tenantId').equals(tenantId)
+              .filter((a: any) => a.severity === 'CRITICAL' && a.timestamp > oneDayAgo)
+              .count();
+            if (criticalCount >= 10) criticalThresholdReached = true;
           }
         }
+      }
+    });
+
+    if (criticalThresholdReached) {
+      assertTenantSession();
+      console.error("CRITICAL THRESHOLD REACHED via Financial Health Monitor 🛡️");
+      if (!IS_PREVIEW) {
+        await AnomalyScoringEngine.calculateCurrentRiskScore();
+      } else {
+        console.warn("PREVIEW GUARD: Critical threshold reached in Health Monitor, but bypassing RECOVERY_MODE.");
       }
     }
   }

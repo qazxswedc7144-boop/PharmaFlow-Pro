@@ -1,8 +1,10 @@
+import Dexie from 'dexie';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { db } from '@/core/db';
+import { db, PharmaFlowDB } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { FinancialHealthService } from '@/features/accounting/services/FinancialHealthService';
 import { cashboxTransferWorkflow } from '@/features/accounting/workflows/CashboxTransferWorkflow';
+import { hashLocalPassword, verifyLocalPassword } from '@features/auth/services/localPasswordService';
 
 vi.mock('@/services/auth/tokenProvider', () => ({
   TokenProvider: {
@@ -119,7 +121,107 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
     });
   });
 
-  describe('3. Financial health isolation', () => {
+  describe('3. Bulk and direct table operation isolation', () => {
+    it('blocks direct get and cross-tenant bulk writes/deletes while clear stays tenant-scoped', async () => {
+      setSession(TENANT_A);
+      await db.products.add({ id: 'product-bulk-A', name: 'A Product' } as any);
+
+      setSession(TENANT_B);
+      await db.products.add({ id: 'product-bulk-B', name: 'B Product' } as any);
+      await expect(db.products.get('product-bulk-A'))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized direct read/);
+      await expect(db.products.bulkGet(['product-bulk-A']))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized bulk read/);
+      await expect(db.products.bulkPut([
+        { id: 'product-bulk-A', name: 'Overwritten', tenantId: TENANT_B }
+      ] as any))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized bulk upsert target/);
+      await expect(db.products.bulkDelete(['product-bulk-A']))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized bulk delete target/);
+
+      await db.products.clear();
+      setSession(TENANT_A);
+      expect((await db.products.where('tenantId').equals(TENANT_A).toArray()).map(p => p.id))
+        .toEqual(['product-bulk-A']);
+      setSession(TENANT_B);
+      expect((await db.products.where('tenantId').equals(TENANT_B).toArray())).toHaveLength(0);
+    });
+
+    it('stamps newly bulk-added and bulk-upserted records and rejects bulk writes without a tenant', async () => {
+      setSession(TENANT_A);
+      await db.users.bulkAdd([{ id: 'bulk-user-A', username: 'bulk-a' }] as any);
+      await db.users.bulkPut([{ id: 'bulk-user-B', username: 'bulk-b' }] as any);
+      expect((await db.users.where('id').equals('bulk-user-A').first())?.tenantId).toBe(TENANT_A);
+      expect((await db.users.where('id').equals('bulk-user-B').first())?.tenantId).toBe(TENANT_A);
+
+      setSession(undefined);
+      await expect(db.users.bulkAdd([{ id: 'bulk-user-no-session', username: 'x' }] as any))
+        .rejects.toThrow(/FAIL_CLOSED/);
+      await expect(db.users.bulkPut([{ id: 'bulk-user-no-session-2', username: 'x' }] as any))
+        .rejects.toThrow(/FAIL_CLOSED/);
+    });
+  });
+
+  describe('4. Local password hashing', () => {
+    it('hashes new local passwords with salted PBKDF2 and verifies them', async () => {
+      const hash = await hashLocalPassword('StrongLocalPassword!2026');
+      expect(hash).toMatch(/^pbkdf2-sha256\$600000\$/);
+      expect((await verifyLocalPassword('StrongLocalPassword!2026', hash)).valid).toBe(true);
+      expect((await verifyLocalPassword('WrongPassword', hash)).valid).toBe(false);
+    });
+
+    it('accepts a legacy local plaintext password only for one-time upgrade', async () => {
+      expect(await verifyLocalPassword('LegacyPass123', null, 'LegacyPass123')).toEqual({
+        valid: true,
+        needsUpgrade: true
+      });
+      expect((await verifyLocalPassword('WrongPass', null, 'LegacyPass123')).valid).toBe(false);
+    });
+  });
+
+  describe('5. Version 36 to 38 orphan-safe migration', () => {
+    it('preserves legacy users and cashboxes without assigning an unverified tenantId', async () => {
+      const legacyName = `pharmaflow-phase2-v36-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const legacyDb = new Dexie(legacyName);
+      legacyDb.version(36).stores({
+        users: '&id, username, role, status, branch, createdAt, cashboxId',
+        cashboxes: '&id, name, accountId, branchId, isActive, openingBalance, openingBalanceJournalId',
+        cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId',
+        financialHealthSnapshots: '&id, date, tenantId',
+        systemAlerts: '&id, type, timestamp, isRead, tenantId',
+        accountingPeriods: '&id, Start_Date, End_Date, Is_Locked, start_date, end_date, is_locked, tenantId',
+        vouchers: '&id, voucher_id, type, partner_id, partnerId, date, status, tenantId, branchId'
+      });
+
+      try {
+        await legacyDb.open();
+        await legacyDb.table('users').add({ id: 'legacy-user-36', username: 'legacy-user', role: 'CASHIER' });
+        await legacyDb.table('cashboxes').add({ id: 'legacy-cashbox-36', name: 'Legacy Cashbox', isActive: true });
+        legacyDb.close();
+
+        const upgradedDb = new PharmaFlowDB(legacyName);
+        try {
+          await upgradedDb.open();
+          const migratedUsers = await upgradedDb.users.toCollection().toArray();
+          const migratedCashboxes = await upgradedDb.cashboxes.toCollection().toArray();
+          expect(migratedUsers).toHaveLength(1);
+          expect(migratedUsers[0].id).toBe('legacy-user-36');
+          expect(migratedUsers[0].tenantId).toBeUndefined();
+          expect(migratedCashboxes).toHaveLength(1);
+          expect(migratedCashboxes[0].id).toBe('legacy-cashbox-36');
+          expect(migratedCashboxes[0].tenantId).toBeUndefined();
+          expect(await upgradedDb.getOrphanedTenantRecordCount()).toBeGreaterThanOrEqual(2);
+        } finally {
+          upgradedDb.close();
+        }
+      } finally {
+        legacyDb.close();
+        await Dexie.delete(legacyName);
+      }
+    });
+  });
+
+  describe('6. Financial health isolation', () => {
     it('stamps alerts with tenantId and returns only active tenant alerts', async () => {
       setSession(TENANT_A);
       await db.systemAlerts.add({

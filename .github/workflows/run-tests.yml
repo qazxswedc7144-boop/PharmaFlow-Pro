@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Remove stale lock file
         run: rm -f package-lock.json
@@ -31,7 +31,13 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
-      - name: Run Atomicity Tests
-        run: npx vitest run server/tests/payment-financial-integrity-atomicity.test.ts
+      - name: Run Atomicity and Tenant Isolation Tests
+        run: npx vitest run server/tests/payment-financial-integrity-atomicity.test.ts server/tests/tenant-isolation-phase2.test.ts server/tests/password-hash-compatibility.test.ts
         env:
           NODE_ENV: test
+
+      - name: TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Production Build
+        run: npm run build

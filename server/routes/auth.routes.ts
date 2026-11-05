@@ -12,6 +12,7 @@ import { AuthorizationService } from "../services/rbac/authorization.service.js"
 import { PermissionService } from "../services/rbac/permission.service.js";
 
 import rateLimit from "express-rate-limit";
+import { verifyPasswordHash } from '../security/passwordHash.js';
 
 export const authRouter = Router();
 
@@ -320,14 +321,14 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), as
       });
     }
 
-    // 2. Verify bcrypt password
+    // 2. Verify bcrypt legacy or PBKDF2 temporary password hash
     if (!user.passwordHash) {
       return res.status(401).json({
         error: "INVALID_CREDENTIALS",
         message: "اسم المستخدم أو كلمة المرور غير صحيحة."
       });
     }
-    const isPasswordValid = await bcrypt.compare(String(password || ''), String(user.passwordHash));
+    const isPasswordValid = await verifyPasswordHash(String(password || ''), String(user.passwordHash));
     if (!isPasswordValid) {
       return res.status(401).json({
         error: "INVALID_CREDENTIALS",

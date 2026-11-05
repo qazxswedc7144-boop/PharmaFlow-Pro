@@ -9,6 +9,7 @@ import { authService } from '@features/auth/services/authService';
 import { useUIStore } from '@/store/useUIStore';
 import { useAuthStore } from '@/store/authStore';
 import SafeMovementReportUI from './SafeMovementReportUI';
+import { hashLocalPassword } from '@features/auth/services/localPasswordService';
 
 type PermissionSet = { read: boolean; add: boolean; edit: boolean; delete: boolean };
 const MODULES = ['الحسابات', 'قبض/صرف', 'المشتريات', 'المبيعات', 'النسخ الاحتياطي', 'الصرف/التوريد المخزني'];
@@ -28,6 +29,20 @@ export const UsersTab: React.FC = () => {
     if (!activeTenantId) return [];
     return await db.users.where('tenantId').equals(activeTenantId).toArray();
   }, [activeTenantId])?.filter(user => user.tenantId === activeTenantId) || [];
+  const [orphanedRecordsCount, setOrphanedRecordsCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeTenantId) {
+      setOrphanedRecordsCount(0);
+      return () => { cancelled = true; };
+    }
+    // This is an administrative one-time scan on tenant change, not a live
+    // query, to avoid rescanning every inventory/accounting row on every write.
+    db.getOrphanedTenantRecordCount()
+      .then(count => { if (!cancelled) setOrphanedRecordsCount(count); })
+      .catch(error => console.error('[UsersTab] Failed to count orphaned tenant records:', error));
+    return () => { cancelled = true; };
+  }, [activeTenantId]);
   const cashboxes = useLiveQuery(async () => {
     if (!activeTenantId) return [];
     return await db.cashboxes.where('tenantId').equals(activeTenantId).toArray();
@@ -124,17 +139,21 @@ export const UsersTab: React.FC = () => {
     }
 
     try {
+      const passwordHash = formData.password ? await hashLocalPassword(formData.password) : undefined;
       if (editingUser) {
         await db.users.update(editingUser.id, {
           name: formData.name, role: formData.role, branch: formData.branch,
           status: formData.status, cashboxId: formData.cashboxId || defaultCashboxId,
-          ...(formData.password ? { password: formData.password } : {})
+          ...(passwordHash ? { passwordHash, password: undefined } : {})
         });
         useUIStore.getState().addToast('تم تحديث بيانات المستخدم بنجاح', 'success');
       } else {
-        await db.users.add({ ...formData, cashboxId: formData.cashboxId || defaultCashboxId, id: Date.now().toString(), createdAt: new Date().toISOString() });
+        if (!passwordHash) throw new Error('يجب إدخال كلمة مرور صالحة للمستخدم الجديد.');
+        const { password: _password, ...userData } = formData;
+        await db.users.add({ ...userData, passwordHash, cashboxId: formData.cashboxId || defaultCashboxId, id: Date.now().toString(), createdAt: new Date().toISOString() });
         useUIStore.getState().addToast('تمت إضافة المستخدم بنجاح', 'success');
       }
+      setFormData(current => ({ ...current, password: '' }));
       setIsModalOpen(false);
     } catch (err: any) {
       useUIStore.getState().addToast(`فشل حفظ المستخدم: ${err.message}`, 'error');
@@ -197,6 +216,14 @@ export const UsersTab: React.FC = () => {
     <div className="relative min-h-[420px] space-y-4 dir-rtl pb-24 text-right font-cairo">
       {activeView === 'users' ? (
         <>
+          {orphanedRecordsCount > 0 && (() => {
+            const role = (authService.getCurrentUser()?.Role || '').toLowerCase();
+            return role.includes('admin') || role.includes('مدير') ? (
+              <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                يوجد <strong>{orphanedRecordsCount}</strong> سجل قديم يحتاج إلى مراجعة وإسناد يدوي للمؤسسة. لم يتم إسناد هذه السجلات تلقائياً حفاظاً على عزل البيانات.
+              </div>
+            ) : null;
+          })()}
           <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#1E4D4D]/10 text-[#1E4D4D]">
