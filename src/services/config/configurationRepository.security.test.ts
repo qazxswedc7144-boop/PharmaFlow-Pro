@@ -107,6 +107,18 @@ describe('ConfigurationRepository legacy preservation', () => {
     })).resolves.toBeNull();
   });
 
+  it('rejects raw values stored under a scoped key because ownership metadata is missing', async () => {
+    mockDb.rows.set('tenant:tenant-a:system.name', {
+      key: 'tenant:tenant-a:system.name',
+      value: 'unverified-raw-value'
+    });
+
+    const repository = new ConfigurationRepository();
+    await expect(repository.getRecord('system.name', 'TENANT', {
+      tenantId: 'tenant-a'
+    })).resolves.toBeNull();
+  });
+
   it('writes only the tenant-scoped key and does not create a global canonical copy', async () => {
     const repository = new ConfigurationRepository();
     await repository.saveRecord(tenantRecord);
