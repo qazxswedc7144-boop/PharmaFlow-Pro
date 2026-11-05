@@ -32,7 +32,7 @@ export class ConfigurationService {
       context.userId || '',
       context.deviceId || '',
       normalizeConfigKey(record.key)
-    ].join('\u001f');
+    ]) ;
   }
 
   private assertMutationAuthorized(scope: ConfigScope, context: ConfigurationContext, operation: 'تعديل' | 'حذف'): void {
