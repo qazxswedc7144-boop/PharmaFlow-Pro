@@ -149,8 +149,8 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
 
       await db.products.clear();
       setSession(TENANT_A);
-      expect((await db.products.where('tenantId').equals(TENANT_A).toArray()).map(p => p.id))
-        .toEqual(['product-bulk-A']);
+      expect((await db.products.where('tenantId').equals(TENANT_A).toArray()).map(p => p.id).sort())
+        .toEqual(['product-bulk-A', 'product-bulk-query-A']);
       setSession(TENANT_B);
       expect((await db.products.where('tenantId').equals(TENANT_B).toArray())).toHaveLength(0);
     });
@@ -334,6 +334,7 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       setSession(undefined);
       await expect(FinancialHealthService.refreshHealthMonitor())
         .rejects.toThrow(/FAIL_CLOSED/);
+      setSession(TENANT_A);
       expect(await db.financialHealthSnapshots.toCollection().toArray()).toHaveLength(0);
     });
 
@@ -348,10 +349,14 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       setSession(TENANT_A);
       await db.clearOldAlerts();
 
-      const remaining = await db.systemAlerts.toCollection().toArray();
-      expect(remaining.map((alert: any) => alert.id).sort()).toEqual(['alert-B', 'financial-A']);
-      expect(remaining.find((alert: any) => alert.id === 'alert-B')?.tenantId).toBe(TENANT_B);
-      expect(remaining.find((alert: any) => alert.id === 'financial-A')?.tenantId).toBe(TENANT_A);
+      const tenantARemaining = await db.systemAlerts.toCollection().toArray();
+      expect(tenantARemaining.map((alert: any) => alert.id)).toEqual(['financial-A']);
+      expect(tenantARemaining[0]?.tenantId).toBe(TENANT_A);
+
+      setSession(TENANT_B);
+      const tenantBRemaining = await db.systemAlerts.toCollection().toArray();
+      expect(tenantBRemaining.map((alert: any) => alert.id)).toEqual(['alert-B']);
+      expect(tenantBRemaining[0]?.tenantId).toBe(TENANT_B);
     });
   });
 
