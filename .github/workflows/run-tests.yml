@@ -35,3 +35,8 @@ jobs:
         run: npx vitest run server/tests/payment-financial-integrity-atomicity.test.ts
         env:
           NODE_ENV: test
+
+      - name: Run Settings Security Tests
+        run: npx vitest run src/core/config/config-security.test.ts
+        env:
+          NODE_ENV: test
