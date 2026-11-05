@@ -24,12 +24,14 @@ export const UsersTab: React.FC = () => {
 
   const users = useLiveQuery(async () => {
     const session = getCurrentUserSession();
+    if (!session.tenantId) return [];
     const all = await db.users.toArray();
     // Filter by tenantId and optionally branchId if users are branch-specific
     return all.filter(u => u.tenantId === session.tenantId);
   }, []) || [];
   const cashboxes = useLiveQuery(async () => {
     const session = getCurrentUserSession();
+    if (!session.tenantId) return [];
     const all = await db.cashboxes.toArray();
     return all.filter(c => c.tenantId === session.tenantId);
   }, []) || [];
@@ -100,7 +102,7 @@ export const UsersTab: React.FC = () => {
     if (selectedUser) {
       const session = getCurrentUserSession();
       // Security: Ensure selectedUser belongs to current tenant before fetching perms
-      if (selectedUser.tenantId && selectedUser.tenantId !== session.tenantId) {
+      if (!session.tenantId || !selectedUser.tenantId || selectedUser.tenantId !== session.tenantId) {
         setSelectedUser(null);
         setActiveView('users');
         return;
@@ -124,6 +126,7 @@ export const UsersTab: React.FC = () => {
   };
 
   const handleSelectUserPermissions = (user: any) => {
+    if (!getAuthorizedTenantSession(user)) return;
     setSelectedUser(user);
     setActiveView('permissions');
   };
