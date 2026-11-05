@@ -7,6 +7,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db, getCurrentUserSession } from '@/core/db';
 import { authService } from '@features/auth/services/authService';
 import { useUIStore } from '@/store/useUIStore';
+import { useAuthStore } from '@/store/authStore';
 import SafeMovementReportUI from './SafeMovementReportUI';
 
 type PermissionSet = { read: boolean; add: boolean; edit: boolean; delete: boolean };
@@ -22,7 +23,10 @@ export const UsersTab: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
 
-  const activeTenantId = getCurrentUserSession().tenantId;
+  // Subscribe to the auth store so a tenant switch immediately re-scopes live queries.
+  const activeTenantId = useAuthStore(state =>
+    state.tenantId || state.user?.tenantId || state.user?.tenant_id || undefined
+  );
 
   const users = useLiveQuery(async () => {
     if (!activeTenantId) return [];
