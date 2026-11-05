@@ -25,7 +25,9 @@ export const UsersTab: React.FC = () => {
 
   // Subscribe to the auth store so a tenant switch immediately re-scopes live queries.
   const activeTenantId = useAuthStore(state =>
-    state.tenantId || state.user?.tenantId || state.user?.tenant_id || undefined
+    state.isAuthenticated && state.token
+      ? state.tenantId || state.user?.tenantId || state.user?.tenant_id || undefined
+      : undefined
   );
 
   const users = useLiveQuery(async () => {
