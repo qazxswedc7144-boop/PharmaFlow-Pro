@@ -437,7 +437,7 @@ function installTenantCollectionGuards(dbInstance: Dexie) {
       const seen: any[] = [];
       return forEachVisibleRecord(this, 'Collection unique-key iteration', (_record, cursor) => {
         const key = cursor?.key;
-        if (key === undefined || seen.some(previous => Dexie.cmp(previous, key) === 0)) return;
+        if (key === undefined || seen.some(previous => indexedDB.cmp(previous, key) === 0)) return;
         seen.push(key);
         return callback(key, cursor);
       });
