@@ -71,6 +71,7 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
   const originalPut = TableProto.put;
   const originalAdd = TableProto.add;
   const originalGet = TableProto.get;
+  const originalUpdate = TableProto.update;
   const originalDelete = TableProto.delete;
   const originalBulkGet = TableProto.bulkGet;
   const originalBulkPut = TableProto.bulkPut;
@@ -80,7 +81,7 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
   const originalToArray = TableProto.toArray;
   const originalCount = TableProto.count;
   const requiredTableMethods = {
-    put: originalPut, add: originalAdd, get: originalGet, delete: originalDelete,
+    put: originalPut, add: originalAdd, get: originalGet, update: originalUpdate, delete: originalDelete,
     bulkGet: originalBulkGet, bulkPut: originalBulkPut, bulkAdd: originalBulkAdd,
     bulkDelete: originalBulkDelete, clear: originalClear, toArray: originalToArray, count: originalCount
   };
@@ -122,6 +123,34 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
           throw new Error(`FAIL_CLOSED: Unauthorized direct read on '${this.name}'.`);
         }
         return record;
+      });
+    };
+  }
+
+  if (originalUpdate && originalGet) {
+    TableProto.update = function(this: any, key: any, changes: any) {
+      if (!isTenantScoped(this)) return originalUpdate.call(this, key, changes);
+      const session = requireTenantForTable(this, 'Update');
+      return originalGet.call(this, key).then((record: any) => {
+        assertTenantUnchanged(this, session.tenantId, 'Update');
+        // Preserve Dexie's 0 result for a genuinely missing key, but never allow
+        // a caller to silently target a row owned by another tenant or an orphan.
+        if (!record) return 0;
+        if (!record.tenantId || record.tenantId !== session.tenantId) {
+          throw new Error(`FAIL_CLOSED: Unauthorized data modification attempt on '${this.name}'.`);
+        }
+        if (
+          changes &&
+          typeof changes === 'object' &&
+          Object.prototype.hasOwnProperty.call(changes, 'tenantId') &&
+          changes.tenantId !== record.tenantId
+        ) {
+          throw new Error('FAIL_CLOSED: tenantId modification is strictly forbidden.');
+        }
+        return originalUpdate.call(this, key, changes).then((updated: number) => {
+          assertTenantUnchanged(this, session.tenantId, 'Update');
+          return updated;
+        });
       });
     };
   }
