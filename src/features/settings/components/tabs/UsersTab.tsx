@@ -76,7 +76,7 @@ export const UsersTab: React.FC = () => {
     const role = String(currentUser?.Role || '').trim().toLowerCase();
     const isAdmin = [
       'admin', 'superadmin', 'super_admin', 'administrator',
-      'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير النظام'
+      'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
     ].includes(role);
 
     if (!currentUser?.id || !session.tenantId || !isAdmin) {
