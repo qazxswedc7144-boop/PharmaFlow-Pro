@@ -63,7 +63,7 @@ export class ConfigurationRepository {
 
       if (item.value && typeof item.value === 'object' && 'scope' in item.value) {
         const record = item.value as ConfigurationRecord<any>;
-        if (record.scope !== scope) return null;
+        if (normalizeConfigKey(record.key) !== canonicalKey || record.scope !== scope) return null;
         if (scope !== 'SYSTEM' && scope !== 'RUNTIME') {
           const expectedFields: Array<keyof ConfigurationContext> =
             scope === 'TENANT' ? ['tenantId'] :
