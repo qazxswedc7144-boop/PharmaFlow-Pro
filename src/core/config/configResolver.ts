@@ -38,13 +38,40 @@ export function resolveConfigValue<T = unknown>(
         case 'RUNTIME':
           return true;
         case 'DEVICE':
-          return !r.context.deviceId || !context.deviceId || r.context.deviceId === context.deviceId;
+          return Boolean(
+            r.context?.tenantId &&
+            context.tenantId &&
+            r.context.tenantId === context.tenantId &&
+            r.context.deviceId &&
+            context.deviceId &&
+            r.context.deviceId === context.deviceId &&
+            (!r.context.branchId || r.context.branchId === context.branchId) &&
+            (!r.context.userId || r.context.userId === context.userId)
+          );
         case 'USER':
-          return !r.context.userId || !context.userId || r.context.userId === context.userId;
+          return Boolean(
+            r.context?.tenantId &&
+            context.tenantId &&
+            r.context.tenantId === context.tenantId &&
+            r.context.userId &&
+            context.userId &&
+            r.context.userId === context.userId
+          );
         case 'BRANCH':
-          return !r.context.branchId || !context.branchId || r.context.branchId === context.branchId;
+          return Boolean(
+            r.context?.tenantId &&
+            context.tenantId &&
+            r.context.tenantId === context.tenantId &&
+            r.context.branchId &&
+            context.branchId &&
+            r.context.branchId === context.branchId
+          );
         case 'TENANT':
-          return !r.context.tenantId || !context.tenantId || r.context.tenantId === context.tenantId;
+          return Boolean(
+            r.context?.tenantId &&
+            context.tenantId &&
+            r.context.tenantId === context.tenantId
+          );
         case 'SYSTEM':
           return true;
         default:
