@@ -63,6 +63,11 @@ describe('Tenant-scoped Dexie indexes', () => {
       .rejects.toThrow(/Cross-tenant or orphaned delete/);
   });
 
+  it('blocks unscoped clear operations on staff and permission tables', async () => {
+    await expect(database.users.clear()).rejects.toThrow(/Bulk clear is forbidden/);
+    await expect(database.userPermissions.clear()).rejects.toThrow(/Bulk clear is forbidden/);
+  });
+
   it('indexes cashboxes and cash movements by tenant ownership', () => {
     expect(indexNames('cashboxes')).toContain('tenantId');
     expect(indexNames('cashFlow')).toContain('[tenantId+cashboxId]');
