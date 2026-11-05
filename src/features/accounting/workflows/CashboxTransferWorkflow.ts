@@ -133,6 +133,13 @@ export class CashboxTransferWorkflow {
           return { transactionUuid: input.transactionUuid, journalId, alreadyProcessed: true };
         }
 
+        // Cash is an asset with a debit-normal balance. Never post a transfer
+        // that would drive the source cashbox below zero.
+        const sourceBalance = Number(sourceAccount.balance);
+        if (!Number.isFinite(sourceBalance) || sourceBalance + 0.000001 < amount) {
+          throw new Error('رصيد صندوق المصدر غير كافٍ لإتمام التحويل.');
+        }
+
         const now = new Date().toISOString();
         const lines: JournalLine[] = [
           {
