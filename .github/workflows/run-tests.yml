@@ -37,7 +37,7 @@ jobs:
           NODE_ENV: test
 
       - name: Run Settings Security Tests
-        run: npx vitest run src/core/config/config-security.test.ts src/services/config/configurationRepository.security.test.ts
+        run: npx vitest run src/core/config/config-security.test.ts src/services/config/configurationRepository.security.test.ts src/services/config/configurationService.security.test.ts
         env:
           NODE_ENV: test
 
