@@ -94,6 +94,22 @@ export function getCurrentUserSession() {
     userId: undefined
   };
 }
+
+function assertTenantAdminForUserManagement(tableName: string): void {
+  if (tableName !== 'users' && tableName !== 'userPermissions') return;
+
+  const session = TokenProvider.getCurrentSession();
+  const current = getCurrentUserSession();
+  const role = String(session.user?.role || session.user?.Role || '').trim().toLowerCase();
+  const allowedRoles = [
+    'admin', 'superadmin', 'super_admin', 'administrator',
+    'tenant_admin', 'tenant-admin', 'owner', 'مدير', 'مدير نظام', 'مدير النظام'
+  ];
+
+  if (!session.isAuthenticated || !session.token || !current.tenantId || !session.user?.id && !(session.user as any)?.user_id || !allowedRoles.includes(role)) {
+    throw new Error(`FAIL_CLOSED: Tenant administrator authorization required for '${tableName}'.`);
+  }
+}
 import { 
   Product, UnifiedInvoice, InvoiceItem, Account, AccountingEntry, JournalEntry, InvoiceStatus, Customer, Supplier, 
   JournalLine, InventoryTransaction, AccountingPeriod, SystemBackup, ValidationRule,
@@ -494,6 +510,7 @@ export class PharmaFlowDB extends Dexie {
         const table = this.table(tableName);
         if (table) {
           table.hook('creating', (_primKey: any, obj: any) => {
+            assertTenantAdminForUserManagement(tableName);
             const session = getCurrentUserSession();
             if (!session.tenantId) {
               console.error(`[SECURITY] Creation blocked on table '${tableName}': No active tenant session.`);
@@ -506,6 +523,7 @@ export class PharmaFlowDB extends Dexie {
             }
           });
           table.hook('updating', (mods: any, _primKey: any, obj: any) => {
+            assertTenantAdminForUserManagement(tableName);
             const session = getCurrentUserSession();
             
             if (!session.tenantId) {
@@ -534,6 +552,15 @@ export class PharmaFlowDB extends Dexie {
               };
             }
           });
+          if (tableName === 'users' || tableName === 'userPermissions') {
+            table.hook('deleting', (_primKey: any, obj: any) => {
+              assertTenantAdminForUserManagement(tableName);
+              const session = getCurrentUserSession();
+              if (!session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
+                throw new Error(`FAIL_CLOSED: Cross-tenant or orphaned delete blocked on '${tableName}'.`);
+              }
+            });
+          }
         }
       } catch (err) {
         console.warn(`[DB] Could not register hooks for table: ${tableName}`, err);
