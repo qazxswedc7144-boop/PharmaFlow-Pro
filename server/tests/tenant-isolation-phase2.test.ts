@@ -1,11 +1,11 @@
-
+import Dexie from 'dexie';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { db } from '@/core/db';
+import { db, PharmaFlowDB } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { FinancialHealthService } from '@/features/accounting/services/FinancialHealthService';
 import { cashboxTransferWorkflow } from '@/features/accounting/workflows/CashboxTransferWorkflow';
+import { hashLocalPassword, verifyLocalPassword } from '@features/auth/services/localPasswordService';
 
-// Mock TokenProvider to control sessions
 vi.mock('@/services/auth/tokenProvider', () => ({
   TokenProvider: {
     getCurrentSession: vi.fn()
@@ -13,167 +13,467 @@ vi.mock('@/services/auth/tokenProvider', () => ({
 }));
 
 describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION', () => {
-  
   const TENANT_A = 'tenant-A';
   const TENANT_B = 'tenant-B';
   const BRANCH_A = 'branch-A';
-  const BRANCH_B = 'branch-B';
 
-  const setSession = (tenantId?: string, branchId?: string) => {
+  const setSession = (tenantId?: string, branchId = BRANCH_A) => {
     (TokenProvider.getCurrentSession as any).mockReturnValue({
       tenantId,
-      branchId,
-      user: { id: 'user-1', tenantId, branchId }
+      branchId: tenantId ? branchId : undefined,
+      user: tenantId ? { id: 'user-1', tenantId, branchId } : null
     });
   };
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    // Reset database to ensure clean state for each test
     await db.delete();
     await db.open();
   });
 
-  describe('1. Compatibility Wrappers Isolation', () => {
-    it('db.getCashFlow returns only current tenant records', async () => {
-      // Setup: Record for Tenant A
+  describe('1. Compatibility wrappers', () => {
+    it('getCashFlow returns only current tenant records', async () => {
       setSession(TENANT_A);
-      await (db as any).cashFlow.add({ 
-        category: 'Rent', amount: 100, type: 'خرج', date: '2023-01-01',
-        cashboxId: 'box-A', userId: 'user-1' 
-      });
-      
-      // Setup: Record for Tenant B
-      setSession(TENANT_B);
-      await (db as any).cashFlow.add({ 
-        category: 'Sales', amount: 200, type: 'دخل', date: '2023-01-01',
-        cashboxId: 'box-B', userId: 'user-1'
-      });
+      await db.cashFlow.add({ category: 'Rent', amount: 100, type: 'خرج', date: '2023-01-01' } as any);
 
-      // Verify for Tenant A
+      setSession(TENANT_B);
+      await db.cashFlow.add({ category: 'Sales', amount: 200, type: 'دخل', date: '2023-01-01' } as any);
+
       setSession(TENANT_A);
       const flowA = await db.getCashFlow();
       expect(flowA).toHaveLength(1);
       expect(flowA[0].category).toBe('Rent');
 
-      // Verify for Tenant B
       setSession(TENANT_B);
       const flowB = await db.getCashFlow();
       expect(flowB).toHaveLength(1);
       expect(flowB[0].category).toBe('Sales');
     });
 
-    it('Fail-Closed: getAccounts returns empty if session is missing', async () => {
+    it('fail-closes tenant-scoped reads when the session is missing', async () => {
       setSession(TENANT_A);
-      await (db as any).accounts.add({ code: '101', name: 'Cash', type: 'ASSET' });
-      
-      // Missing session
-      (TokenProvider.getCurrentSession as any).mockReturnValue({ user: null });
-      const accounts = await db.getAccounts();
-      expect(accounts).toEqual([]);
+      await db.accounts.add({ id: 'account-A', code: '101', name: 'Cash', type: 'ASSET' } as any);
+
+      setSession(undefined);
+      expect(await db.getAccounts()).toEqual([]);
+      expect(await db.getCashFlow()).toEqual([]);
+      expect(await db.getProducts()).toEqual([]);
+      expect(await db.getTransactions()).toEqual([]);
     });
 
-    it('Proxy wrappers (getProducts, getTransactions, etc.) enforce isolation', async () => {
+    it('getProducts and getTransactions exclude another tenant', async () => {
       setSession(TENANT_A);
-      await (db as any).products.add({ name: 'Panadol', stock: 10 });
-      await (db as any).invoices.add({ invoiceNumber: 'INV-1', type: 'SALE', date: '2023-01-01', partnerId: 'C-1' });
+      await db.products.add({ id: 'product-A', name: 'Panadol', stock: 10 } as any);
+      await db.invoices.add({
+        id: 'invoice-A', invoiceNumber: 'INV-A', type: 'SALE', date: '2023-01-01', partnerId: 'C-A'
+      } as any);
 
       setSession(TENANT_B);
-      const productsB = await db.getProducts();
-      const transactionsB = await db.getTransactions();
-      expect(productsB).toHaveLength(0);
-      expect(transactionsB).toHaveLength(0);
+      expect(await db.getProducts()).toEqual([]);
+      expect(await db.getTransactions()).toEqual([]);
     });
   });
 
-  describe('2. Security Hooks Hardening', () => {
-    it('Cannot pass forged tenantId during creation (Forced from Session)', async () => {
+  describe('2. Dexie security hooks', () => {
+    it('overwrites a forged tenantId on create with the active session tenant', async () => {
       setSession(TENANT_A);
-      const id = await (db as any).customers.add({ name: 'Evil Corp', tenantId: TENANT_B });
-      const record = await (db as any).customers.get(id);
-      
-      // Hook must have overridden TENANT_B with TENANT_A
-      expect(record.tenantId).toBe(TENANT_A);
+      await db.customers.add({ id: 'customer-A', name: 'Customer', tenantId: TENANT_B } as any);
+      const record = await db.customers.get('customer-A');
+      expect(record?.tenantId).toBe(TENANT_A);
     });
 
-    it('Cannot create records without active tenant session', async () => {
-      (TokenProvider.getCurrentSession as any).mockReturnValue({ user: null });
-      await expect((db as any).suppliers.add({ name: 'Supp' })).rejects.toThrow(/FAIL_CLOSED: Creation forbidden/);
+    it('blocks creation without an active tenant session', async () => {
+      setSession(undefined);
+      await expect(db.suppliers.add({ id: 'supplier-X', name: 'Supplier' } as any))
+        .rejects.toThrow(/FAIL_CLOSED: Creation forbidden/);
     });
 
-    it('Cannot update record belonging to another tenant', async () => {
+    it('blocks updates to another tenant record', async () => {
       setSession(TENANT_A);
-      const id = await (db as any).products.add({ name: 'Safe Prod' });
-      
-      // Switch to Tenant B and attempt to rename Tenant A's product
+      await db.products.add({ id: 'product-A', name: 'Safe Product' } as any);
+      expect((await db.products.get('product-A'))?.tenantId).toBe(TENANT_A);
+
       setSession(TENANT_B);
-      await expect((db as any).products.update(id, { name: 'Hacked' })).rejects.toThrow(/FAIL_CLOSED: Unauthorized data modification attempt/);
-      
-      // Verify Tenant A's record was NOT changed
+      await expect(db.products.update('product-A', { name: 'Hacked' }))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized data modification attempt/);
+
       setSession(TENANT_A);
-      const record = await (db as any).products.get(id);
-      expect(record.name).toBe('Safe Prod');
+      expect((await db.products.get('product-A'))?.name).toBe('Safe Product');
     });
 
-    it('Cannot modify tenantId via update()', async () => {
+    it('blocks tenantId changes through update()', async () => {
       setSession(TENANT_A);
-      const id = await (db as any).journalEntries.add({ date: '2023-01-01' });
-      
-      await expect((db as any).journalEntries.update(id, { tenantId: TENANT_B })).rejects.toThrow(/tenantId modification is strictly forbidden/);
+      await db.journalEntries.add({ id: 'journal-A', date: '2023-01-01' } as any);
+
+      await expect(db.journalEntries.update('journal-A', { tenantId: TENANT_B } as any))
+        .rejects.toThrow(/tenantId modification is strictly forbidden/);
+    });
+
+    it('blocks deletion of another tenant record', async () => {
+      setSession(TENANT_A);
+      await db.products.add({ id: 'product-A', name: 'Protected' } as any);
+
+      setSession(TENANT_B);
+      await expect(db.products.delete('product-A'))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized data deletion attempt/);
+
+      setSession(TENANT_A);
+      expect(await db.products.get('product-A')).toBeDefined();
     });
   });
 
-  describe('3. FinancialHealthService Isolation', () => {
-    it('getActiveAlerts returns only current tenant alerts', async () => {
+  describe('3. Bulk and direct table operation isolation', () => {
+    it('blocks direct get and cross-tenant bulk writes/deletes while clear stays tenant-scoped', async () => {
       setSession(TENANT_A);
-      await (db as any).systemAlerts.add({ type: 'FINANCIAL', message: 'A-Danger', isRead: 0 });
-      
+      await db.products.add({ id: 'product-bulk-A', name: 'A Product' } as any);
+
       setSession(TENANT_B);
-      await (db as any).systemAlerts.add({ type: 'FINANCIAL', message: 'B-Danger', isRead: 0 });
+      await db.products.add({ id: 'product-bulk-B', name: 'Shared Product Name' } as any);
+      setSession(TENANT_A);
+      await db.products.add({ id: 'product-bulk-query-A', name: 'Shared Product Name' } as any);
+      expect((await db.products.where('name').equals('Shared Product Name').toArray()).map(p => p.id))
+        .toEqual(['product-bulk-query-A']);
+      expect(await db.products.where('name').equals('Shared Product Name').count()).toBe(1);
+      expect((await db.products.where('name').equals('Shared Product Name').first())?.id).toBe('product-bulk-query-A');
+
+      setSession(TENANT_B);
+      await expect(db.products.get('product-bulk-A'))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized direct read/);
+      await expect(db.products.bulkGet(['product-bulk-A']))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized bulk read/);
+      await expect(db.products.bulkPut([
+        { id: 'product-bulk-A', name: 'Overwritten', tenantId: TENANT_B }
+      ] as any))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized bulk upsert target/);
+      await expect(db.products.bulkDelete(['product-bulk-A']))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized bulk delete target/);
+
+      await db.products.clear();
+      setSession(TENANT_A);
+      expect((await db.products.where('tenantId').equals(TENANT_A).toArray()).map(p => p.id).sort())
+        .toEqual(['product-bulk-A', 'product-bulk-query-A']);
+      setSession(TENANT_B);
+      expect((await db.products.where('tenantId').equals(TENANT_B).toArray())).toHaveLength(0);
+    });
+
+    it('installs Collection guards on every PharmaFlowDB instance and blocks session switches mid-read', async () => {
+      const databaseName = `pharmaflow-tenant-collection-instance-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const isolatedDb = new PharmaFlowDB(databaseName);
+      try {
+        await isolatedDb.open();
+
+        setSession(TENANT_A);
+        await isolatedDb.products.add({ id: 'instance-product-A', name: 'Shared Instance Product' } as any);
+        setSession(TENANT_B);
+        await isolatedDb.products.add({ id: 'instance-product-B', name: 'Shared Instance Product' } as any);
+
+        setSession(TENANT_A);
+        const query = isolatedDb.products.where('name').equals('Shared Instance Product');
+        expect((await query.toArray()).map(product => product.id)).toEqual(['instance-product-A']);
+        expect(await isolatedDb.products.where('name').equals('Shared Instance Product').count()).toBe(1);
+        expect((await isolatedDb.products.where('name').equals('Shared Instance Product').first())?.id)
+          .toBe('instance-product-A');
+        expect((await isolatedDb.products.where('name').equals('Shared Instance Product').last())?.id)
+          .toBe('instance-product-A');
+
+        const iteratedIds: string[] = [];
+        await isolatedDb.products.where('name').equals('Shared Instance Product')
+          .each(product => { iteratedIds.push(product.id); });
+        expect(iteratedIds).toEqual(['instance-product-A']);
+        expect(await isolatedDb.products.where('name').equals('Shared Instance Product').primaryKeys())
+          .toEqual(['instance-product-A']);
+
+        const allProducts = isolatedDb.products.toCollection();
+        expect(await allProducts.keys()).toEqual(['instance-product-A']);
+        expect(await allProducts.uniqueKeys()).toEqual(['instance-product-A']);
+
+        const eachKeyValues: string[] = [];
+        await allProducts.eachKey(key => { eachKeyValues.push(String(key)); });
+        expect(eachKeyValues).toEqual(['instance-product-A']);
+
+        const eachPrimaryKeyValues: string[] = [];
+        await allProducts.eachPrimaryKey(key => { eachPrimaryKeyValues.push(String(key)); });
+        expect(eachPrimaryKeyValues).toEqual(['instance-product-A']);
+
+        const eachUniqueKeyValues: string[] = [];
+        await allProducts.eachUniqueKey(key => { eachUniqueKeyValues.push(String(key)); });
+        expect(eachUniqueKeyValues).toEqual(['instance-product-A']);
+
+        await expect(
+          isolatedDb.products.where('name').equals('Shared Instance Product')
+            .each(() => { setSession(TENANT_B); })
+        ).rejects.toThrow(/FAIL_CLOSED: Tenant session changed during Collection iteration/);
+      } finally {
+        isolatedDb.close();
+        await isolatedDb.delete();
+      }
+    });
+
+    it('stamps newly bulk-added and bulk-upserted records and rejects bulk writes without a tenant', async () => {
+      setSession(TENANT_A);
+      await db.users.bulkAdd([{ id: 'bulk-user-A', username: 'bulk-a' }] as any);
+      await db.users.bulkPut([{ id: 'bulk-user-B', username: 'bulk-b' }] as any);
+      expect((await db.users.where('id').equals('bulk-user-A').first())?.tenantId).toBe(TENANT_A);
+      expect((await db.users.where('id').equals('bulk-user-B').first())?.tenantId).toBe(TENANT_A);
+
+      setSession(undefined);
+      await expect(db.users.bulkAdd([{ id: 'bulk-user-no-session', username: 'x' }] as any))
+        .rejects.toThrow(/FAIL_CLOSED/);
+      await expect(db.users.bulkPut([{ id: 'bulk-user-no-session-2', username: 'x' }] as any))
+        .rejects.toThrow(/FAIL_CLOSED/);
+    });
+  });
+
+  describe('4. Local password hashing', () => {
+    it('hashes new local passwords with salted PBKDF2 and verifies them', async () => {
+      const hash = await hashLocalPassword('StrongLocalPassword!2026');
+      expect(hash).toMatch(/^pbkdf2-sha256\$600000\$/);
+      expect((await verifyLocalPassword('StrongLocalPassword!2026', hash)).valid).toBe(true);
+      expect((await verifyLocalPassword('WrongPassword', hash)).valid).toBe(false);
+    });
+
+    it('accepts a legacy local plaintext password only for one-time upgrade', async () => {
+      expect(await verifyLocalPassword('LegacyPass123', null, 'LegacyPass123')).toEqual({
+        valid: true,
+        needsUpgrade: true
+      });
+      expect((await verifyLocalPassword('WrongPass', null, 'LegacyPass123')).valid).toBe(false);
+    });
+  });
+
+  describe('5. Version 36 to 38 orphan-safe migration', () => {
+    it('preserves legacy users and cashboxes without assigning an unverified tenantId', async () => {
+      const legacyName = `pharmaflow-phase2-v36-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const legacyDb = new Dexie(legacyName);
+      legacyDb.version(36).stores({
+        users: '&id, username, role, status, branch, createdAt, cashboxId',
+        cashboxes: '&id, name, accountId, branchId, isActive, openingBalance, openingBalanceJournalId',
+        cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId',
+        financialHealthSnapshots: '&id, date, tenantId',
+        systemAlerts: '&id, type, timestamp, isRead, tenantId',
+        accountingPeriods: '&id, Start_Date, End_Date, Is_Locked, start_date, end_date, is_locked, tenantId',
+        vouchers: '&id, voucher_id, type, partner_id, partnerId, date, status, tenantId, branchId'
+      });
+
+      try {
+        await legacyDb.open();
+        await legacyDb.table('users').add({ id: 'legacy-user-36', username: 'legacy-user', role: 'CASHIER' });
+        await legacyDb.table('cashboxes').add({ id: 'legacy-cashbox-36', name: 'Legacy Cashbox', isActive: true });
+        legacyDb.close();
+
+        const upgradedDb = new PharmaFlowDB(legacyName);
+        try {
+          await upgradedDb.open();
+          const nativeDb = (upgradedDb as any).backendDB();
+          const readLegacyStore = (storeName: string) => new Promise<any[]>((resolve, reject) => {
+            const transaction = nativeDb.transaction(storeName, 'readonly');
+            const request = transaction.objectStore(storeName).getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+          });
+          const migratedUsers = await readLegacyStore('users');
+          const migratedCashboxes = await readLegacyStore('cashboxes');
+          expect(migratedUsers).toHaveLength(1);
+          expect(migratedUsers[0].id).toBe('legacy-user-36');
+          expect(migratedUsers[0].tenantId).toBeUndefined();
+          expect(migratedCashboxes).toHaveLength(1);
+          expect(migratedCashboxes[0].id).toBe('legacy-cashbox-36');
+          expect(migratedCashboxes[0].tenantId).toBeUndefined();
+          expect(await upgradedDb.getOrphanedTenantRecordCount()).toBeGreaterThanOrEqual(2);
+        } finally {
+          upgradedDb.close();
+        }
+      } finally {
+        legacyDb.close();
+        await Dexie.delete(legacyName);
+      }
+    });
+  });
+
+  describe('6. Financial health isolation', () => {
+    it('stamps alerts with tenantId and returns only active tenant alerts', async () => {
+      setSession(TENANT_A);
+      await db.systemAlerts.add({
+        id: 'alert-A', type: 'FINANCIAL', severity: 'HIGH',
+        message: 'A-Danger', timestamp: '2026-11-04T00:00:00.000Z', isRead: false
+      } as any);
+
+      setSession(TENANT_B);
+      await db.systemAlerts.add({
+        id: 'alert-B', type: 'FINANCIAL', severity: 'HIGH',
+        message: 'B-Danger', timestamp: '2026-11-04T00:00:00.000Z', isRead: false
+      } as any);
 
       const alertsB = await FinancialHealthService.getActiveAlerts();
       expect(alertsB).toHaveLength(1);
       expect(alertsB[0].message).toBe('B-Danger');
+      expect(alertsB[0].tenantId).toBe(TENANT_B);
+
+      setSession(TENANT_A);
+      const alertsA = await FinancialHealthService.getActiveAlerts();
+      expect(alertsA).toHaveLength(1);
+      expect(alertsA[0].message).toBe('A-Danger');
     });
 
-    it('getLatestSnapshot returns only current tenant snapshot', async () => {
+    it('stamps snapshots with tenantId and returns only the active tenant snapshot', async () => {
       setSession(TENANT_A);
-      await (db as any).financialHealthSnapshots.add({ date: '2023-01-01', score: 100 });
-      
+      await db.financialHealthSnapshots.add({ id: 'snapshot-A', date: '2026-11-03', score: 80 } as any);
+
       setSession(TENANT_B);
-      const snapB = await FinancialHealthService.getLatestSnapshot();
-      expect(snapB).toBeUndefined();
+      await db.financialHealthSnapshots.add({ id: 'snapshot-B', date: '2026-11-04', score: 90 } as any);
+      const snapshotB = await FinancialHealthService.getLatestSnapshot();
+      expect(snapshotB?.id).toBe('snapshot-B');
+      expect(snapshotB?.tenantId).toBe(TENANT_B);
+
+      setSession(TENANT_A);
+      const snapshotA = await FinancialHealthService.getLatestSnapshot();
+      expect(snapshotA?.id).toBe('snapshot-A');
+      expect(snapshotA?.tenantId).toBe(TENANT_A);
+    });
+
+    it('does not create a financial snapshot without an active tenant', async () => {
+      setSession(undefined);
+      await expect(FinancialHealthService.refreshHealthMonitor())
+        .rejects.toThrow(/FAIL_CLOSED/);
+      setSession(TENANT_A);
+      expect(await db.financialHealthSnapshots.toCollection().toArray()).toHaveLength(0);
+    });
+
+    it('clearOldAlerts deletes only alerts belonging to the active tenant', async () => {
+      setSession(TENANT_A);
+      await db.systemAlerts.add({ id: 'alert-A', type: 'STOCK', message: 'Medicine A', isRead: false } as any);
+      await db.systemAlerts.add({ id: 'financial-A', type: 'FINANCIAL', message: 'Financial A', isRead: false } as any);
+
+      setSession(TENANT_B);
+      await db.systemAlerts.add({ id: 'alert-B', type: 'STOCK', message: 'Medicine B', isRead: false } as any);
+
+      setSession(TENANT_A);
+      await db.clearOldAlerts();
+
+      const tenantARemaining = await db.systemAlerts.toCollection().toArray();
+      expect(tenantARemaining.map((alert: any) => alert.id)).toEqual(['financial-A']);
+      expect(tenantARemaining[0]?.tenantId).toBe(TENANT_A);
+
+      setSession(TENANT_B);
+      const tenantBRemaining = await db.systemAlerts.toCollection().toArray();
+      expect(tenantBRemaining.map((alert: any) => alert.id)).toEqual(['alert-B']);
+      expect(tenantBRemaining[0]?.tenantId).toBe(TENANT_B);
     });
   });
 
-  describe('4. CashboxTransferWorkflow Isolation', () => {
-    it('Cannot execute transfer with mismatched tenantId/branchId session', async () => {
+  describe('4. Cashbox transfer isolation', () => {
+    it('rejects a transfer that would make the source cashbox balance negative', async () => {
       setSession(TENANT_A, BRANCH_A);
-      
+      await db.accounts.add({
+        id: 'cash-account-source-low', code: '101-11', name: 'Low Source Cash', type: 'ASSET',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true, balance: 50
+      } as any);
+      await db.accounts.add({
+        id: 'cash-account-destination-low', code: '101-12', name: 'Destination Cash', type: 'ASSET',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true, balance: 0
+      } as any);
+      await db.cashboxes.add({
+        id: 'cashbox-source-low', name: 'Low Source', accountId: 'cash-account-source-low',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+      await db.cashboxes.add({
+        id: 'cashbox-destination-low', name: 'Destination', accountId: 'cash-account-destination-low',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+
+      await expect(cashboxTransferWorkflow.execute({
+        sourceCashboxId: 'cashbox-source-low',
+        destinationCashboxId: 'cashbox-destination-low',
+        amount: 75,
+        date: '2026-11-05',
+        tenantId: TENANT_A,
+        branchId: BRANCH_A,
+        transactionUuid: 'insufficient-cash-transfer'
+      })).rejects.toThrow(/رصيد صندوق المصدر غير كافٍ/);
+
+      expect(await db.journalEntries.count()).toBe(0);
+      expect((await db.accounts.get('cash-account-source-low'))?.balance).toBe(50);
+      expect((await db.accounts.get('cash-account-destination-low'))?.balance).toBe(0);
+    });
+
+    it('rejects cashbox accounts assigned to a different branch before posting', async () => {
+      setSession(TENANT_A, BRANCH_A);
+      await db.accounts.add({
+        id: 'cash-account-source', code: '101-01', name: 'Source Cash', type: 'ASSET',
+        tenantId: TENANT_A, branchId: 'branch-B', isActive: true
+      } as any);
+      await db.accounts.add({
+        id: 'cash-account-destination', code: '101-02', name: 'Destination Cash', type: 'ASSET',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+      await db.cashboxes.add({
+        id: 'cashbox-source', name: 'Source', accountId: 'cash-account-source',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+      await db.cashboxes.add({
+        id: 'cashbox-destination', name: 'Destination', accountId: 'cash-account-destination',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+
+      await expect(cashboxTransferWorkflow.execute({
+        sourceCashboxId: 'cashbox-source',
+        destinationCashboxId: 'cashbox-destination',
+        amount: 25,
+        date: '2026-11-05',
+        tenantId: TENANT_A,
+        branchId: BRANCH_A,
+        transactionUuid: 'branch-mismatch-transfer'
+      })).rejects.toThrow(/لا يتبع الفرع المحدد للتحويل/);
+
+      expect(await db.journalEntries.count()).toBe(0);
+    });
+
+    it('rejects tenant or branch context spoofing before any accounting write', async () => {
+      setSession(TENANT_A, BRANCH_A);
       const input = {
         sourceCashboxId: 'box-1',
         destinationCashboxId: 'box-2',
         amount: 50,
         date: '2023-01-01',
-        tenantId: TENANT_B, // Spoofed
+        tenantId: TENANT_B,
         branchId: BRANCH_A,
         transactionUuid: 'tx-1'
       };
 
-      await expect(cashboxTransferWorkflow.execute(input)).rejects.toThrow(/خطأ أمني: سياق المؤسسة أو الفرع غير مطابق للجلسة النشطة/);
+      await expect(cashboxTransferWorkflow.execute(input))
+        .rejects.toThrow(/خطأ أمني: سياق المؤسسة أو الفرع غير مطابق للجلسة النشطة/);
+      expect(await db.journalEntries.count()).toBe(0);
     });
   });
 
-  describe('5. Users & Permissions Isolation', () => {
-    it('Cannot modify userPermissions of another tenant (Verification in db hooks)', async () => {
+  describe('5. User permissions isolation', () => {
+    it('blocks updates to permissions owned by another tenant', async () => {
       setSession(TENANT_A);
-      const permId = 'perm-A';
-      await (db as any).userPermissions.add({ id: permId, userId: 'user-A', permissions: {} });
+      await db.userPermissions.add({
+        id: 'permission-A', userId: 'user-A', permissions: {}
+      } as any);
+      expect((await db.userPermissions.get('permission-A'))?.tenantId).toBe(TENANT_A);
 
       setSession(TENANT_B);
-      // Attempt to update Tenant A's permissions
-      await expect((db as any).userPermissions.update(permId, { permissions: { 'Admin': true } }))
+      await expect(db.userPermissions.update('permission-A', { permissions: { Admin: true } } as any))
         .rejects.toThrow(/FAIL_CLOSED: Unauthorized data modification attempt/);
+    });
+
+    it('supports tenant-scoped permission lookup through the compound index', async () => {
+      setSession(TENANT_A);
+      await db.userPermissions.add({
+        id: 'permission-A', userId: 'same-user-id', permissions: { Sales: true }
+      } as any);
+
+      setSession(TENANT_B);
+      await db.userPermissions.add({
+        id: 'permission-B', userId: 'same-user-id', permissions: { Accounting: true }
+      } as any);
+
+      const permissionsB = await db.userPermissions
+        .where('[tenantId+userId]').equals([TENANT_B, 'same-user-id']).first();
+      expect(permissionsB?.id).toBe('permission-B');
+      expect(permissionsB?.permissions).toEqual({ Accounting: true });
     });
   });
 });

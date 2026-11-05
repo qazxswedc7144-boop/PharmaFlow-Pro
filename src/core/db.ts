@@ -35,10 +35,70 @@ function ensureItemPrimaryKey(table: any, item: any) {
   return item;
 }
 
+function extractPrimaryKey(table: any, record: any): any {
+  const keyPath = table?.schema?.primKey?.keyPath;
+  if (typeof keyPath === 'string') return record?.[keyPath];
+  if (Array.isArray(keyPath)) return keyPath.map((part: string) => record?.[part]);
+  return undefined;
+}
+
+const TENANT_SCOPED_TABLES = new Set([
+  'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
+  'accounts', 'journalLines', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
+  'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
+  'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments',
+  'financialHealthSnapshots', 'systemAlerts', 'accountingPeriods'
+]);
+
+function requireTenantForTable(table: any, operation: string) {
+  const session = getCurrentUserSession();
+  if (!session.tenantId) {
+    throw new Error(`FAIL_CLOSED: ${operation} forbidden on '${table.name}' without an active tenant session.`);
+  }
+  return session as typeof session & { tenantId: string };
+}
+
+function assertTenantUnchanged(table: any, expectedTenantId: string, operation: string) {
+  const current = requireTenantForTable(table, operation);
+  if (current.tenantId !== expectedTenantId) {
+    throw new Error(`FAIL_CLOSED: Tenant session changed during ${operation} on '${table.name}'.`);
+  }
+  return current;
+}
+
 if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
   const TableProto = (Dexie as any).Table.prototype;
-  
   const originalPut = TableProto.put;
+  const originalAdd = TableProto.add;
+  const originalGet = TableProto.get;
+  const originalUpdate = TableProto.update;
+  const originalDelete = TableProto.delete;
+  const originalBulkGet = TableProto.bulkGet;
+  const originalBulkPut = TableProto.bulkPut;
+  const originalBulkAdd = TableProto.bulkAdd;
+  const originalBulkDelete = TableProto.bulkDelete;
+  const originalClear = TableProto.clear;
+  const originalToArray = TableProto.toArray;
+  const originalCount = TableProto.count;
+  const requiredTableMethods = {
+    put: originalPut, add: originalAdd, get: originalGet, update: originalUpdate, delete: originalDelete,
+    bulkGet: originalBulkGet, bulkPut: originalBulkPut, bulkAdd: originalBulkAdd,
+    bulkDelete: originalBulkDelete, clear: originalClear, toArray: originalToArray, count: originalCount
+  };
+  const missingTableMethods = Object.entries(requiredTableMethods)
+    .filter(([, method]) => typeof method !== 'function')
+    .map(([name]) => name);
+  if (missingTableMethods.length > 0) {
+    throw new Error(`[SECURITY] Dexie tenant guards could not initialize; missing Table methods: ${missingTableMethods.join(', ')}`);
+  }
+  const hasTenantIndex = (table: any) => (table?.schema?.indexes || []).some((index: any) =>
+    index?.keyPath === 'tenantId'
+  );
+  const isTenantScoped = (table: any) => TENANT_SCOPED_TABLES.has(table?.name) ||
+    hasTenantIndex(table) || (table?.schema?.indexes || []).some((index: any) =>
+      Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId')
+    );
+
   if (originalPut) {
     TableProto.put = function(this: any, item: any, key?: any) {
       ensureItemPrimaryKey(this, item);
@@ -46,7 +106,6 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
     };
   }
 
-  const originalAdd = TableProto.add;
   if (originalAdd) {
     TableProto.add = function(this: any, item: any, key?: any) {
       ensureItemPrimaryKey(this, item);
@@ -54,25 +113,384 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
     };
   }
 
-  const originalBulkPut = TableProto.bulkPut;
-  if (originalBulkPut) {
-    TableProto.bulkPut = function(this: any, items: any[], keys?: any, options?: any) {
-      if (Array.isArray(items)) {
-        items.forEach(item => ensureItemPrimaryKey(this, item));
-      }
-      return originalBulkPut.call(this, items, keys, options);
+  if (originalGet) {
+    TableProto.get = function(this: any, key: any) {
+      if (!isTenantScoped(this)) return originalGet.call(this, key);
+      const session = requireTenantForTable(this, 'Read');
+      return originalGet.call(this, key).then((record: any) => {
+        assertTenantUnchanged(this, session.tenantId, 'Read');
+        if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+          throw new Error(`FAIL_CLOSED: Unauthorized direct read on '${this.name}'.`);
+        }
+        return record;
+      });
     };
   }
 
-  const originalBulkAdd = TableProto.bulkAdd;
-  if (originalBulkAdd) {
-    TableProto.bulkAdd = function(this: any, items: any[], keys?: any, options?: any) {
-      if (Array.isArray(items)) {
-        items.forEach(item => ensureItemPrimaryKey(this, item));
-      }
-      return originalBulkAdd.call(this, items, keys, options);
+  if (originalUpdate && originalGet) {
+    TableProto.update = function(this: any, key: any, changes: any) {
+      if (!isTenantScoped(this)) return originalUpdate.call(this, key, changes);
+      const session = requireTenantForTable(this, 'Update');
+      return originalGet.call(this, key).then((record: any) => {
+        assertTenantUnchanged(this, session.tenantId, 'Update');
+        // Preserve Dexie's 0 result for a genuinely missing key, but never allow
+        // a caller to silently target a row owned by another tenant or an orphan.
+        if (!record) return 0;
+        if (!record.tenantId || record.tenantId !== session.tenantId) {
+          throw new Error(`FAIL_CLOSED: Unauthorized data modification attempt on '${this.name}'.`);
+        }
+        if (
+          changes &&
+          typeof changes === 'object' &&
+          Object.prototype.hasOwnProperty.call(changes, 'tenantId') &&
+          changes.tenantId !== record.tenantId
+        ) {
+          throw new Error('FAIL_CLOSED: tenantId modification is strictly forbidden.');
+        }
+        return originalUpdate.call(this, key, changes).then((updated: number) => {
+          assertTenantUnchanged(this, session.tenantId, 'Update');
+          return updated;
+        });
+      });
     };
   }
+
+  if (originalBulkGet) {
+    TableProto.bulkGet = function(this: any, keys: any[]) {
+      if (!isTenantScoped(this)) return originalBulkGet.call(this, keys);
+      const session = requireTenantForTable(this, 'Bulk read');
+      return originalBulkGet.call(this, keys).then((records: any[]) => {
+        assertTenantUnchanged(this, session.tenantId, 'Bulk read');
+        return records.map((record: any) => {
+          if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Unauthorized bulk read on '${this.name}'.`);
+          }
+          return record;
+        });
+      });
+    };
+  }
+
+  if (originalToArray) {
+    TableProto.toArray = function(this: any) {
+      if (!isTenantScoped(this)) return originalToArray.call(this);
+      const session = requireTenantForTable(this, 'Read');
+      const result = hasTenantIndex(this)
+        ? this.where('tenantId').equals(session.tenantId).toArray()
+        : originalToArray.call(this).then((records: any[]) =>
+            records.filter((record: any) => record?.tenantId === session.tenantId)
+          );
+      return result.then((records: any[]) => {
+        assertTenantUnchanged(this, session.tenantId, 'Read');
+        return records;
+      });
+    };
+  }
+
+  if (originalCount) {
+    TableProto.count = function(this: any) {
+      if (!isTenantScoped(this)) return originalCount.call(this);
+      const session = requireTenantForTable(this, 'Count');
+      const result = hasTenantIndex(this)
+        ? this.where('tenantId').equals(session.tenantId).count()
+        : originalToArray.call(this).then((records: any[]) =>
+            records.filter((record: any) => record?.tenantId === session.tenantId).length
+          );
+      return result.then((count: number) => {
+        assertTenantUnchanged(this, session.tenantId, 'Count');
+        return count;
+      });
+    };
+  }
+
+  if (originalBulkAdd) {
+    TableProto.bulkAdd = function(this: any, items: any[], keysOrOptions?: any, optionsArg?: any) {
+      if (!isTenantScoped(this)) {
+        if (Array.isArray(items)) items.forEach(item => ensureItemPrimaryKey(this, item));
+        return originalBulkAdd.call(this, items, keysOrOptions, optionsArg);
+      }
+      if (!Array.isArray(items)) throw new Error('FAIL_CLOSED: Invalid bulk payload.');
+      const keys = Array.isArray(keysOrOptions) ? keysOrOptions : undefined;
+      const options = optionsArg || (keys ? undefined : keysOrOptions);
+      if (keys && keys.length !== items.length) throw new Error('Invalid bulk keys length.');
+      if (keys && this.schema.primKey.keyPath) throw new Error('bulkAdd(): keys are invalid for inbound primary keys.');
+      const session = requireTenantForTable(this, 'Bulk create');
+      const normalized = items.map((item: any) => {
+        if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== session.tenantId)) {
+          throw new Error(`FAIL_CLOSED: Cross-tenant bulk create rejected on '${this.name}'.`);
+        }
+        const value = { ...item, tenantId: session.tenantId, userId: item.userId || session.userId };
+        ensureItemPrimaryKey(this, value);
+        return value;
+      });
+      return this.db.transaction('rw', this, async () => {
+        const result: any[] = [];
+        for (let index = 0; index < normalized.length; index += 1) {
+          assertTenantUnchanged(this, session.tenantId, 'Bulk create');
+          result.push(await originalAdd.call(this, normalized[index], Array.isArray(keys) ? keys[index] : undefined));
+        }
+        return options?.allKeys === true ? result : result[result.length - 1];
+      });
+    };
+  }
+
+  if (originalBulkPut && originalGet && originalPut) {
+    TableProto.bulkPut = function(this: any, items: any[], keysOrOptions?: any, optionsArg?: any) {
+      if (!isTenantScoped(this)) {
+        if (Array.isArray(items)) items.forEach(item => ensureItemPrimaryKey(this, item));
+        return originalBulkPut.call(this, items, keysOrOptions, optionsArg);
+      }
+      if (!Array.isArray(items)) throw new Error('FAIL_CLOSED: Invalid bulk payload.');
+      const keys = Array.isArray(keysOrOptions) ? keysOrOptions : undefined;
+      const options = optionsArg || (keys ? undefined : keysOrOptions);
+      if (keys && keys.length !== items.length) throw new Error('Invalid bulk keys length.');
+      if (keys && this.schema.primKey.keyPath) throw new Error('bulkPut(): keys are invalid for inbound primary keys.');
+      const session = requireTenantForTable(this, 'Bulk upsert');
+      return this.db.transaction('rw', this, async () => {
+        const result: any[] = [];
+        for (let index = 0; index < items.length; index += 1) {
+          const item = items[index];
+          if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Cross-tenant bulk upsert rejected on '${this.name}'.`);
+          }
+          const key = Array.isArray(keys) ? keys[index] : extractPrimaryKey(this, item);
+          const existing = key === undefined || key === null ? undefined : await originalGet.call(this, key);
+          if (existing && (!existing.tenantId || existing.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Unauthorized bulk upsert target on '${this.name}'.`);
+          }
+          const value = { ...item, tenantId: session.tenantId, userId: item.userId || session.userId };
+          ensureItemPrimaryKey(this, value);
+          assertTenantUnchanged(this, session.tenantId, 'Bulk upsert');
+          result.push(await originalPut.call(this, value, Array.isArray(keys) ? keys[index] : undefined));
+        }
+        return options?.allKeys === true ? result : result[result.length - 1];
+      });
+    };
+  }
+
+  if (originalBulkDelete && originalGet && originalDelete) {
+    TableProto.bulkDelete = function(this: any, keys: any[]) {
+      if (!isTenantScoped(this)) return originalBulkDelete.call(this, keys);
+      if (!Array.isArray(keys)) throw new Error('FAIL_CLOSED: Invalid bulk delete keys.');
+      return this.db.transaction('rw', this, async () => {
+        const session = requireTenantForTable(this, 'Bulk delete');
+        for (const key of keys) {
+          assertTenantUnchanged(this, session.tenantId, 'Bulk delete');
+          const record = await originalGet.call(this, key);
+          if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Unauthorized bulk delete target on '${this.name}'.`);
+          }
+        }
+        for (const key of keys) {
+          assertTenantUnchanged(this, session.tenantId, 'Bulk delete');
+          const record = await originalGet.call(this, key);
+          if (record) {
+            assertTenantUnchanged(this, session.tenantId, 'Bulk delete');
+            await originalDelete.call(this, key);
+          }
+        }
+      });
+    };
+  }
+
+  if (originalClear && originalToArray && originalDelete) {
+    TableProto.clear = function(this: any) {
+      if (!isTenantScoped(this)) return originalClear.call(this);
+      return this.db.transaction('rw', this, async () => {
+        const session = requireTenantForTable(this, 'Clear');
+        const records = hasTenantIndex(this)
+          ? await this.where('tenantId').equals(session.tenantId).toArray()
+          : await originalToArray.call(this);
+        assertTenantUnchanged(this, session.tenantId, 'Clear');
+        for (const record of records) {
+          if (record?.tenantId === session.tenantId) {
+            assertTenantUnchanged(this, session.tenantId, 'Clear');
+            const key = extractPrimaryKey(this, record);
+            await originalDelete.call(this, key);
+          }
+        }
+      });
+    };
+  }
+}
+
+/**
+ * Install tenant Collection guards on the constructors owned by this Dexie
+ * instance. Dexie creates per-instance Collection classes; patching the static
+ * Dexie.Collection prototype does not protect Collections created by db.where().
+ */
+const patchedTenantCollectionPrototypes = new WeakSet<object>();
+
+function installTenantCollectionGuards(dbInstance: Dexie) {
+  const CollectionProto = (dbInstance as any).Collection?.prototype;
+  if (!CollectionProto) {
+    throw new Error('[SECURITY] Instance Dexie Collection prototype is unavailable; tenant collection guards cannot initialize.');
+  }
+  if (patchedTenantCollectionPrototypes.has(CollectionProto)) return;
+
+  const originalToArray = CollectionProto.toArray;
+  const originalEach = CollectionProto.each;
+  if (typeof originalToArray !== 'function' || typeof originalEach !== 'function') {
+    throw new Error('[SECURITY] Instance Dexie Collection guards cannot initialize; required methods are missing.');
+  }
+
+  const collectionTable = (collection: any) => collection?._ctx?.table;
+  const hasTenantIndex = (table: any) => (table?.schema?.indexes || []).some((index: any) =>
+    index?.keyPath === 'tenantId'
+  );
+  const isTenantScoped = (table: any) => TENANT_SCOPED_TABLES.has(table?.name) ||
+    hasTenantIndex(table) || (table?.schema?.indexes || []).some((index: any) =>
+      Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId')
+    );
+  const collectionSession = (collection: any, operation: string) => {
+    const table = collectionTable(collection);
+    if (!isTenantScoped(table)) return null;
+    return { table, session: requireTenantForTable(table, operation) };
+  };
+  const assertCollectionSession = (scope: any, operation: string) => {
+    if (scope) assertTenantUnchanged(scope.table, scope.session.tenantId, operation);
+  };
+  const forEachVisibleRecord = (
+    collection: any,
+    operation: string,
+    callback: (record: any, cursor: any) => any
+  ) => {
+    const scope = collectionSession(collection, operation);
+    if (!scope) return originalEach.call(collection, callback);
+    return originalEach.call(collection, (record: any, cursor: any) => {
+      assertCollectionSession(scope, operation);
+      if (!record || record.tenantId !== scope.session.tenantId) return;
+      return callback(record, cursor);
+    }).then((result: any) => {
+      assertCollectionSession(scope, operation);
+      return result;
+    });
+  };
+
+  CollectionProto.toArray = function(this: any, callback?: (records: any[]) => any) {
+    const scope = collectionSession(this, 'Collection read');
+    if (!scope) return originalToArray.call(this, callback);
+    return originalToArray.call(this).then((records: any[]) => {
+      assertCollectionSession(scope, 'Collection read');
+      const visible = records.filter(record => record?.tenantId === scope.session.tenantId);
+      if (typeof callback === 'function') callback(visible);
+      return visible;
+    });
+  };
+
+  if (typeof CollectionProto.first === 'function') {
+    CollectionProto.first = function(this: any, callback?: (record: any) => any) {
+      return this.toArray().then((records: any[]) => {
+        const first = records[0];
+        if (typeof callback === 'function') callback(first);
+        return first;
+      });
+    };
+  }
+
+  if (typeof CollectionProto.last === 'function') {
+    CollectionProto.last = function(this: any, callback?: (record: any) => any) {
+      return this.reverse().toArray().then((records: any[]) => {
+        const last = records[0];
+        if (typeof callback === 'function') callback(last);
+        return last;
+      });
+    };
+  }
+
+  if (typeof CollectionProto.count === 'function') {
+    CollectionProto.count = function(this: any, callback?: (count: number) => any) {
+      return this.toArray().then((records: any[]) => {
+        const count = records.length;
+        if (typeof callback === 'function') callback(count);
+        return count;
+      });
+    };
+  }
+
+  CollectionProto.each = function(this: any, callback: (record: any, cursor: any) => any) {
+    if (typeof callback !== 'function') throw new TypeError('Collection.each requires a callback.');
+    return forEachVisibleRecord(this, 'Collection iteration', callback);
+  };
+
+  // Dexie also exposes key-only iterators. They must use the same tenant-filtered
+  // cursor path because keys and primary keys can disclose cross-tenant metadata.
+  if (typeof CollectionProto.eachKey === 'function') {
+    CollectionProto.eachKey = function(this: any, callback: (key: any, cursor: any) => any) {
+      if (typeof callback !== 'function') throw new TypeError('Collection.eachKey requires a callback.');
+      return forEachVisibleRecord(this, 'Collection key iteration', (_record, cursor) =>
+        callback(cursor?.key, cursor)
+      );
+    };
+  }
+  if (typeof CollectionProto.eachPrimaryKey === 'function') {
+    CollectionProto.eachPrimaryKey = function(this: any, callback: (key: any, cursor: any) => any) {
+      if (typeof callback !== 'function') throw new TypeError('Collection.eachPrimaryKey requires a callback.');
+      return forEachVisibleRecord(this, 'Collection primary-key iteration', (_record, cursor) =>
+        callback(cursor?.primaryKey, cursor)
+      );
+    };
+  }
+  if (typeof CollectionProto.eachUniqueKey === 'function') {
+    CollectionProto.eachUniqueKey = function(this: any, callback: (key: any, cursor: any) => any) {
+      if (typeof callback !== 'function') throw new TypeError('Collection.eachUniqueKey requires a callback.');
+      const seen: any[] = [];
+      return forEachVisibleRecord(this, 'Collection unique-key iteration', (_record, cursor) => {
+        const key = cursor?.key;
+        if (key === undefined || seen.some(previous => indexedDB.cmp(previous, key) === 0)) return;
+        seen.push(key);
+        return callback(key, cursor);
+      });
+    };
+  }
+
+  if (typeof CollectionProto.sortBy === 'function') {
+    CollectionProto.sortBy = function(this: any, keyPath: string, callback?: (records: any[]) => any) {
+      return this.toArray().then((records: any[]) => {
+        const sorted = records.sort((a, b) =>
+          a?.[keyPath] < b?.[keyPath] ? -1 : a?.[keyPath] > b?.[keyPath] ? 1 : 0
+        );
+        if (typeof callback === 'function') callback(sorted);
+        return sorted;
+      });
+    };
+  }
+
+  // Keys are metadata too: prevent enumeration of another tenant's index or
+  // primary keys through Collection.keys()/primaryKeys()/uniqueKeys().
+  const collectCursorValues = (
+    collection: any,
+    property: 'key' | 'primaryKey',
+    operation: string,
+    unique: boolean
+  ) => {
+    const values: any[] = [];
+    const seen = new Set<any>();
+    return forEachVisibleRecord(collection, operation, (_record, cursor) => {
+      const value = cursor?.[property];
+      if (value !== undefined && (!unique || !seen.has(value))) {
+        values.push(value);
+        seen.add(value);
+      }
+    }).then(() => values);
+  };
+  if (typeof CollectionProto.keys === 'function') {
+    CollectionProto.keys = function(this: any) {
+      return collectCursorValues(this, 'key', 'Collection key read', false);
+    };
+  }
+  if (typeof CollectionProto.primaryKeys === 'function') {
+    CollectionProto.primaryKeys = function(this: any) {
+      return collectCursorValues(this, 'primaryKey', 'Collection primary-key read', false);
+    };
+  }
+  if (typeof CollectionProto.uniqueKeys === 'function') {
+    CollectionProto.uniqueKeys = function(this: any) {
+      return collectCursorValues(this, 'key', 'Collection unique-key read', true);
+    };
+  }
+
+  patchedTenantCollectionPrototypes.add(CollectionProto);
 }
 
 export function getCurrentUserSession() {
@@ -389,23 +807,23 @@ export class PharmaFlowDB extends Dexie {
 
     // Version 27: Phase 8.1 - Offline Multi-Tenant Composite Key Architecture & Data Isolation
     this.version(27).stores({
-      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId',
-      invoices: '&id, invoice_number, invoiceNumber, date, Date, partner_id, partnerId, type, payment_status, financial_status, document_status, is_synced, createdAt, transactionUuid, tenantId, branchId',
-      sales: '&id, invoice_number, date, Date, InvoiceStatus, hash, SaleID, createdAt, transactionUuid, tenantId, branchId',
-      purchases: '&id, invoice_number, date, Date, invoiceStatus, hash, createdAt, transactionUuid, tenantId, branchId',
-      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
-      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
-      journalEntries: '&id, date, sourceId, source_id, referenceId, reference_id, partnerId, sourceType, status, createdAt, tenantId, branchId',
-      accounts: '&id, code, name, type, parentId, tenantId',
-      syncQueue: '++id, &idempotencyKey, mutationId, syncStatus, tenantId',
-      outbox: '++id, &mutationId, &idempotencyKey, status, type, tenantId, createdAt'
+      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId, [tenantId+id], [tenantId+barcode], [tenantId+sku], [tenantId+categoryId]',
+      invoices: '&id, invoice_number, invoiceNumber, date, Date, partner_id, partnerId, type, payment_status, financial_status, document_status, is_synced, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoiceNumber], [tenantId+invoice_number], [tenantId+type], [tenantId+branchId], [tenantId+partnerId], [tenantId+partner_id], [type+partner_id], [type+partnerId], [type+invoice_number], [type+invoiceNumber]',
+      sales: '&id, invoice_number, date, Date, InvoiceStatus, hash, SaleID, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoice_number], [tenantId+branchId]',
+      purchases: '&id, invoice_number, date, Date, invoiceStatus, hash, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoice_number], [tenantId+branchId]',
+      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
+      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
+      journalEntries: '&id, date, sourceId, source_id, referenceId, reference_id, partnerId, sourceType, status, createdAt, tenantId, branchId, [tenantId+id], [tenantId+branchId], [tenantId+date]',
+      accounts: '&id, code, name, type, parentId, tenantId, [tenantId+id], [tenantId+code]',
+      syncQueue: '++id, &idempotencyKey, mutationId, syncStatus, tenantId, [tenantId+id], [tenantId+syncStatus], [syncStatus+createdAt], [entityType+createdAt]',
+      outbox: '++id, &mutationId, &idempotencyKey, status, type, tenantId, createdAt, [tenantId+status], [status+createdAt]'
     });
 
     // Version 28: Defensive Product & Entity Schema Upgrade - Indexing Name, ProductID, Is_Active
     this.version(28).stores({
-      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId',
-      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
-      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId'
+      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId, [tenantId+id], [tenantId+barcode], [tenantId+sku], [tenantId+categoryId], [tenantId+name], [tenantId+Name]',
+      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
+      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]'
     });
 
     // Version 29: Phase 2.3 - Smart Import Alias Learning System Multi-Tenant Schema & Indexes
@@ -465,6 +883,26 @@ export class PharmaFlowDB extends Dexie {
       vouchers: '&id, voucher_id, type, partner_id, partnerId, date, status, tenantId, branchId'
     });
 
+    // Version 37: Tenant-scoped lookup indexes for security-sensitive collections.
+    // Index creation is additive; existing records are not assigned to a tenant here.
+    this.version(37).stores({
+      users: '&id, username, role, status, branch, createdAt, cashboxId, tenantId',
+      userPermissions: '&id, userId, tenantId, [tenantId+userId]',
+      cashboxes: '&id, name, accountId, branchId, isActive, openingBalance, openingBalanceJournalId, tenantId',
+      cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId, [tenantId+cashboxId], [tenantId+userId]',
+      financialHealthSnapshots: '&id, date, tenantId, [tenantId+date]',
+      systemAlerts: '&id, type, timestamp, isRead, tenantId, [tenantId+type]',
+      accountingPeriods: '&id, Start_Date, End_Date, Is_Locked, start_date, end_date, is_locked, tenantId, [tenantId+Is_Locked]'
+    });
+
+    // Version 38: Preserve tenant-less legacy data as Orphan records.
+    // Never infer ownership from whichever tenant happens to be logged in.
+    this.version(38).stores({
+      journalLines: '&id, entry_id, entryId, account_id, accountId, [entry_id+account_id], [entryId+accountId], tenantId, branchId'
+    }).upgrade(async () => {
+      // Existing tenant-less records remain untouched for manual ownership review.
+    });
+
     // Handle structural integrity and recovery
     this.on('versionchange', () => {
       console.warn("Database structure updated in another tab. Switching to resilient mode.");
@@ -474,63 +912,98 @@ export class PharmaFlowDB extends Dexie {
       isDbBlocked = true;
     });
 
-    // Register hooks to ensure tenantId and userId are set on specified tables
-    const targetTables = [
-      'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
-      'accounts', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
-      'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
-      'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments'
-    ];
-    targetTables.forEach(tableName => {
-      try {
-        const table = this.table(tableName);
-        if (table) {
-          table.hook('creating', (_primKey: any, obj: any) => {
-            const session = getCurrentUserSession();
-            if (!session.tenantId) {
-              console.error(`[SECURITY] Creation blocked on table '${tableName}': No active tenant session.`);
-              throw new Error("FAIL_CLOSED: Creation forbidden without active tenant session.");
-            }
-            if (obj && typeof obj === 'object') {
-              // Force tenantId from session to prevent spoofing
-              obj.tenantId = session.tenantId;
-              obj.userId = obj.userId || session.userId;
-            }
-          });
-          table.hook('updating', (mods: any, _primKey: any, obj: any) => {
-            const session = getCurrentUserSession();
-            
-            if (!session.tenantId) {
-              console.error(`[SECURITY] Update blocked on table '${tableName}': No active tenant session.`);
-              throw new Error("FAIL_CLOSED: Update forbidden without active tenant session.");
-            }
+    // Register hooks on the explicit tenant allow-list and every schema table
+    // declaring a tenantId index. Registration failures abort construction.
+    const tenantScopedTableNames = new Set(TENANT_SCOPED_TABLES);
+    for (const table of this.tables) {
+      const hasTenantIndex = (table.schema.indexes || []).some((index: any) =>
+        index?.keyPath === 'tenantId' ||
+        (Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId'))
+      );
+      if (hasTenantIndex) tenantScopedTableNames.add(table.name);
+    }
 
-            // Security: Prevent updating records that don't belong to the current tenant
-            // Or updating old records that don't have a tenantId (Orphaned)
-            if (!obj || !obj.tenantId || obj.tenantId !== session.tenantId) {
-              console.error(`[SECURITY] Cross-tenant or orphaned update blocked on table '${tableName}' for key:`, _primKey, "Target Tenant:", obj?.tenantId, "Active Session:", session.tenantId);
-              throw new Error("FAIL_CLOSED: Unauthorized data modification attempt (Cross-tenant or Orphaned).");
-            }
-
-            if (mods && typeof mods === 'object') {
-              // Prevent changing tenantId via update
-              if (mods.tenantId && mods.tenantId !== obj.tenantId) {
-                console.error(`[SECURITY] Attempt to change tenantId blocked on table '${tableName}'`);
-                throw new Error("FAIL_CLOSED: tenantId modification is strictly forbidden.");
-              }
-
-              return {
-                ...mods,
-                tenantId: session.tenantId, // Force tenantId from session
-                userId: mods.userId || (obj ? obj.userId : undefined) || session.userId
-              };
-            }
-          });
-        }
-      } catch (err) {
-        console.warn(`[DB] Could not register hooks for table: ${tableName}`, err);
+    tenantScopedTableNames.forEach(tableName => {
+      const table = this.table(tableName);
+      if (!table) {
+        throw new Error(`[SECURITY] Required tenant-scoped table '${tableName}' is missing.`);
       }
+
+      table.hook('creating', (_primKey: any, obj: any) => {
+        const session = getCurrentUserSession();
+        if (!session.tenantId) {
+          console.error(`[SECURITY] Creation blocked on table '${tableName}': No active tenant session.`);
+          throw new Error("FAIL_CLOSED: Creation forbidden without active tenant session.");
+        }
+        if (obj && typeof obj === 'object') {
+          ensureItemPrimaryKey(table, obj);
+          obj.tenantId = session.tenantId;
+          obj.userId = obj.userId || session.userId;
+        }
+      });
+
+      table.hook('updating', (mods: any, _primKey: any, obj: any) => {
+        const session = getCurrentUserSession();
+        if (!session.tenantId) {
+          console.error(`[SECURITY] Update blocked on table '${tableName}': No active tenant session.`);
+          throw new Error("FAIL_CLOSED: Update forbidden without active tenant session.");
+        }
+        if (!obj || !obj.tenantId || obj.tenantId !== session.tenantId) {
+          console.error(`[SECURITY] Cross-tenant or orphaned update blocked on table '${tableName}' for key:`, _primKey, "Target Tenant:", obj?.tenantId, "Active Session:", session.tenantId);
+          throw new Error("FAIL_CLOSED: Unauthorized data modification attempt (Cross-tenant or Orphaned).");
+        }
+        if (mods && typeof mods === 'object') {
+          if (Object.prototype.hasOwnProperty.call(mods, 'tenantId') && mods.tenantId !== obj.tenantId) {
+            console.error(`[SECURITY] Attempt to change tenantId blocked on table '${tableName}'`);
+            throw new Error("FAIL_CLOSED: tenantId modification is strictly forbidden.");
+          }
+          return {
+            ...mods,
+            tenantId: session.tenantId,
+            userId: mods.userId || obj.userId || session.userId
+          };
+        }
+      });
+
+      table.hook('deleting', (_primKey: any, obj: any) => {
+        const session = getCurrentUserSession();
+        if (!session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
+          console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey);
+          throw new Error("FAIL_CLOSED: Unauthorized data deletion attempt (Cross-tenant or Orphaned).");
+        }
+      });
     });
+
+    installTenantCollectionGuards(this);
+  }
+
+  async getOrphanedTenantRecordCount(): Promise<number> {
+    if (!this.isOpen()) await this.open();
+    const scopedNames = new Set(TENANT_SCOPED_TABLES);
+    for (const table of this.tables) {
+      if ((table.schema.indexes || []).some((index: any) =>
+        index?.keyPath === 'tenantId' || (Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId'))
+      )) {
+        scopedNames.add(table.name);
+      }
+    }
+    let total = 0;
+    const nativeDb = (this as any).backendDB?.();
+    if (!nativeDb) throw new Error('ORPHAN_AUDIT_UNAVAILABLE: Native IndexedDB handle is unavailable.');
+    for (const tableName of scopedNames) {
+      if (!nativeDb.objectStoreNames.contains(tableName)) continue;
+      // Privileged aggregate-only audit: raw records never leave this method;
+      // only the number of orphaned rows is returned to the administration UI.
+      const records = await new Promise<any[]>((resolve, reject) => {
+        const transaction = nativeDb.transaction(tableName, 'readonly');
+        const request = transaction.objectStore(tableName).getAll();
+        request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
+        request.onerror = () => reject(request.error || transaction.error || new Error('Orphan audit read failed.'));
+        transaction.onabort = () => reject(transaction.error || new Error('Orphan audit transaction aborted.'));
+      });
+      total += records.filter((record: any) => !record?.tenantId).length;
+    }
+    return total;
   }
 
   getExistingTableNames(): string[] {
@@ -653,12 +1126,24 @@ export class PharmaFlowDB extends Dexie {
     return await this.suppliers.where('tenantId').equals(tenantId).toArray(); 
   }
   async getCurrencies(): Promise<Currency[]> { return await this.getSetting('CURRENCIES', []) as Currency[]; }
-  async getMedicineAlerts() { return await this.systemAlerts.where('type').equals('STOCK').toArray(); }
+  async getMedicineAlerts() {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.systemAlerts
+      .where('tenantId').equals(tenantId)
+      .filter((alert: any) => alert.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(alert.Type))
+      .toArray();
+  }
   async getDailyAuditTask(date: string) { return await this.dailyAuditTasks.where('date').equals(date).first(); }
   async createDailyAuditTask(task: any) { return await this.dailyAuditTasks.add(task); }
   async saveAuditProgress(progress: any) { return await this.auditProgress.put(progress); }
   async finalizeAudit(taskId: string, results: any) { return await this.dailyAuditTasks.update(taskId, { ...results, status: 'COMPLETED' }); }
-  async clearOldAlerts() { return await this.systemAlerts.clear(); }
+  async clearOldAlerts() {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) throw new Error('FAIL_CLOSED: Cannot clear alerts without an active tenant session.');
+    return await this.systemAlerts.where('tenantId').equals(tenantId)
+      .filter((alert: any) => alert.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(alert.Type)).delete();
+  }
   
   async saveCustomer(customer: Customer) { return await this.customers.put(customer); }
   async saveSupplier(supplier: Supplier) { return await this.suppliers.put(supplier); }
@@ -975,7 +1460,9 @@ export class PharmaFlowDB extends Dexie {
   }
 
   async getTransactions() {
-    const all = await this.invoices.toArray();
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    const all = await this.invoices.where('tenantId').equals(tenantId).toArray();
     return all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 
@@ -1086,6 +1573,11 @@ export class PharmaFlowDB extends Dexie {
   // --- INITIALIZATION ---
   async init() {
     console.log("[DB] Initializing database seeds and defaults...");
+    const activeTenantId = getCurrentUserSession().tenantId;
+    if (!activeTenantId) {
+      console.warn('[DB] Skipping tenant-owned seed data: no active tenant session.');
+      return true;
+    }
     if (isDbBlocked) {
       console.log("[DB] Operating in resilient in-memory mode for init.");
       return true;
@@ -1110,7 +1602,7 @@ export class PharmaFlowDB extends Dexie {
           { id: 'acc-cash', code: '101', name: 'الصندوق الرئيسي', type: 'ASSET', balance: 0, isSystem: true, isActive: true, balance_type: 'DEBIT', balanceType: 'DEBIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() },
           { id: 'acc-sales', code: '401', name: 'إيرادات المبيعات', type: 'REVENUE', balance: 0, isSystem: true, isActive: true, balance_type: 'CREDIT', balanceType: 'CREDIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() },
           { id: 'acc-cogs', code: '501', name: 'تكلفة البضاعة المباعة', type: 'EXPENSE', balance: 0, isSystem: true, isActive: true, balance_type: 'DEBIT', balanceType: 'DEBIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() }
-        ]).catch((err) => console.warn('[DB] Accounts seed warning:', err));
+        ].map(record => ({ ...record, tenantId: activeTenantId })) as any[]).catch((err) => console.warn('[DB] Accounts seed warning:', err));
       }
 
       // Seed the default cashbox without changing existing user or cash movement records.
@@ -1137,7 +1629,7 @@ export class PharmaFlowDB extends Dexie {
           { id: 'PRD-104', name: 'أوجمنتين 1 جرام أقراص', Name: 'Augmentin 1g', barcode: '628100011004', categoryId: 'CAT-3', supplierId: 'SUP-2', stock: 60, is_active: true, Is_Active: true, price: 64.5, cost: 45.0, updatedAt: new Date().toISOString() },
           { id: 'PRD-105', name: 'بخاخ أنف أوتروفين', Name: 'Otrivin Nasal Spray', barcode: '628100011005', categoryId: 'CAT-4', supplierId: 'SUP-3', stock: 110, is_active: true, Is_Active: true, price: 16.0, cost: 10.5, updatedAt: new Date().toISOString() },
           { id: 'PRD-106', name: 'مرطب كيو في 500 جرام', Name: 'QV Cream 500g', barcode: '628100011006', categoryId: 'CAT-5', supplierId: 'SUP-3', stock: 40, is_active: true, Is_Active: true, price: 115.0, cost: 82.0, updatedAt: new Date().toISOString() }
-        ] as any[]).catch((err) => console.warn('[DB] Products seed warning:', err));
+        ].map(record => ({ ...record, tenantId: activeTenantId })) as any[]).catch((err) => console.warn('[DB] Products seed warning:', err));
       }
 
       // Seed initial invoices (sales & purchases history) for offline browsing if empty
@@ -1219,7 +1711,7 @@ export class PharmaFlowDB extends Dexie {
             createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
             updatedAt: new Date(Date.now() - 86400000 * 5).toISOString()
           }
-        ] as any[]).catch((err) => console.warn('[DB] Invoices seed warning:', err));
+        ].map(record => ({ ...record, tenantId: activeTenantId })) as any[]).catch((err) => console.warn('[DB] Invoices seed warning:', err));
       }
 
       return true;
@@ -1247,46 +1739,45 @@ export class PharmaFlowDB extends Dexie {
 let isDbBlocked = false;
 const memDb: Record<string, Map<string, any>> = {};
 
-function createMockCollection(results: any[]) {
+function createMockCollection(results: any[], mutationGuard?: (item: any, changes: any) => void) {
+  const cloneRecord = (record: any) => record && typeof record === 'object' ? { ...record } : record;
   const coll: any = {
-    toArray: () => Promise.resolve([...results]),
+    toArray: () => Promise.resolve(results.map(cloneRecord)),
     count: () => Promise.resolve(results.length),
-    first: () => Promise.resolve(results[0] || null),
-    last: () => Promise.resolve(results[results.length - 1] || null),
-    limit: (n: number) => createMockCollection(results.slice(0, n)),
-    offset: (n: number) => createMockCollection(results.slice(n)),
-    reverse: () => createMockCollection([...results].reverse()),
-    filter: (fn: any) => createMockCollection(results.filter(fn)),
-    and: (fn: any) => createMockCollection(results.filter(fn)),
+    first: () => Promise.resolve(cloneRecord(results[0]) || null),
+    last: () => Promise.resolve(cloneRecord(results[results.length - 1]) || null),
+    limit: (n: number) => createMockCollection(results.slice(0, n), mutationGuard),
+    offset: (n: number) => createMockCollection(results.slice(n), mutationGuard),
+    reverse: () => createMockCollection([...results].reverse(), mutationGuard),
+    filter: (fn: any) => createMockCollection(results.filter(fn), mutationGuard),
+    and: (fn: any) => createMockCollection(results.filter(fn), mutationGuard),
     sortBy: (keyPath: string) => {
-      const sorted = [...results].sort((a, b) => {
-        if (a[keyPath] < b[keyPath]) return -1;
-        if (a[keyPath] > b[keyPath]) return 1;
-        return 0;
-      });
-      return Promise.resolve(sorted);
+      const sorted = [...results].sort((a, b) => a[keyPath] < b[keyPath] ? -1 : a[keyPath] > b[keyPath] ? 1 : 0);
+      return Promise.resolve(sorted.map(cloneRecord));
     },
-    clone: () => createMockCollection([...results]),
-    distinct: () => createMockCollection(Array.from(new Set(results))),
+    clone: () => createMockCollection([...results], mutationGuard),
+    distinct: () => createMockCollection(Array.from(new Set(results)), mutationGuard),
     keys: () => Promise.resolve(results.map(r => r.id || r.key)),
     primaryKeys: () => Promise.resolve(results.map(r => r.id || r.key)),
     uniqueKeys: () => Promise.resolve(Array.from(new Set(results.map(r => r.id || r.key)))),
     modify: (changesOrFn: any) => {
       let count = 0;
       results.forEach(item => {
-        if (typeof changesOrFn === 'function') {
-          changesOrFn(item);
-          count++;
-        } else if (typeof changesOrFn === 'object' && changesOrFn !== null) {
-          Object.assign(item, changesOrFn);
-          count++;
+        mutationGuard?.(item, changesOrFn);
+        const previousTenantId = item?.tenantId;
+        if (typeof changesOrFn === 'function') changesOrFn(item);
+        else if (typeof changesOrFn === 'object' && changesOrFn !== null) Object.assign(item, changesOrFn);
+        if (mutationGuard && item?.tenantId !== previousTenantId) {
+          item.tenantId = previousTenantId;
+          throw new Error('FAIL_CLOSED: tenantId modification is forbidden.');
         }
+        count++;
       });
       return Promise.resolve(count);
     },
     delete: () => Promise.resolve(results.length),
     each: (fn: (item: any) => void) => {
-      results.forEach(fn);
+      results.forEach(item => fn(cloneRecord(item)));
       return Promise.resolve();
     }
   };
@@ -1298,160 +1789,191 @@ function getMockTable(tableName: string) {
     memDb[tableName] = new Map();
   }
   const store = memDb[tableName];
+  const tenantScoped = TENANT_SCOPED_TABLES.has(tableName);
+  const getVisibleRows = () => {
+    const rows = Array.from(store.values());
+    if (!tenantScoped) return rows;
+    const tenantId = getCurrentUserSession().tenantId;
+    if (!tenantId) throw new Error(`FAIL_CLOSED: In-memory read blocked on '${tableName}' without an active tenant session.`);
+    return rows.filter(item => item?.tenantId === tenantId);
+  };
+  const assertWritable = (item: any, key?: any) => {
+    if (!tenantScoped) return item;
+    const tenantId = getCurrentUserSession().tenantId;
+    if (!tenantId) throw new Error(`FAIL_CLOSED: In-memory write blocked on '${tableName}' without an active tenant session.`);
+    if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== tenantId)) {
+      throw new Error(`FAIL_CLOSED: In-memory cross-tenant write blocked on '${tableName}'.`);
+    }
+    const id = key ?? item.id ?? item.key;
+    const existing = id !== undefined ? store.get(String(id)) : undefined;
+    if (existing && existing.tenantId !== tenantId) {
+      throw new Error(`FAIL_CLOSED: In-memory cross-tenant write blocked on '${tableName}'.`);
+    }
+    return { ...item, tenantId };
+  };
+  const createVisibleCollection = (rows: any[]) => createMockCollection(rows, tenantScoped ? (item, changes) => {
+    const tenantId = getCurrentUserSession().tenantId;
+    if (!tenantId || item?.tenantId !== tenantId) {
+      throw new Error(`FAIL_CLOSED: In-memory collection mutation blocked on '${tableName}'.`);
+    }
+    if (typeof changes === 'object' && changes !== null && changes.tenantId !== undefined && changes.tenantId !== item.tenantId) {
+      throw new Error('FAIL_CLOSED: tenantId modification is forbidden.');
+    }
+  } : undefined);
 
   const whereMock = (indexOrProp?: any) => {
     // If an object criteria is passed, e.g. table.where({ code: '101' })
     if (typeof indexOrProp === 'object' && indexOrProp !== null) {
       const entries = Object.entries(indexOrProp);
-      const results = Array.from(store.values()).filter(item => {
+      const results = getVisibleRows().filter(item => {
         if (typeof item === 'object' && item !== null) {
           return entries.every(([k, v]) => String(item[k]).toLowerCase() === String(v).toLowerCase());
         }
         return false;
       });
-      return createMockCollection(results);
+      return createVisibleCollection(results);
     }
 
     const prop = typeof indexOrProp === 'string' ? indexOrProp : '';
 
     return {
       equals: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return String(item[prop]).toLowerCase() === String(val).toLowerCase();
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       equalsIgnoreCase: (val: any) => {
         const strVal = String(val).toLowerCase();
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return String(item[prop] ?? '').toLowerCase() === strVal;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       startsWith: (val: any) => {
         const prefix = String(val);
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return String(item[prop] ?? '').startsWith(prefix);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       startsWithIgnoreCase: (val: any) => {
         const prefix = String(val).toLowerCase();
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return String(item[prop] ?? '').toLowerCase().startsWith(prefix);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       startsWithAnyOf: (prefixes: string[]) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             const fieldVal = String(item[prop] ?? '');
             return prefixes.some(p => fieldVal.startsWith(p));
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       startsWithIgnoreCaseAnyOf: (prefixes: string[]) => {
         const lowerPrefixes = prefixes.map(p => String(p).toLowerCase());
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             const fieldVal = String(item[prop] ?? '').toLowerCase();
             return lowerPrefixes.some(p => fieldVal.startsWith(p));
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       above: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] > val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       aboveOrEqual: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] >= val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       below: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] < val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       belowOrEqual: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] <= val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       anyOf: (vals: any[]) => {
         const valSet = new Set(vals);
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return valSet.has(item[prop]);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       anyOfIgnoreCase: (vals: string[]) => {
         const valSet = new Set(vals.map(v => String(v).toLowerCase()));
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return valSet.has(String(item[prop] ?? '').toLowerCase());
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       noneOf: (vals: any[]) => {
         const valSet = new Set(vals);
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return !valSet.has(item[prop]);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       notEqual: (val: any) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             return item[prop] !== val;
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       between: (a: any, b: any, includeLower = true, includeUpper = true) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             const v = item[prop];
             const lowerOk = includeLower ? v >= a : v > a;
@@ -1460,94 +1982,105 @@ function getMockTable(tableName: string) {
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       },
       inAnyRange: (ranges: [any, any][]) => {
-        const results = Array.from(store.values()).filter(item => {
+        const results = getVisibleRows().filter(item => {
           if (typeof item === 'object' && item !== null && prop) {
             const v = item[prop];
             return ranges.some(([a, b]) => v >= a && v <= b);
           }
           return false;
         });
-        return createMockCollection(results);
+        return createVisibleCollection(results);
       }
     };
   };
 
   const mockTable: any = {
     name: tableName,
-    toArray: () => Promise.resolve(Array.from(store.values())),
+    toArray: () => Promise.resolve(getVisibleRows().map((item: any) => ({ ...item }))),
     get: (key: any) => {
-      if (typeof key === 'object' && key !== null) {
-        // Handle compound or query key search
-        const found = Array.from(store.values()).find(item => {
-          return Object.entries(key).every(([k, v]) => item[k] === v);
-        });
-        return Promise.resolve(found || null);
-      }
-      return Promise.resolve(store.get(String(key)) || null);
+      const rows = getVisibleRows();
+      const found = typeof key === 'object' && key !== null
+        ? rows.find(item => Object.entries(key).every(([k, v]) => item[k] === v))
+        : rows.find(item => String(item.id ?? item.key) === String(key));
+      return Promise.resolve(found ? { ...found } : null);
     },
+    bulkGet: async (keys: any[]) => Promise.all(keys.map((key: any) => mockTable.get(key))),
     put: (item: any) => {
-      const id = item.id || item.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
-      const activeItem = { ...item, id };
-      store.set(String(id), activeItem);
+      const safeItem = assertWritable(item);
+      const id = safeItem.id || safeItem.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
+      store.set(String(id), { ...safeItem, id });
       return Promise.resolve(id);
     },
     add: (item: any) => {
-      const id = item.id || item.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
-      const activeItem = { ...item, id };
-      store.set(String(id), activeItem);
+      const safeItem = assertWritable(item);
+      const id = safeItem.id || safeItem.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
+      if (store.has(String(id))) throw new Error(`ConstraintError: Duplicate key in '${tableName}'.`);
+      store.set(String(id), { ...safeItem, id });
       return Promise.resolve(id);
     },
     update: (key: any, changes: any) => {
       const existing = store.get(String(key));
-      if (existing) {
-        store.set(String(key), { ...existing, ...changes });
-        return Promise.resolve(1);
+      if (!existing) return Promise.resolve(0);
+      const activeTenantId = getCurrentUserSession().tenantId;
+      if (tenantScoped && (!activeTenantId || !existing.tenantId || existing.tenantId !== activeTenantId)) {
+        throw new Error(`FAIL_CLOSED: In-memory cross-tenant or orphaned update blocked on '${tableName}'.`);
       }
-      return Promise.resolve(0);
+      if (tenantScoped && changes?.tenantId !== undefined && changes.tenantId !== existing.tenantId) {
+        throw new Error('FAIL_CLOSED: tenantId modification is forbidden.');
+      }
+      store.set(String(key), { ...existing, ...changes, ...(tenantScoped ? { tenantId: existing.tenantId } : {}) });
+      return Promise.resolve(1);
     },
     delete: (key: any) => {
+      const existing = store.get(String(key));
+      if (tenantScoped && (!getCurrentUserSession().tenantId || !existing || existing.tenantId !== getCurrentUserSession().tenantId)) {
+        throw new Error(`FAIL_CLOSED: In-memory cross-tenant delete blocked on '${tableName}'.`);
+      }
       store.delete(String(key));
       return Promise.resolve(null);
     },
-    bulkAdd: (items: any[]) => {
-      items.forEach(item => {
-        const id = item.id || item.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
-        store.set(String(id), { ...item, id });
-      });
-      return Promise.resolve(items);
+    bulkAdd: async (items: any[]) => {
+      if (!Array.isArray(items)) throw new TypeError('bulkAdd expects an array.');
+      const safeItems = items.map(item => assertWritable(item));
+      for (const item of safeItems) {
+        const id = item.id || item.key;
+        if (id !== undefined && store.has(String(id))) throw new Error(`ConstraintError: Duplicate key in '${tableName}'.`);
+      }
+      return Promise.all(safeItems.map(item => mockTable.add(item)));
     },
-    bulkPut: (items: any[]) => {
-      items.forEach(item => {
-        const id = item.id || item.key || `mem-${Math.random().toString(36).substring(2, 10)}`;
-        store.set(String(id), { ...item, id });
-      });
-      return Promise.resolve(items);
+    bulkPut: async (items: any[]) => {
+      if (!Array.isArray(items)) throw new TypeError('bulkPut expects an array.');
+      const safeItems = items.map(item => assertWritable(item));
+      return Promise.all(safeItems.map(item => mockTable.put(item)));
     },
-    bulkDelete: (keys: any[]) => {
-      keys.forEach(k => store.delete(String(k)));
-      return Promise.resolve();
+    bulkDelete: async (keys: any[]) => {
+      if (!Array.isArray(keys)) throw new TypeError('bulkDelete expects an array of keys.');
+      if (tenantScoped) {
+        const tenantId = getCurrentUserSession().tenantId;
+        if (!tenantId) throw new Error(`FAIL_CLOSED: In-memory bulk delete blocked on '${tableName}'.`);
+        for (const key of keys) {
+          const record = store.get(String(key));
+          if (record && record.tenantId !== tenantId) throw new Error(`FAIL_CLOSED: In-memory cross-tenant bulk delete blocked on '${tableName}'.`);
+        }
+      }
+      return Promise.all(keys.map(key => mockTable.delete(key)));
     },
-    clear: () => {
-      store.clear();
-      return Promise.resolve();
+    clear: async () => {
+      if (!tenantScoped) { store.clear(); return; }
+      const tenantId = getCurrentUserSession().tenantId;
+      if (!tenantId) throw new Error(`FAIL_CLOSED: In-memory clear blocked on '${tableName}'.`);
+      for (const [key, record] of store.entries()) if (record?.tenantId === tenantId) store.delete(key);
     },
-    count: () => Promise.resolve(store.size),
+    count: () => Promise.resolve(getVisibleRows().length),
     where: whereMock,
     orderBy: (prop: string) => {
-      const results = Array.from(store.values()).sort((a, b) => {
-        if (a[prop] < b[prop]) return -1;
-        if (a[prop] > b[prop]) return 1;
-        return 0;
-      });
-      return createMockCollection(results);
+      const results = getVisibleRows().sort((a, b) => a[prop] < b[prop] ? -1 : a[prop] > b[prop] ? 1 : 0);
+      return createVisibleCollection(results);
     },
-    filter: (fn: any) => {
-      const results = Array.from(store.values()).filter(fn);
-      return createMockCollection(results);
-    }
+    filter: (fn: any) => createVisibleCollection(getVisibleRows().filter(fn))
   };
 
   return mockTable;
@@ -1642,26 +2175,172 @@ function wrapTable(realTable: any, tableName: string): any {
   return new Proxy(realTable, {
     get(tObj, tProp) {
       if (tProp === 'name') return tableName || tObj.name;
-      if (tProp === 'then' && typeof tObj.then !== 'function') {
-        return undefined;
+      if (tProp === 'then' && typeof tObj.then !== 'function') return undefined;
+      if (isDbBlocked) return (getMockTable(tableName) as any)[tProp];
+
+      const tenantIndexed = (tObj.schema?.indexes || []).some((index: any) =>
+        index?.keyPath === 'tenantId' ||
+        (Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId'))
+      );
+      const tenantScoped = TENANT_SCOPED_TABLES.has(tableName) || tenantIndexed;
+      const requireScope = (operation: string) => requireTenantForTable(tObj, operation);
+      const assertScope = (tenantId: string, operation: string) => assertTenantUnchanged(tObj, tenantId, operation);
+      const rawGet = tObj.get.bind(tObj);
+      const rawPut = tObj.put.bind(tObj);
+      const rawAdd = tObj.add.bind(tObj);
+      const rawDelete = tObj.delete.bind(tObj);
+      const rawToCollection = () => tObj.toCollection();
+
+      if (tenantScoped && tProp === 'get') {
+        return async (key: any) => {
+          const session = requireScope('Read');
+          const record = await rawGet(key);
+          assertScope(session.tenantId, 'Read');
+          if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Unauthorized direct read on '${tableName}'.`);
+          }
+          return record;
+        };
       }
-      if (isDbBlocked) {
-        return (getMockTable(tableName) as any)[tProp];
+
+      if (tenantScoped && tProp === 'update') {
+        return async (key: any, changes: any) => {
+          const session = requireScope('Update');
+          const existing = await rawGet(key);
+          assertScope(session.tenantId, 'Update');
+          if (!existing) return 0;
+          if (!existing.tenantId || existing.tenantId !== session.tenantId) {
+            throw new Error(`FAIL_CLOSED: Unauthorized data modification attempt on '${tableName}'.`);
+          }
+          if (
+            changes &&
+            typeof changes === 'object' &&
+            Object.prototype.hasOwnProperty.call(changes, 'tenantId') &&
+            changes.tenantId !== existing.tenantId
+          ) {
+            throw new Error('FAIL_CLOSED: tenantId modification is strictly forbidden.');
+          }
+          const updated = await tObj.update(key, changes);
+          assertScope(session.tenantId, 'Update');
+          return updated;
+        };
       }
+
+      if (tenantScoped && tProp === 'bulkGet') {
+        return async (keys: any[]) => {
+          const session = requireScope('Bulk read');
+          const records = await tObj.bulkGet(keys);
+          assertScope(session.tenantId, 'Bulk read');
+          for (const record of records) {
+            if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+              throw new Error(`FAIL_CLOSED: Unauthorized bulk read on '${tableName}'.`);
+            }
+          }
+          return records;
+        };
+      }
+
+      if (tenantScoped && tProp === 'toArray') {
+        return async () => {
+          const session = requireScope('Read');
+          const records = tenantIndexed
+            ? await tObj.where('tenantId').equals(session.tenantId).toArray()
+            : await rawToCollection().toArray().then((rows: any[]) => rows.filter(row => row?.tenantId === session.tenantId));
+          assertScope(session.tenantId, 'Read');
+          return records;
+        };
+      }
+
+      if (tenantScoped && tProp === 'count') {
+        return async () => {
+          const session = requireScope('Count');
+          const count = tenantIndexed
+            ? await tObj.where('tenantId').equals(session.tenantId).count()
+            : (await rawToCollection().toArray()).filter((row: any) => row?.tenantId === session.tenantId).length;
+          assertScope(session.tenantId, 'Count');
+          return count;
+        };
+      }
+
+      if (tenantScoped && (tProp === 'bulkAdd' || tProp === 'bulkPut')) {
+        const addOnly = tProp === 'bulkAdd';
+        return async (items: any[], keysOrOptions?: any, optionsArg?: any) => {
+          if (!Array.isArray(items)) throw new Error('FAIL_CLOSED: Invalid bulk payload.');
+          const keys = Array.isArray(keysOrOptions) ? keysOrOptions : undefined;
+          const options = optionsArg || (keys ? undefined : keysOrOptions);
+          if (keys && keys.length !== items.length) throw new Error('Invalid bulk keys length.');
+          if (keys && tObj.schema.primKey.keyPath) throw new Error('Bulk keys are invalid for inbound primary keys.');
+          const session = requireScope(addOnly ? 'Bulk create' : 'Bulk upsert');
+          return tObj.db.transaction('rw', tObj, async () => {
+            const result: any[] = [];
+            for (let index = 0; index < items.length; index += 1) {
+              const item = items[index];
+              if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== session.tenantId)) {
+                throw new Error(`FAIL_CLOSED: Cross-tenant bulk operation rejected on '${tableName}'.`);
+              }
+              const value = { ...item, tenantId: session.tenantId, userId: item.userId || session.userId };
+              ensureItemPrimaryKey(tObj, value);
+              const key = Array.isArray(keys) ? keys[index] : extractPrimaryKey(tObj, value);
+              if (!addOnly && key !== undefined && key !== null) {
+                const existing = await rawGet(key);
+                if (existing && (!existing.tenantId || existing.tenantId !== session.tenantId)) {
+                  throw new Error(`FAIL_CLOSED: Unauthorized bulk upsert target on '${tableName}'.`);
+                }
+              }
+              assertScope(session.tenantId, addOnly ? 'Bulk create' : 'Bulk upsert');
+              result.push(await (addOnly ? rawAdd : rawPut)(value, Array.isArray(keys) ? keys[index] : undefined));
+            }
+            return options?.allKeys === true ? result : result[result.length - 1];
+          });
+        };
+      }
+
+      if (tenantScoped && tProp === 'bulkDelete') {
+        return async (keys: any[]) => {
+          if (!Array.isArray(keys)) throw new Error('FAIL_CLOSED: Invalid bulk delete keys.');
+          const session = requireScope('Bulk delete');
+          return tObj.db.transaction('rw', tObj, async () => {
+            for (const key of keys) {
+              const record = await rawGet(key);
+              assertScope(session.tenantId, 'Bulk delete');
+              if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+                throw new Error(`FAIL_CLOSED: Unauthorized bulk delete target on '${tableName}'.`);
+              }
+            }
+            for (const key of keys) {
+              const record = await rawGet(key);
+              if (record) {
+                assertScope(session.tenantId, 'Bulk delete');
+                await rawDelete(key);
+              }
+            }
+          });
+        };
+      }
+
+      if (tenantScoped && tProp === 'clear') {
+        return async () => {
+          const session = requireScope('Clear');
+          return tObj.db.transaction('rw', tObj, async () => {
+            const records = await rawToCollection().toArray();
+            for (const record of records) {
+              if (record?.tenantId === session.tenantId) {
+                assertScope(session.tenantId, 'Clear');
+                await rawDelete(extractPrimaryKey(tObj, record));
+              }
+            }
+          });
+        };
+      }
+
       const realVal = tObj[tProp];
       if (typeof realVal === 'function') {
         const boundFn = realVal.bind(tObj);
         return (...args: any[]) => {
-            const res = boundFn(...args);
-            if (res && typeof res.then === 'function') {
-              return res.catch((err: any) => {
-                throw err;
-              });
-            }
-            if (res && typeof res === 'object') {
-              return wrapQueryChain(res, tableName);
-            }
-            return res;
+          const res = boundFn(...args);
+          if (res && typeof res.then === 'function') return res.catch((err: any) => { throw err; });
+          if (res && typeof res === 'object') return wrapQueryChain(res, tableName);
+          return res;
         };
       }
       return realVal;
@@ -1832,10 +2511,18 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'getMedicineAlerts') return async () => {
       const session = getCurrentUserSession();
       if (!session.tenantId) return [];
-      return await target.systemAlerts.where('tenantId').equals(session.tenantId).filter((a: any) => a.type === 'STOCK').toArray();
+      return await target.systemAlerts
+        .where('tenantId').equals(session.tenantId)
+        .filter((a: any) => a.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(a.Type))
+        .toArray();
     };
     if (prop === 'saveMedicineAlert') return async (alert: any) => dbProxy.systemAlerts.add(alert);
-    if (prop === 'clearOldAlerts') return async () => dbProxy.systemAlerts.clear();
+    if (prop === 'clearOldAlerts') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) throw new Error('FAIL_CLOSED: Cannot clear alerts without an active tenant session.');
+      return await target.systemAlerts.where('tenantId').equals(session.tenantId)
+        .filter((alert: any) => alert.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(alert.Type)).delete();
+    };
     if (prop === 'getDailyAuditTask') return async (date: string) => dbProxy.dailyAuditTasks.where('date').equals(date).first();
     if (prop === 'createDailyAuditTask') return async (task: any) => dbProxy.dailyAuditTasks.add(task);
     if (prop === 'saveAuditProgress') return async (progress: any) => dbProxy.auditProgress.put(progress);

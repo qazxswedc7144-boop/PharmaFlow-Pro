@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { alertBotService } from '@features/ai/services/alertBotService';
 import { MedicineAlert } from '@/types';
 import { useEventBus, useUI } from '@/contexts/AppContext'; 
@@ -67,8 +67,15 @@ const NotificationCenter: React.FC = () => {
 
   const handleClearMedicineAll = async () => {
     try {
-      // حذف التنبيهات من قاعدة البيانات الأساسية
-      await db.systemAlerts.clear();
+      const { tenantId } = getCurrentUserSession();
+      if (!tenantId) throw new Error('FAIL_CLOSED: لا يمكن حذف التنبيهات دون جلسة مؤسسة نشطة.');
+      // Delete only medicine alerts belonging to the active tenant.
+      await db.systemAlerts
+        .where('tenantId').equals(tenantId)
+        .filter((alert: any) =>
+          alert.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(alert.Type)
+        )
+        .delete();
       await loadMedicineAlerts();
     } catch (e) {
       console.error("[NotificationCenter] Error clearing medicine alerts:", e);

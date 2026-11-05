@@ -4,6 +4,8 @@ import { configurationService } from '@/services/config/configurationService';
 import { useAuthStore } from '@/store/authStore';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { User } from '@/types/auth.types';
+import { db } from '@/core/db';
+import { hashLocalPassword, verifyLocalPassword } from '@features/auth/services/localPasswordService';
 
 interface AuthContextType {
   user: User | null;
@@ -158,6 +160,79 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return { user: authenticatedUser, accessToken: access };
     } catch (err: any) {
+      const networkMessage = String(err?.message || '');
+      const isNetworkFailure = !err?.response && !err?.status && (
+        (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        /network error|failed to fetch|fetch failed|econn|etimedout|timeout/i.test(networkMessage)
+      );
+
+      if (isNetworkFailure) {
+        try {
+          // Local PBKDF2 credentials are an offline-only fallback. They are never
+          // sent to the API and cannot be used as an online bearer credential.
+          const currentTenantId = TokenProvider.getCurrentSession().tenantId || useAuthStore.getState().tenantId;
+          if (!currentTenantId) {
+            throw new Error('OFFLINE_LOGIN_REQUIRES_TENANT: لا توجد مؤسسة محفوظة وآمنة لتسجيل الدخول دون اتصال.');
+          }
+          const candidates = await db.users
+            .where('tenantId').equals(currentTenantId)
+            .filter((candidate: any) =>
+              candidate?.username === username.trim() &&
+              candidate.status !== 'inactive' && candidate.isActive !== false
+            )
+            .toArray();
+
+          // The lookup is scoped to the previously selected tenant; duplicate
+          // usernames within that tenant still fail closed.
+          if (candidates.length === 1) {
+            const localUser = candidates[0] as any;
+            const verified = await verifyLocalPassword(password, localUser.passwordHash, localUser.password);
+            if (verified.valid) {
+              const {
+                password: _legacyPassword,
+                passwordHash: _passwordHash,
+                ...safeUser
+              } = localUser;
+              const offlineUser = {
+                ...safeUser,
+                id: String(localUser.id),
+                user_id: String(localUser.id),
+                username: localUser.username,
+                role: localUser.role || 'CASHIER',
+                Role: localUser.role || 'CASHIER',
+                tenantId: localUser.tenantId,
+                tenant_id: localUser.tenantId,
+                branchId: localUser.branchId || localUser.branch || null,
+                offlineOnly: true
+              } as User;
+              const randomBytes = crypto.getRandomValues(new Uint8Array(18));
+              const offlineToken = `offline-local-${Array.from(randomBytes, byte => byte.toString(16).padStart(2, '0')).join('')}`;
+              TokenProvider.setSession(offlineUser, offlineToken, null, {
+                tenantId: String(localUser.tenantId),
+                branchId: localUser.branchId || localUser.branch || null
+              });
+              if (verified.needsUpgrade) {
+                try {
+                  const upgradedHash = await hashLocalPassword(password);
+                  await db.users.update(localUser.id, { passwordHash: upgradedHash, password: undefined });
+                } catch (upgradeError) {
+                  TokenProvider.clearSession();
+                  throw upgradeError;
+                }
+              }
+              setAccessToken(offlineToken);
+              setRefreshTokenState(null);
+              setUser(offlineUser);
+              setAuthenticationEnabledState(true);
+              configurationService.set('pharmaflow_auth_enabled', 'true').catch(() => {});
+              return { user: offlineUser, accessToken: offlineToken };
+            }
+          }
+        } catch (offlineError) {
+          console.warn('[Auth] Offline credential verification failed:', offlineError);
+        }
+      }
+
       const msg = err.response?.data?.message || err.message || 'Login failed';
       throw new Error(msg);
     } finally {

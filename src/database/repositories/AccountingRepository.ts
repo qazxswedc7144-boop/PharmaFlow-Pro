@@ -40,7 +40,7 @@ export const AccountingRepository = {
       .toArray();
   },
 
-  addEntry: async (entry: AccountingEntry, tx?: any) => {
+  addEntry: async (entry: AccountingEntry, tx?: any, assertWriteContext?: () => void) => {
     const totalDebit = entry.lines.reduce(
       (sum, l) => sum + (l.debit || 0),
       0
@@ -58,6 +58,7 @@ export const AccountingRepository = {
     }
 
     const performWrite = async (t: any) => {
+      assertWriteContext?.();
       if (!t || typeof t.table !== 'function') {
         throw new Error(
           'ACCOUNTING_WRITE_REJECTED: ACTIVE_TRANSACTION_REQUIRED'
@@ -146,6 +147,7 @@ export const AccountingRepository = {
        * do not apply account balances or journal lines again.
        */
       const existingEntry = await jeTbl.get(entryId);
+      assertWriteContext?.();
 
       if (existingEntry) {
         const sameScope =
@@ -163,6 +165,7 @@ export const AccountingRepository = {
         return;
       }
 
+      assertWriteContext?.();
       await jeTbl.put({
         ...entry,
         id: entryId,
@@ -201,6 +204,7 @@ export const AccountingRepository = {
         const account = await accTbl.get(lineAccId);
 
         if (account) {
+          assertWriteContext?.();
           await accTbl.update(lineAccId, {
             balance:
               (account.balance || 0) +
@@ -209,6 +213,7 @@ export const AccountingRepository = {
           });
         }
 
+        assertWriteContext?.();
         await jlTbl.add({
           ...line,
           id:

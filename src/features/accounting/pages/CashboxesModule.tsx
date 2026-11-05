@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { db, getCurrentUserSession } from '@/core/db';
+import { useAuthStore } from '@/store/authStore';
 import { Account, Cashbox } from '@/types';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { PeriodLockEngine } from '@/services/transactions/PeriodLockEngine';
@@ -26,6 +27,7 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
   const [error, setError] = useState('');
   const [modal, setModal] = useState<'create' | 'transfer' | null>(null);
   const session = getCurrentUserSession();
+  const activeTenantId = useAuthStore(state => state.tenantId);
 
   const [createForm, setCreateForm] = useState({
     name: '', accountId: '', branchId: session.branchId || '',
@@ -38,12 +40,27 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const { tenantId } = session;
+      const currentSession = getCurrentUserSession();
+      const tenantId = currentSession.tenantId;
+      if (!tenantId || (activeTenantId && activeTenantId !== tenantId)) {
+        setCashboxes([]);
+        setAccounts([]);
+        setBranches([]);
+        setError('لا توجد مؤسسة نشطة لعرض الصناديق.');
+        return;
+      }
       const [allBoxes, allAccounts, allBranches] = await Promise.all([
         db.cashboxes.toArray(),
         db.accounts.toArray(),
         db.branches.toArray()
       ]);
+      // Do not publish results if the tenant changed while the reads were in flight.
+      if (getCurrentUserSession().tenantId !== tenantId) {
+        setCashboxes([]);
+        setAccounts([]);
+        setBranches([]);
+        return;
+      }
       setCashboxes(allBoxes.filter((b: any) => b.tenantId === tenantId));
       setAccounts(allAccounts.filter((a: any) => a.tenantId === tenantId));
       setBranches(allBranches.filter((b: any) => b.tenantId === tenantId).map((b: any) => ({ id: b.id, name: b.name || b.branchName || b.code || b.id })));
@@ -53,7 +70,7 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeTenantId]);
 
   useEffect(() => { void loadData(); }, [loadData]);
 
@@ -69,9 +86,10 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
 
   const openCreate = () => {
     setError('');
+    const currentSession = getCurrentUserSession();
     setCreateForm({
       name: '', accountId: activeAssetAccounts[0]?.id || '',
-      branchId: session.branchId || branches[0]?.id || '',
+      branchId: currentSession.branchId || branches[0]?.id || '',
       openingBalance: '0', openingAccountId: equityAccounts[0]?.id || ''
     });
     setModal('create');
@@ -94,14 +112,15 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
     setSaving(true);
     setError('');
     const amount = Number(createForm.openingBalance);
-    const tenantId = session.tenantId;
+    const currentSession = getCurrentUserSession();
+    const tenantId = currentSession.tenantId;
     const branchId = createForm.branchId;
     const id = db.generateId('CASHBOX');
     const transactionUuid = generateTransactionUuid('JE');
     try {
       if (!createForm.name.trim()) throw new Error('اسم الصندوق مطلوب.');
       if (!tenantId || !branchId) throw new Error('تعذر تحديد المؤسسة والفرع من الجلسة الحالية.');
-      if (session.branchId && session.branchId !== branchId) throw new Error('لا يمكن إنشاء صندوق خارج الفرع المحدد في جلسة المستخدم.');
+      if (currentSession.branchId && currentSession.branchId !== branchId) throw new Error('لا يمكن إنشاء صندوق خارج الفرع المحدد في جلسة المستخدم.');
       if (!createForm.accountId) throw new Error('اختر الحساب المحاسبي المرتبط بالصندوق.');
       if (!Number.isFinite(amount) || amount < 0 || Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001) {
         throw new Error('الرصيد الافتتاحي يجب أن يكون صفراً أو مبلغاً موجباً بمنزلتين عشريتين.');
@@ -119,19 +138,28 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
         throw new Error('حساب الطرف المقابل يجب أن يكون حساب حقوق ملكية نشطاً ومختلفاً عن حساب الصندوق.');
       }
 
+      const assertWriteSession = () => {
+        const latest = getCurrentUserSession();
+        if (latest.tenantId !== tenantId || latest.branchId !== currentSession.branchId) {
+          throw new Error('FAIL_CLOSED: تغيرت المؤسسة أو الفرع أثناء إنشاء الصندوق.');
+        }
+      };
+
       await db.safeTransaction('rw', ['cashboxes', 'accounts', 'journalEntries', 'journalLines'], async (tx) => {
+        assertWriteSession();
         const boxesTable = tx.table('cashboxes');
         const accountsTable = tx.table('accounts');
         const currentCashAccount = await accountsTable.get(cashAccount.id);
         const currentOpeningAccount = amount > 0 ? await accountsTable.get(createForm.openingAccountId) : undefined;
+        assertWriteSession();
         if (!currentCashAccount || currentCashAccount.type !== 'ASSET' || currentCashAccount.isActive === false ||
-            (currentCashAccount.tenantId && currentCashAccount.tenantId !== tenantId) ||
+            currentCashAccount.tenantId !== tenantId ||
             (currentCashAccount.branchId && currentCashAccount.branchId !== branchId)) {
           throw new Error('الحساب النقدي لم يعد صالحاً أو لا يتبع المؤسسة والفرع المحددين.');
         }
         if (amount > 0 && (!currentOpeningAccount || currentOpeningAccount.type !== 'EQUITY' ||
             currentOpeningAccount.isActive === false ||
-            (currentOpeningAccount.tenantId && currentOpeningAccount.tenantId !== tenantId) ||
+            currentOpeningAccount.tenantId !== tenantId ||
             (currentOpeningAccount.branchId && currentOpeningAccount.branchId !== branchId))) {
           throw new Error('حساب الأرصدة الافتتاحية لم يعد صالحاً أو لا يتبع المؤسسة والفرع المحددين.');
         }
@@ -166,9 +194,11 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
             tenantId, branchId, createdAt: now, lines,
             transactionUuid, cashboxId: id, openingBalance: amount
           };
-          await AccountingRepository.addEntry(entry, tx);
+          assertWriteSession();
+          await AccountingRepository.addEntry(entry, tx, assertWriteSession);
           box.openingBalanceJournalId = transactionUuid;
         }
+        assertWriteSession();
         await boxesTable.add(box);
       });
       setModal(null);
@@ -186,14 +216,15 @@ const CashboxesModule: React.FC<CashboxesModuleProps> = ({ onNavigate }) => {
     setSaving(true);
     setError('');
     try {
-      if (!session.tenantId || !transferForm.sourceCashboxId || !transferForm.destinationCashboxId) {
+      const currentSession = getCurrentUserSession();
+      if (!currentSession.tenantId || !transferForm.sourceCashboxId || !transferForm.destinationCashboxId) {
         throw new Error('بيانات المؤسسة والصندوقين مطلوبة.');
       }
       await cashboxTransferWorkflow.execute({
         ...transferForm,
         amount: Number(transferForm.amount),
-        tenantId: session.tenantId,
-        branchId: session.branchId || cashboxes.find(c => c.id === transferForm.sourceCashboxId)?.branchId || '',
+        tenantId: currentSession.tenantId,
+        branchId: currentSession.branchId || cashboxes.find(c => c.id === transferForm.sourceCashboxId)?.branchId || '',
         transactionUuid: generateTransactionUuid('TRX')
       });
       setModal(null);

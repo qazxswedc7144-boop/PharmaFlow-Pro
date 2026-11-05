@@ -61,22 +61,37 @@ export class FinancialHealthService {
    * Main entry point to refresh financial health data
    */
   static async refreshHealthMonitor(): Promise<FinancialHealthSnapshot> {
+    const session = getCurrentUserSession();
+    const tenantId = session.tenantId;
+    if (!tenantId) {
+      throw new Error('FAIL_CLOSED: لا يمكن تحديث المؤشر المالي دون جلسة مؤسسة نشطة.');
+    }
+    const assertTenantSession = () => {
+      if (getCurrentUserSession().tenantId !== tenantId) {
+        throw new Error('FAIL_CLOSED: تغيرت المؤسسة النشطة أثناء تحديث المؤشر المالي.');
+      }
+    };
     const now = new Date().toISOString();
     const today = now.split('T')[0] || '';
 
-    // 1. Fetch raw data
-    const rawSales = await db.getSales();
-    const rawPurchases = await db.getPurchases();
+    // Read all source records using the captured tenant context.
+    const [rawSales, rawPurchases, products, cashFlow] = await Promise.all([
+      db.invoices.where('tenantId').equals(tenantId).filter(invoice => invoice.type === 'SALE').toArray(),
+      db.invoices.where('tenantId').equals(tenantId).filter(invoice => invoice.type === 'PURCHASE').toArray(),
+      db.products.where('tenantId').equals(tenantId).toArray(),
+      db.cashFlow.where('tenantId').equals(tenantId).toArray()
+    ]);
+    assertTenantSession();
+
     const sales = rawSales.map(mapInvoiceToSale);
     const purchases = rawPurchases.map(mapInvoiceToPurchase);
-    const products = await db.getProducts();
-    const cashFlow = await db.getCashFlow();
 
     // 2. Calculate KPIs
     const kpis = await this.calculateKPIs(sales, purchases, products, cashFlow);
+    assertTenantSession();
 
     // 3. Detect Risks & Generate Alerts
-    await this.detectRisks(kpis, sales, purchases, products);
+    await this.detectRisks(kpis, sales, purchases, products, tenantId, assertTenantSession);
 
     // 4. Calculate Health Score
     const breakdown = this.calculateBreakdown(kpis);
@@ -90,20 +105,22 @@ export class FinancialHealthService {
     // 5. Generate Insights
     const insights = this.generateInsights(kpis, breakdown);
 
-    const session = getCurrentUserSession();
     // 6. Create Snapshot
     const snapshot: FinancialHealthSnapshot = {
-      id: `HEALTH-${Date.now()}`,
+      id: db.generateId('HEALTH'),
       date: today,
       score,
       metrics: kpis,
       breakdown,
       insights,
-      tenantId: session.tenantId
+      tenantId
     };
 
-    // Save snapshot (one per day usually, but we'll save this one)
-    await db.financialHealthSnapshots.put(snapshot);
+    // Save the snapshot inside a transaction and pin the write to the captured tenant.
+    await db.safeTransaction('rw', ['financialHealthSnapshots'], async (tx) => {
+      assertTenantSession();
+      await tx.table('financialHealthSnapshots').put(snapshot);
+    });
 
     return snapshot;
   }
@@ -168,9 +185,15 @@ export class FinancialHealthService {
     };
   }
 
-  private static async detectRisks(kpis: HealthKPIs, sales: Sale[], purchases: Purchase[], products: Product[]) {
-    const session = getCurrentUserSession();
-    const alerts: (SystemAlert & { tenantId?: string })[] = [];
+  private static async detectRisks(
+    kpis: HealthKPIs,
+    sales: Sale[],
+    purchases: Purchase[],
+    products: Product[],
+    tenantId: string,
+    assertTenantSession: () => void
+  ) {
+    const alerts: SystemAlert[] = [];
     const now = new Date().toISOString();
 
     // 1. AR > 40% of total sales (Last 30 days)
@@ -182,13 +205,13 @@ export class FinancialHealthService {
     
     if (totalSales30d > 0 && (kpis.accountsReceivable / totalSales30d) > 0.4) {
       alerts.push({
-        id: `ALRT-AR-${Date.now()}`,
+        id: db.generateId('ALRT-AR'),
         type: 'FINANCIAL',
         severity: 'HIGH',
         message: 'تحذير: ذمم العملاء تجاوزت 40% من إجمالي المبيعات. خطر في السيولة.',
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
@@ -203,26 +226,26 @@ export class FinancialHealthService {
     });
     if (overdueAP) {
       alerts.push({
-        id: `ALRT-AP-${Date.now()}`,
+        id: db.generateId('ALRT-AP'),
         type: 'FINANCIAL',
         severity: 'MEDIUM',
         message: 'تنبيه: توجد فواتير مشتريات متأخرة السداد لأكثر من 30 يوماً.',
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
     // 3. Negative cash
     if (kpis.cashBalance < 0) {
       alerts.push({
-        id: `ALRT-CASH-${Date.now()}`,
+        id: db.generateId('ALRT-CASH'),
         type: 'FINANCIAL',
         severity: 'CRITICAL',
         message: 'حرج: رصيد الصندوق سالب! يرجى مراجعة العمليات المالية فوراً.',
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
@@ -242,13 +265,13 @@ export class FinancialHealthService {
     });
     if (stagnantProducts.length > 5) {
       alerts.push({
-        id: `ALRT-STOCK-${Date.now()}`,
+        id: db.generateId('ALRT-STOCK'),
         type: 'STOCK',
         severity: 'MEDIUM',
         message: `تنبيه: يوجد ${stagnantProducts.length} أصناف راكدة لم يتم بيعها منذ 90 يوماً.`,
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
@@ -257,47 +280,54 @@ export class FinancialHealthService {
     const margin = totalRevenue > 0 ? (kpis.netProfit / totalRevenue) * 100 : 0;
     if (margin < 5 && totalRevenue > 0) {
       alerts.push({
-        id: `ALRT-PROFIT-${Date.now()}`,
+        id: db.generateId('ALRT-PROFIT'),
         type: 'FINANCIAL',
         severity: 'HIGH',
         message: 'تحذير: هامش الربح الصافي أقل من 5%. كفاءة التشغيل منخفضة.',
         timestamp: now,
         isRead: false,
-        tenantId: session.tenantId
+        tenantId
       });
     }
 
-    if (!session.tenantId) return;
+    // Save alerts (only if not already present and unread to avoid flooding).
+    // Older records may store the flag as numeric 0; current records use boolean false.
+    let criticalThresholdReached = false;
+    await db.safeTransaction('rw', ['systemAlerts'], async (tx) => {
+      assertTenantSession();
+      const alertTable = tx.table('systemAlerts');
+      const existingAlerts = await alertTable
+        .where('tenantId').equals(tenantId)
+        .filter((a: any) => a.isRead === false || (a.isRead as any) === 0)
+        .toArray();
+      assertTenantSession();
 
-    // Save alerts (only if not already present and unread to avoid flooding)
-    const existingAlerts = await db.systemAlerts
-      .where('tenantId').equals(session.tenantId)
-      .and(a => a.isRead === 0)
-      .toArray();
-    
-    for (const alert of alerts) {
-      const isDuplicate = existingAlerts.some(a => a.message === alert.message && a.severity === alert.severity);
-      if (!isDuplicate) {
-        await db.systemAlerts.put(alert);
-        
-        // If critical, check threshold via AlertCenter logic
-        if (alert.severity === 'CRITICAL') {
-          // We don't call addAlert here to avoid recursion, but we trigger the threshold check
-          const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-          const criticalCount = await db.systemAlerts
-            .where('tenantId').equals(session.tenantId)
-            .filter(a => a.severity === 'CRITICAL' && a.timestamp > oneDayAgo)
-            .count();
-            
-          if (criticalCount >= 10) {
-            console.error("CRITICAL THRESHOLD REACHED via Financial Health Monitor 🛡️");
-            if (!IS_PREVIEW) {
-              await AnomalyScoringEngine.calculateCurrentRiskScore();
-            } else {
-              console.warn("PREVIEW GUARD: Critical threshold reached in Health Monitor, but bypassing RECOVERY_MODE.");
-            }
+      for (const alert of alerts) {
+        const isDuplicate = existingAlerts.some((a: any) => a.message === alert.message && a.severity === alert.severity);
+        if (!isDuplicate) {
+          // Check the captured tenant immediately before every actual IndexedDB write.
+          assertTenantSession();
+          await alertTable.put(alert);
+
+          if (alert.severity === 'CRITICAL') {
+            const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const criticalCount = await alertTable
+              .where('tenantId').equals(tenantId)
+              .filter((a: any) => a.severity === 'CRITICAL' && a.timestamp > oneDayAgo)
+              .count();
+            if (criticalCount >= 10) criticalThresholdReached = true;
           }
         }
+      }
+    });
+
+    if (criticalThresholdReached) {
+      assertTenantSession();
+      console.error("CRITICAL THRESHOLD REACHED via Financial Health Monitor 🛡️");
+      if (!IS_PREVIEW) {
+        await AnomalyScoringEngine.calculateCurrentRiskScore();
+      } else {
+        console.warn("PREVIEW GUARD: Critical threshold reached in Health Monitor, but bypassing RECOVERY_MODE.");
       }
     }
   }
@@ -368,7 +398,7 @@ export class FinancialHealthService {
     if (!tenantId) return [];
     return await db.systemAlerts
       .where('tenantId').equals(tenantId)
-      .filter(a => a.isRead === 0)
+      .filter(a => a.isRead === false || (a.isRead as any) === 0)
       .toArray();
   }
 }

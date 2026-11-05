@@ -15,21 +15,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
   const supplierId = 'SUP-FIN-001';
 
   beforeEach(async () => {
-    // Clear Dexie tables (including auditLogs for atomicity verification)
-    await db.vouchers.clear();
-    await db.journalEntries.clear();
-    await db.journalLines.clear();
-    await db.financialTransactions.clear();
-    await db.invoices.clear();
-    await db.suppliers.clear();
-    await db.voucherInvoiceLinks.clear();
-    await db.idempotencyRecords.clear();
-    await db.auditLogs.clear();
-
-    // CRITICAL: Ensure failure stage is reset before each test
-    (globalThis as any).__FAIL_AT_STAGE__ = undefined;
-
-    // Setup active authenticated user with required permissions
+    // Establish the test tenant before tenant-scoped cleanup operations.
     useAuthStore.setState({
       user: {
         id: 'usr-fin-tester',
@@ -45,6 +31,20 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
       permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage'],
       isAuthenticated: true
     });
+
+    // Clear only this test tenant's rows; unscoped audit/auxiliary tables are cleared normally.
+    await db.vouchers.clear();
+    await db.journalEntries.clear();
+    await db.journalLines.clear();
+    await db.financialTransactions.clear();
+    await db.invoices.clear();
+    await db.suppliers.clear();
+    await db.voucherInvoiceLinks.clear();
+    await db.idempotencyRecords.clear();
+    await db.auditLogs.clear();
+
+    // CRITICAL: Ensure failure stage is reset before each test
+    (globalThis as any).__FAIL_AT_STAGE__ = undefined;
 
     // Seed Supplier with initial balance of 1500
     await db.suppliers.put({
