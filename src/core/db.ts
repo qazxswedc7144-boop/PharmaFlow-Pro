@@ -721,6 +721,7 @@ export class PharmaFlowDB extends Dexie {
           throw new Error("FAIL_CLOSED: Creation forbidden without active tenant session.");
         }
         if (obj && typeof obj === 'object') {
+          ensureItemPrimaryKey(table, obj);
           obj.tenantId = session.tenantId;
           obj.userId = obj.userId || session.userId;
         }
@@ -1907,26 +1908,149 @@ function wrapTable(realTable: any, tableName: string): any {
   return new Proxy(realTable, {
     get(tObj, tProp) {
       if (tProp === 'name') return tableName || tObj.name;
-      if (tProp === 'then' && typeof tObj.then !== 'function') {
-        return undefined;
+      if (tProp === 'then' && typeof tObj.then !== 'function') return undefined;
+      if (isDbBlocked) return (getMockTable(tableName) as any)[tProp];
+
+      const tenantIndexed = (tObj.schema?.indexes || []).some((index: any) =>
+        index?.keyPath === 'tenantId' ||
+        (Array.isArray(index?.keyPath) && index.keyPath.includes('tenantId'))
+      );
+      const tenantScoped = TENANT_SCOPED_TABLES.has(tableName) || tenantIndexed;
+      const requireScope = (operation: string) => requireTenantForTable(tObj, operation);
+      const assertScope = (tenantId: string, operation: string) => assertTenantUnchanged(tObj, tenantId, operation);
+      const rawGet = tObj.get.bind(tObj);
+      const rawPut = tObj.put.bind(tObj);
+      const rawAdd = tObj.add.bind(tObj);
+      const rawDelete = tObj.delete.bind(tObj);
+      const rawToCollection = () => tObj.toCollection();
+
+      if (tenantScoped && tProp === 'get') {
+        return async (key: any) => {
+          const session = requireScope('Read');
+          const record = await rawGet(key);
+          assertScope(session.tenantId, 'Read');
+          if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+            throw new Error(`FAIL_CLOSED: Unauthorized direct read on '${tableName}'.`);
+          }
+          return record;
+        };
       }
-      if (isDbBlocked) {
-        return (getMockTable(tableName) as any)[tProp];
+
+      if (tenantScoped && tProp === 'bulkGet') {
+        return async (keys: any[]) => {
+          const session = requireScope('Bulk read');
+          const records = await tObj.bulkGet(keys);
+          assertScope(session.tenantId, 'Bulk read');
+          for (const record of records) {
+            if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+              throw new Error(`FAIL_CLOSED: Unauthorized bulk read on '${tableName}'.`);
+            }
+          }
+          return records;
+        };
       }
+
+      if (tenantScoped && tProp === 'toArray') {
+        return async () => {
+          const session = requireScope('Read');
+          const records = tenantIndexed
+            ? await tObj.where('tenantId').equals(session.tenantId).toArray()
+            : await rawToCollection().toArray().then((rows: any[]) => rows.filter(row => row?.tenantId === session.tenantId));
+          assertScope(session.tenantId, 'Read');
+          return records;
+        };
+      }
+
+      if (tenantScoped && tProp === 'count') {
+        return async () => {
+          const session = requireScope('Count');
+          const count = tenantIndexed
+            ? await tObj.where('tenantId').equals(session.tenantId).count()
+            : (await rawToCollection().toArray()).filter((row: any) => row?.tenantId === session.tenantId).length;
+          assertScope(session.tenantId, 'Count');
+          return count;
+        };
+      }
+
+      if (tenantScoped && (tProp === 'bulkAdd' || tProp === 'bulkPut')) {
+        const addOnly = tProp === 'bulkAdd';
+        return async (items: any[], keysOrOptions?: any, optionsArg?: any) => {
+          if (!Array.isArray(items)) throw new Error('FAIL_CLOSED: Invalid bulk payload.');
+          const keys = Array.isArray(keysOrOptions) ? keysOrOptions : undefined;
+          const options = optionsArg || (keys ? undefined : keysOrOptions);
+          if (keys && keys.length !== items.length) throw new Error('Invalid bulk keys length.');
+          if (keys && tObj.schema.primKey.keyPath) throw new Error('Bulk keys are invalid for inbound primary keys.');
+          const session = requireScope(addOnly ? 'Bulk create' : 'Bulk upsert');
+          return tObj.db.transaction('rw', tObj, async () => {
+            const result: any[] = [];
+            for (let index = 0; index < items.length; index += 1) {
+              const item = items[index];
+              if (!item || typeof item !== 'object' || (item.tenantId && item.tenantId !== session.tenantId)) {
+                throw new Error(`FAIL_CLOSED: Cross-tenant bulk operation rejected on '${tableName}'.`);
+              }
+              const value = { ...item, tenantId: session.tenantId, userId: item.userId || session.userId };
+              ensureItemPrimaryKey(tObj, value);
+              const key = Array.isArray(keys) ? keys[index] : tObj.schema.primKey.extract(value);
+              if (!addOnly && key !== undefined && key !== null) {
+                const existing = await rawGet(key);
+                if (existing && (!existing.tenantId || existing.tenantId !== session.tenantId)) {
+                  throw new Error(`FAIL_CLOSED: Unauthorized bulk upsert target on '${tableName}'.`);
+                }
+              }
+              assertScope(session.tenantId, addOnly ? 'Bulk create' : 'Bulk upsert');
+              result.push(await (addOnly ? rawAdd : rawPut)(value, Array.isArray(keys) ? keys[index] : undefined));
+            }
+            return options?.allKeys === true ? result : result[result.length - 1];
+          });
+        };
+      }
+
+      if (tenantScoped && tProp === 'bulkDelete') {
+        return async (keys: any[]) => {
+          if (!Array.isArray(keys)) throw new Error('FAIL_CLOSED: Invalid bulk delete keys.');
+          const session = requireScope('Bulk delete');
+          return tObj.db.transaction('rw', tObj, async () => {
+            for (const key of keys) {
+              const record = await rawGet(key);
+              assertScope(session.tenantId, 'Bulk delete');
+              if (record && (!record.tenantId || record.tenantId !== session.tenantId)) {
+                throw new Error(`FAIL_CLOSED: Unauthorized bulk delete target on '${tableName}'.`);
+              }
+            }
+            for (const key of keys) {
+              const record = await rawGet(key);
+              if (record) {
+                assertScope(session.tenantId, 'Bulk delete');
+                await rawDelete(key);
+              }
+            }
+          });
+        };
+      }
+
+      if (tenantScoped && tProp === 'clear') {
+        return async () => {
+          const session = requireScope('Clear');
+          return tObj.db.transaction('rw', tObj, async () => {
+            const records = await rawToCollection().toArray();
+            for (const record of records) {
+              if (record?.tenantId === session.tenantId) {
+                assertScope(session.tenantId, 'Clear');
+                await rawDelete(tObj.schema.primKey.extract(record));
+              }
+            }
+          });
+        };
+      }
+
       const realVal = tObj[tProp];
       if (typeof realVal === 'function') {
         const boundFn = realVal.bind(tObj);
         return (...args: any[]) => {
-            const res = boundFn(...args);
-            if (res && typeof res.then === 'function') {
-              return res.catch((err: any) => {
-                throw err;
-              });
-            }
-            if (res && typeof res === 'object') {
-              return wrapQueryChain(res, tableName);
-            }
-            return res;
+          const res = boundFn(...args);
+          if (res && typeof res.then === 'function') return res.catch((err: any) => { throw err; });
+          if (res && typeof res === 'object') return wrapQueryChain(res, tableName);
+          return res;
         };
       }
       return realVal;
