@@ -41,7 +41,8 @@ export class ConfigurationRepository {
       return result;
     } catch (error) {
       console.warn('[ConfigurationRepository] Failed to read records from Dexie:', error);
-      return [];
+      // Do not convert a storage failure into an apparently valid empty settings set.
+      throw error;
     }
   }
 
