@@ -62,6 +62,49 @@ describe('Settings tenant isolation', () => {
     expect(resolveConfigValue('system.name', [legacyRecord], { tenantId: 'tenant-a' })).toBe('PharmaFlow Pro');
   });
 
+  it('matches USER records by both tenant and user identity', () => {
+    const records = [
+      record('USER', { tenantId: 'tenant-b', userId: 'user-a' }, 'other-tenant'),
+      record('USER', { tenantId: 'tenant-a', userId: 'user-b' }, 'other-user'),
+      record('USER', { tenantId: 'tenant-a', userId: 'user-a' }, 'current-user')
+    ];
+
+    expect(resolveConfigValue('system.name', records, {
+      tenantId: 'tenant-a',
+      userId: 'user-a'
+    })).toBe('current-user');
+  });
+
+  it('matches DEVICE records by tenant, device, and any stored branch/user context', () => {
+    const records = [
+      record('DEVICE', {
+        tenantId: 'tenant-a',
+        deviceId: 'device-a',
+        branchId: 'branch-b',
+        userId: 'user-a'
+      }, 'other-branch'),
+      record('DEVICE', {
+        tenantId: 'tenant-a',
+        deviceId: 'device-a',
+        branchId: 'branch-a',
+        userId: 'user-b'
+      }, 'other-user'),
+      record('DEVICE', {
+        tenantId: 'tenant-a',
+        deviceId: 'device-a',
+        branchId: 'branch-a',
+        userId: 'user-a'
+      }, 'current-device-context')
+    ];
+
+    expect(resolveConfigValue('system.name', records, {
+      tenantId: 'tenant-a',
+      branchId: 'branch-a',
+      userId: 'user-a',
+      deviceId: 'device-a'
+    })).toBe('current-device-context');
+  });
+
   it('requires both tenant and branch identifiers for branch-scoped records', () => {
     const records = [
       record('BRANCH', { tenantId: 'tenant-a' }, 'missing-branch'),
