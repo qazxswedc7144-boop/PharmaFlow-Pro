@@ -10,7 +10,7 @@ import {
   ConfigChangeEvent
 } from '@/core/config/types';
 import { CONFIG_REGISTRY, normalizeConfigKey } from '@/core/config/configKeys';
-import { getCurrentContext } from '@/core/config/configScopes';
+import { assertScopedContext, getCurrentContext } from '@/core/config/configScopes';
 import { validateConfigMutation } from '@/core/config/configValidation';
 import { resolveConfigValue } from '@/core/config/configResolver';
 import { runLegacySettingsMigration } from '@/core/config/configMigration';
@@ -22,6 +22,47 @@ import { authService } from '@features/auth/services/authService';
 
 export class ConfigurationService {
   private cache: Map<string, ConfigurationRecord<any>> = new Map();
+
+  private getCacheKey(record: ConfigurationRecord<any>): string {
+    const context = record.context || {};
+    return [
+      record.scope,
+      context.tenantId || '',
+      context.branchId || '',
+      context.userId || '',
+      context.deviceId || '',
+      normalizeConfigKey(record.key)
+    ].join('\u001f');
+  }
+
+  private assertMutationAuthorized(scope: ConfigScope, context: ConfigurationContext, operation: 'تعديل' | 'حذف'): void {
+    const user = authService.getCurrentUser();
+    if (!user?.id) {
+      throw new Error(`[ConfigurationService] غير مصرح لك: يجب تسجيل الدخول قبل ${operation} الإعدادات.`);
+    }
+
+    assertScopedContext(scope, context);
+
+    const role = String(user.Role || '').trim().toLowerCase();
+    const isSuperAdmin = ['superadmin', 'super_admin', 'platform_owner', 'مدير النظام'].includes(role);
+    const isAdmin = isSuperAdmin || ['admin', 'administrator', 'tenant_admin', 'tenant-admin', 'owner', 'مدير'].includes(role);
+
+    if (scope === 'SYSTEM' && !isSuperAdmin) {
+      throw new Error('[ConfigurationService] يتطلب هذا الإعداد صلاحية SuperAdmin.');
+    }
+
+    if ((scope === 'TENANT' || scope === 'BRANCH') && !isAdmin) {
+      throw new Error(`[ConfigurationService] غير مصرح لك بـ${operation} إعدادات المؤسسة أو الفرع. يتطلب صلاحيات مدير.`);
+    }
+
+    if (scope === 'USER' && context.userId !== user.id) {
+      throw new Error('[ConfigurationService] لا يمكنك تعديل إعدادات مستخدم آخر.');
+    }
+
+    if (scope === 'DEVICE' && user.tenantId && context.tenantId !== user.tenantId) {
+      throw new Error('[ConfigurationService] سياق الجهاز لا يتبع المؤسسة الحالية.');
+    }
+  }
   private isInitialized = false;
   private initPromise: Promise<void> | null = null;
 
@@ -34,23 +75,18 @@ export class ConfigurationService {
 
     this.initPromise = (async () => {
       try {
-        // 1. Run safe idempotent legacy storage migration with 1000ms timeout max
-        await Promise.race([
-          runLegacySettingsMigration(),
-          new Promise((res) => setTimeout(res, 1000))
-        ]);
+        // Legacy unscoped records are preserved and intentionally not auto-assigned
+        // to the current tenant. Migration remains deferred until ownership is verified.
+        await runLegacySettingsMigration();
 
-        // 2. Load all records into reactive memory cache with 1000ms timeout max
-        const allRecords = await Promise.race([
-          configurationRepository.getAllRecords(),
-          new Promise<ConfigurationRecord<any>[]>((res) => setTimeout(() => res([]), 1000))
-        ]);
+        // Load the complete record set; a timeout must not mark a partial cache as ready.
+        const allRecords = await configurationRepository.getAllRecords();
 
         this.cache.clear();
         if (Array.isArray(allRecords)) {
           for (const record of allRecords) {
             if (record && record.key) {
-              this.cache.set(normalizeConfigKey(record.key), record);
+              this.cache.set(this.getCacheKey(record), record);
             }
           }
         }
@@ -89,11 +125,6 @@ export class ConfigurationService {
     const context = getCurrentContext(overrideContext);
     const canonicalKey = normalizeConfigKey(key);
 
-    const cached = this.cache.get(canonicalKey);
-    if (cached) {
-      return cached.value as T;
-    }
-
     const allRecords = Array.from(this.cache.values());
     return resolveConfigValue<T>(canonicalKey, allRecords, context);
   }
@@ -108,17 +139,12 @@ export class ConfigurationService {
   ): Promise<void> {
     await this.initialize();
 
-    // 👈 إصلاح أمني: التحقق من صلاحيات المستخدم (RBAC)
-    const user = authService.getCurrentUser();
-    if (user && user.Role !== 'Admin' && user.Role !== 'SuperAdmin') {
-      throw new Error('[ConfigurationService] غير مصرح لك بتعديل الإعدادات. يتطلب صلاحيات مدير.');
-    }
-
     const context = getCurrentContext(overrideContext);
     const canonicalKey = normalizeConfigKey(key);
 
     const def = CONFIG_REGISTRY[canonicalKey];
     const scope: ConfigScope = def ? def.scope : 'TENANT';
+    this.assertMutationAuthorized(scope, context, 'تعديل');
 
     // 1. Validate mutation
     const validation = validateConfigMutation(canonicalKey, value, scope, context);
@@ -143,7 +169,7 @@ export class ConfigurationService {
     await configurationRepository.saveRecord(record);
 
     // 4. Update memory cache
-    this.cache.set(canonicalKey, record);
+    this.cache.set(this.getCacheKey(record), record);
 
     // 5. Handle network synchronization if syncable
     // نضعها في كتلة try-catch حتى لا يمنع فشل المزامنة حفظ الإعداد محلياً
@@ -227,21 +253,16 @@ export class ConfigurationService {
   ): Promise<void> {
     await this.initialize();
 
-    // 👈 إصلاح أمني: التحقق من صلاحيات المستخدم (RBAC)
-    const user = authService.getCurrentUser();
-    if (user && user.Role !== 'Admin' && user.Role !== 'SuperAdmin') {
-      throw new Error('[ConfigurationService] غير مصرح لك بحذف الإعدادات. يتطلب صلاحيات مدير.');
-    }
-
     const context = getCurrentContext(overrideContext);
     const canonicalKey = normalizeConfigKey(key);
     const def = CONFIG_REGISTRY[canonicalKey];
     const scope: ConfigScope = def ? def.scope : 'TENANT';
+    this.assertMutationAuthorized(scope, context, 'حذف');
 
     const oldValue = this.getSync(key, context); // 👈 أخذ القيمة القديمة قبل الحذف
 
     await configurationRepository.deleteRecord(canonicalKey, scope, context);
-    this.cache.delete(canonicalKey);
+    this.cache.delete(this.getCacheKey({ key: canonicalKey, scope, context, value: undefined, version: 0, updatedAt: '' }));
 
     // 👈 إصلاح: إطلاق حدث عند الحذف ليتحدث باقي التطبيق
     configurationEvents.emit({
