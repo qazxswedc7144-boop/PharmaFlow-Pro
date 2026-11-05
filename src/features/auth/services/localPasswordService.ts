@@ -77,7 +77,7 @@ export async function verifyLocalPassword(
     const actual = await derivePasswordBits(password, salt, iterations);
     let difference = actual.length ^ expected.length;
     for (let index = 0; index < Math.min(actual.length, expected.length); index += 1) {
-      difference |= actual[index] ^ expected[index];
+      difference |= (actual[index] ?? 0) ^ (expected[index] ?? 0);
     }
     return { valid: difference === 0, needsUpgrade: false };
   } catch {

@@ -28,6 +28,7 @@ export async function verifyPasswordHash(password: string, encodedHash: string):
   const iterations = Number(parts[1]);
   const saltText = parts[2];
   const hashText = parts[3];
+  if (!saltText || !hashText) return false;
   const validBase64 = (value: string) =>
     /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value);
 

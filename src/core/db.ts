@@ -55,7 +55,7 @@ function requireTenantForTable(table: any, operation: string) {
   if (!session.tenantId) {
     throw new Error(`FAIL_CLOSED: ${operation} forbidden on '${table.name}' without an active tenant session.`);
   }
-  return session;
+  return session as typeof session & { tenantId: string };
 }
 
 function assertTenantUnchanged(table: any, expectedTenantId: string, operation: string) {
@@ -1383,7 +1383,7 @@ export class PharmaFlowDB extends Dexie {
           { id: 'acc-cash', code: '101', name: 'الصندوق الرئيسي', type: 'ASSET', balance: 0, isSystem: true, isActive: true, balance_type: 'DEBIT', balanceType: 'DEBIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() },
           { id: 'acc-sales', code: '401', name: 'إيرادات المبيعات', type: 'REVENUE', balance: 0, isSystem: true, isActive: true, balance_type: 'CREDIT', balanceType: 'CREDIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() },
           { id: 'acc-cogs', code: '501', name: 'تكلفة البضاعة المباعة', type: 'EXPENSE', balance: 0, isSystem: true, isActive: true, balance_type: 'DEBIT', balanceType: 'DEBIT', debit: 0, credit: 0, updatedAt: new Date().toISOString() }
-        ].map(record => ({ ...record, tenantId: activeTenantId }))).catch((err) => console.warn('[DB] Accounts seed warning:', err));
+        ].map(record => ({ ...record, tenantId: activeTenantId })) as any[]).catch((err) => console.warn('[DB] Accounts seed warning:', err));
       }
 
       // Seed the default cashbox without changing existing user or cash movement records.
