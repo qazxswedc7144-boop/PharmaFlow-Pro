@@ -362,6 +362,38 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
   });
 
   describe('4. Cashbox transfer isolation', () => {
+    it('rejects cashbox accounts assigned to a different branch before posting', async () => {
+      setSession(TENANT_A, BRANCH_A);
+      await db.accounts.add({
+        id: 'cash-account-source', code: '101-01', name: 'Source Cash', type: 'ASSET',
+        tenantId: TENANT_A, branchId: 'branch-B', isActive: true
+      } as any);
+      await db.accounts.add({
+        id: 'cash-account-destination', code: '101-02', name: 'Destination Cash', type: 'ASSET',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+      await db.cashboxes.add({
+        id: 'cashbox-source', name: 'Source', accountId: 'cash-account-source',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+      await db.cashboxes.add({
+        id: 'cashbox-destination', name: 'Destination', accountId: 'cash-account-destination',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+
+      await expect(cashboxTransferWorkflow.execute({
+        sourceCashboxId: 'cashbox-source',
+        destinationCashboxId: 'cashbox-destination',
+        amount: 25,
+        date: '2026-11-05',
+        tenantId: TENANT_A,
+        branchId: BRANCH_A,
+        transactionUuid: 'branch-mismatch-transfer'
+      })).rejects.toThrow(/لا يتبع الفرع المحدد للتحويل/);
+
+      expect(await db.journalEntries.count()).toBe(0);
+    });
+
     it('rejects tenant or branch context spoofing before any accounting write', async () => {
       setSession(TENANT_A, BRANCH_A);
       const input = {
