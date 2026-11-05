@@ -389,23 +389,23 @@ export class PharmaFlowDB extends Dexie {
 
     // Version 27: Phase 8.1 - Offline Multi-Tenant Composite Key Architecture & Data Isolation
     this.version(27).stores({
-      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId',
-      invoices: '&id, invoice_number, invoiceNumber, date, Date, partner_id, partnerId, type, payment_status, financial_status, document_status, is_synced, createdAt, transactionUuid, tenantId, branchId',
-      sales: '&id, invoice_number, date, Date, InvoiceStatus, hash, SaleID, createdAt, transactionUuid, tenantId, branchId',
-      purchases: '&id, invoice_number, date, Date, invoiceStatus, hash, createdAt, transactionUuid, tenantId, branchId',
-      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
-      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
-      journalEntries: '&id, date, sourceId, source_id, referenceId, reference_id, partnerId, sourceType, status, createdAt, tenantId, branchId',
-      accounts: '&id, code, name, type, parentId, tenantId',
-      syncQueue: '++id, &idempotencyKey, mutationId, syncStatus, tenantId',
-      outbox: '++id, &mutationId, &idempotencyKey, status, type, tenantId, createdAt'
+      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId, [tenantId+id], [tenantId+barcode], [tenantId+sku], [tenantId+categoryId]',
+      invoices: '&id, invoice_number, invoiceNumber, date, Date, partner_id, partnerId, type, payment_status, financial_status, document_status, is_synced, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoiceNumber], [tenantId+invoice_number], [tenantId+type], [tenantId+branchId], [tenantId+partnerId], [tenantId+partner_id], [type+partner_id], [type+partnerId], [type+invoice_number], [type+invoiceNumber]',
+      sales: '&id, invoice_number, date, Date, InvoiceStatus, hash, SaleID, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoice_number], [tenantId+branchId]',
+      purchases: '&id, invoice_number, date, Date, invoiceStatus, hash, createdAt, transactionUuid, tenantId, branchId, [tenantId+id], [tenantId+invoice_number], [tenantId+branchId]',
+      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
+      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
+      journalEntries: '&id, date, sourceId, source_id, referenceId, reference_id, partnerId, sourceType, status, createdAt, tenantId, branchId, [tenantId+id], [tenantId+branchId], [tenantId+date]',
+      accounts: '&id, code, name, type, parentId, tenantId, [tenantId+id], [tenantId+code]',
+      syncQueue: '++id, &idempotencyKey, mutationId, syncStatus, tenantId, [tenantId+id], [tenantId+syncStatus], [syncStatus+createdAt], [entityType+createdAt]',
+      outbox: '++id, &mutationId, &idempotencyKey, status, type, tenantId, createdAt, [tenantId+status], [status+createdAt]'
     });
 
     // Version 28: Defensive Product & Entity Schema Upgrade - Indexing Name, ProductID, Is_Active
     this.version(28).stores({
-      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId',
-      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId',
-      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId'
+      products: '&id, name, Name, barcode, sku, ProductID, categoryId, supplierId, is_active, Is_Active, stock, StockQuantity, updatedAt, tenantId, [tenantId+id], [tenantId+barcode], [tenantId+sku], [tenantId+categoryId], [tenantId+name], [tenantId+Name]',
+      customers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]',
+      suppliers: '&id, name, Name, phone, email, is_active, Is_Active, tenantId, [tenantId+id], [tenantId+phone]'
     });
 
     // Version 29: Phase 2.3 - Smart Import Alias Learning System Multi-Tenant Schema & Indexes
@@ -465,6 +465,18 @@ export class PharmaFlowDB extends Dexie {
       vouchers: '&id, voucher_id, type, partner_id, partnerId, date, status, tenantId, branchId'
     });
 
+    // Version 37: Tenant-scoped lookup indexes for security-sensitive collections.
+    // Index creation is additive; existing records are not assigned to a tenant here.
+    this.version(37).stores({
+      users: '&id, username, role, status, branch, createdAt, cashboxId, tenantId',
+      userPermissions: '&id, userId, tenantId, [tenantId+userId]',
+      cashboxes: '&id, name, accountId, branchId, isActive, openingBalance, openingBalanceJournalId, tenantId',
+      cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId, [tenantId+cashboxId], [tenantId+userId]',
+      financialHealthSnapshots: '&id, date, tenantId, [tenantId+date]',
+      systemAlerts: '&id, type, timestamp, isRead, tenantId, [tenantId+type]',
+      accountingPeriods: '&id, Start_Date, End_Date, Is_Locked, start_date, end_date, is_locked, tenantId, [tenantId+Is_Locked]'
+    });
+
     // Handle structural integrity and recovery
     this.on('versionchange', () => {
       console.warn("Database structure updated in another tab. Switching to resilient mode.");
@@ -479,7 +491,8 @@ export class PharmaFlowDB extends Dexie {
       'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
       'accounts', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
       'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
-      'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments'
+      'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments',
+      'financialHealthSnapshots', 'systemAlerts', 'accountingPeriods'
     ];
     targetTables.forEach(tableName => {
       try {
@@ -524,6 +537,13 @@ export class PharmaFlowDB extends Dexie {
                 tenantId: session.tenantId, // Force tenantId from session
                 userId: mods.userId || (obj ? obj.userId : undefined) || session.userId
               };
+            }
+          });
+          table.hook('deleting', (_primKey: any, obj: any) => {
+            const session = getCurrentUserSession();
+            if (!session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
+              console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey);
+              throw new Error("FAIL_CLOSED: Unauthorized data deletion attempt (Cross-tenant or Orphaned).");
             }
           });
         }
@@ -653,12 +673,23 @@ export class PharmaFlowDB extends Dexie {
     return await this.suppliers.where('tenantId').equals(tenantId).toArray(); 
   }
   async getCurrencies(): Promise<Currency[]> { return await this.getSetting('CURRENCIES', []) as Currency[]; }
-  async getMedicineAlerts() { return await this.systemAlerts.where('type').equals('STOCK').toArray(); }
+  async getMedicineAlerts() {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    return await this.systemAlerts
+      .where('tenantId').equals(tenantId)
+      .filter((alert: any) => alert.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(alert.Type))
+      .toArray();
+  }
   async getDailyAuditTask(date: string) { return await this.dailyAuditTasks.where('date').equals(date).first(); }
   async createDailyAuditTask(task: any) { return await this.dailyAuditTasks.add(task); }
   async saveAuditProgress(progress: any) { return await this.auditProgress.put(progress); }
   async finalizeAudit(taskId: string, results: any) { return await this.dailyAuditTasks.update(taskId, { ...results, status: 'COMPLETED' }); }
-  async clearOldAlerts() { return await this.systemAlerts.clear(); }
+  async clearOldAlerts() {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) throw new Error('FAIL_CLOSED: Cannot clear alerts without an active tenant session.');
+    return await this.systemAlerts.where('tenantId').equals(tenantId).delete();
+  }
   
   async saveCustomer(customer: Customer) { return await this.customers.put(customer); }
   async saveSupplier(supplier: Supplier) { return await this.suppliers.put(supplier); }
@@ -975,7 +1006,9 @@ export class PharmaFlowDB extends Dexie {
   }
 
   async getTransactions() {
-    const all = await this.invoices.toArray();
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) return [];
+    const all = await this.invoices.where('tenantId').equals(tenantId).toArray();
     return all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 
@@ -1832,10 +1865,17 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'getMedicineAlerts') return async () => {
       const session = getCurrentUserSession();
       if (!session.tenantId) return [];
-      return await target.systemAlerts.where('tenantId').equals(session.tenantId).filter((a: any) => a.type === 'STOCK').toArray();
+      return await target.systemAlerts
+        .where('tenantId').equals(session.tenantId)
+        .filter((a: any) => a.type === 'STOCK' || ['EXPIRY', 'LOW_STOCK', 'SEASONAL'].includes(a.Type))
+        .toArray();
     };
     if (prop === 'saveMedicineAlert') return async (alert: any) => dbProxy.systemAlerts.add(alert);
-    if (prop === 'clearOldAlerts') return async () => dbProxy.systemAlerts.clear();
+    if (prop === 'clearOldAlerts') return async () => {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) throw new Error('FAIL_CLOSED: Cannot clear alerts without an active tenant session.');
+      return await target.systemAlerts.where('tenantId').equals(session.tenantId).delete();
+    };
     if (prop === 'getDailyAuditTask') return async (date: string) => dbProxy.dailyAuditTasks.where('date').equals(date).first();
     if (prop === 'createDailyAuditTask') return async (task: any) => dbProxy.dailyAuditTasks.add(task);
     if (prop === 'saveAuditProgress') return async (progress: any) => dbProxy.auditProgress.put(progress);
