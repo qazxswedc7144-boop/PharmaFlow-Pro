@@ -96,7 +96,7 @@ export class FinancialHealthService {
 
     // 6. Create Snapshot
     const snapshot: FinancialHealthSnapshot = {
-      id: `HEALTH-${Date.now()}`,
+      id: db.generateId('HEALTH'),
       date: today,
       score,
       metrics: kpis,
@@ -185,7 +185,7 @@ export class FinancialHealthService {
     
     if (totalSales30d > 0 && (kpis.accountsReceivable / totalSales30d) > 0.4) {
       alerts.push({
-        id: `ALRT-AR-${Date.now()}`,
+        id: db.generateId('ALRT-AR'),
         type: 'FINANCIAL',
         severity: 'HIGH',
         message: 'تحذير: ذمم العملاء تجاوزت 40% من إجمالي المبيعات. خطر في السيولة.',
@@ -206,7 +206,7 @@ export class FinancialHealthService {
     });
     if (overdueAP) {
       alerts.push({
-        id: `ALRT-AP-${Date.now()}`,
+        id: db.generateId('ALRT-AP'),
         type: 'FINANCIAL',
         severity: 'MEDIUM',
         message: 'تنبيه: توجد فواتير مشتريات متأخرة السداد لأكثر من 30 يوماً.',
@@ -219,7 +219,7 @@ export class FinancialHealthService {
     // 3. Negative cash
     if (kpis.cashBalance < 0) {
       alerts.push({
-        id: `ALRT-CASH-${Date.now()}`,
+        id: db.generateId('ALRT-CASH'),
         type: 'FINANCIAL',
         severity: 'CRITICAL',
         message: 'حرج: رصيد الصندوق سالب! يرجى مراجعة العمليات المالية فوراً.',
@@ -245,7 +245,7 @@ export class FinancialHealthService {
     });
     if (stagnantProducts.length > 5) {
       alerts.push({
-        id: `ALRT-STOCK-${Date.now()}`,
+        id: db.generateId('ALRT-STOCK'),
         type: 'STOCK',
         severity: 'MEDIUM',
         message: `تنبيه: يوجد ${stagnantProducts.length} أصناف راكدة لم يتم بيعها منذ 90 يوماً.`,
@@ -260,7 +260,7 @@ export class FinancialHealthService {
     const margin = totalRevenue > 0 ? (kpis.netProfit / totalRevenue) * 100 : 0;
     if (margin < 5 && totalRevenue > 0) {
       alerts.push({
-        id: `ALRT-PROFIT-${Date.now()}`,
+        id: db.generateId('ALRT-PROFIT'),
         type: 'FINANCIAL',
         severity: 'HIGH',
         message: 'تحذير: هامش الربح الصافي أقل من 5%. كفاءة التشغيل منخفضة.',
