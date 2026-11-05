@@ -231,8 +231,7 @@ export const UsersTab: React.FC = () => {
         }
 
         const existing = await db.userPermissions
-          .where('userId').equals(selectedUser.id)
-          .and(permission => permission.tenantId === activeSession.tenantId)
+          .where('[tenantId+userId]').equals([activeSession.tenantId, selectedUser.id])
           .first();
 
         if (existing) {
