@@ -48,6 +48,15 @@ describe('ConfigurationRepository legacy preservation', () => {
     await expect(repository.getAllRecords()).rejects.toThrow('storage unavailable');
   });
 
+  it('propagates scoped record read failures instead of treating them as missing settings', async () => {
+    mockDb.settings.get.mockRejectedValueOnce(new Error('scoped read unavailable'));
+
+    const repository = new ConfigurationRepository();
+    await expect(repository.getRecord('system.name', 'TENANT', {
+      tenantId: 'tenant-a'
+    })).rejects.toThrow('scoped read unavailable');
+  });
+
   it('loads only correctly scoped records and preserves unscoped legacy values', async () => {
     mockDb.rows.set('tenant:tenant-a:system.name', {
       key: 'tenant:tenant-a:system.name',
