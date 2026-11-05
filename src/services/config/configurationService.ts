@@ -94,7 +94,9 @@ export class ConfigurationService {
         this.isInitialized = true;
       } catch (err) {
         console.error('[ConfigurationService] Failed to initialize:', err);
-        // 👈 إصلاح: لا نجعلها true في حالة الفشل، لكي نتمكن من إعادة المحاولة لاحقاً
+        // Keep initialization retryable and surface storage failures to callers;
+        // never silently resolve critical settings from defaults after a failed read.
+        throw err;
       } finally {
         this.initPromise = null;
       }
