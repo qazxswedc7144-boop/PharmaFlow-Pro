@@ -61,6 +61,10 @@ export class FinancialHealthService {
    * Main entry point to refresh financial health data
    */
   static async refreshHealthMonitor(): Promise<FinancialHealthSnapshot> {
+    const session = getCurrentUserSession();
+    if (!session.tenantId) {
+      throw new Error('FAIL_CLOSED: لا يمكن تحديث المؤشر المالي دون جلسة مؤسسة نشطة.');
+    }
     const now = new Date().toISOString();
     const today = now.split('T')[0] || '';
 
@@ -90,7 +94,6 @@ export class FinancialHealthService {
     // 5. Generate Insights
     const insights = this.generateInsights(kpis, breakdown);
 
-    const session = getCurrentUserSession();
     // 6. Create Snapshot
     const snapshot: FinancialHealthSnapshot = {
       id: `HEALTH-${Date.now()}`,
@@ -169,8 +172,8 @@ export class FinancialHealthService {
   }
 
   private static async detectRisks(kpis: HealthKPIs, sales: Sale[], purchases: Purchase[], products: Product[]) {
-    const session = getCurrentUserSession();
-    const alerts: (SystemAlert & { tenantId?: string })[] = [];
+    if (!session.tenantId) return;
+    const alerts: SystemAlert[] = [];
     const now = new Date().toISOString();
 
     // 1. AR > 40% of total sales (Last 30 days)
@@ -267,12 +270,11 @@ export class FinancialHealthService {
       });
     }
 
-    if (!session.tenantId) return;
-
-    // Save alerts (only if not already present and unread to avoid flooding)
+    // Save alerts (only if not already present and unread to avoid flooding).
+    // Older records may store the flag as numeric 0; current records use boolean false.
     const existingAlerts = await db.systemAlerts
       .where('tenantId').equals(session.tenantId)
-      .and(a => a.isRead === 0)
+      .filter(a => a.isRead === false || (a.isRead as any) === 0)
       .toArray();
     
     for (const alert of alerts) {
@@ -368,7 +370,7 @@ export class FinancialHealthService {
     if (!tenantId) return [];
     return await db.systemAlerts
       .where('tenantId').equals(tenantId)
-      .filter(a => a.isRead === 0)
+      .filter(a => a.isRead === false || (a.isRead as any) === 0)
       .toArray();
   }
 }
