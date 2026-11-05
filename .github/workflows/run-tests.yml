@@ -40,3 +40,9 @@ jobs:
         run: npx vitest run src/core/config/config-security.test.ts
         env:
           NODE_ENV: test
+
+      - name: TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Production Build
+        run: npm run build
