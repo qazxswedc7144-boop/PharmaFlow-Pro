@@ -465,6 +465,14 @@ export class PharmaFlowDB extends Dexie {
       vouchers: '&id, voucher_id, type, partner_id, partnerId, date, status, tenantId, branchId'
     });
 
+    this.version(37).stores({
+      // Add tenant indexes without rewriting or reassigning legacy records.
+      users: '&id, username, role, status, branch, createdAt, cashboxId, tenantId, [tenantId+username]',
+      userPermissions: '&id, userId, tenantId, [tenantId+userId]',
+      cashboxes: '&id, name, accountId, branchId, isActive, openingBalance, openingBalanceJournalId, tenantId',
+      cashFlow: '&id, transaction_id, date, type, cashboxId, userId, tenantId, [tenantId+cashboxId], [tenantId+userId]'
+    });
+
     // Handle structural integrity and recovery
     this.on('versionchange', () => {
       console.warn("Database structure updated in another tab. Switching to resilient mode.");
