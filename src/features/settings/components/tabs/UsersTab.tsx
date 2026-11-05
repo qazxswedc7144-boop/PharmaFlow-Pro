@@ -162,11 +162,18 @@ export const UsersTab: React.FC = () => {
           if (!persistedUser || persistedUser.tenantId !== activeSession.tenantId) {
             throw new Error('رفض التعديل: المستخدم لا يتبع المؤسسة النشطة.');
           }
+          const requestedCashboxId = formData.cashboxId || defaultCashboxId;
+          const assignedCashbox = requestedCashboxId
+            ? await db.cashboxes.get(requestedCashboxId)
+            : undefined;
+          if (assignedCashbox && assignedCashbox.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض التعديل: الصندوق المحدد لا يتبع المؤسسة النشطة.');
+          }
 
           // Passwords must be provisioned and hashed by the trusted server, never stored in Dexie.
           await db.users.update(editingUser.id, {
             name: formData.name, role: formData.role, branch: formData.branch,
-            status: formData.status, cashboxId: formData.cashboxId || defaultCashboxId,
+            status: formData.status, cashboxId: requestedCashboxId,
             tenantId: persistedUser.tenantId
           });
         });
@@ -184,10 +191,17 @@ export const UsersTab: React.FC = () => {
         await db.transaction('rw', db.users, async () => {
           const activeSession = getAuthorizedTenantSession();
           if (!activeSession) throw new Error('انتهت جلسة الإدارة أو تغير سياق المؤسسة.');
+          const requestedCashboxId = formData.cashboxId || defaultCashboxId;
+          const assignedCashbox = requestedCashboxId
+            ? await db.cashboxes.get(requestedCashboxId)
+            : undefined;
+          if (assignedCashbox && assignedCashbox.tenantId !== activeSession.tenantId) {
+            throw new Error('رفض الإضافة: الصندوق المحدد لا يتبع المؤسسة النشطة.');
+          }
           await db.users.add({
             ...profileData,
             tenantId: activeSession.tenantId,
-            cashboxId: formData.cashboxId || defaultCashboxId,
+            cashboxId: requestedCashboxId,
             id: crypto.randomUUID(),
             createdAt: new Date().toISOString()
           });
