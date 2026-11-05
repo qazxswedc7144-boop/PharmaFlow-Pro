@@ -362,6 +362,40 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
   });
 
   describe('4. Cashbox transfer isolation', () => {
+    it('rejects a transfer that would make the source cashbox balance negative', async () => {
+      setSession(TENANT_A, BRANCH_A);
+      await db.accounts.add({
+        id: 'cash-account-source-low', code: '101-11', name: 'Low Source Cash', type: 'ASSET',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true, balance: 50
+      } as any);
+      await db.accounts.add({
+        id: 'cash-account-destination-low', code: '101-12', name: 'Destination Cash', type: 'ASSET',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true, balance: 0
+      } as any);
+      await db.cashboxes.add({
+        id: 'cashbox-source-low', name: 'Low Source', accountId: 'cash-account-source-low',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+      await db.cashboxes.add({
+        id: 'cashbox-destination-low', name: 'Destination', accountId: 'cash-account-destination-low',
+        tenantId: TENANT_A, branchId: BRANCH_A, isActive: true
+      } as any);
+
+      await expect(cashboxTransferWorkflow.execute({
+        sourceCashboxId: 'cashbox-source-low',
+        destinationCashboxId: 'cashbox-destination-low',
+        amount: 75,
+        date: '2026-11-05',
+        tenantId: TENANT_A,
+        branchId: BRANCH_A,
+        transactionUuid: 'insufficient-cash-transfer'
+      })).rejects.toThrow(/رصيد صندوق المصدر غير كافٍ/);
+
+      expect(await db.journalEntries.count()).toBe(0);
+      expect((await db.accounts.get('cash-account-source-low'))?.balance).toBe(50);
+      expect((await db.accounts.get('cash-account-destination-low'))?.balance).toBe(0);
+    });
+
     it('rejects cashbox accounts assigned to a different branch before posting', async () => {
       setSession(TENANT_A, BRANCH_A);
       await db.accounts.add({
