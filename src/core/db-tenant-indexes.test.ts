@@ -48,6 +48,8 @@ describe('Tenant-scoped Dexie indexes', () => {
       .rejects.toThrow(/Tenant administrator authorization required/);
     await expect(database.userPermissions.update('permissions-a', { permissions: { Admin: true } }))
       .rejects.toThrow(/Tenant administrator authorization required/);
+    await expect(database.users.bulkAdd([{ id: 'staff-bulk-denied', username: 'denied-bulk' }]))
+      .rejects.toThrow(/Tenant administrator authorization required/);
 
     TokenProvider.setSession({
       id: 'admin-b',
@@ -60,6 +62,10 @@ describe('Tenant-scoped Dexie indexes', () => {
     await expect(database.users.delete('staff-a'))
       .rejects.toThrow(/Cross-tenant or orphaned delete/);
     await expect(database.userPermissions.delete('permissions-a'))
+      .rejects.toThrow(/Cross-tenant or orphaned delete/);
+    await expect(database.users.bulkDelete(['staff-a']))
+      .rejects.toThrow(/Cross-tenant or orphaned delete/);
+    await expect(database.userPermissions.bulkDelete(['permissions-a']))
       .rejects.toThrow(/Cross-tenant or orphaned delete/);
   });
 
