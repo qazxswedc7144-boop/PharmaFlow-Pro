@@ -77,7 +77,7 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
   const originalClear = TableProto.clear;
   if (originalClear) {
     TableProto.clear = function(this: any) {
-      if (this?.name === 'users' || this?.name === 'userPermissions') {
+      if (this?.name === 'users' || this?.name === 'userPermissions' || this?.name === 'cashboxes' || this?.name === 'cashFlow') {
         return Promise.reject(new Error(
           `FAIL_CLOSED: Bulk clear is forbidden on '${this.name}'; use tenant-verified record deletion.`
         ));
@@ -564,11 +564,12 @@ export class PharmaFlowDB extends Dexie {
               };
             }
           });
-          if (tableName === 'users' || tableName === 'userPermissions') {
+          if (tableName === 'users' || tableName === 'userPermissions' || tableName === 'cashboxes' || tableName === 'cashFlow') {
             table.hook('deleting', (_primKey: any, obj: any) => {
               assertTenantAdminForUserManagement(tableName);
+              const authSession = TokenProvider.getCurrentSession();
               const session = getCurrentUserSession();
-              if (!session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
+              if (!authSession.isAuthenticated || !authSession.token || !session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
                 throw new Error(`FAIL_CLOSED: Cross-tenant or orphaned delete blocked on '${tableName}'.`);
               }
             });
