@@ -25,14 +25,14 @@ export class ConfigurationService {
 
   private getCacheKey(record: ConfigurationRecord<any>): string {
     const context = record.context || {};
-    return [
+    return JSON.stringify([
       record.scope,
       context.tenantId || '',
       context.branchId || '',
       context.userId || '',
       context.deviceId || '',
       normalizeConfigKey(record.key)
-    ]) ;
+    ]);
   }
 
   private assertMutationAuthorized(scope: ConfigScope, context: ConfigurationContext, operation: 'تعديل' | 'حذف'): void {
