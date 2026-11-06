@@ -906,7 +906,7 @@ export class DistributedSyncEngine {
           response = await send();
         }
         assertSyncSessionCurrent(snapshot);
-        const body = await response.json().catch(() => ({}));
+        const body = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
         assertSyncSessionCurrent(snapshot);
         const result = Array.isArray(body.results)
           ? body.results.find((item: any) => item?.mutationId === mutation.mutationId || item?.id === mutation.mutationId) || body.results[0]
