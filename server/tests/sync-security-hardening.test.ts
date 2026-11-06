@@ -216,7 +216,8 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
     });
 
     it('does not process another user\'s outbox event within the same tenant', async () => {
-      setSession(TENANT_A, USER_B);
+      // Create the event as its real owner, then switch users before draining.
+      setSession(TENANT_A, USER_A);
       await db.outbox.add({
         id: 91,
         tenantId: TENANT_A,
@@ -227,6 +228,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
         mutationId: 'mut-other-user-outbox'
       } as any);
 
+      setSession(TENANT_A, USER_B);
       const engine = DistributedSyncEngine.getInstance();
       await engine.drainQueue();
 
@@ -682,7 +684,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       setSession(TENANT_A, USER_A);
       await expect(
         db.outbox.update(92, { status: 'pending' })
-      ).rejects.toThrow('Sync record update requires its exact authenticated user owner.');
+      ).rejects.toThrow('Sync record update requires its exact authenticated tenant/user owner.');
 
       const unchanged = await db.outbox.get(92);
       expect(unchanged?.status).toBe('processing');
