@@ -646,6 +646,50 @@ export function getCurrentUserSession() {
     userId: undefined
   };
 }
+
+/**
+ * Returns a sync owner only when the active auth state is authenticated and
+ * its token identity exactly matches the normalized application session.
+ * A stale user object or tenant context alone is never sufficient.
+ */
+export function getTrustedSyncOwner(): { tenantId: string; userId: string; branchId?: string } | null {
+  try {
+    const auth = TokenProvider.getCurrentSession();
+    const session = getCurrentUserSession();
+    const user = auth?.user as any;
+    const primaryUserId = typeof user?.id === 'string' ? user.id.trim() : '';
+    const legacyUserId = typeof user?.user_id === 'string' ? user.user_id.trim() : '';
+    const primaryTenantId = typeof user?.tenantId === 'string' ? user.tenantId.trim() : '';
+    const legacyTenantId = typeof user?.tenant_id === 'string' ? user.tenant_id.trim() : '';
+    const authTenantId = typeof auth?.tenantId === 'string' ? auth.tenantId.trim() : '';
+    const authUserId = primaryUserId || legacyUserId;
+    const authResolvedTenantId = authTenantId || primaryTenantId || legacyTenantId;
+
+    if (
+      auth?.isAuthenticated !== true ||
+      typeof auth.token !== 'string' ||
+      !auth.token.trim() ||
+      !authUserId ||
+      !authResolvedTenantId ||
+      (primaryUserId && legacyUserId && primaryUserId !== legacyUserId) ||
+      (primaryTenantId && legacyTenantId && primaryTenantId !== legacyTenantId) ||
+      (authTenantId && primaryTenantId && authTenantId !== primaryTenantId) ||
+      (authTenantId && legacyTenantId && authTenantId !== legacyTenantId) ||
+      session.userId !== authUserId ||
+      session.tenantId !== authResolvedTenantId
+    ) {
+      return null;
+    }
+
+    return {
+      tenantId: authResolvedTenantId,
+      userId: authUserId,
+      branchId: session.branchId
+    };
+  } catch {
+    return null;
+  }
+}
 import { 
   Product, UnifiedInvoice, InvoiceItem, Account, AccountingEntry, JournalEntry, InvoiceStatus, Customer, Supplier, 
   JournalLine, InventoryTransaction, AccountingPeriod, SystemBackup, ValidationRule,
