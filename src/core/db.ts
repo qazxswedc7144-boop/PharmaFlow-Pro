@@ -2680,13 +2680,54 @@ function wrapTable(realTable: any, tableName: string): any {
       if (tenantScoped && tProp === 'clear') {
         return async () => {
           const session = requireScope('Clear');
+          const isSyncOwnedTable = SYNC_OWNED_TABLES.has(tableName);
+          const owner = isSyncOwnedTable ? getTrustedSyncOwner() : null;
+
+          if (
+            isSyncOwnedTable &&
+            (
+              !owner ||
+              owner.tenantId !== session.tenantId ||
+              owner.userId !== session.userId
+            )
+          ) {
+            throw new Error(
+              "FAIL_CLOSED: Sync table clear requires the exact authenticated tenant/user owner."
+            );
+          }
+
           return tObj.db.transaction('rw', tObj, async () => {
             const records = await rawToCollection().toArray();
+            assertScope(session.tenantId, 'Clear');
+
             for (const record of records) {
-              if (record?.tenantId === session.tenantId) {
-                assertScope(session.tenantId, 'Clear');
-                await rawDelete(extractPrimaryKey(tObj, record));
+              // Sync-owned tables must be scoped by the exact tenant AND user.
+              // Ownerless legacy rows and rows owned by other users are preserved.
+              const isVisible = isSyncOwnedTable
+                ? record?.tenantId === owner!.tenantId &&
+                  record?.userId === owner!.userId
+                : record?.tenantId === session.tenantId;
+
+              if (!isVisible) continue;
+
+              if (owner) {
+                const currentOwner = getTrustedSyncOwner();
+                const currentSession = requireScope('Clear');
+                if (
+                  !currentOwner ||
+                  currentOwner.tenantId !== owner.tenantId ||
+                  currentOwner.userId !== owner.userId ||
+                  currentSession.tenantId !== owner.tenantId ||
+                  currentSession.userId !== owner.userId
+                ) {
+                  throw new Error(
+                    "FAIL_CLOSED: Sync table owner changed during clear."
+                  );
+                }
               }
+
+              assertScope(session.tenantId, 'Clear');
+              await rawDelete(extractPrimaryKey(tObj, record));
             }
           });
         };
