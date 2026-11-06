@@ -1116,6 +1116,21 @@ export class PharmaFlowDB extends Dexie {
         }
         if (obj && typeof obj === 'object') {
           ensureItemPrimaryKey(table, obj);
+          if (SYNC_OWNED_TABLES.has(tableName)) {
+            const owner = getTrustedSyncOwner();
+            if (!owner) {
+              throw new Error("FAIL_CLOSED: Sync record creation requires an authenticated user/token identity.");
+            }
+            if (
+              (obj.tenantId && obj.tenantId !== owner.tenantId) ||
+              (obj.userId && obj.userId !== owner.userId)
+            ) {
+              throw new Error("FAIL_CLOSED: Sync record creation owner must match the authenticated session.");
+            }
+            obj.tenantId = owner.tenantId;
+            obj.userId = owner.userId;
+            return;
+          }
           obj.tenantId = session.tenantId;
           obj.userId = obj.userId || session.userId;
         }
@@ -1140,21 +1155,27 @@ export class PharmaFlowDB extends Dexie {
             throw new Error("FAIL_CLOSED: tenantId modification is strictly forbidden.");
           }
 
-          // Sync ownership is immutable. Never attach an owner to a legacy row
-          // merely because another user updates its status or metadata.
+          // Sync ownership is immutable and requires a live authenticated identity.
+          // Never attach an owner to a legacy row or mutate another user's row.
           if (SYNC_OWNED_TABLES.has(tableName)) {
+            const owner = getTrustedSyncOwner();
             const recordUserId = typeof obj.userId === 'string' && obj.userId.trim()
               ? obj.userId
               : undefined;
-            if (!session.userId || !recordUserId || recordUserId !== session.userId) {
-              throw new Error("FAIL_CLOSED: Sync record update requires its exact authenticated user owner.");
+            if (
+              !owner ||
+              owner.tenantId !== obj.tenantId ||
+              !recordUserId ||
+              recordUserId !== owner.userId
+            ) {
+              throw new Error("FAIL_CLOSED: Sync record update requires its exact authenticated tenant/user owner.");
             }
             if (Object.prototype.hasOwnProperty.call(mods, 'userId') && mods.userId !== recordUserId) {
               throw new Error("FAIL_CLOSED: Sync record userId is immutable.");
             }
             return {
               ...mods,
-              tenantId: session.tenantId,
+              tenantId: owner.tenantId,
               userId: recordUserId
             };
           }
