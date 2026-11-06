@@ -278,6 +278,9 @@ export class DistributedSyncEngine {
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
 
+    if (!session.userId) {
+      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync enqueue.');
+    }
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
       throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for sync enqueue.');
     }
