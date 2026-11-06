@@ -314,7 +314,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       (unifiedTransport.request as any).mockResolvedValue(makeResponse('CONFLICT', mutation.mutationId));
       const engine = new DistributedSyncEngine(db as any);
       await (engine as any).processMutationWithRetry(mutation);
-      expect(await db.syncQueue.get(mutation.id)).toBeUndefined();
+      expect((await db.syncQueue.get(mutation.id))?.syncStatus).toBe('CONFLICT');
       expect(await db.failedMutations.where('mutationId').equals(mutation.mutationId).count()).toBe(1);
     });
 
