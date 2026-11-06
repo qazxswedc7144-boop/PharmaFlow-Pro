@@ -275,8 +275,14 @@ export class DistributedSyncEngine {
       }
     }
 
-    if (requireOutbox && (!queueRecord || !outboxRecord)) {
-      throw new Error('SYNC_IDEMPOTENCY_RECONCILIATION_REQUIRED: Queue/outbox idempotency pair is incomplete; automatic repair is blocked.');
+    if (requireOutbox && queueRecord && !outboxRecord) {
+      throw new Error('SYNC_IDEMPOTENCY_RECONCILIATION_REQUIRED: Queue record has no matching outbox event; automatic repair is blocked.');
+    }
+    if (requireOutbox && outboxRecord && !queueRecord) {
+      const terminalOutboxStatuses = new Set(['CONFIRMED', 'COMPLETED', 'SUCCESS', 'DUPLICATE']);
+      if (!terminalOutboxStatuses.has(String(outboxRecord.status || '').toUpperCase())) {
+        throw new Error('SYNC_IDEMPOTENCY_RECONCILIATION_REQUIRED: Active outbox event has no matching queue record; automatic repair is blocked.');
+      }
     }
     if (queueRecord && outboxRecord && queueRecord.mutationId !== outboxRecord.mutationId) {
       throw new Error('SYNC_IDEMPOTENCY_RECONCILIATION_REQUIRED: Queue/outbox mutation IDs do not match.');
