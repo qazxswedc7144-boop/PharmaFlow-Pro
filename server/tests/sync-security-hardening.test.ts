@@ -284,6 +284,69 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
     });
   });
 
+
+  describe('Phase 4: Per-mutation HTTP 2xx result integrity', () => {
+    const makeResponse = (status: string, mutationId: string) => ({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        success: status === 'SUCCESS' || status === 'DUPLICATE',
+        results: [{ id: mutationId, mutationId, status, success: status === 'SUCCESS' || status === 'DUPLICATE',
+          conflict: status === 'CONFLICT' ? { message: 'Version conflict' } : undefined,
+          message: status === 'REJECTED' ? 'Rejected by server' : undefined }]
+      })
+    } as any);
+
+    const addQueueMutation = async (mutationId: string) => {
+      const id = await db.syncQueue.add({
+        tenantId: TENANT_A, userId: USER_A, syncStatus: 'PENDING', retryCount: 0,
+        mutationId, idempotencyKey: `idem-${mutationId}`, entityType: 'PRODUCT',
+        operationType: 'UPDATE', payload: { id: `product-${mutationId}` }, createdAt: new Date()
+      } as any);
+      return { id, tenantId: TENANT_A, userId: USER_A, syncStatus: 'PENDING', retryCount: 0,
+        mutationId, idempotencyKey: `idem-${mutationId}`, entityType: 'PRODUCT',
+        operationType: 'UPDATE', payload: { id: `product-${mutationId}` }, createdAt: new Date() } as any;
+    };
+
+    it('preserves queue mutation and records conflict for HTTP 200 + CONFLICT', async () => {
+      setSession(TENANT_A, USER_A);
+      const mutation = await addQueueMutation('result-conflict');
+      (unifiedTransport.request as any).mockResolvedValue(makeResponse('CONFLICT', mutation.mutationId));
+      const engine = new DistributedSyncEngine(db as any);
+      await (engine as any).processMutationWithRetry(mutation);
+      expect(await db.syncQueue.get(mutation.id)).toBeUndefined();
+      expect(await db.failedMutations.where('mutationId').equals(mutation.mutationId).count()).toBe(1);
+    });
+
+    it('does not confirm an outbox event for HTTP 200 + CONFLICT', async () => {
+      setSession(TENANT_A, USER_A);
+      await db.outbox.add({ id: 31, tenantId: TENANT_A, userId: USER_A, status: 'PENDING',
+        type: 'PRODUCT', payload: {}, mutationId: 'outbox-result-conflict' } as any);
+      (unifiedTransport.request as any).mockResolvedValue(makeResponse('CONFLICT', 'outbox-result-conflict'));
+      const engine = new DistributedSyncEngine(db as any);
+      await (engine as any).processOutboxEvent(await db.outbox.get(31));
+      expect((await db.outbox.get(31))?.status).toBe('CONFLICT');
+    });
+
+    it.each(['SUCCESS', 'DUPLICATE'])('confirms and removes mutation for HTTP 200 + %s', async (status) => {
+      setSession(TENANT_A, USER_A);
+      const mutation = await addQueueMutation(`result-${status.toLowerCase()}`);
+      (unifiedTransport.request as any).mockResolvedValue(makeResponse(status, mutation.mutationId));
+      const engine = new DistributedSyncEngine(db as any);
+      await (engine as any).processMutationWithRetry(mutation);
+      expect(await db.syncQueue.get(mutation.id)).toBeUndefined();
+    });
+
+    it('does not confirm a mutation for HTTP 200 + REJECTED', async () => {
+      setSession(TENANT_A, USER_A);
+      const mutation = await addQueueMutation('result-rejected');
+      (unifiedTransport.request as any).mockResolvedValue(makeResponse('REJECTED', mutation.mutationId));
+      const engine = new DistributedSyncEngine(db as any);
+      await (engine as any).processMutationWithRetry(mutation);
+      expect((await db.syncQueue.get(mutation.id))?.syncStatus).toBe('REJECTED');
+    });
+  });
+
   describe('Phase 3: SyncTab Logic Hardening', () => {
     it('only deletes failed records belonging to the active tenant', async () => {
       // Setup: Failed events for Tenant A and B
