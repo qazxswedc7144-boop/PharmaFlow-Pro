@@ -4,6 +4,7 @@ import { configurationSyncService } from '@/services/config/configurationSyncSer
 import { DistributedSyncEngine } from '@/features/sync/sync.engine';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { unifiedTransport } from '@/shared/network/transport/unifiedTransport';
+import { crashRecoveryManager } from '@/core/observability/crashRecoveryManager';
 
 vi.mock('@/core/db', async (importOriginal) => {
   const actual = await importOriginal() as any;
@@ -383,6 +384,83 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
     });
   });
 
+
+  describe('Phase 4: Legacy Outbox Recovery & Ownership Reconciliation', () => {
+    it('does not assign the active user to an ownerless legacy outbox row during update', async () => {
+      setSession(TENANT_A, undefined);
+      await db.outbox.add({
+        id: 92,
+        tenantId: TENANT_A,
+        status: 'processing',
+        type: 'LEGACY',
+        payload: {},
+        mutationId: 'legacy-no-owner-update'
+      } as any);
+
+      setSession(TENANT_A, USER_A);
+      await expect(
+        db.outbox.update(92, { status: 'pending' })
+      ).rejects.toThrow('Sync record update requires its exact authenticated user owner.');
+
+      const unchanged = await db.outbox.get(92);
+      expect(unchanged?.status).toBe('processing');
+      expect(unchanged?.userId).toBeUndefined();
+    });
+
+    it('recovers only current-user processing events and leaves legacy/other-user events untouched', async () => {
+      setSession(TENANT_A, undefined);
+      await db.outbox.add({
+        id: 93,
+        tenantId: TENANT_A,
+        status: 'processing',
+        type: 'LEGACY',
+        payload: {},
+        mutationId: 'legacy-processing-no-owner'
+      } as any);
+
+      setSession(TENANT_A, USER_A);
+      await db.outbox.add({
+        id: 94,
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'processing',
+        type: 'OWNED',
+        payload: {},
+        mutationId: 'owned-processing-user-a'
+      } as any);
+
+      setSession(TENANT_A, USER_B);
+      await db.outbox.add({
+        id: 95,
+        tenantId: TENANT_A,
+        userId: USER_B,
+        status: 'processing',
+        type: 'OTHER_USER',
+        payload: {},
+        mutationId: 'owned-processing-user-b'
+      } as any);
+
+      setSession(TENANT_A, USER_A);
+      const result = await crashRecoveryManager.bootstrapAppRecovery();
+
+      expect(result.interruptedSyncsFound).toBe(1);
+      expect(result.unownedLegacyOutboxCount).toBe(1);
+      expect(result.reconciliationsRequiredCount).toBeGreaterThanOrEqual(1);
+      expect(result.recoveredCount).toBe(1);
+
+      const recovered = await db.outbox.get(94);
+      expect(recovered?.status).toBe('pending');
+      expect(recovered?.userId).toBe(USER_A);
+
+      const legacy = await db.outbox.get(93);
+      expect(legacy?.status).toBe('processing');
+      expect(legacy?.userId).toBeUndefined();
+
+      const otherUser = await db.outbox.get(95);
+      expect(otherUser?.status).toBe('processing');
+      expect(otherUser?.userId).toBe(USER_B);
+    });
+  });
 
   describe('Phase 4: Per-mutation HTTP 2xx result integrity', () => {
     const makeResponse = (status: string, mutationId: string) => ({
