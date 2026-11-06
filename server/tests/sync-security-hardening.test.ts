@@ -594,6 +594,8 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       setSession(TENANT_A, USER_A);
       await expect(db.outbox.delete(userBId))
         .rejects.toThrow('Unauthorized sync record deletion');
+      await expect(db.outbox.bulkDelete([userBId]))
+        .rejects.toThrow('Unauthorized sync record deletion');
       await db.outbox.clear();
 
       expect(await db.outbox.get(userAId)).toBeUndefined();
