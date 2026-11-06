@@ -202,6 +202,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 1,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -226,6 +227,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 3,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -250,6 +252,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 4,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -303,6 +306,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 1,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
