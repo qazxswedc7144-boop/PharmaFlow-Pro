@@ -60,7 +60,12 @@ export class SyncQueueRepository {
       if (error && (error.name === 'ConstraintError' || error instanceof Dexie.ConstraintError)) {
         // Return deterministic result on uniqueness conflict by returning the existing item's ID
         const existing = await this.db.syncQueue.where('idempotencyKey').equals(item.idempotencyKey).first();
-        if (existing && existing.id !== undefined) {
+        if (
+          existing &&
+          existing.id !== undefined &&
+          existing.tenantId === owner.tenantId &&
+          existing.userId === owner.userId
+        ) {
           return existing.id;
         }
       }
@@ -90,7 +95,12 @@ export class SyncQueueRepository {
     } catch (error: any) {
       if (error && (error.name === 'ConstraintError' || error instanceof Dexie.ConstraintError)) {
         const existing = await this.db.syncQueue.where('idempotencyKey').equals(item.idempotencyKey).first();
-        if (existing && existing.id !== undefined) {
+        if (
+          existing &&
+          existing.id !== undefined &&
+          existing.tenantId === owner.tenantId &&
+          existing.userId === owner.userId
+        ) {
           return existing.id;
         }
       }
