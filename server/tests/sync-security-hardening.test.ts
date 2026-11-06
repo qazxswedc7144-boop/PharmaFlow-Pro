@@ -421,6 +421,20 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       expect(repositoryRecord?.tenantId).toBe(TENANT_A);
       expect(repositoryRecord?.userId).toBe(USER_A);
 
+      setSession(TENANT_A, USER_B);
+      await expect(syncQueueRepository.enqueue({
+        ...repositoryItem,
+        mutationId: 'repo-queue-owned-by-user-b',
+        userId: USER_B
+      } as any)).rejects.toThrow();
+
+      setSession(TENANT_A, USER_A);
+      const sameOwnerDuplicate = await syncQueueRepository.enqueue({
+        ...repositoryItem,
+        mutationId: 'repo-queue-same-owner-duplicate'
+      } as any);
+      expect(sameOwnerDuplicate).toBe(repositoryId);
+
       const legacyMutation = await legacyQueue.enqueue({
         type: 'PRODUCT',
         payload: { id: 'legacy-queue-product' },
