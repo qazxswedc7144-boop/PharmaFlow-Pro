@@ -258,6 +258,42 @@ export class DistributedSyncEngine {
     return `${entityType}:${entityId}:${mutationType}:${version}:${branchId}`;
   }
 
+  private resolveExistingIdempotency(
+    queueRecord: any,
+    outboxRecord: any,
+    tenantId: string,
+    userId: string,
+    idempotencyKey: string,
+    requireOutbox: boolean
+  ): { mutationId: string; idempotencyKey: string; queueItemId?: number } | null {
+    if (!queueRecord && !outboxRecord) return null;
+
+    for (const [source, record] of [['syncQueue', queueRecord], ['outbox', outboxRecord]] as const) {
+      if (!record) continue;
+      if (record.tenantId !== tenantId || record.userId !== userId) {
+        throw new Error('SYNC_IDEMPOTENCY_OWNER_MISMATCH: Existing ' + source + ' record is not owned by the active tenant/user.');
+      }
+    }
+
+    if (requireOutbox && (!queueRecord || !outboxRecord)) {
+      throw new Error('SYNC_IDEMPOTENCY_RECONCILIATION_REQUIRED: Queue/outbox idempotency pair is incomplete; automatic repair is blocked.');
+    }
+    if (queueRecord && outboxRecord && queueRecord.mutationId !== outboxRecord.mutationId) {
+      throw new Error('SYNC_IDEMPOTENCY_RECONCILIATION_REQUIRED: Queue/outbox mutation IDs do not match.');
+    }
+
+    const existingMutationId = queueRecord?.mutationId || outboxRecord?.mutationId;
+    if (!existingMutationId) {
+      throw new Error('SYNC_IDEMPOTENCY_RECONCILIATION_REQUIRED: Existing idempotency record has no mutation ID.');
+    }
+
+    return {
+      mutationId: existingMutationId,
+      idempotencyKey,
+      queueItemId: queueRecord?.id
+    };
+  }
+
   /**
    * Atomic Outbox / Queue Enqueue (Primary Entry Point for Mutations)
    */
@@ -280,6 +316,9 @@ export class DistributedSyncEngine {
 
     if (!session.userId) {
       throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync enqueue.');
+    }
+    if (!session.tenantId || tenantId !== session.tenantId) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_MISMATCH: Sync enqueue tenant must match the active authenticated session.');
     }
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
       throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for sync enqueue.');
@@ -328,44 +367,67 @@ export class DistributedSyncEngine {
       entityType
     };
 
-    let addedId: number | undefined = undefined;
+    const outboxTable = (this.db as any).outbox;
+    const hasOutbox = Boolean(outboxTable && outboxTable.schema);
+    const txTables = [this.db.syncQueue];
+    if (hasOutbox) txTables.push(outboxTable);
 
+    let result: { mutationId: string; idempotencyKey: string; queueItemId?: number } | undefined;
     try {
-      const txTables = [this.db.syncQueue];
-      if ((this.db as any).outbox && (this.db as any).outbox.schema) {
-        txTables.push((this.db as any).outbox);
-      }
       await (this.db as any).transaction('rw', txTables, async () => {
-        if (this.db.syncQueue) {
-          try {
-            addedId = await this.db.syncQueue.add(queueItem);
-          } catch (err: any) {
-            if (err && (err.name === 'ConstraintError' || err instanceof Dexie.ConstraintError)) {
-              const existing = await this.db.syncQueue.where('idempotencyKey').equals(idempotencyKey).first();
-              if (existing) {
-                addedId = existing.id;
-              }
-            }
-          }
-        }
-        if ((this.db as any).outbox && (this.db as any).outbox.schema) {
-          try {
-            await (this.db as any).outbox.add(outboxEvent);
-          } catch (err: any) {
-            // Ignore duplicate constraint for outbox
-          }
-        }
+        const existingQueue = await this.db.syncQueue
+          .where('idempotencyKey')
+          .equals(idempotencyKey)
+          .first();
+        const existingOutbox = hasOutbox
+          ? await outboxTable.where('idempotencyKey').equals(idempotencyKey).first()
+          : undefined;
+
+        result = this.resolveExistingIdempotency(
+          existingQueue,
+          existingOutbox,
+          tenantId,
+          session.userId!,
+          idempotencyKey,
+          hasOutbox
+        );
+        if (result) return;
+
+        const queueItemId = await this.db.syncQueue.add(queueItem);
+        if (hasOutbox) await outboxTable.add(outboxEvent);
+        result = { mutationId, idempotencyKey, queueItemId };
       });
+    } catch (error: any) {
+      const isConstraintError = error?.name === 'ConstraintError' || error instanceof Dexie.ConstraintError;
+      if (!isConstraintError) throw error;
 
-      if (typeof navigator !== 'undefined' && navigator.onLine) {
-        this.requestSync().catch(() => {});
-      }
-
-      return { mutationId, idempotencyKey, queueItemId: addedId };
-    } catch (error) {
-      console.error("[DistributedSyncEngine] Atomic Enqueue Failed:", error);
-      throw error;
+      const existingQueue = await this.db.syncQueue
+        .where('idempotencyKey')
+        .equals(idempotencyKey)
+        .first();
+      const existingOutbox = hasOutbox
+        ? await outboxTable.where('idempotencyKey').equals(idempotencyKey).first()
+        : undefined;
+      result = this.resolveExistingIdempotency(
+        existingQueue,
+        existingOutbox,
+        tenantId,
+        session.userId!,
+        idempotencyKey,
+        hasOutbox
+      );
+      if (!result) throw error;
     }
+
+    if (!result) {
+      throw new Error('SYNC_ENQUEUE_FAILED: No queue record was created or safely reused.');
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      this.requestSync().catch(() => {});
+    }
+
+    return result;
   }
 
   /**
@@ -392,6 +454,9 @@ export class DistributedSyncEngine {
 
     if (!session.userId) {
       throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync enqueue.');
+    }
+    if (!session.tenantId || tenantId !== session.tenantId) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_MISMATCH: Sync enqueue tenant must match the active authenticated session.');
     }
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
       throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for transactional sync enqueue.');
@@ -440,36 +505,37 @@ export class DistributedSyncEngine {
       entityType
     };
 
-    let addedId: number | undefined = undefined;
-
-    if (this.db.syncQueue) {
-      const existing = await this.db.syncQueue.where('idempotencyKey').equals(idempotencyKey).first();
-      if (existing) {
-        addedId = existing.id;
-      } else {
-        try {
-          addedId = await this.db.syncQueue.add(queueItem);
-        } catch (err: any) {
-          if (err && (err.name === 'ConstraintError' || err instanceof Dexie.ConstraintError)) {
-            const recheck = await this.db.syncQueue.where('idempotencyKey').equals(idempotencyKey).first();
-            if (recheck) {
-              addedId = recheck.id;
-            }
-          }
-        }
-      }
-    }
-
     const currentTx = (Dexie as any).currentTransaction;
-    const canWriteOutbox = (this.db as any).outbox && (this.db as any).outbox.schema && 
-      (!currentTx || (currentTx.tables && (currentTx.tables['outbox'] || (Array.isArray(currentTx.tables) && currentTx.tables.some((t: any) => t.name === 'outbox')))));
-    if (canWriteOutbox) {
-      try {
-        await (this.db as any).outbox.add(outboxEvent);
-      } catch (err: any) {
-        // Ignore duplicate constraint for outbox
-      }
-    }
+    const outboxTable = (this.db as any).outbox;
+    const canWriteOutbox = Boolean(
+      outboxTable &&
+      outboxTable.schema &&
+      (!currentTx || (
+        currentTx.tables &&
+        (currentTx.tables['outbox'] ||
+          (Array.isArray(currentTx.tables) && currentTx.tables.some((table: any) => table.name === 'outbox')))
+      ))
+    );
+
+    const existingQueue = await this.db.syncQueue
+      .where('idempotencyKey')
+      .equals(idempotencyKey)
+      .first();
+    const existingOutbox = canWriteOutbox
+      ? await outboxTable.where('idempotencyKey').equals(idempotencyKey).first()
+      : undefined;
+    const existingResult = this.resolveExistingIdempotency(
+      existingQueue,
+      existingOutbox,
+      tenantId,
+      session.userId!,
+      idempotencyKey,
+      canWriteOutbox
+    );
+    if (existingResult) return existingResult;
+
+    const addedId = await this.db.syncQueue.add(queueItem);
+    if (canWriteOutbox) await outboxTable.add(outboxEvent);
 
     return { mutationId, idempotencyKey, queueItemId: addedId };
   }
