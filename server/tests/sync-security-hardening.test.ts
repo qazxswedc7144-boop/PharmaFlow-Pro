@@ -635,6 +635,39 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       expect(await db.syncEvents.get(oldEventId)).toBeDefined();
     });
 
+    it('blocks direct sync-row create and update from stale unauthenticated sessions', async () => {
+      setSession(TENANT_A, USER_A);
+      const ownedId = await db.outbox.add({
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'PENDING',
+        type: 'OWNED',
+        payload: {},
+        mutationId: 'owned-row-stale-auth-test'
+      } as any);
+
+      (TokenProvider.getCurrentSession as any).mockReturnValue({
+        ...(TokenProvider.getCurrentSession() as any),
+        isAuthenticated: false
+      });
+
+      await expect(db.outbox.add({
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'PENDING',
+        type: 'STALE_AUTH_CREATE',
+        payload: {},
+        mutationId: 'stale-auth-create-must-fail'
+      } as any)).rejects.toThrow('authenticated user/token identity');
+
+      await expect(db.outbox.update(ownedId, { status: 'PROCESSING' }))
+        .rejects.toThrow('authenticated tenant/user owner');
+
+      const unchanged = await db.outbox.get(ownedId);
+      expect(unchanged?.status).toBe('PENDING');
+      expect(unchanged?.userId).toBe(USER_A);
+    });
+
     it('does not assign the active user to an ownerless legacy outbox row during update', async () => {
       setSession(TENANT_A, undefined);
       await db.outbox.add({
