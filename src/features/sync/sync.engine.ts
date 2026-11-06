@@ -265,8 +265,8 @@ export class DistributedSyncEngine {
     userId: string,
     idempotencyKey: string,
     requireOutbox: boolean
-  ): { mutationId: string; idempotencyKey: string; queueItemId?: number } | null {
-    if (!queueRecord && !outboxRecord) return null;
+  ): { mutationId: string; idempotencyKey: string; queueItemId?: number } | undefined {
+    if (!queueRecord && !outboxRecord) return undefined;
 
     for (const [source, record] of [['syncQueue', queueRecord], ['outbox', outboxRecord]] as const) {
       if (!record) continue;
