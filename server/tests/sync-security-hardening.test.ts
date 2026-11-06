@@ -33,6 +33,16 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
   const USER_B = 'user-B';
   const BRANCH_A = 'branch-A';
 
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+
   beforeEach(async () => {
     vi.clearAllMocks();
     
@@ -48,14 +58,14 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
     await db.syncQueue.clear();
   });
 
-  const setSession = (tenantId?: string, userId?: string) => {
+  const setSession = (tenantId?: string, userId?: string, token = 'test-token') => {
     const session = {
       tenantId,
       userId,
       branchId: BRANCH_A,
       isAuthenticated: Boolean(tenantId),
       user: tenantId ? { id: userId, tenantId, branchId: BRANCH_A } : null,
-      token: tenantId ? 'test-token' : null,
+      token: tenantId ? token : null,
       roles: [],
       permissions: []
     };
@@ -148,50 +158,105 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       expect(item2?.status).toBe('PENDING');
     });
 
-    it('aborts push if session changes between start and transport call', async () => {
+    it('does not confirm an outbox event when the tenant changes during the network await', async () => {
       await db.outbox.add({
         id: 1,
         tenantId: TENANT_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
-        mutationId: 'mut-1'
+        mutationId: 'mut-tenant-switch'
       });
-
-      // Start with Tenant A
       setSession(TENANT_A, USER_A);
-      
-      // Mock transport to be called only if session is still TENANT_A
-      (unifiedTransport.request as any).mockImplementation(() => {
-         return Promise.resolve({ ok: true });
+      const request = deferred<Response>();
+      (unifiedTransport.request as any).mockReturnValue(request.promise);
+
+      const engine = new DistributedSyncEngine(db as any);
+      const drain = engine.drainQueue();
+      await vi.waitFor(() => expect(unifiedTransport.request).toHaveBeenCalledTimes(1));
+      setSession(TENANT_B, USER_B);
+      request.resolve({ ok: true } as Response);
+      await drain;
+
+      setSession(TENANT_A, USER_A);
+      expect((await db.outbox.get(1))?.status).toBe('SENDING');
+    });
+
+    it('does not confirm an outbox event when the user changes within the same tenant during the network await', async () => {
+      await db.outbox.add({
+        id: 3,
+        tenantId: TENANT_A,
+        status: 'PENDING',
+        type: 'TEST',
+        payload: {},
+        mutationId: 'mut-user-switch'
       });
+      setSession(TENANT_A, USER_A);
+      const request = deferred<Response>();
+      (unifiedTransport.request as any).mockReturnValue(request.promise);
 
-      const engine = DistributedSyncEngine.getInstance();
-      
-      // We'll simulate the race by changing session mid-loop
-      // Call 1: drainQueue preamble
-      // Call 2: drainQueue loop check
-      // Call 3: processOutboxEvent start
-      // Call 4+: inside sendPushRequest or subsequent calls
-      let callCount = 0;
-      (getCurrentUserSession as any).mockImplementation(() => {
-        callCount++;
-        if (callCount > 3) {
-          return { tenantId: TENANT_B, userId: USER_B, branchId: BRANCH_A };
-        }
-        return { tenantId: TENANT_A, userId: USER_A, branchId: BRANCH_A };
+      const engine = new DistributedSyncEngine(db as any);
+      const drain = engine.drainQueue();
+      await vi.waitFor(() => expect(unifiedTransport.request).toHaveBeenCalledTimes(1));
+      setSession(TENANT_A, USER_B);
+      request.resolve({ ok: true } as Response);
+      await drain;
+
+      setSession(TENANT_A, USER_A);
+      expect((await db.outbox.get(3))?.status).toBe('SENDING');
+    });
+
+    it('does not confirm an outbox event when the access token changes during the network await', async () => {
+      await db.outbox.add({
+        id: 4,
+        tenantId: TENANT_A,
+        status: 'PENDING',
+        type: 'TEST',
+        payload: {},
+        mutationId: 'mut-token-switch'
       });
+      setSession(TENANT_A, USER_A, 'token-before');
+      const request = deferred<Response>();
+      (unifiedTransport.request as any).mockReturnValue(request.promise);
 
-      await engine.drainQueue();
+      const engine = new DistributedSyncEngine(db as any);
+      const drain = engine.drainQueue();
+      await vi.waitFor(() => expect(unifiedTransport.request).toHaveBeenCalledTimes(1));
+      setSession(TENANT_A, USER_A, 'token-after');
+      request.resolve({ ok: true } as Response);
+      await drain;
 
-      // Should have bailed before transport or during transport wrap
-      expect(unifiedTransport.request).not.toHaveBeenCalled();
-      
-      const item = await db.outbox.get(1);
-      // It was marked SENDING but never confirmed or failed (it might stay SENDING if bailed silently, 
-      // but our code now throws error which is caught and marks RETRYING)
-      expect(item?.status).toBe('RETRYING'); 
-      expect(item?.error).toContain('SESSION_SWITCH_DETECTED');
+      setSession(TENANT_A, USER_A, 'token-before');
+      expect((await db.outbox.get(4))?.status).toBe('SENDING');
+    });
+
+    it('does not delete a syncQueue mutation when the tenant changes during the network await', async () => {
+      await db.syncQueue.add({
+        tenantId: TENANT_A,
+        userId: USER_A,
+        syncStatus: 'PENDING',
+        retryCount: 0,
+        mutationId: 'queue-mut-session-switch',
+        idempotencyKey: 'queue-idem-session-switch',
+        entityType: 'PRODUCT',
+        operationType: 'CREATE',
+        payload: { id: 'product-session-switch' },
+        createdAt: new Date()
+      } as any);
+      setSession(TENANT_A, USER_A);
+      const request = deferred<Response>();
+      (unifiedTransport.request as any).mockReturnValue(request.promise);
+
+      const engine = new DistributedSyncEngine(db as any);
+      const drain = engine.drainQueue();
+      await vi.waitFor(() => expect(unifiedTransport.request).toHaveBeenCalledTimes(1));
+      setSession(TENANT_B, USER_B);
+      request.resolve({ ok: true } as Response);
+      await drain;
+
+      setSession(TENANT_A, USER_A);
+      const item = await db.syncQueue.where('mutationId').equals('queue-mut-session-switch').first();
+      expect(item?.syncStatus).toBe('PROCESSING');
     });
 
     it('prevents cross-tenant userId/tenantId mismatch in headers', async () => {
@@ -240,7 +305,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       // Simulation of handleClearFailed logic:
       const session = getCurrentUserSession();
       const failedIds = await db.outbox
-        .where('status').anyOf('failed', 'FAILED')
+        .where('status').anyOf('failed', 'FAILED', 'RETRYING')
         .and(item => item.tenantId === session.tenantId)
         .primaryKeys();
       
@@ -254,6 +319,28 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       const item2 = await db.outbox.get(11);
       expect(item2).toBeDefined();
       expect(item2?.status).toBe('FAILED');
+    });
+
+    it('includes RETRYING records in the tenant-scoped failed clear operation', async () => {
+      setSession(TENANT_A, USER_A);
+      await db.outbox.add({
+        id: 12,
+        tenantId: TENANT_A,
+        status: 'RETRYING',
+        type: 'T3',
+        mutationId: 'tab-mut-retrying',
+        idempotencyKey: 'tab-idem-retrying'
+      });
+
+      const session = getCurrentUserSession();
+      const retryingIds = await db.outbox
+        .where('status').anyOf('failed', 'FAILED', 'RETRYING')
+        .and(item => item.tenantId === session.tenantId)
+        .primaryKeys();
+
+      expect(retryingIds).toContain(12);
+      await db.outbox.bulkDelete(retryingIds);
+      expect(await db.outbox.get(12)).toBeUndefined();
     });
   });
 });
