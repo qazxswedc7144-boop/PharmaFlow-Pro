@@ -808,7 +808,14 @@ export class DistributedSyncEngine {
             tenantId: snapshot.tenantId, branchId: event.branchId || snapshot.branchId,
             userId: snapshot.userId, deviceId: device.deviceId,
             schemaVersion: SYNC_PROTOCOL_VERSION, clientVersion: CLIENT_VERSION,
-            events: [{ mutationId: event.mutationId, type: event.type, payload: event.payload, idempotencyKey: event.idempotencyKey }]
+            mutations: [{
+              id: event.mutationId || String(event.id),
+              entity: event.entityType || event.type || 'MUTATION',
+              operation: event.operation || 'CREATE',
+              payload: event.payload || {},
+              idempotencyKey: event.idempotencyKey || event.mutationId || String(event.id),
+              timestamp: event.createdAt || Date.now()
+            }]
           }
         });
         assertSyncSessionCurrent(snapshot);
@@ -866,9 +873,15 @@ export class DistributedSyncEngine {
           tenantId: snapshot.tenantId, branchId: mutation.branchId || snapshot.branchId,
           userId: snapshot.userId, deviceId: device.deviceId,
           schemaVersion: SYNC_PROTOCOL_VERSION, clientVersion: CLIENT_VERSION,
-          mutations: [{ mutationId: mutation.mutationId, entityType: mutation.entityType,
-            operationType: mutation.operationType, payload: mutation.payload,
-            idempotencyKey: mutation.idempotencyKey, version: mutation.version }]
+          mutations: [{
+            id: mutation.mutationId,
+            entity: mutation.entityType || 'MUTATION',
+            operation: mutation.operationType || 'CREATE',
+            payload: mutation.payload,
+            idempotencyKey: mutation.idempotencyKey || mutation.mutationId,
+            version: mutation.version || 1,
+            timestamp: mutation.createdAt
+          }]
         }
       });
       assertSyncSessionCurrent(snapshot);
