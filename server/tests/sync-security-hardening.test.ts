@@ -113,17 +113,56 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       
       const outboxItem = await db.outbox.orderBy('id').last();
       expect(outboxItem.tenantId).toBe(TENANT_A);
+      expect(outboxItem.userId).toBe(USER_A);
       expect(outboxItem.payload.context.tenantId).toBe(TENANT_A);
     });
   });
 
   describe('Phase 2: Sync Engine Race Protection', () => {
+    it('does not process legacy outbox events without an attributable user owner', async () => {
+      setSession(TENANT_A, USER_A);
+      await db.outbox.add({
+        id: 90,
+        tenantId: TENANT_A,
+        status: 'PENDING',
+        type: 'TEST',
+        payload: {},
+        mutationId: 'mut-unowned-outbox'
+      } as any);
+
+      const engine = DistributedSyncEngine.getInstance();
+      await engine.drainQueue();
+
+      expect(unifiedTransport.request).not.toHaveBeenCalled();
+      expect((await db.outbox.get(90))?.status).toBe('PENDING');
+    });
+
+    it('does not process another user\'s outbox event within the same tenant', async () => {
+      setSession(TENANT_A, USER_B);
+      await db.outbox.add({
+        id: 91,
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'PENDING',
+        type: 'TEST',
+        payload: {},
+        mutationId: 'mut-other-user-outbox'
+      } as any);
+
+      const engine = DistributedSyncEngine.getInstance();
+      await engine.drainQueue();
+
+      expect(unifiedTransport.request).not.toHaveBeenCalled();
+      expect((await db.outbox.get(91))?.status).toBe('PENDING');
+    });
+
     it('skips outbox events belonging to another tenant', async () => {
       // Setup: One event for Tenant A
       setSession(TENANT_A, USER_A);
       await db.outbox.add({
         id: 1,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -135,6 +174,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 2,
         tenantId: TENANT_B,
+        userId: USER_B,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
