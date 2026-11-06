@@ -1211,6 +1211,24 @@ export class PharmaFlowDB extends Dexie {
         }
       });
 
+      // Table.clear() bypasses collection-level tenant filtering. For
+      // sync-owned tables, redefine it as an owner-scoped delete so one user's
+      // cleanup can never enumerate or delete another user's rows.
+      if (SYNC_OWNED_TABLES.has(tableName)) {
+        const originalClear = table.clear.bind(table);
+        (table as any).clear = () => {
+          const owner = getTrustedSyncOwner();
+          if (!owner) {
+            throw new Error("FAIL_CLOSED: Sync table clear requires an authenticated tenant/user owner.");
+          }
+          return table
+            .where('tenantId')
+            .equals(owner.tenantId)
+            .and((record: any) => record?.userId === owner.userId)
+            .delete();
+        };
+      }
+
       table.hook('deleting', (_primKey: any, obj: any) => {
         assertTenantAdminForUserManagement(tableName);
         const session = getCurrentUserSession();
