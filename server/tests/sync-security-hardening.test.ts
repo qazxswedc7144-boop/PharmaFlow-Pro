@@ -495,6 +495,25 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       }))
         .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
 
+      const engine = new DistributedSyncEngine(db as any);
+      await expect(engine.enqueue(
+        'CREATE',
+        { id: 'stale-session-product' },
+        'PRODUCT',
+        'stale-session-engine-idem',
+        { tenantId: TENANT_A, branchId: BRANCH_A }
+      )).rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+
+      await expect(db.transaction('rw', [db.syncQueue, db.outbox], async () =>
+        engine.enqueueWithinTransaction(
+          'CREATE',
+          { id: 'stale-session-transactional-product' },
+          'PRODUCT',
+          'stale-session-transactional-idem',
+          { tenantId: TENANT_A, branchId: BRANCH_A }
+        )
+      )).rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+
       setSession(TENANT_A, undefined);
       await expect(syncQueueRepository.enqueue(repositoryItem as any))
         .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
