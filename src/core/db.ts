@@ -43,6 +43,8 @@ function extractPrimaryKey(table: any, record: any): any {
   return undefined;
 }
 
+const SYNC_OWNED_TABLES = new Set(['syncQueue', 'sync_queue', 'outbox']);
+
 const TENANT_SCOPED_TABLES = new Set([
   'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
   'accounts', 'journalLines', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
@@ -430,12 +432,25 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
       if (!isTenantScoped(this)) return originalClear.call(this);
       return this.db.transaction('rw', this, async () => {
         const session = requireTenantForTable(this, 'Clear');
+        const owner = SYNC_OWNED_TABLES.has(this.name) ? getTrustedSyncOwner() : null;
+        if (SYNC_OWNED_TABLES.has(this.name) && !owner) {
+          throw new Error("FAIL_CLOSED: Sync table clear requires an authenticated tenant/user owner.");
+        }
         const records = hasTenantIndex(this)
           ? await this.where('tenantId').equals(session.tenantId).toArray()
           : await originalToArray.call(this);
         assertTenantUnchanged(this, session.tenantId, 'Clear');
         for (const record of records) {
-          if (record?.tenantId === session.tenantId) {
+          const isVisible = SYNC_OWNED_TABLES.has(this.name)
+            ? record?.tenantId === owner!.tenantId && record?.userId === owner!.userId
+            : record?.tenantId === session.tenantId;
+          if (isVisible) {
+            if (owner) {
+              const currentOwner = getTrustedSyncOwner();
+              if (!currentOwner || currentOwner.tenantId !== owner.tenantId || currentOwner.userId !== owner.userId) {
+                throw new Error("FAIL_CLOSED: Sync table owner changed during clear.");
+              }
+            }
             assertTenantUnchanged(this, session.tenantId, 'Clear');
             const key = extractPrimaryKey(this, record);
             await originalDelete.call(this, key);
@@ -643,6 +658,50 @@ export function getCurrentUserSession() {
     branchId: undefined,
     userId: undefined
   };
+}
+
+/**
+ * Returns a sync owner only when the active auth state is authenticated and
+ * its token identity exactly matches the normalized application session.
+ * A stale user object or tenant context alone is never sufficient.
+ */
+export function getTrustedSyncOwner(): { tenantId: string; userId: string; branchId?: string } | null {
+  try {
+    const auth = TokenProvider.getCurrentSession();
+    const session = getCurrentUserSession();
+    const user = auth?.user as any;
+    const primaryUserId = typeof user?.id === 'string' ? user.id.trim() : '';
+    const legacyUserId = typeof user?.user_id === 'string' ? user.user_id.trim() : '';
+    const primaryTenantId = typeof user?.tenantId === 'string' ? user.tenantId.trim() : '';
+    const legacyTenantId = typeof user?.tenant_id === 'string' ? user.tenant_id.trim() : '';
+    const authTenantId = typeof auth?.tenantId === 'string' ? auth.tenantId.trim() : '';
+    const authUserId = primaryUserId || legacyUserId;
+    const authResolvedTenantId = authTenantId || primaryTenantId || legacyTenantId;
+
+    if (
+      auth?.isAuthenticated !== true ||
+      typeof auth.token !== 'string' ||
+      !auth.token.trim() ||
+      !authUserId ||
+      !authResolvedTenantId ||
+      (primaryUserId && legacyUserId && primaryUserId !== legacyUserId) ||
+      (primaryTenantId && legacyTenantId && primaryTenantId !== legacyTenantId) ||
+      (authTenantId && primaryTenantId && authTenantId !== primaryTenantId) ||
+      (authTenantId && legacyTenantId && authTenantId !== legacyTenantId) ||
+      session.userId !== authUserId ||
+      session.tenantId !== authResolvedTenantId
+    ) {
+      return null;
+    }
+
+    return {
+      tenantId: authResolvedTenantId,
+      userId: authUserId,
+      branchId: session.branchId
+    };
+  } catch {
+    return null;
+  }
 }
 import { 
   Product, UnifiedInvoice, InvoiceItem, Account, AccountingEntry, JournalEntry, InvoiceStatus, Customer, Supplier, 
@@ -1070,6 +1129,31 @@ export class PharmaFlowDB extends Dexie {
         }
         if (obj && typeof obj === 'object') {
           ensureItemPrimaryKey(table, obj);
+          if (SYNC_OWNED_TABLES.has(tableName)) {
+            const owner = getTrustedSyncOwner();
+            if (!owner) {
+              // Preserve explicitly ownerless legacy rows for reconciliation,
+              // but never let a stale user object or supplied userId claim them.
+              if (session.userId || obj.userId) {
+                throw new Error("FAIL_CLOSED: Sync record creation requires an authenticated user/token identity.");
+              }
+              if (obj.tenantId && obj.tenantId !== session.tenantId) {
+                throw new Error("FAIL_CLOSED: Legacy sync record tenant does not match the active tenant.");
+              }
+              obj.tenantId = session.tenantId;
+              delete obj.userId;
+              return;
+            }
+            if (
+              (obj.tenantId && obj.tenantId !== owner.tenantId) ||
+              (obj.userId && obj.userId !== owner.userId)
+            ) {
+              throw new Error("FAIL_CLOSED: Sync record creation owner must match the authenticated session.");
+            }
+            obj.tenantId = owner.tenantId;
+            obj.userId = owner.userId;
+            return;
+          }
           obj.tenantId = session.tenantId;
           obj.userId = obj.userId || session.userId;
         }
@@ -1093,6 +1177,32 @@ export class PharmaFlowDB extends Dexie {
             console.error(`[SECURITY] Attempt to change tenantId blocked on table '${tableName}'`);
             throw new Error("FAIL_CLOSED: tenantId modification is strictly forbidden.");
           }
+
+          // Sync ownership is immutable and requires a live authenticated identity.
+          // Never attach an owner to a legacy row or mutate another user's row.
+          if (SYNC_OWNED_TABLES.has(tableName)) {
+            const owner = getTrustedSyncOwner();
+            const recordUserId = typeof obj.userId === 'string' && obj.userId.trim()
+              ? obj.userId
+              : undefined;
+            if (
+              !owner ||
+              owner.tenantId !== obj.tenantId ||
+              !recordUserId ||
+              recordUserId !== owner.userId
+            ) {
+              throw new Error("FAIL_CLOSED: Sync record update requires its exact authenticated tenant/user owner.");
+            }
+            if (Object.prototype.hasOwnProperty.call(mods, 'userId') && mods.userId !== recordUserId) {
+              throw new Error("FAIL_CLOSED: Sync record userId is immutable.");
+            }
+            return {
+              ...mods,
+              tenantId: owner.tenantId,
+              userId: recordUserId
+            };
+          }
+
           return {
             ...mods,
             tenantId: session.tenantId,
@@ -1101,16 +1211,28 @@ export class PharmaFlowDB extends Dexie {
         }
       });
 
+      // Keep the prototype-level Table.clear guard as the single implementation.
+      // It enumerates tenant rows, filters by the exact tenant+user owner, and
+      // deletes only matching primary keys. A per-instance Collection.delete()
+      // override here bypassed that path and triggered cross-user delete hooks.
+      
       table.hook('deleting', (_primKey: any, obj: any) => {
         assertTenantAdminForUserManagement(tableName);
         const session = getCurrentUserSession();
-        // Standard P0 check: session must exist for any deletion attempt
         if (!session.tenantId) {
           throw new Error("FAIL_CLOSED: Deletion forbidden without active tenant session.");
         }
-        // Strict Isolation: If record exists, it MUST belong to the current session tenant.
-        // If obj is undefined (Dexie standard delete on non-existent key), we allow it to proceed 
-        // to maintain standard Dexie behavior and prevent unnecessary crashes in cleanup/reversal paths.
+        if (SYNC_OWNED_TABLES.has(tableName)) {
+          const owner = getTrustedSyncOwner();
+          if (!owner || owner.tenantId !== session.tenantId) {
+            throw new Error("FAIL_CLOSED: Sync record deletion requires an authenticated tenant/user owner.");
+          }
+          if (obj && (obj.tenantId !== owner.tenantId || !obj.userId || obj.userId !== owner.userId)) {
+            throw new Error("FAIL_CLOSED: Unauthorized sync record deletion outside the exact tenant/user owner.");
+          }
+          return;
+        }
+        // If obj is undefined, preserve Dexie's standard no-op delete behavior.
         if (obj && (!obj.tenantId || obj.tenantId !== session.tenantId)) {
           console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey, "Record Tenant:", obj.tenantId, "Session Tenant:", session.tenantId);
           throw new Error("FAIL_CLOSED: Unauthorized data deletion attempt (Cross-tenant or Orphaned).");
@@ -2558,13 +2680,54 @@ function wrapTable(realTable: any, tableName: string): any {
       if (tenantScoped && tProp === 'clear') {
         return async () => {
           const session = requireScope('Clear');
+          const isSyncOwnedTable = SYNC_OWNED_TABLES.has(tableName);
+          const owner = isSyncOwnedTable ? getTrustedSyncOwner() : null;
+
+          if (
+            isSyncOwnedTable &&
+            (
+              !owner ||
+              owner.tenantId !== session.tenantId ||
+              owner.userId !== session.userId
+            )
+          ) {
+            throw new Error(
+              "FAIL_CLOSED: Sync table clear requires the exact authenticated tenant/user owner."
+            );
+          }
+
           return tObj.db.transaction('rw', tObj, async () => {
             const records = await rawToCollection().toArray();
+            assertScope(session.tenantId, 'Clear');
+
             for (const record of records) {
-              if (record?.tenantId === session.tenantId) {
-                assertScope(session.tenantId, 'Clear');
-                await rawDelete(extractPrimaryKey(tObj, record));
+              // Sync-owned tables must be scoped by the exact tenant AND user.
+              // Ownerless legacy rows and rows owned by other users are preserved.
+              const isVisible = isSyncOwnedTable
+                ? record?.tenantId === owner!.tenantId &&
+                  record?.userId === owner!.userId
+                : record?.tenantId === session.tenantId;
+
+              if (!isVisible) continue;
+
+              if (owner) {
+                const currentOwner = getTrustedSyncOwner();
+                const currentSession = requireScope('Clear');
+                if (
+                  !currentOwner ||
+                  currentOwner.tenantId !== owner.tenantId ||
+                  currentOwner.userId !== owner.userId ||
+                  currentSession.tenantId !== owner.tenantId ||
+                  currentSession.userId !== owner.userId
+                ) {
+                  throw new Error(
+                    "FAIL_CLOSED: Sync table owner changed during clear."
+                  );
+                }
               }
+
+              assertScope(session.tenantId, 'Clear');
+              await rawDelete(extractPrimaryKey(tObj, record));
             }
           });
         };

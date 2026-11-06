@@ -1,18 +1,18 @@
 import { SettingsCard } from '../shared/SettingsUI';
 import { RefreshCw, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
-import { db, getCurrentUserSession } from '@/core/db';
+import { db, getTrustedSyncOwner } from '@/core/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function SyncTab() {
   const pendingCount = useLiveQuery(async () => {
     try {
-      const session = getCurrentUserSession();
-      if (!session.tenantId) return 0;
+      const owner = getTrustedSyncOwner();
+      if (!owner) return 0;
       // 🚨 CONSISTENCY: Count both camelCase and UPPERCASE statuses used by engine
       return await db.outbox
         .where('status')
         .anyOf('pending', 'PENDING')
-        .and(item => item.tenantId === session.tenantId)
+        .and(item => item.tenantId === owner.tenantId && item.userId === owner.userId)
         .count();
     } catch {
       return 0;
@@ -21,13 +21,13 @@ export default function SyncTab() {
 
   const failedCount = useLiveQuery(async () => {
     try {
-      const session = getCurrentUserSession();
-      if (!session.tenantId) return 0;
+      const owner = getTrustedSyncOwner();
+      if (!owner) return 0;
       // 🚨 CONSISTENCY: Include RETRYING in failed/warning count
       return await db.outbox
         .where('status')
         .anyOf('failed', 'FAILED', 'RETRYING')
-        .and(item => item.tenantId === session.tenantId)
+        .and(item => item.tenantId === owner.tenantId && item.userId === owner.userId)
         .count();
     } catch {
       return 0;
@@ -40,20 +40,22 @@ export default function SyncTab() {
   };
 
   const handleClearFailed = async () => {
-    const session = getCurrentUserSession();
-    if (!session.tenantId) return;
-    const tenantId = session.tenantId;
-    const userId = session.userId;
-    
-    // 🚨 SECURITY: Only delete failed records belonging to the current tenant
+    const owner = getTrustedSyncOwner();
+    if (!owner) return;
+
+    // Delete only failed records belonging to the exact authenticated owner.
     const failedIds = await db.outbox
       .where('status')
         .anyOf('failed', 'FAILED', 'RETRYING')
-        .and(item => item.tenantId === tenantId)
+        .and(item => item.tenantId === owner.tenantId && item.userId === owner.userId)
       .primaryKeys();
 
-    const latestSession = getCurrentUserSession();
-    if (latestSession.tenantId !== tenantId || latestSession.userId !== userId) return;
+    const latestOwner = getTrustedSyncOwner();
+    if (
+      !latestOwner ||
+      latestOwner.tenantId !== owner.tenantId ||
+      latestOwner.userId !== owner.userId
+    ) return;
       
     if (failedIds.length > 0) {
       await db.outbox.bulkDelete(failedIds);

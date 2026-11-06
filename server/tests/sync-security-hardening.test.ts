@@ -4,6 +4,9 @@ import { configurationSyncService } from '@/services/config/configurationSyncSer
 import { DistributedSyncEngine } from '@/features/sync/sync.engine';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { unifiedTransport } from '@/shared/network/transport/unifiedTransport';
+import { crashRecoveryManager } from '@/core/observability/crashRecoveryManager';
+import { syncQueueRepository } from '@/features/sync/sync.queue';
+import { MutationQueue } from '../../packages/sync-engine/src/queue/mutationQueue';
 
 vi.mock('@/core/db', async (importOriginal) => {
   const actual = await importOriginal() as any;
@@ -53,9 +56,21 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       configurable: true
     });
 
-    setSession(TENANT_A, USER_A); // Set initial session for clearing
-    await db.outbox.clear();
-    await db.syncQueue.clear();
+    setSession(TENANT_A, USER_A);
+    if (!db.isOpen()) await db.open();
+    // Test-only native IndexedDB cleanup: production clear() is intentionally
+    // user-scoped and must not be used to erase other users' sync records.
+    const nativeDb = (db as any).backendDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = nativeDb.transaction(['outbox', 'syncQueue', 'sync_queue'], 'readwrite');
+      tx.objectStore('outbox').clear();
+      tx.objectStore('syncQueue').clear();
+      tx.objectStore('sync_queue').clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    setSession(TENANT_A, USER_A);
   });
 
   const setSession = (tenantId?: string, userId?: string, token = 'test-token') => {
@@ -95,6 +110,25 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       
       const count = await db.outbox.count();
       expect(count).toBe(0);
+    });
+
+    it('does not enqueue configuration changes from a stale unauthenticated session', async () => {
+      setSession(TENANT_A, USER_A);
+      (TokenProvider.getCurrentSession as any).mockReturnValue({
+        ...(TokenProvider.getCurrentSession() as any),
+        isAuthenticated: false
+      });
+
+      await configurationSyncService.handleConfigMutation({
+        key: 'system.name',
+        value: 'Must Not Queue',
+        scope: 'TENANT' as any,
+        context: { tenantId: TENANT_A },
+        version: 1,
+        updatedAt: new Date().toISOString()
+      } as any);
+
+      expect(await db.outbox.count()).toBe(0);
     });
 
     it('forces session tenantId into outbox and payload context', async () => {
@@ -193,7 +227,8 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
     });
 
     it('does not process another user\'s outbox event within the same tenant', async () => {
-      setSession(TENANT_A, USER_B);
+      // Create the event as its real owner, then switch users before draining.
+      setSession(TENANT_A, USER_A);
       await db.outbox.add({
         id: 91,
         tenantId: TENANT_A,
@@ -204,6 +239,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
         mutationId: 'mut-other-user-outbox'
       } as any);
 
+      setSession(TENANT_A, USER_B);
       const engine = DistributedSyncEngine.getInstance();
       await engine.drainQueue();
 
@@ -383,6 +419,397 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
     });
   });
 
+
+  describe('Phase 4: Legacy Outbox Recovery & Ownership Reconciliation', () => {
+    it('reuses idempotency only for the exact owner across both engine enqueue paths', async () => {
+      Object.defineProperty(global, 'navigator', {
+        value: { onLine: false, userAgent: 'TestAgent' },
+        writable: true,
+        configurable: true
+      });
+      setSession(TENANT_A, USER_A);
+
+      const engine = new DistributedSyncEngine(db as any);
+      const payload = { id: 'idempotent-product-A', name: 'Idempotent Product' };
+      const first = await engine.enqueue(
+        'CREATE',
+        payload,
+        'PRODUCT',
+        'phase4-owner-idempotency-key',
+        { tenantId: TENANT_A, branchId: BRANCH_A }
+      );
+
+      const transactionalDuplicate = await db.transaction(
+        'rw',
+        [db.syncQueue, db.outbox],
+        async () => engine.enqueueWithinTransaction(
+          'CREATE',
+          payload,
+          'PRODUCT',
+          'phase4-owner-idempotency-key',
+          { tenantId: TENANT_A, branchId: BRANCH_A }
+        )
+      );
+
+      expect(transactionalDuplicate.mutationId).toBe(first.mutationId);
+      expect(transactionalDuplicate.queueItemId).toBe(first.queueItemId);
+      expect(await db.syncQueue.where('idempotencyKey').equals('phase4-owner-idempotency-key').count()).toBe(1);
+      expect(await db.outbox.where('idempotencyKey').equals('phase4-owner-idempotency-key').count()).toBe(1);
+
+      setSession(TENANT_A, USER_B);
+      await expect(engine.enqueue(
+        'CREATE',
+        payload,
+        'PRODUCT',
+        'phase4-owner-idempotency-key',
+        { tenantId: TENANT_A, branchId: BRANCH_A }
+      )).rejects.toThrow('SYNC_IDEMPOTENCY_OWNER_MISMATCH');
+
+      const queueRecord = await db.syncQueue.where('idempotencyKey').equals('phase4-owner-idempotency-key').first();
+      const outboxRecord = await db.outbox.where('idempotencyKey').equals('phase4-owner-idempotency-key').first();
+      expect(queueRecord?.userId).toBe(USER_A);
+      expect(outboxRecord?.userId).toBe(USER_A);
+      expect(queueRecord?.mutationId).toBe(first.mutationId);
+      expect(outboxRecord?.mutationId).toBe(first.mutationId);
+    });
+
+
+    it('requires an authenticated owner across all sync queue enqueue entry points', async () => {
+      const repositoryItem = {
+        mutationId: 'repo-queue-owned',
+        tenantId: TENANT_A,
+        branchId: BRANCH_A,
+        deviceId: 'device-A',
+        entityType: 'PRODUCT',
+        operationType: 'CREATE',
+        payload: { id: 'queue-product-A' },
+        idempotencyKey: 'repo-queue-idem',
+        logicalTimestamp: Date.now(),
+        actorId: USER_A
+      };
+
+      const legacyQueue = MutationQueue.getInstance();
+
+      // A stale user/tenant object without an authenticated session token
+      // must not be treated as a trusted queue owner.
+      setSession(TENANT_A, USER_A);
+      const staleUnauthenticatedSession = {
+        ...(TokenProvider.getCurrentSession() as any),
+        isAuthenticated: false
+      };
+      (TokenProvider.getCurrentSession as any).mockReturnValue(staleUnauthenticatedSession);
+      await expect(syncQueueRepository.enqueue(repositoryItem as any))
+        .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+      await expect(legacyQueue.enqueue({
+        type: 'PRODUCT',
+        payload: { id: 'legacy-queue-stale-session' },
+        priority: 'LOW',
+        idempotencyKey: 'legacy-queue-stale-session-idem'
+      }))
+        .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+
+      const engine = new DistributedSyncEngine(db as any);
+      await expect(engine.enqueue(
+        'CREATE',
+        { id: 'stale-session-product' },
+        'PRODUCT',
+        'stale-session-engine-idem',
+        { tenantId: TENANT_A, branchId: BRANCH_A }
+      )).rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+
+      await expect(db.transaction('rw', [db.syncQueue, db.outbox], async () =>
+        engine.enqueueWithinTransaction(
+          'CREATE',
+          { id: 'stale-session-transactional-product' },
+          'PRODUCT',
+          'stale-session-transactional-idem',
+          { tenantId: TENANT_A, branchId: BRANCH_A }
+        )
+      )).rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+
+      setSession(TENANT_A, undefined);
+      await expect(syncQueueRepository.enqueue(repositoryItem as any))
+        .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+      await expect(legacyQueue.enqueue({
+        type: 'PRODUCT',
+        payload: { id: 'legacy-queue-product' },
+        priority: 'LOW',
+        idempotencyKey: 'legacy-queue-idem'
+      }))
+        .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+
+      setSession(TENANT_A, USER_A);
+      const repositoryId = await syncQueueRepository.enqueue(repositoryItem as any);
+      const repositoryRecord = await db.syncQueue.get(repositoryId);
+      expect(repositoryRecord?.tenantId).toBe(TENANT_A);
+      expect(repositoryRecord?.userId).toBe(USER_A);
+
+      setSession(TENANT_A, USER_B);
+      await expect(syncQueueRepository.enqueue({
+        ...repositoryItem,
+        mutationId: 'repo-queue-owned-by-user-b',
+        userId: USER_B
+      } as any)).rejects.toThrow();
+
+      setSession(TENANT_A, USER_A);
+      const sameOwnerDuplicate = await syncQueueRepository.enqueue({
+        ...repositoryItem,
+        mutationId: 'repo-queue-same-owner-duplicate'
+      } as any);
+      expect(sameOwnerDuplicate).toBe(repositoryId);
+
+      const legacyMutation = await legacyQueue.enqueue({
+        type: 'PRODUCT',
+        payload: { id: 'legacy-queue-product' },
+        priority: 'LOW',
+        idempotencyKey: 'legacy-queue-idem-owned'
+      });
+      const legacyRecord = await db.sync_queue.get(legacyMutation.id);
+      expect(legacyRecord?.tenantId).toBe(TENANT_A);
+      expect(legacyRecord?.userId).toBe(USER_A);
+    });
+
+
+    it('prevents deleting another user sync records and scopes table clear to the current owner', async () => {
+      setSession(TENANT_A, USER_A);
+      const userAId = await db.outbox.add({
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'PENDING',
+        type: 'USER_A',
+        payload: {},
+        mutationId: 'delete-scope-user-a'
+      } as any);
+
+      setSession(TENANT_A, USER_B);
+      const userBId = await db.outbox.add({
+        tenantId: TENANT_A,
+        userId: USER_B,
+        status: 'PENDING',
+        type: 'USER_B',
+        payload: {},
+        mutationId: 'delete-scope-user-b'
+      } as any);
+
+      setSession(TENANT_A, USER_A);
+      await expect(db.outbox.delete(userBId))
+        .rejects.toThrow('Unauthorized sync record deletion');
+      await expect(db.outbox.bulkDelete([userBId]))
+        .rejects.toThrow('Unauthorized sync record deletion');
+      await db.outbox.clear();
+
+      expect(await db.outbox.get(userAId)).toBeUndefined();
+      expect((await db.outbox.get(userBId))?.userId).toBe(USER_B);
+
+      setSession(TENANT_A, USER_B);
+      await db.outbox.delete(userBId);
+      expect(await db.outbox.get(userBId)).toBeUndefined();
+    });
+
+    it('scopes legacy queue reads and compaction to the exact user owner', async () => {
+      const addRepositoryRecord = async (userId: string, mutationId: string, syncStatus: string) => {
+        setSession(TENANT_A, userId);
+        await db.syncQueue.add({
+          tenantId: TENANT_A,
+          userId,
+          branchId: BRANCH_A,
+          deviceId: 'device-' + userId,
+          mutationId,
+          entityType: 'PRODUCT',
+          operationType: 'UPDATE',
+          payload: { id: mutationId },
+          syncStatus,
+          retryCount: 0,
+          idempotencyKey: 'idem-' + mutationId,
+          logicalTimestamp: Date.now(),
+          actorId: userId,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        } as any);
+      };
+
+      const addLegacyRecord = async (userId: string, id: string, status: string) => {
+        setSession(TENANT_A, userId);
+        await db.sync_queue.add({
+          id,
+          tenantId: TENANT_A,
+          userId,
+          type: 'TEST',
+          payload: {},
+          timestamp: Date.now(),
+          retryCount: 0,
+          priority: 'LOW',
+          idempotencyKey: 'legacy-' + id,
+          status
+        } as any);
+      };
+
+      await addRepositoryRecord(USER_A, 'repo-a-pending', 'PENDING');
+      await addRepositoryRecord(USER_A, 'repo-a-conflict', 'CONFLICT');
+      await addRepositoryRecord(USER_B, 'repo-b-pending', 'PENDING');
+      await addRepositoryRecord(USER_B, 'repo-b-conflict', 'CONFLICT');
+
+      await addLegacyRecord(USER_A, 'legacy-a-pending', 'PENDING');
+      await addLegacyRecord(USER_A, 'legacy-a-completed', 'COMPLETED');
+      await addLegacyRecord(USER_B, 'legacy-b-pending', 'PENDING');
+      await addLegacyRecord(USER_B, 'legacy-b-completed', 'COMPLETED');
+
+      setSession(TENANT_A, USER_A);
+      const repositoryPending = await syncQueueRepository.getNextPendingBatch(10);
+      const repositoryStats = await syncQueueRepository.getQueueStats();
+      const repositoryDeadLetters = await syncQueueRepository.getDeadLetterMutations();
+      expect(repositoryPending).toHaveLength(1);
+      expect(repositoryPending.every(item => item.userId === USER_A)).toBe(true);
+      expect(repositoryStats.total).toBe(2);
+      expect(repositoryStats.pending).toBe(1);
+      expect(repositoryStats.conflict).toBe(1);
+      expect(repositoryDeadLetters).toHaveLength(1);
+      expect(repositoryDeadLetters[0].userId).toBe(USER_A);
+
+      const legacyQueue = MutationQueue.getInstance();
+      const legacyPending = await legacyQueue.getPendingMutations();
+      expect(legacyPending).toHaveLength(1);
+      expect(legacyPending[0].userId).toBe(USER_A);
+
+      expect(await legacyQueue.compactQueue()).toBe(1);
+      expect(await db.sync_queue.get('legacy-a-completed')).toBeUndefined();
+      expect(await db.sync_queue.get('legacy-b-completed')).toBeDefined();
+
+      const oldEventId = await db.syncEvents.add({
+        eventId: 'ownerless-old-sync-event',
+        sequence: '1',
+        createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+      } as any);
+      expect(await syncQueueRepository.purgeObsoleteEvents(7)).toBe(0);
+      expect(await db.syncEvents.get(oldEventId)).toBeDefined();
+    });
+
+    it('blocks direct sync-row create and update from stale unauthenticated sessions', async () => {
+      setSession(TENANT_A, USER_A);
+      const ownedId = await db.outbox.add({
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'PENDING',
+        type: 'OWNED',
+        payload: {},
+        mutationId: 'owned-row-stale-auth-test'
+      } as any);
+
+      (TokenProvider.getCurrentSession as any).mockReturnValue({
+        ...(TokenProvider.getCurrentSession() as any),
+        isAuthenticated: false
+      });
+
+      await expect(db.outbox.add({
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'PENDING',
+        type: 'STALE_AUTH_CREATE',
+        payload: {},
+        mutationId: 'stale-auth-create-must-fail'
+      } as any)).rejects.toThrow('authenticated user/token identity');
+
+      await expect(db.outbox.update(ownedId, { status: 'PROCESSING' }))
+        .rejects.toThrow('authenticated tenant/user owner');
+
+      const unchanged = await db.outbox.get(ownedId);
+      expect(unchanged?.status).toBe('PENDING');
+      expect(unchanged?.userId).toBe(USER_A);
+    });
+
+    it('does not assign the active user to an ownerless legacy outbox row during update', async () => {
+      setSession(TENANT_A, undefined);
+      await db.outbox.add({
+        id: 92,
+        tenantId: TENANT_A,
+        status: 'processing',
+        type: 'LEGACY',
+        payload: {},
+        mutationId: 'legacy-no-owner-update'
+      } as any);
+
+      setSession(TENANT_A, USER_A);
+      await expect(
+        db.outbox.update(92, { status: 'pending' })
+      ).rejects.toThrow('Sync record update requires its exact authenticated tenant/user owner.');
+
+      const unchanged = await db.outbox.get(92);
+      expect(unchanged?.status).toBe('processing');
+      expect(unchanged?.userId).toBeUndefined();
+    });
+
+    it('recovers only current-user processing events and leaves legacy/other-user events untouched', async () => {
+      setSession(TENANT_A, undefined);
+      await db.outbox.add({
+        id: 93,
+        tenantId: TENANT_A,
+        status: 'processing',
+        type: 'LEGACY',
+        payload: {},
+        mutationId: 'legacy-processing-no-owner'
+      } as any);
+
+      setSession(TENANT_A, USER_A);
+      await db.outbox.add({
+        id: 94,
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'processing',
+        type: 'OWNED',
+        payload: {},
+        mutationId: 'owned-processing-user-a',
+        createdAt: new Date(Date.now() - 6 * 60 * 1000),
+        updatedAt: new Date(Date.now() - 6 * 60 * 1000)
+      } as any);
+
+      setSession(TENANT_A, USER_B);
+      await db.outbox.add({
+        id: 95,
+        tenantId: TENANT_A,
+        userId: USER_B,
+        status: 'processing',
+        type: 'OTHER_USER',
+        payload: {},
+        mutationId: 'owned-processing-user-b'
+      } as any);
+
+      setSession(TENANT_A, USER_A);
+      await db.outbox.add({
+        id: 96,
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'processing',
+        type: 'ACTIVE',
+        payload: {},
+        mutationId: 'active-processing-user-a',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as any);
+
+      const result = await crashRecoveryManager.bootstrapAppRecovery();
+
+      expect(result.interruptedSyncsFound).toBe(1);
+      expect(result.unownedLegacyOutboxCount).toBe(1);
+      expect(result.reconciliationsRequiredCount).toBeGreaterThanOrEqual(1);
+      expect(result.recoveredCount).toBe(1);
+
+      const recovered = await db.outbox.get(94);
+      expect(recovered?.status).toBe('pending');
+      expect(recovered?.userId).toBe(USER_A);
+
+      const legacy = await db.outbox.get(93);
+      expect(legacy?.status).toBe('processing');
+      expect(legacy?.userId).toBeUndefined();
+
+      const otherUser = await db.outbox.get(95);
+      expect(otherUser?.status).toBe('processing');
+      expect(otherUser?.userId).toBe(USER_B);
+
+      const active = await db.outbox.get(96);
+      expect(active?.status).toBe('processing');
+      expect(active?.userId).toBe(USER_A);
+    });
+  });
 
   describe('Phase 4: Per-mutation HTTP 2xx result integrity', () => {
     const makeResponse = (status: string, mutationId: string) => ({

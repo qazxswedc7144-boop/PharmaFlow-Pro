@@ -1,18 +1,33 @@
 // src/core/observability/crashRecoveryManager.ts
 
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { observabilityService } from './observabilityService';
 import { recoveryCoordinator } from './recoveryCoordinator';
 import { createObservabilityContext } from './observabilityContext';
 
 export interface CrashRecoveryResult {
   interruptedSyncsFound: number;
+  unownedLegacyOutboxCount: number;
   interruptedDraftsFound: number;
   unconfirmedFinancialCount: number;
   recoveredCount: number;
   reconciliationsRequiredCount: number;
   timestamp: string;
 }
+
+type RecoveryOwner = {
+  tenantId: string;
+  userId: string;
+};
+
+const ACTIVE_OUTBOX_STATUSES = new Set([
+  'PENDING',
+  'PROCESSING',
+  'SENDING',
+  'RETRYING',
+  'RETRY_PENDING'
+]);
 
 export class CrashRecoveryManager {
   private static instance: CrashRecoveryManager;
@@ -25,12 +40,44 @@ export class CrashRecoveryManager {
   }
 
   /**
+   * Return an owner only when the authenticated token identity and the
+   * application's normalized session identity agree exactly.
+   */
+  private readRecoveryOwner(): RecoveryOwner | null {
+    const auth = TokenProvider.getCurrentSession() as any;
+    const session = getCurrentUserSession();
+    const authUserId = auth?.user?.id || auth?.user?.user_id;
+    const authTenantId = auth?.tenantId || auth?.user?.tenantId || auth?.user?.tenant_id;
+
+    if (
+      auth?.isAuthenticated !== true ||
+      typeof auth?.token !== 'string' ||
+      !auth.token.trim() ||
+      !authUserId ||
+      !authTenantId ||
+      session.userId !== authUserId ||
+      session.tenantId !== authTenantId
+    ) {
+      return null;
+    }
+
+    return { tenantId: authTenantId, userId: authUserId };
+  }
+
+  private isRecoveryOwnerCurrent(owner: RecoveryOwner): boolean {
+    const current = this.readRecoveryOwner();
+    return Boolean(current && current.tenantId === owner.tenantId && current.userId === owner.userId);
+  }
+
+  /**
    * Application Bootstrap Crash Recovery Routine.
-   * Runs safely during app startup to detect interrupted transactions or syncs.
+   * Sync recovery is strictly user-owned; ownerless legacy rows are reported
+   * for controlled reconciliation and are never re-attributed or retried.
    */
   public async bootstrapAppRecovery(): Promise<CrashRecoveryResult> {
     const ctx = createObservabilityContext({ workflow: 'APP_BOOTSTRAP_CRASH_RECOVERY' });
     let interruptedSyncsFound = 0;
+    let unownedLegacyOutboxCount = 0;
     let interruptedDraftsFound = 0;
     let unconfirmedFinancialCount = 0;
     let recoveredCount = 0;
@@ -43,26 +90,71 @@ export class CrashRecoveryManager {
         } catch {}
       }
 
-      // 1. Inspect Outbox / Sync Queue for stuck processing items
-      if (db && db.outbox) {
-        const processingMutations = await db.outbox
-          .where('status')
-          .equals('processing')
+      const recoveryOwner = this.readRecoveryOwner();
+
+      // 1. Inspect only the active tenant's outbox. A row is recoverable only
+      // when it has an exact owner match with the authenticated session.
+      if (db && db.outbox && recoveryOwner) {
+        const tenantOutbox = await db.outbox
+          .where('tenantId')
+          .equals(recoveryOwner.tenantId)
           .toArray()
           .catch(() => []);
+
+        unownedLegacyOutboxCount = tenantOutbox.filter((event: any) =>
+          ACTIVE_OUTBOX_STATUSES.has(String(event?.status || '').toUpperCase()) &&
+          (!event?.userId || typeof event.userId !== 'string' || !event.userId.trim())
+        ).length;
+
+        const staleBefore = Date.now() - 5 * 60 * 1000;
+        const processingMutations = tenantOutbox.filter((event: any) => {
+          const updatedAt = new Date(event?.updatedAt || event?.createdAt || 0).getTime();
+          return event?.status === 'processing' &&
+            event.tenantId === recoveryOwner.tenantId &&
+            event.userId === recoveryOwner.userId &&
+            Number.isFinite(updatedAt) &&
+            updatedAt < staleBefore;
+        });
 
         interruptedSyncsFound = processingMutations.length;
 
         for (const mut of processingMutations) {
-          // Reset stuck 'processing' back to 'pending' for safe retry
-          try {
-            await db.outbox.update(mut.id, { status: 'pending', updatedAt: new Date().toISOString() });
-            recoveredCount++;
-          } catch {}
+          if (!this.isRecoveryOwnerCurrent(recoveryOwner)) break;
+          if (!mut?.id || mut.tenantId !== recoveryOwner.tenantId || mut.userId !== recoveryOwner.userId) continue;
+
+          // Re-read immediately before mutation to avoid acting on a stale row.
+          const latest = await db.outbox.get(mut.id).catch(() => undefined);
+          if (!this.isRecoveryOwnerCurrent(recoveryOwner)) break;
+          if (
+            !latest ||
+            latest.tenantId !== recoveryOwner.tenantId ||
+            latest.userId !== recoveryOwner.userId ||
+            latest.status !== 'processing'
+          ) {
+            continue;
+          }
+
+          await db.outbox.update(mut.id, {
+            status: 'pending',
+            updatedAt: new Date().toISOString()
+          });
+          if (!this.isRecoveryOwnerCurrent(recoveryOwner)) break;
+          recoveredCount++;
+        }
+
+        if (unownedLegacyOutboxCount > 0) {
+          reconciliationsRequiredCount += unownedLegacyOutboxCount;
+          await observabilityService.recordRecovery(
+            'MANUAL_INTERVENTION',
+            'RECONCILIATION_REQUIRED',
+            ctx,
+            `Found ${unownedLegacyOutboxCount} ownerless legacy outbox record(s) for this tenant. Records were left unchanged; ownership must be established from trusted evidence before any replay.`
+          );
         }
       }
 
-      // 2. Inspect Invoices with pending or draft document status that might be unposted financial transactions
+      // 2. Inspect invoices with DRAFT document status. Financial operations
+      // retain the existing zero-blind-retry verification boundary.
       if (db && db.invoices) {
         const draftInvoices = await db.invoices
           .where('documentStatus')
@@ -80,7 +172,6 @@ export class CrashRecoveryManager {
             );
 
             if (check.committed) {
-              // Invoice was committed in DB but stuck as DRAFT in UI state
               await db.invoices.update(draft.id, { documentStatus: 'POSTED' });
               recoveredCount++;
               await observabilityService.recordRecovery(
@@ -105,6 +196,7 @@ export class CrashRecoveryManager {
 
       const summary: CrashRecoveryResult = {
         interruptedSyncsFound,
+        unownedLegacyOutboxCount,
         interruptedDraftsFound,
         unconfirmedFinancialCount,
         recoveredCount,
@@ -132,6 +224,7 @@ export class CrashRecoveryManager {
 
       return {
         interruptedSyncsFound: 0,
+        unownedLegacyOutboxCount: 0,
         interruptedDraftsFound: 0,
         unconfirmedFinancialCount: 0,
         recoveredCount: 0,
