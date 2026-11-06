@@ -711,6 +711,16 @@ export class DistributedSyncEngine {
           }
 
           for (const mutation of batch) {
+            // 🚨 RACE PROTECTION: Check session before each mutation
+            const currentSession = getCurrentUserSession();
+            if (!currentSession.tenantId || mutation.tenantId !== currentSession.tenantId) {
+              console.warn("[DistributedSyncEngine] Skipping mutation due to session mismatch or logout:", {
+                mutationTenant: mutation.tenantId,
+                sessionTenant: currentSession.tenantId
+              });
+              hasMore = false; // Stop batch processing if session changed
+              break;
+            }
             await this.processMutationWithRetry(mutation);
           }
         }
@@ -725,6 +735,15 @@ export class DistributedSyncEngine {
           .catch(() => []);
 
         for (const event of outboxEvents) {
+          // 🚨 RACE PROTECTION: Check session before each event
+          const currentSession = getCurrentUserSession();
+          if (!currentSession.tenantId || (event.tenantId && event.tenantId !== currentSession.tenantId)) {
+            console.warn("[DistributedSyncEngine] Skipping outbox event due to session mismatch or logout:", {
+              eventTenant: event.tenantId,
+              sessionTenant: currentSession.tenantId
+            });
+            continue; // Keep event in outbox for its correct tenant session
+          }
           await this.processOutboxEvent(event);
         }
       }
@@ -735,12 +754,23 @@ export class DistributedSyncEngine {
 
   private async processOutboxEvent(event: any): Promise<void> {
     try {
+      // 🚨 SESSION VERIFICATION: Re-check session at start of processing
       const session = getCurrentUserSession();
+      if (!session.tenantId || (event.tenantId && event.tenantId !== session.tenantId)) {
+        return; // Safety bail
+      }
+
       const device = DeviceManager.getDeviceIdentity();
 
       await (this.db as any).outbox.update(event.id, { status: 'SENDING', updatedAt: new Date().toISOString() });
       
       const sendPushRequest = async (): Promise<Response> => {
+        // 🚨 FINAL SENTRY: Ensure session hasn't changed during update wait
+        const midSession = getCurrentUserSession();
+        if (midSession.tenantId !== (event.tenantId || session.tenantId)) {
+           throw new Error("SESSION_SWITCH_DETECTED: Aborting push due to tenant change.");
+        }
+
         return await unifiedTransport.request<Response>({
           url: this.getApiUrl('/api/v1/sync/push'),
           method: 'POST',
@@ -812,27 +842,32 @@ export class DistributedSyncEngine {
     await this.db.syncQueue.update(mutation.id!, { syncStatus: 'PROCESSING', updatedAt: new Date() });
 
     let delay: number = SYNC_CONFIG.BACKOFF_INITIAL_DELAY_MS;
-    const session = getCurrentUserSession();
     const device = DeviceManager.getDeviceIdentity();
 
     const sendPushMutation = async (): Promise<Response> => {
+      // 🚨 SESSION VERIFICATION: Re-check session before transport call
+      const currentSession = getCurrentUserSession();
+      if (!currentSession.tenantId || mutation.tenantId !== currentSession.tenantId) {
+         throw new Error("SESSION_SWITCH_DETECTED: Aborting push due to tenant change.");
+      }
+
       return await unifiedTransport.request<Response>({
         url: this.getApiUrl('/api/v1/sync/push'),
         method: 'POST',
         profile: 'SYNC',
         raw: true,
         headers: {
-          'X-Tenant-ID': mutation.tenantId || session.tenantId || '',
-          'X-Branch-ID': mutation.branchId || session.branchId || '',
-          'X-User-ID': session.userId || '',
+          'X-Tenant-ID': mutation.tenantId || currentSession.tenantId || '',
+          'X-Branch-ID': mutation.branchId || currentSession.branchId || '',
+          'X-User-ID': currentSession.userId || '',
           'X-Device-ID': device.deviceId,
           'X-Session-ID': (mutation as any).sessionId || 'local-session',
           'X-Correlation-ID': mutation.correlationId || 'local-correlation',
         },
         body: {
-          tenantId: mutation.tenantId || session.tenantId,
-          branchId: mutation.branchId || session.branchId,
-          userId: session.userId,
+          tenantId: mutation.tenantId || currentSession.tenantId,
+          branchId: mutation.branchId || currentSession.branchId,
+          userId: currentSession.userId,
           deviceId: device.deviceId,
           schemaVersion: SYNC_PROTOCOL_VERSION,
           clientVersion: CLIENT_VERSION,

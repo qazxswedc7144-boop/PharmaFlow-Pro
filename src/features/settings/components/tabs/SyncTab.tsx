@@ -9,7 +9,12 @@ export default function SyncTab() {
     try {
       const session = getCurrentUserSession();
       if (!session.tenantId) return 0;
-      return await db.outbox.where('status').equals('pending').count();
+      // 🚨 CONSISTENCY: Count both camelCase and UPPERCASE statuses used by engine
+      return await db.outbox
+        .where('status')
+        .anyOf('pending', 'PENDING')
+        .and(item => item.tenantId === session.tenantId)
+        .count();
     } catch {
       return 0;
     }
@@ -19,7 +24,12 @@ export default function SyncTab() {
     try {
       const session = getCurrentUserSession();
       if (!session.tenantId) return 0;
-      return await db.outbox.where('status').equals('failed').count();
+      // 🚨 CONSISTENCY: Include RETRYING in failed/warning count
+      return await db.outbox
+        .where('status')
+        .anyOf('failed', 'FAILED', 'RETRYING')
+        .and(item => item.tenantId === session.tenantId)
+        .count();
     } catch {
       return 0;
     }
@@ -33,7 +43,17 @@ export default function SyncTab() {
   const handleClearFailed = async () => {
     const session = getCurrentUserSession();
     if (!session.tenantId) return;
-    await db.outbox.where('status').equals('failed').delete();
+    
+    // 🚨 SECURITY: Only delete failed records belonging to the current tenant
+    const failedIds = await db.outbox
+      .where('status')
+      .anyOf('failed', 'FAILED')
+      .and(item => item.tenantId === session.tenantId)
+      .primaryKeys();
+      
+    if (failedIds.length > 0) {
+      await db.outbox.bulkDelete(failedIds);
+    }
   };
 
   return (

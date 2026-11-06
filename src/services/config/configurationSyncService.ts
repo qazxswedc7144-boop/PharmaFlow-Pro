@@ -49,12 +49,26 @@ export class ConfigurationSyncService {
     }
 
     // 3. Ensure an active tenant session exists before writing to tenant-scoped outbox
+    // 🚨 SECURITY HARDENING: Use active session as the ONLY trusted source of truth
     const session = getCurrentUserSession();
-    const tenantId = record.context?.tenantId || session?.tenantId;
-    if (!tenantId) {
+    const activeTenantId = session?.tenantId;
+
+    if (!activeTenantId) {
       // Cannot queue cloud outbox sync events without an active tenant session
       return;
     }
+
+    // 🚨 SECURITY HARDENING: Reject if record context attempts to spoof another tenant
+    if (record.context?.tenantId && record.context.tenantId !== activeTenantId) {
+      console.error('[SECURITY] Mismatched tenant context in config mutation rejected:', {
+        expected: activeTenantId,
+        received: record.context.tenantId,
+        key: record.key
+      });
+      return;
+    }
+
+    const trustedTenantId = activeTenantId;
 
     // 4. SYNCABLE: Create mutation entry in outbox queue
     try {
@@ -69,17 +83,17 @@ export class ConfigurationSyncService {
       await db.outbox.add({
         mutationId,
         idempotencyKey,
-        tenantId,
+        tenantId: trustedTenantId, // Force trusted tenant ID
         type: 'UPDATE_SETTING',
         payload: {
           key: record.key,
           value: record.value,
           scope: record.scope,
-          context: { ...record.context, tenantId },
+          context: { ...record.context, tenantId: trustedTenantId }, // Force trusted tenant ID in payload
           version: record.version,
           updatedAt: record.updatedAt
         },
-        status: 'pending',
+        status: 'PENDING',
         createdAt: new Date(),
         retryCount: 0
       });
