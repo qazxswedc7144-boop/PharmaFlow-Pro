@@ -462,76 +462,6 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
 }
 
 /**
- * Override clear() only for sync-owned tables. Unlike Dexie's native clear(),
- * this deletes exact-owner rows individually through the guarded Table.delete()
- * path, leaving other users' and ownerless legacy rows untouched.
- */
-function installSyncOwnedTableClearGuards(db: Dexie) {
-  for (const table of db.tables) {
-    if (!SYNC_OWNED_TABLES.has(table.name)) continue;
-
-    const guardedTable = table as any;
-
-    guardedTable.clear = function (this: any) {
-      const owner = getTrustedSyncOwner();
-
-      if (!owner) {
-        throw new Error(
-          "FAIL_CLOSED: Sync table clear requires an authenticated tenant/user owner."
-        );
-      }
-
-      const session = requireTenantForTable(this, "Clear");
-      if (
-        session.tenantId !== owner.tenantId ||
-        session.userId !== owner.userId
-      ) {
-        throw new Error(
-          "FAIL_CLOSED: Sync table clear owner does not match the active tenant/user."
-        );
-      }
-
-      // Delete only rows matching both owner keys in one Dexie transaction.
-      // The deleting hook remains unchanged and validates each matched row.
-      return this.db.transaction("rw", this, async () => {
-        const currentOwner = getTrustedSyncOwner();
-        if (
-          !currentOwner ||
-          currentOwner.tenantId !== owner.tenantId ||
-          currentOwner.userId !== owner.userId
-        ) {
-          throw new Error(
-            "FAIL_CLOSED: Sync table owner changed during clear."
-          );
-        }
-
-        assertTenantUnchanged(this, owner.tenantId, "Clear");
-
-        const result = await this
-          .where("tenantId")
-          .equals(owner.tenantId)
-          .and((record: any) => record?.userId === owner.userId)
-          .delete();
-
-        const finalOwner = getTrustedSyncOwner();
-        if (
-          !finalOwner ||
-          finalOwner.tenantId !== owner.tenantId ||
-          finalOwner.userId !== owner.userId
-        ) {
-          throw new Error(
-            "FAIL_CLOSED: Sync table owner changed during clear."
-          );
-        }
-
-        assertTenantUnchanged(this, owner.tenantId, "Clear");
-        return result;
-      });
-    };
-  }
-}
-
-/**
  * Install tenant Collection guards on the constructors owned by this Dexie
  * instance. Dexie creates per-instance Collection classes; patching the static
  * Dexie.Collection prototype does not protect Collections created by db.where().
@@ -1311,7 +1241,6 @@ export class PharmaFlowDB extends Dexie {
     });
 
     installTenantCollectionGuards(this);
-    installSyncOwnedTableClearGuards(this);
   }
 
   async getOrphanedTenantRecordCount(): Promise<number> {
