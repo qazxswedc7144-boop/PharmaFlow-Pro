@@ -1119,7 +1119,17 @@ export class PharmaFlowDB extends Dexie {
           if (SYNC_OWNED_TABLES.has(tableName)) {
             const owner = getTrustedSyncOwner();
             if (!owner) {
-              throw new Error("FAIL_CLOSED: Sync record creation requires an authenticated user/token identity.");
+              // Preserve explicitly ownerless legacy rows for reconciliation,
+              // but never let a stale user object or supplied userId claim them.
+              if (session.userId || obj.userId) {
+                throw new Error("FAIL_CLOSED: Sync record creation requires an authenticated user/token identity.");
+              }
+              if (obj.tenantId && obj.tenantId !== session.tenantId) {
+                throw new Error("FAIL_CLOSED: Legacy sync record tenant does not match the active tenant.");
+              }
+              obj.tenantId = session.tenantId;
+              delete obj.userId;
+              return;
             }
             if (
               (obj.tenantId && obj.tenantId !== owner.tenantId) ||
