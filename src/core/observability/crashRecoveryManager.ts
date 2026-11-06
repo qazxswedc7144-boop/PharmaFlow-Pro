@@ -21,6 +21,14 @@ type RecoveryOwner = {
   userId: string;
 };
 
+const ACTIVE_OUTBOX_STATUSES = new Set([
+  'PENDING',
+  'PROCESSING',
+  'SENDING',
+  'RETRYING',
+  'RETRY_PENDING'
+]);
+
 export class CrashRecoveryManager {
   private static instance: CrashRecoveryManager;
 
@@ -94,7 +102,8 @@ export class CrashRecoveryManager {
           .catch(() => []);
 
         unownedLegacyOutboxCount = tenantOutbox.filter((event: any) =>
-          !event?.userId || typeof event.userId !== 'string' || !event.userId.trim()
+          ACTIVE_OUTBOX_STATUSES.has(String(event?.status || '').toUpperCase()) &&
+          (!event?.userId || typeof event.userId !== 'string' || !event.userId.trim())
         ).length;
 
         const staleBefore = Date.now() - 5 * 60 * 1000;
