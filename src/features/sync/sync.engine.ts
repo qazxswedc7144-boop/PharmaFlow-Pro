@@ -780,6 +780,11 @@ export class DistributedSyncEngine {
           if (!isSyncSessionCurrent(snapshot)) break;
         }
       }
+    } catch (error: any) {
+      // Session changes are expected cancellation boundaries for a queue drain.
+      // Do not let a stale session's cancellation surface as an unhandled failure.
+      if (error?.message?.includes('SESSION_SWITCH_DETECTED') || !isSyncSessionCurrent(snapshot)) return;
+      throw error;
     } finally {
       this.isProcessing = false;
     }
