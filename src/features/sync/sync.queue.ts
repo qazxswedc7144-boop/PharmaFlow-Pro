@@ -4,7 +4,7 @@
 
 import Dexie, { Table } from 'dexie';
 import { LocalSyncQueueItem, LocalSyncEvent, FailedMutationLog } from './sync.types';
-import { db, getCurrentUserSession } from '@/core/db';
+import { db, getTrustedSyncOwner } from '@/core/db';
 
 export interface PharmaFlowDexieExtension {
   syncQueue: Table<LocalSyncQueueItem, number>;
@@ -26,17 +26,17 @@ export class SyncQueueRepository {
   }
 
   private requireTrustedOwner(item: { tenantId?: string; userId?: string }): { tenantId: string; userId: string } {
-    const session = getCurrentUserSession();
-    if (!session.tenantId || !session.userId) {
-      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync queue enqueue.');
+    const owner = getTrustedSyncOwner();
+    if (!owner) {
+      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user/token identity is required for sync queue access.');
     }
-    if (item.tenantId && item.tenantId !== session.tenantId) {
+    if (item.tenantId && item.tenantId !== owner.tenantId) {
       throw new Error('TRUSTED_TENANT_CONTEXT_MISMATCH: Sync queue item tenant does not match the active session.');
     }
-    if (item.userId && item.userId !== session.userId) {
+    if (item.userId && item.userId !== owner.userId) {
       throw new Error('TRUSTED_USER_CONTEXT_MISMATCH: Sync queue item user does not match the active session.');
     }
-    return { tenantId: session.tenantId, userId: session.userId };
+    return { tenantId: owner.tenantId, userId: owner.userId };
   }
 
   async enqueue(item: Omit<LocalSyncQueueItem, 'id' | 'createdAt' | 'updatedAt' | 'syncStatus' | 'retryCount'>): Promise<number> {
