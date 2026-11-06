@@ -21,13 +21,13 @@ export default function SyncTab() {
 
   const failedCount = useLiveQuery(async () => {
     try {
-      const session = getCurrentUserSession();
-      if (!session.tenantId) return 0;
+      const owner = getTrustedSyncOwner();
+      if (!owner) return 0;
       // 🚨 CONSISTENCY: Include RETRYING in failed/warning count
       return await db.outbox
         .where('status')
         .anyOf('failed', 'FAILED', 'RETRYING')
-        .and(item => item.tenantId === session.tenantId)
+        .and(item => item.tenantId === owner.tenantId && item.userId === owner.userId)
         .count();
     } catch {
       return 0;
