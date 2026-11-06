@@ -421,6 +421,9 @@ export class DistributedSyncEngine {
     const outboxEvent = {
       mutationId,
       tenantId,
+      userId: session.userId,
+      branchId,
+      deviceId: DeviceManager.getDeviceIdentity().deviceId,
       type,
       payload: sanitizedPayload,
       status: 'PENDING',
