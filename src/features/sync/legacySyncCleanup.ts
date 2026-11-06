@@ -60,7 +60,7 @@ export async function cleanupLegacyLocalSyncRecords(now: number = Date.now()): P
         }
         const record = cursor.value;
         summary.scanned[bucket]++;
-        const field = bucket === 'outbox' ? 'status' : 'syncStatus';
+        const field: 'status' | 'syncStatus' = bucket === 'outbox' ? 'status' : 'syncStatus';
         const status = String(record?.[field] || '').toUpperCase();
         const createdAt = getRecordTimestamp(record?.createdAt);
         if (record?.tenantId !== owner.tenantId) summary.skipped.otherTenant++;
