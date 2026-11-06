@@ -56,10 +56,21 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       configurable: true
     });
 
-    setSession(TENANT_A, USER_A); // Set initial session for clearing
-    await db.outbox.clear();
-    await db.syncQueue.clear();
-    await db.sync_queue.clear();
+    setSession(TENANT_A, USER_A);
+    if (!db.isOpen()) await db.open();
+    // Test-only native IndexedDB cleanup: production clear() is intentionally
+    // user-scoped and must not be used to erase other users' sync records.
+    const nativeDb = (db as any).backendDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = nativeDb.transaction(['outbox', 'syncQueue', 'sync_queue'], 'readwrite');
+      tx.objectStore('outbox').clear();
+      tx.objectStore('syncQueue').clear();
+      tx.objectStore('sync_queue').clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    setSession(TENANT_A, USER_A);
   });
 
   const setSession = (tenantId?: string, userId?: string, token = 'test-token') => {
@@ -558,6 +569,40 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       expect(legacyRecord?.userId).toBe(USER_A);
     });
 
+
+    it('prevents deleting another user sync records and scopes table clear to the current owner', async () => {
+      setSession(TENANT_A, USER_A);
+      const userAId = await db.outbox.add({
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'PENDING',
+        type: 'USER_A',
+        payload: {},
+        mutationId: 'delete-scope-user-a'
+      } as any);
+
+      setSession(TENANT_A, USER_B);
+      const userBId = await db.outbox.add({
+        tenantId: TENANT_A,
+        userId: USER_B,
+        status: 'PENDING',
+        type: 'USER_B',
+        payload: {},
+        mutationId: 'delete-scope-user-b'
+      } as any);
+
+      setSession(TENANT_A, USER_A);
+      await expect(db.outbox.delete(userBId))
+        .rejects.toThrow('Unauthorized sync record deletion');
+      await db.outbox.clear();
+
+      expect(await db.outbox.get(userAId)).toBeUndefined();
+      expect((await db.outbox.get(userBId))?.userId).toBe(USER_B);
+
+      setSession(TENANT_A, USER_B);
+      await db.outbox.delete(userBId);
+      expect(await db.outbox.get(userBId)).toBeUndefined();
+    });
 
     it('scopes legacy queue reads and compaction to the exact user owner', async () => {
       const addRepositoryRecord = async (userId: string, mutationId: string, syncStatus: string) => {
