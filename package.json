@@ -81,7 +81,10 @@
     "zustand": "^5.0.11"
   },
   "overrides": {
-    "deepmerge-ts": "^8.0.0"
+    "deepmerge-ts": "^8.0.0",
+    "browserslist": {
+      "electron-to-chromium": "1.5.477"
+    }
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

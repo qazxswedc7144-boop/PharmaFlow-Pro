@@ -1111,7 +1111,7 @@ export class PharmaFlowDB extends Dexie {
         // Strict Isolation: If record exists, it MUST belong to the current session tenant.
         // If obj is undefined (Dexie standard delete on non-existent key), we allow it to proceed 
         // to maintain standard Dexie behavior and prevent unnecessary crashes in cleanup/reversal paths.
-        if (obj && obj.tenantId && obj.tenantId !== session.tenantId) {
+        if (obj && (!obj.tenantId || obj.tenantId !== session.tenantId)) {
           console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey, "Record Tenant:", obj.tenantId, "Session Tenant:", session.tenantId);
           throw new Error("FAIL_CLOSED: Unauthorized data deletion attempt (Cross-tenant or Orphaned).");
         }
