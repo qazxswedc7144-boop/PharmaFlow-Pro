@@ -21,6 +21,18 @@ export class MutationQueue {
 
   private constructor() {}
 
+  private requireTrustedOwner(): { tenantId: string; userId: string } {
+    const session = getCurrentUserSession();
+    if (!session.tenantId || !session.userId) {
+      throw new Error("TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for legacy sync queue access.");
+    }
+    return { tenantId: session.tenantId, userId: session.userId };
+  }
+
+  private isOwnedBy(record: any, owner: { tenantId: string; userId: string }): boolean {
+    return record?.tenantId === owner.tenantId && record?.userId === owner.userId;
+  }
+
   public static getInstance(): MutationQueue {
     if (!MutationQueue.instance) {
       MutationQueue.instance = new MutationQueue();
@@ -73,16 +85,18 @@ export class MutationQueue {
    * Fetch all pending mutations sorted by priority and timestamp
    */
   public async getPendingMutations(): Promise<Mutation[]> {
+    const owner = this.requireTrustedOwner();
     const all = await db.sync_queue.where("status").equals("PENDING").toArray();
-    return this.sortMutations(all);
+    return this.sortMutations(all.filter(item => this.isOwnedBy(item, owner)));
   }
 
   /**
    * Fetch failed mutations indicating they are waiting for retry / reconnect
    */
   public async getFailedMutations(): Promise<Mutation[]> {
+    const owner = this.requireTrustedOwner();
     const all = await db.sync_queue.where("status").equals("FAILED").toArray();
-    return this.sortMutations(all);
+    return this.sortMutations(all.filter(item => this.isOwnedBy(item, owner)));
   }
 
   /**
@@ -115,6 +129,12 @@ export class MutationQueue {
     status: Mutation["status"], 
     error?: string
   ): Promise<void> {
+    const owner = this.requireTrustedOwner();
+    const current = await db.sync_queue.get(id);
+    if (!this.isOwnedBy(current, owner)) {
+      throw new Error("SYNC_RECORD_OWNER_MISMATCH: Cannot update a mutation outside the active tenant/user scope.");
+    }
+
     const updatePayload: Partial<Mutation> = { status, lastAttemptAt: Date.now() };
     if (error !== undefined) {
       updatePayload.error = error;
@@ -145,8 +165,12 @@ export class MutationQueue {
    * Increment retry count and reset to PENDING if under max retries
    */
   public async incrementRetry(id: string, error: string, maxRetries = 5): Promise<boolean> {
+    const owner = this.requireTrustedOwner();
     const mutation = await db.sync_queue.get(id);
     if (!mutation) return false;
+    if (!this.isOwnedBy(mutation, owner)) {
+      throw new Error("SYNC_RECORD_OWNER_MISMATCH: Cannot retry a mutation outside the active tenant/user scope.");
+    }
 
     const newCount = mutation.retryCount + 1;
     if (newCount >= maxRetries) {
@@ -167,7 +191,12 @@ export class MutationQueue {
    * Clear processed items from the queue to free space
    */
   public async compactQueue(): Promise<number> {
-    const completed = await db.sync_queue.where("status").equals("COMPLETED").toArray();
+    const owner = this.requireTrustedOwner();
+    const completed = await db.sync_queue
+      .where("status")
+      .equals("COMPLETED")
+      .and(mutation => this.isOwnedBy(mutation, owner))
+      .toArray();
     const ids = completed.map(m => m.id);
     if (ids.length > 0) {
       await db.sync_queue.bulkDelete(ids);
