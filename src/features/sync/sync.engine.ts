@@ -751,7 +751,7 @@ export class DistributedSyncEngine {
         const batch = await this.db.syncQueue.where('syncStatus').anyOf('PENDING', 'RETRY_PENDING').toArray().catch(() => []);
         assertSyncSessionCurrent(snapshot);
         const eligible = batch.filter(item => item.tenantId === snapshot.tenantId &&
-          (!item.userId || item.userId === snapshot.userId))
+          item.userId === snapshot.userId)
           .sort((a,b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
           .slice(0, SYNC_CONFIG.BATCH_CHUNK_SIZE);
         for (const mutation of eligible) {
@@ -796,7 +796,7 @@ export class DistributedSyncEngine {
   private async processOutboxEvent(event: any): Promise<void> {
     const snapshot = readSyncSessionSnapshot();
     if (!snapshot || !event?.id || event.tenantId !== snapshot.tenantId ||
-        (event.userId && event.userId !== snapshot.userId)) return;
+        event.userId !== snapshot.userId) return;
     try {
       assertSyncSessionCurrent(snapshot);
       const device = DeviceManager.getDeviceIdentity();
@@ -926,7 +926,7 @@ export class DistributedSyncEngine {
           assertSyncSessionCurrent(snapshot);
           if ((this.db as any).outbox) {
             const matching = await (this.db as any).outbox.where('mutationId').equals(mutation.mutationId)
-              .and((item: any) => item.tenantId === snapshot.tenantId && (!item.userId || item.userId === snapshot.userId))
+              .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
               .first().catch(() => null);
             assertSyncSessionCurrent(snapshot);
             if (matching) await (this.db as any).outbox.update(matching.id, { status: 'CONFIRMED', error: undefined, updatedAt: new Date().toISOString() });
