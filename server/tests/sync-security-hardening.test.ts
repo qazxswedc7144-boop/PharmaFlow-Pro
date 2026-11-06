@@ -5,6 +5,8 @@ import { DistributedSyncEngine } from '@/features/sync/sync.engine';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { unifiedTransport } from '@/shared/network/transport/unifiedTransport';
 import { crashRecoveryManager } from '@/core/observability/crashRecoveryManager';
+import { syncQueueRepository } from '@/features/sync/sync.queue';
+import { MutationQueue } from '../../packages/sync-engine/src/queue/mutationQueue';
 
 vi.mock('@/core/db', async (importOriginal) => {
   const actual = await importOriginal() as any;
@@ -57,6 +59,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
     setSession(TENANT_A, USER_A); // Set initial session for clearing
     await db.outbox.clear();
     await db.syncQueue.clear();
+    await db.sync_queue.clear();
   });
 
   const setSession = (tenantId?: string, userId?: string, token = 'test-token') => {
@@ -386,6 +389,50 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
 
 
   describe('Phase 4: Legacy Outbox Recovery & Ownership Reconciliation', () => {
+    it('requires an authenticated owner across all sync queue enqueue entry points', async () => {
+      const repositoryItem = {
+        mutationId: 'repo-queue-owned',
+        tenantId: TENANT_A,
+        branchId: BRANCH_A,
+        deviceId: 'device-A',
+        entityType: 'PRODUCT',
+        operationType: 'CREATE',
+        payload: { id: 'queue-product-A' },
+        idempotencyKey: 'repo-queue-idem',
+        logicalTimestamp: Date.now(),
+        actorId: USER_A
+      };
+
+      const legacyQueue = MutationQueue.getInstance();
+      setSession(TENANT_A, undefined);
+      await expect(syncQueueRepository.enqueue(repositoryItem as any))
+        .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+      await expect(legacyQueue.enqueue({
+        type: 'PRODUCT',
+        payload: { id: 'legacy-queue-product' },
+        priority: 'LOW',
+        idempotencyKey: 'legacy-queue-idem'
+      }))
+        .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+
+      setSession(TENANT_A, USER_A);
+      const repositoryId = await syncQueueRepository.enqueue(repositoryItem as any);
+      const repositoryRecord = await db.syncQueue.get(repositoryId);
+      expect(repositoryRecord?.tenantId).toBe(TENANT_A);
+      expect(repositoryRecord?.userId).toBe(USER_A);
+
+      const legacyMutation = await legacyQueue.enqueue({
+        type: 'PRODUCT',
+        payload: { id: 'legacy-queue-product' },
+        priority: 'LOW',
+        idempotencyKey: 'legacy-queue-idem-owned'
+      });
+      const legacyRecord = await db.sync_queue.get(legacyMutation.id);
+      expect(legacyRecord?.tenantId).toBe(TENANT_A);
+      expect(legacyRecord?.userId).toBe(USER_A);
+    });
+
+
     it('does not assign the active user to an ownerless legacy outbox row during update', async () => {
       setSession(TENANT_A, undefined);
       await db.outbox.add({
