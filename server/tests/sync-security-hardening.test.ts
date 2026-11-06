@@ -426,7 +426,9 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
         status: 'processing',
         type: 'OWNED',
         payload: {},
-        mutationId: 'owned-processing-user-a'
+        mutationId: 'owned-processing-user-a',
+        createdAt: new Date(Date.now() - 6 * 60 * 1000),
+        updatedAt: new Date(Date.now() - 6 * 60 * 1000)
       } as any);
 
       setSession(TENANT_A, USER_B);
@@ -441,6 +443,18 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       } as any);
 
       setSession(TENANT_A, USER_A);
+      await db.outbox.add({
+        id: 96,
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'processing',
+        type: 'ACTIVE',
+        payload: {},
+        mutationId: 'active-processing-user-a',
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as any);
+
       const result = await crashRecoveryManager.bootstrapAppRecovery();
 
       expect(result.interruptedSyncsFound).toBe(1);
@@ -459,6 +473,10 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       const otherUser = await db.outbox.get(95);
       expect(otherUser?.status).toBe('processing');
       expect(otherUser?.userId).toBe(USER_B);
+
+      const active = await db.outbox.get(96);
+      expect(active?.status).toBe('processing');
+      expect(active?.userId).toBe(USER_A);
     });
   });
 
