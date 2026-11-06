@@ -43,6 +43,8 @@ function extractPrimaryKey(table: any, record: any): any {
   return undefined;
 }
 
+const SYNC_OWNED_TABLES = new Set(['syncQueue', 'sync_queue', 'outbox']);
+
 const TENANT_SCOPED_TABLES = new Set([
   'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
   'accounts', 'journalLines', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
@@ -1093,6 +1095,26 @@ export class PharmaFlowDB extends Dexie {
             console.error(`[SECURITY] Attempt to change tenantId blocked on table '${tableName}'`);
             throw new Error("FAIL_CLOSED: tenantId modification is strictly forbidden.");
           }
+
+          // Sync ownership is immutable. Never attach an owner to a legacy row
+          // merely because another user updates its status or metadata.
+          if (SYNC_OWNED_TABLES.has(tableName)) {
+            const recordUserId = typeof obj.userId === 'string' && obj.userId.trim()
+              ? obj.userId
+              : undefined;
+            if (!session.userId || !recordUserId || recordUserId !== session.userId) {
+              throw new Error("FAIL_CLOSED: Sync record update requires its exact authenticated user owner.");
+            }
+            if (Object.prototype.hasOwnProperty.call(mods, 'userId') && mods.userId !== recordUserId) {
+              throw new Error("FAIL_CLOSED: Sync record userId is immutable.");
+            }
+            return {
+              ...mods,
+              tenantId: session.tenantId,
+              userId: recordUserId
+            };
+          }
+
           return {
             ...mods,
             tenantId: session.tenantId,
