@@ -109,10 +109,12 @@ export class SyncQueueRepository {
   }
 
   async getNextPendingBatch(limit: number): Promise<LocalSyncQueueItem[]> {
-    // استخدام الفهرس المركب لمنع التصفح الكامل للجدول ومقاومة البطء
+    const owner = this.requireTrustedOwner({});
+    // Use the compound status/date index, then enforce exact user ownership.
     return await this.db.syncQueue
       .where('[syncStatus+createdAt]')
       .between(['PENDING', Dexie.minKey], ['PENDING', Dexie.maxKey])
+      .and(item => item.tenantId === owner.tenantId && item.userId === owner.userId)
       .limit(limit)
       .toArray();
   }
@@ -128,17 +130,21 @@ export class SyncQueueRepository {
     failed: number;
     total: number;
   }> {
+    const owner = this.requireTrustedOwner({});
     const all = await this.db.syncQueue.toArray().catch(() => []);
+    const ownedItems = all.filter(item =>
+      item.tenantId === owner.tenantId && item.userId === owner.userId
+    );
     const stats = {
       pending: 0,
       processing: 0,
       conflict: 0,
       rejected: 0,
       failed: 0,
-      total: all.length
+      total: ownedItems.length
     };
 
-    for (const item of all) {
+    for (const item of ownedItems) {
       const status = item.syncStatus?.toUpperCase();
       if (status === 'PENDING') stats.pending++;
       else if (status === 'PROCESSING') stats.processing++;
@@ -154,9 +160,11 @@ export class SyncQueueRepository {
    * Retrieves dead-letter mutations (FAILED or REJECTED)
    */
   async getDeadLetterMutations(limit: number = 50): Promise<LocalSyncQueueItem[]> {
+    const owner = this.requireTrustedOwner({});
     return await this.db.syncQueue
       .where('syncStatus')
       .anyOf('FAILED', 'REJECTED', 'CONFLICT')
+      .and(item => item.tenantId === owner.tenantId && item.userId === owner.userId)
       .limit(limit)
       .toArray()
       .catch(() => []);
@@ -166,18 +174,12 @@ export class SyncQueueRepository {
    * Safely purges resolved / confirmed sync items older than the retention threshold
    */
   async purgeObsoleteEvents(olderThanDays: number = 7): Promise<number> {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
-    const oldEvents = await this.db.syncEvents
-      .where('createdAt')
-      .below(cutoff)
-      .toArray()
-      .catch(() => []);
-    
-    if (oldEvents.length > 0) {
-      const ids = oldEvents.map(e => e.id!).filter(Boolean);
-      await this.db.syncEvents.bulkDelete(ids).catch(() => null);
-    }
-    return oldEvents.length;
+    // LocalSyncEvent/schema currently carry no tenantId or userId. Deleting
+    // by age alone could purge another user's events, so fail closed.
+    console.warn(
+      `[SyncQueueRepository] Skipped ${olderThanDays}-day sync event purge: ownership metadata is unavailable.`
+    );
+    return 0;
   }
 }
 
