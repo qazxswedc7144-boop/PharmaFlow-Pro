@@ -312,18 +312,18 @@ export class DistributedSyncEngine {
   ): Promise<{ mutationId: string; idempotencyKey: string; queueItemId?: number }> {
     const mutationId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
     const timestamp = new Date().toISOString();
-    const session = getCurrentUserSession();
-    
+    const session = readSyncSessionSnapshot();
+    if (!session) {
+      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user/token identity is required for sync enqueue.');
+    }
+
     const tenantId = options?.tenantId || session.tenantId;
     const branchId = options?.branchId || session.branchId;
 
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
 
-    if (!session.userId) {
-      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync enqueue.');
-    }
-    if (!session.tenantId || tenantId !== session.tenantId) {
+    if (tenantId !== session.tenantId) {
       throw new Error('TRUSTED_TENANT_CONTEXT_MISMATCH: Sync enqueue tenant must match the active authenticated session.');
     }
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
@@ -450,18 +450,18 @@ export class DistributedSyncEngine {
   ): Promise<{ mutationId: string; idempotencyKey: string; queueItemId?: number }> {
     const mutationId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
     const timestamp = new Date().toISOString();
-    const session = getCurrentUserSession();
-    
+    const session = readSyncSessionSnapshot();
+    if (!session) {
+      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user/token identity is required for transactional sync enqueue.');
+    }
+
     const tenantId = options?.tenantId || session.tenantId;
     const branchId = options?.branchId || session.branchId;
 
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
 
-    if (!session.userId) {
-      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync enqueue.');
-    }
-    if (!session.tenantId || tenantId !== session.tenantId) {
+    if (tenantId !== session.tenantId) {
       throw new Error('TRUSTED_TENANT_CONTEXT_MISMATCH: Sync enqueue tenant must match the active authenticated session.');
     }
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
