@@ -85,6 +85,8 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (SyncConflictService.evaluateConflict as any).mockReturnValue({ hasConflict: false });
+    (SyncIdempotencyService.check as any).mockResolvedValue({ isDuplicate: false });
   });
 
   it("Scenario 1: Authorized User (Member of Branch) -> PASS", async () => {
