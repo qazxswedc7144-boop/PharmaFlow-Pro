@@ -24,6 +24,45 @@ export type SyncEngineState =
   | 'ERROR' 
   | 'STOPPED';
 
+type SyncSessionSnapshot = {
+  tenantId: string;
+  userId: string;
+  branchId: string | null;
+  token: string | null;
+};
+
+function readSyncSessionSnapshot(): SyncSessionSnapshot | null {
+  const session = TokenProvider.getCurrentSession() as any;
+  const user = session?.user;
+  const tenantId = session?.tenantId || user?.tenantId || user?.tenant_id;
+  const userId = user?.id || user?.user_id;
+  const branchId = session?.branchId || user?.branchId || user?.branch_id || null;
+  if (!session?.isAuthenticated || !session?.token || !tenantId || !userId) return null;
+  return { tenantId, userId, branchId, token: session.token };
+}
+
+function isSyncSessionCurrent(snapshot: SyncSessionSnapshot, includeToken = true): boolean {
+  const current = readSyncSessionSnapshot();
+  return Boolean(current && current.tenantId === snapshot.tenantId &&
+    current.userId === snapshot.userId && current.branchId === snapshot.branchId &&
+    (!includeToken || current.token === snapshot.token));
+}
+
+function assertSyncSessionCurrent(snapshot: SyncSessionSnapshot): void {
+  if (!isSyncSessionCurrent(snapshot)) {
+    throw new Error('SESSION_SWITCH_DETECTED: Sync session changed while a request was in flight.');
+  }
+}
+
+function acceptRefreshedSyncToken(snapshot: SyncSessionSnapshot): void {
+  const current = readSyncSessionSnapshot();
+  if (!current || current.tenantId !== snapshot.tenantId ||
+      current.userId !== snapshot.userId || current.branchId !== snapshot.branchId) {
+    throw new Error('SESSION_SWITCH_DETECTED: Session identity changed during token refresh.');
+  }
+  snapshot.token = current.token;
+}
+
 export class DistributedSyncEngine {
   private static instance: DistributedSyncEngine | null = null;
 
@@ -689,62 +728,56 @@ export class DistributedSyncEngine {
    */
   public async drainQueue(): Promise<void> {
     if (this.isProcessing || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
-    const session = getCurrentUserSession();
-    if (!session.tenantId) return;
+    const snapshot = readSyncSessionSnapshot();
+    if (!snapshot) return;
     this.isProcessing = true;
-
+    const staleBefore = Date.now() - 5 * 60 * 1000;
     try {
-      // 1. Drain syncQueue table
       if (this.db.syncQueue) {
-        let hasMore = true;
-        while (hasMore) {
-          const batch = await this.db.syncQueue
-            .where('[syncStatus+createdAt]')
-            .between(['PENDING', Dexie.minKey], ['PENDING', Dexie.maxKey])
-            .limit(SYNC_CONFIG.BATCH_CHUNK_SIZE)
-            .toArray()
-            .catch(() => []);
-
-          if (batch.length === 0) {
-            hasMore = false;
-            break;
+        const processing = await this.db.syncQueue.where('syncStatus').equals('PROCESSING').toArray().catch(() => []);
+        assertSyncSessionCurrent(snapshot);
+        for (const item of processing) {
+          const updatedAt = new Date(item.updatedAt || item.createdAt || 0).getTime();
+          if (item.tenantId === snapshot.tenantId && (!item.userId || item.userId === snapshot.userId) &&
+              Number.isFinite(updatedAt) && updatedAt < staleBefore) {
+            assertSyncSessionCurrent(snapshot);
+            await this.db.syncQueue.update(item.id!, { syncStatus: 'PENDING', updatedAt: new Date() });
+            assertSyncSessionCurrent(snapshot);
           }
-
-          for (const mutation of batch) {
-            // 🚨 RACE PROTECTION: Check session before each mutation
-            const currentSession = getCurrentUserSession();
-            if (!currentSession.tenantId || mutation.tenantId !== currentSession.tenantId) {
-              console.warn("[DistributedSyncEngine] Skipping mutation due to session mismatch or logout:", {
-                mutationTenant: mutation.tenantId,
-                sessionTenant: currentSession.tenantId
-              });
-              hasMore = false; // Stop batch processing if session changed
-              break;
-            }
-            await this.processMutationWithRetry(mutation);
-          }
+        }
+        const batch = await this.db.syncQueue.where('syncStatus').anyOf('PENDING', 'RETRY_PENDING').toArray().catch(() => []);
+        assertSyncSessionCurrent(snapshot);
+        const eligible = batch.filter(item => item.tenantId === snapshot.tenantId &&
+          (!item.userId || item.userId === snapshot.userId))
+          .sort((a,b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
+          .slice(0, SYNC_CONFIG.BATCH_CHUNK_SIZE);
+        for (const mutation of eligible) {
+          assertSyncSessionCurrent(snapshot);
+          await this.processMutationWithRetry(mutation);
+          if (!isSyncSessionCurrent(snapshot)) break;
         }
       }
 
-      // 2. Drain outbox table
+      assertSyncSessionCurrent(snapshot);
       if ((this.db as any).outbox) {
-        const outboxEvents = await (this.db as any).outbox
-          .where('status')
-          .anyOf('PENDING', 'pending', 'RETRYING')
-          .toArray()
-          .catch(() => []);
-
-        for (const event of outboxEvents) {
-          // 🚨 RACE PROTECTION: Check session before each event
-          const currentSession = getCurrentUserSession();
-          if (!currentSession.tenantId || (event.tenantId && event.tenantId !== currentSession.tenantId)) {
-            console.warn("[DistributedSyncEngine] Skipping outbox event due to session mismatch or logout:", {
-              eventTenant: event.tenantId,
-              sessionTenant: currentSession.tenantId
-            });
-            continue; // Keep event in outbox for its correct tenant session
+        const sending = await (this.db as any).outbox.where('status').equals('SENDING').toArray().catch(() => []);
+        assertSyncSessionCurrent(snapshot);
+        for (const event of sending) {
+          const updatedAt = new Date(event.updatedAt || event.createdAt || 0).getTime();
+          if (event.tenantId === snapshot.tenantId && (!event.userId || event.userId === snapshot.userId) &&
+              Number.isFinite(updatedAt) && updatedAt < staleBefore) {
+            assertSyncSessionCurrent(snapshot);
+            await (this.db as any).outbox.update(event.id, { status: 'PENDING', updatedAt: new Date().toISOString() });
+            assertSyncSessionCurrent(snapshot);
           }
+        }
+        const events = await (this.db as any).outbox.where('status').anyOf('PENDING','pending','RETRYING').toArray().catch(() => []);
+        assertSyncSessionCurrent(snapshot);
+        for (const event of events) {
+          if (event.tenantId !== snapshot.tenantId || (event.userId && event.userId !== snapshot.userId)) continue;
+          assertSyncSessionCurrent(snapshot);
           await this.processOutboxEvent(event);
+          if (!isSyncSessionCurrent(snapshot)) break;
         }
       }
     } finally {
@@ -753,250 +786,183 @@ export class DistributedSyncEngine {
   }
 
   private async processOutboxEvent(event: any): Promise<void> {
+    const snapshot = readSyncSessionSnapshot();
+    if (!snapshot || !event?.id || event.tenantId !== snapshot.tenantId ||
+        (event.userId && event.userId !== snapshot.userId)) return;
     try {
-      // 🚨 SESSION VERIFICATION: Re-check session at start of processing
-      const session = getCurrentUserSession();
-      if (!session.tenantId || (event.tenantId && event.tenantId !== session.tenantId)) {
-        return; // Safety bail
-      }
-
+      assertSyncSessionCurrent(snapshot);
       const device = DeviceManager.getDeviceIdentity();
-
       await (this.db as any).outbox.update(event.id, { status: 'SENDING', updatedAt: new Date().toISOString() });
-      
-      const sendPushRequest = async (): Promise<Response> => {
-        // 🚨 FINAL SENTRY: Ensure session hasn't changed during update wait
-        const midSession = getCurrentUserSession();
-        if (midSession.tenantId !== (event.tenantId || session.tenantId)) {
-           throw new Error("SESSION_SWITCH_DETECTED: Aborting push due to tenant change.");
-        }
-
-        return await unifiedTransport.request<Response>({
-          url: this.getApiUrl('/api/v1/sync/push'),
-          method: 'POST',
-          profile: 'SYNC',
-          raw: true,
-          headers: { 
-            'X-Tenant-ID': event.tenantId || session.tenantId,
-            'X-Branch-ID': event.branchId || session.branchId || '',
-            'X-User-ID': session.userId,
+      assertSyncSessionCurrent(snapshot);
+      const send = async (): Promise<Response> => {
+        assertSyncSessionCurrent(snapshot);
+        const response = await unifiedTransport.request<Response>({
+          url: this.getApiUrl('/api/v1/sync/push'), method: 'POST', profile: 'SYNC', raw: true,
+          headers: {
+            'X-Tenant-ID': snapshot.tenantId,
+            'X-Branch-ID': event.branchId || snapshot.branchId || '',
+            'X-User-ID': snapshot.userId,
             'X-Device-ID': device.deviceId
           },
           body: {
-            tenantId: event.tenantId || session.tenantId,
-            branchId: event.branchId || session.branchId,
-            userId: session.userId,
-            deviceId: device.deviceId,
-            schemaVersion: SYNC_PROTOCOL_VERSION,
-            clientVersion: CLIENT_VERSION,
-            mutations: [{
-              id: event.mutationId || String(event.id),
-              entity: event.entityType || event.type || 'MUTATION',
-              operation: event.operation || 'CREATE',
-              payload: event.payload || {},
-              idempotencyKey: event.idempotencyKey || event.mutationId || String(event.id),
-              timestamp: event.createdAt || Date.now()
-            }]
+            tenantId: snapshot.tenantId, branchId: event.branchId || snapshot.branchId,
+            userId: snapshot.userId, deviceId: device.deviceId,
+            schemaVersion: SYNC_PROTOCOL_VERSION, clientVersion: CLIENT_VERSION,
+            events: [{ mutationId: event.mutationId, type: event.type, payload: event.payload, idempotencyKey: event.idempotencyKey }]
           }
         });
+        assertSyncSessionCurrent(snapshot);
+        return response;
       };
-
-      let response = await sendPushRequest();
-
-      // Single-Flight 401 Refresh Handling
+      let response = await send();
       if (response.status === 401 && typeof navigator !== 'undefined' && navigator.onLine) {
-        try {
-          await TokenProvider.refreshAccessToken();
-          response = await sendPushRequest();
-        } catch {
-          await (this.db as any).outbox.update(event.id, {
-            status: 'FAILED',
-            error: 'Session expired / Unauthorized',
-            updatedAt: new Date().toISOString()
-          });
-          return;
-        }
+        await TokenProvider.refreshAccessToken();
+        acceptRefreshedSyncToken(snapshot);
+        response = await send();
       }
-
+      assertSyncSessionCurrent(snapshot);
       if (response.ok) {
         await (this.db as any).outbox.update(event.id, { status: 'CONFIRMED', updatedAt: new Date().toISOString() });
-      } else {
-        const errorBody = await response.json().catch(() => ({}));
-        const isFatal = [400, 401, 403].includes(response.status) || errorBody.errorCode === "SCHEMA_VERSION_MISMATCH";
-        await (this.db as any).outbox.update(event.id, { 
-          status: isFatal ? 'FAILED' : 'RETRYING', 
-          error: errorBody.message || `HTTP ${response.status}`,
-          updatedAt: new Date().toISOString() 
-        });
+        assertSyncSessionCurrent(snapshot);
+        return;
       }
-    } catch (err: any) {
-      await (this.db as any).outbox.update(event.id, { 
-        status: 'RETRYING', 
-        error: err.message || "Network Error",
-        updatedAt: new Date().toISOString() 
+      const body = await response.json().catch(() => ({}));
+      assertSyncSessionCurrent(snapshot);
+      const fatal = [400,401,403].includes(response.status) || body.errorCode === 'SCHEMA_VERSION_MISMATCH';
+      await (this.db as any).outbox.update(event.id, {
+        status: fatal ? 'FAILED' : 'RETRYING',
+        error: body.message || `HTTP ${response.status}`,
+        updatedAt: new Date().toISOString()
+      });
+      assertSyncSessionCurrent(snapshot);
+    } catch (error: any) {
+      if (!isSyncSessionCurrent(snapshot)) return;
+      await (this.db as any).outbox.update(event.id, {
+        status: 'RETRYING', error: error?.message || 'Network Error', updatedAt: new Date().toISOString()
       });
     }
   }
 
   private async processMutationWithRetry(mutation: LocalSyncQueueItem): Promise<void> {
-    await this.db.syncQueue.update(mutation.id!, { syncStatus: 'PROCESSING', updatedAt: new Date() });
-
-    let delay: number = SYNC_CONFIG.BACKOFF_INITIAL_DELAY_MS;
+    const snapshot = readSyncSessionSnapshot();
+    if (!snapshot || !mutation.id || mutation.tenantId !== snapshot.tenantId ||
+        ((mutation as any).userId && (mutation as any).userId !== snapshot.userId)) return;
+    assertSyncSessionCurrent(snapshot);
+    await this.db.syncQueue.update(mutation.id, { syncStatus: 'PROCESSING', updatedAt: new Date() });
+    assertSyncSessionCurrent(snapshot);
+    let delay = SYNC_CONFIG.BACKOFF_INITIAL_DELAY_MS;
     const device = DeviceManager.getDeviceIdentity();
-
-    const sendPushMutation = async (): Promise<Response> => {
-      // 🚨 SESSION VERIFICATION: Re-check session before transport call
-      const currentSession = getCurrentUserSession();
-      if (!currentSession.tenantId || mutation.tenantId !== currentSession.tenantId) {
-         throw new Error("SESSION_SWITCH_DETECTED: Aborting push due to tenant change.");
-      }
-
-      return await unifiedTransport.request<Response>({
-        url: this.getApiUrl('/api/v1/sync/push'),
-        method: 'POST',
-        profile: 'SYNC',
-        raw: true,
+    const send = async (): Promise<Response> => {
+      assertSyncSessionCurrent(snapshot);
+      const response = await unifiedTransport.request<Response>({
+        url: this.getApiUrl('/api/v1/sync/push'), method: 'POST', profile: 'SYNC', raw: true,
         headers: {
-          'X-Tenant-ID': mutation.tenantId || currentSession.tenantId || '',
-          'X-Branch-ID': mutation.branchId || currentSession.branchId || '',
-          'X-User-ID': currentSession.userId || '',
-          'X-Device-ID': device.deviceId,
+          'X-Tenant-ID': snapshot.tenantId, 'X-Branch-ID': mutation.branchId || snapshot.branchId || '',
+          'X-User-ID': snapshot.userId, 'X-Device-ID': device.deviceId,
           'X-Session-ID': (mutation as any).sessionId || 'local-session',
-          'X-Correlation-ID': mutation.correlationId || 'local-correlation',
+          'X-Correlation-ID': mutation.correlationId || 'local-correlation'
         },
         body: {
-          tenantId: mutation.tenantId || currentSession.tenantId,
-          branchId: mutation.branchId || currentSession.branchId,
-          userId: currentSession.userId,
-          deviceId: device.deviceId,
-          schemaVersion: SYNC_PROTOCOL_VERSION,
-          clientVersion: CLIENT_VERSION,
-          mutations: [{
-            id: mutation.mutationId,
-            entity: mutation.entityType || 'MUTATION',
-            operation: mutation.operationType || 'CREATE',
-            payload: mutation.payload,
-            idempotencyKey: mutation.idempotencyKey || mutation.mutationId,
-            version: mutation.version || 1,
-            timestamp: mutation.createdAt
-          }]
+          tenantId: snapshot.tenantId, branchId: mutation.branchId || snapshot.branchId,
+          userId: snapshot.userId, deviceId: device.deviceId,
+          schemaVersion: SYNC_PROTOCOL_VERSION, clientVersion: CLIENT_VERSION,
+          mutations: [{ mutationId: mutation.mutationId, entityType: mutation.entityType,
+            operationType: mutation.operationType, payload: mutation.payload,
+            idempotencyKey: mutation.idempotencyKey, version: mutation.version }]
         }
       });
+      assertSyncSessionCurrent(snapshot);
+      return response;
     };
-    
+
     while (mutation.retryCount <= SYNC_CONFIG.MAX_RETRY_ATTEMPTS) {
       try {
-        let response = await sendPushMutation();
-
-        // Single-Flight 401 Refresh Handling
+        let response = await send();
         if (response.status === 401 && typeof navigator !== 'undefined' && navigator.onLine) {
-          try {
-            await TokenProvider.refreshAccessToken();
-            response = await sendPushMutation();
-          } catch {
-            await this.db.syncQueue.update(mutation.id!, {
-              syncStatus: 'REJECTED',
-              lastError: 'Session expired / Unauthorized',
-              updatedAt: new Date()
-            });
-            return;
-          }
+          await TokenProvider.refreshAccessToken();
+          acceptRefreshedSyncToken(snapshot);
+          response = await send();
         }
-
+        assertSyncSessionCurrent(snapshot);
         if (response.ok) {
-          await this.db.syncQueue.delete(mutation.id!);
-
+          await this.db.syncQueue.delete(mutation.id);
+          assertSyncSessionCurrent(snapshot);
           if ((this.db as any).outbox) {
-            try {
-              const matchingOutbox = await (this.db as any).outbox.where('mutationId').equals(mutation.mutationId).first();
-              if (matchingOutbox) {
-                await (this.db as any).outbox.update(matchingOutbox.id, { status: 'CONFIRMED', updatedAt: new Date().toISOString() });
-              }
-            } catch {
-              // Non-blocking outbox sync
-            }
+            const matching = await (this.db as any).outbox.where('mutationId').equals(mutation.mutationId)
+              .and((item: any) => item.tenantId === snapshot.tenantId && (!item.userId || item.userId === snapshot.userId))
+              .first().catch(() => null);
+            assertSyncSessionCurrent(snapshot);
+            if (matching) await (this.db as any).outbox.update(matching.id, { status: 'CONFIRMED', updatedAt: new Date().toISOString() });
+            assertSyncSessionCurrent(snapshot);
           }
-
-          // Mark local record as synced
-          if (mutation.payload && (mutation.payload as any).id) {
-            const entityId = (mutation.payload as any).id;
-            const eType = String(mutation.entityType).toUpperCase();
-            if (eType === 'SALE' || eType === 'INVOICE') {
-              if ((this.db as any).invoices) {
-                await (this.db as any).invoices.update(entityId, {
-                  is_synced: 1,
-                  isSynced: true,
-                  syncStatus: 'SYNCED',
-                  updatedAt: new Date().toISOString()
-                }).catch(() => null);
-              }
-            } else if (eType === 'PRODUCT') {
-              if ((this.db as any).products) {
-                await (this.db as any).products.update(entityId, {
-                  is_synced: 1,
-                  isSynced: true,
-                  syncStatus: 'SYNCED',
-                  updatedAt: new Date().toISOString()
-                }).catch(() => null);
-              }
+          const entityId = (mutation.payload as any)?.id;
+          if (entityId) {
+            const table = String(mutation.entityType).toUpperCase() === 'PRODUCT' ? (this.db as any).products :
+              ['SALE','INVOICE'].includes(String(mutation.entityType).toUpperCase()) ? (this.db as any).invoices : null;
+            if (table) {
+              assertSyncSessionCurrent(snapshot);
+              await table.update(entityId, { is_synced: 1, isSynced: true, syncStatus: 'SYNCED', updatedAt: new Date().toISOString() }).catch(() => null);
+              assertSyncSessionCurrent(snapshot);
             }
           }
           return;
         }
-
-        const errPayload = await response.json().catch(() => ({}));
-        
-        // Handle explicit conflicts
-        if (response.status === 409 || errPayload.errorType === 'CONFLICT' || errPayload.results?.[0]?.status === 'CONFLICT') {
-          const conflictData = errPayload.results?.[0]?.conflict || errPayload;
-          await this.handleConflict(mutation, conflictData.message || 'تعارض في مزامنة السجل مع الخادم');
+        const body = await response.json().catch(() => ({}));
+        assertSyncSessionCurrent(snapshot);
+        if (response.status === 409 || body.errorType === 'CONFLICT' || body.results?.[0]?.status === 'CONFLICT') {
+          const conflict = body.results?.[0]?.conflict || body;
+          await this.handleConflict(mutation, conflict.message || 'تعارض في مزامنة السجل مع الخادم', snapshot);
           return;
         }
-
-        // Non-retryable fatal errors
-        if ([400, 401, 403].includes(response.status) || errPayload.errorCode === "SCHEMA_VERSION_MISMATCH" || errPayload.errorCode === "DEVICE_REVOKED") {
-          await this.db.syncQueue.update(mutation.id!, {
+        if ([400,401,403].includes(response.status) ||
+            body.errorCode === 'SCHEMA_VERSION_MISMATCH' || body.errorCode === 'DEVICE_REVOKED') {
+          await this.db.syncQueue.update(mutation.id, {
             syncStatus: 'REJECTED',
-            lastError: errPayload.message || `Rejected by server with code ${errPayload.errorCode || response.status}`,
+            lastError: body.message || `Rejected by server with code ${body.errorCode || response.status}`,
             updatedAt: new Date()
           });
+          assertSyncSessionCurrent(snapshot);
           return;
         }
-
         throw new Error(`Server returned status: ${response.status}`);
-
       } catch (error: any) {
+        if (!isSyncSessionCurrent(snapshot)) return;
         mutation.retryCount++;
-        const isDeadLetter = mutation.retryCount > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
-        await this.db.syncQueue.update(mutation.id!, { 
-          retryCount: mutation.retryCount, 
-          syncStatus: isDeadLetter ? 'FAILED' : 'RETRY_PENDING',
-          lastError: error.message || 'Sync network/processing failure',
-          updatedAt: new Date() 
+        const dead = mutation.retryCount > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
+        assertSyncSessionCurrent(snapshot);
+        await this.db.syncQueue.update(mutation.id, {
+          retryCount: mutation.retryCount, syncStatus: dead ? 'FAILED' : 'RETRY_PENDING',
+          lastError: error?.message || 'Sync network/processing failure', updatedAt: new Date()
         });
-
-        if (isDeadLetter) {
-          try {
-            await this.db.failedMutations.add({
-              mutationId: mutation.mutationId,
-              reason: `DEAD_LETTER_MAX_RETRIES_EXCEEDED: ${error.message || 'Network error'}`,
-              payload: mutation.payload,
-              tenantId: mutation.tenantId,
-              branchId: mutation.branchId,
-              createdAt: new Date(),
-            });
-          } catch {
-            // Non-blocking DLQ logging
-          }
+        assertSyncSessionCurrent(snapshot);
+        if (dead) {
+          await this.db.failedMutations.add({
+            mutationId: mutation.mutationId,
+            reason: `DEAD_LETTER_MAX_RETRIES_EXCEEDED: ${error?.message || 'Network error'}`,
+            payload: mutation.payload, tenantId: mutation.tenantId,
+            branchId: mutation.branchId, createdAt: new Date()
+          }).catch(() => undefined);
           return;
         }
-
-        // Add random jitter to exponential backoff (e.g. 10-20% variance)
-        const jitter = Math.random() * 200;
-        await new Promise((resolve) => setTimeout(resolve, delay + jitter));
+        await new Promise(resolve => setTimeout(resolve, delay + Math.random() * 200));
+        if (!isSyncSessionCurrent(snapshot)) return;
         delay = Math.min(delay * 2, SYNC_CONFIG.BACKOFF_MAX_DELAY_MS);
       }
     }
+  }
+
+  private async handleConflict(mutation: LocalSyncQueueItem, reason: string, snapshot: SyncSessionSnapshot): Promise<void> {
+    assertSyncSessionCurrent(snapshot);
+    await this.db.transaction('rw', [this.db.syncQueue, this.db.failedMutations], async () => {
+      assertSyncSessionCurrent(snapshot);
+      await this.db.failedMutations.add({
+        mutationId: mutation.mutationId, reason, payload: mutation.payload,
+        tenantId: mutation.tenantId, branchId: mutation.branchId, createdAt: new Date()
+      });
+      assertSyncSessionCurrent(snapshot);
+      await this.db.syncQueue.update(mutation.id!, { syncStatus: 'CONFLICT', updatedAt: new Date() });
+      assertSyncSessionCurrent(snapshot);
+    });
   }
 
   private async handleConflict(mutation: LocalSyncQueueItem, reason: string): Promise<void> {
