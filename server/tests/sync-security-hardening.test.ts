@@ -389,6 +389,59 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
 
 
   describe('Phase 4: Legacy Outbox Recovery & Ownership Reconciliation', () => {
+    it('reuses idempotency only for the exact owner across both engine enqueue paths', async () => {
+      Object.defineProperty(global, 'navigator', {
+        value: { onLine: false, userAgent: 'TestAgent' },
+        writable: true,
+        configurable: true
+      });
+      setSession(TENANT_A, USER_A);
+
+      const engine = new DistributedSyncEngine(db as any);
+      const payload = { id: 'idempotent-product-A', name: 'Idempotent Product' };
+      const first = await engine.enqueue(
+        'CREATE',
+        payload,
+        'PRODUCT',
+        'phase4-owner-idempotency-key',
+        { tenantId: TENANT_A, branchId: BRANCH_A }
+      );
+
+      const transactionalDuplicate = await db.transaction(
+        'rw',
+        [db.syncQueue, db.outbox],
+        async () => engine.enqueueWithinTransaction(
+          'CREATE',
+          payload,
+          'PRODUCT',
+          'phase4-owner-idempotency-key',
+          { tenantId: TENANT_A, branchId: BRANCH_A }
+        )
+      );
+
+      expect(transactionalDuplicate.mutationId).toBe(first.mutationId);
+      expect(transactionalDuplicate.queueItemId).toBe(first.queueItemId);
+      expect(await db.syncQueue.where('idempotencyKey').equals('phase4-owner-idempotency-key').count()).toBe(1);
+      expect(await db.outbox.where('idempotencyKey').equals('phase4-owner-idempotency-key').count()).toBe(1);
+
+      setSession(TENANT_A, USER_B);
+      await expect(engine.enqueue(
+        'CREATE',
+        payload,
+        'PRODUCT',
+        'phase4-owner-idempotency-key',
+        { tenantId: TENANT_A, branchId: BRANCH_A }
+      )).rejects.toThrow('SYNC_IDEMPOTENCY_OWNER_MISMATCH');
+
+      const queueRecord = await db.syncQueue.where('idempotencyKey').equals('phase4-owner-idempotency-key').first();
+      const outboxRecord = await db.outbox.where('idempotencyKey').equals('phase4-owner-idempotency-key').first();
+      expect(queueRecord?.userId).toBe(USER_A);
+      expect(outboxRecord?.userId).toBe(USER_A);
+      expect(queueRecord?.mutationId).toBe(first.mutationId);
+      expect(outboxRecord?.mutationId).toBe(first.mutationId);
+    });
+
+
     it('requires an authenticated owner across all sync queue enqueue entry points', async () => {
       const repositoryItem = {
         mutationId: 'repo-queue-owned',
