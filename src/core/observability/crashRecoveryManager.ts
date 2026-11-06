@@ -97,10 +97,15 @@ export class CrashRecoveryManager {
           !event?.userId || typeof event.userId !== 'string' || !event.userId.trim()
         ).length;
 
-        const processingMutations = tenantOutbox.filter((event: any) =>
-          event?.status === 'processing' && event.tenantId === recoveryOwner.tenantId &&
-          event.userId === recoveryOwner.userId
-        );
+        const staleBefore = Date.now() - 5 * 60 * 1000;
+        const processingMutations = tenantOutbox.filter((event: any) => {
+          const updatedAt = new Date(event?.updatedAt || event?.createdAt || 0).getTime();
+          return event?.status === 'processing' &&
+            event.tenantId === recoveryOwner.tenantId &&
+            event.userId === recoveryOwner.userId &&
+            Number.isFinite(updatedAt) &&
+            updatedAt < staleBefore;
+        });
 
         interruptedSyncsFound = processingMutations.length;
 
