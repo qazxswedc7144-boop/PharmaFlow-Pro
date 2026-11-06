@@ -462,6 +462,72 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
 }
 
 /**
+ * Override clear() only for sync-owned tables. Unlike Dexie's native clear(),
+ * this deletes exact-owner rows individually through the guarded Table.delete()
+ * path, leaving other users' and ownerless legacy rows untouched.
+ */
+function installSyncOwnedTableClearGuards(db: Dexie) {
+  for (const table of db.tables) {
+    if (!SYNC_OWNED_TABLES.has(table.name)) continue;
+
+    const guardedTable = table as any;
+
+    guardedTable.clear = async function (this: any) {
+      const owner = getTrustedSyncOwner();
+
+      if (!owner) {
+        throw new Error(
+          "FAIL_CLOSED: Sync table clear requires an authenticated tenant/user owner."
+        );
+      }
+
+      const session = requireTenantForTable(this, "Clear");
+
+      if (session.tenantId !== owner.tenantId) {
+        throw new Error(
+          "FAIL_CLOSED: Sync table clear owner does not match the active tenant."
+        );
+      }
+
+      const records = await this
+        .where("tenantId")
+        .equals(owner.tenantId)
+        .toArray();
+
+      assertTenantUnchanged(this, owner.tenantId, "Clear");
+
+      const ownedKeys = records
+        .filter(
+          (record: any) =>
+            record?.tenantId === owner.tenantId &&
+            record?.userId === owner.userId
+        )
+        .map((record: any) => extractPrimaryKey(this, record))
+        .filter((key: any) => key !== undefined && key !== null);
+
+      for (const key of ownedKeys) {
+        const currentOwner = getTrustedSyncOwner();
+
+        if (
+          !currentOwner ||
+          currentOwner.tenantId !== owner.tenantId ||
+          currentOwner.userId !== owner.userId
+        ) {
+          throw new Error(
+            "FAIL_CLOSED: Sync table owner changed during clear."
+          );
+        }
+
+        assertTenantUnchanged(this, owner.tenantId, "Clear");
+
+        // Keep the deleting hook strict; this is the ordinary single-row API.
+        await this.delete(key);
+      }
+    };
+  }
+}
+
+/**
  * Install tenant Collection guards on the constructors owned by this Dexie
  * instance. Dexie creates per-instance Collection classes; patching the static
  * Dexie.Collection prototype does not protect Collections created by db.where().
@@ -1241,6 +1307,7 @@ export class PharmaFlowDB extends Dexie {
     });
 
     installTenantCollectionGuards(this);
+    installSyncOwnedTableClearGuards(this);
   }
 
   async getOrphanedTenantRecordCount(): Promise<number> {
