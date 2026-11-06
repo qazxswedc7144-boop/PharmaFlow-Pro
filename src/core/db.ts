@@ -432,12 +432,25 @@ if (typeof Dexie !== 'undefined' && (Dexie as any).Table) {
       if (!isTenantScoped(this)) return originalClear.call(this);
       return this.db.transaction('rw', this, async () => {
         const session = requireTenantForTable(this, 'Clear');
+        const owner = SYNC_OWNED_TABLES.has(this.name) ? getTrustedSyncOwner() : null;
+        if (SYNC_OWNED_TABLES.has(this.name) && !owner) {
+          throw new Error("FAIL_CLOSED: Sync table clear requires an authenticated tenant/user owner.");
+        }
         const records = hasTenantIndex(this)
           ? await this.where('tenantId').equals(session.tenantId).toArray()
           : await originalToArray.call(this);
         assertTenantUnchanged(this, session.tenantId, 'Clear');
         for (const record of records) {
-          if (record?.tenantId === session.tenantId) {
+          const isVisible = SYNC_OWNED_TABLES.has(this.name)
+            ? record?.tenantId === owner!.tenantId && record?.userId === owner!.userId
+            : record?.tenantId === session.tenantId;
+          if (isVisible) {
+            if (owner) {
+              const currentOwner = getTrustedSyncOwner();
+              if (!currentOwner || currentOwner.tenantId !== owner.tenantId || currentOwner.userId !== owner.userId) {
+                throw new Error("FAIL_CLOSED: Sync table owner changed during clear.");
+              }
+            }
             assertTenantUnchanged(this, session.tenantId, 'Clear');
             const key = extractPrimaryKey(this, record);
             await originalDelete.call(this, key);
@@ -1201,13 +1214,20 @@ export class PharmaFlowDB extends Dexie {
       table.hook('deleting', (_primKey: any, obj: any) => {
         assertTenantAdminForUserManagement(tableName);
         const session = getCurrentUserSession();
-        // Standard P0 check: session must exist for any deletion attempt
         if (!session.tenantId) {
           throw new Error("FAIL_CLOSED: Deletion forbidden without active tenant session.");
         }
-        // Strict Isolation: If record exists, it MUST belong to the current session tenant.
-        // If obj is undefined (Dexie standard delete on non-existent key), we allow it to proceed 
-        // to maintain standard Dexie behavior and prevent unnecessary crashes in cleanup/reversal paths.
+        if (SYNC_OWNED_TABLES.has(tableName)) {
+          const owner = getTrustedSyncOwner();
+          if (!owner || owner.tenantId !== session.tenantId) {
+            throw new Error("FAIL_CLOSED: Sync record deletion requires an authenticated tenant/user owner.");
+          }
+          if (obj && (obj.tenantId !== owner.tenantId || !obj.userId || obj.userId !== owner.userId)) {
+            throw new Error("FAIL_CLOSED: Unauthorized sync record deletion outside the exact tenant/user owner.");
+          }
+          return;
+        }
+        // If obj is undefined, preserve Dexie's standard no-op delete behavior.
         if (obj && (!obj.tenantId || obj.tenantId !== session.tenantId)) {
           console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey, "Record Tenant:", obj.tenantId, "Session Tenant:", session.tenantId);
           throw new Error("FAIL_CLOSED: Unauthorized data deletion attempt (Cross-tenant or Orphaned).");
