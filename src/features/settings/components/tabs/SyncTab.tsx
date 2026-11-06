@@ -1,12 +1,29 @@
 
 import { SettingsCard } from '../shared/SettingsUI';
 import { RefreshCw, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 export default function SyncTab() {
-  const pendingCount = useLiveQuery(() => db.outbox.where('status').equals('pending').count()) || 0;
-  const failedCount = useLiveQuery(() => db.outbox.where('status').equals('failed').count()) || 0;
+  const pendingCount = useLiveQuery(async () => {
+    try {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return 0;
+      return await db.outbox.where('status').equals('pending').count();
+    } catch {
+      return 0;
+    }
+  }) || 0;
+
+  const failedCount = useLiveQuery(async () => {
+    try {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) return 0;
+      return await db.outbox.where('status').equals('failed').count();
+    } catch {
+      return 0;
+    }
+  }) || 0;
   
   const handleForceSync = () => {
     // Dispatch a custom event to wake up the sync engine
@@ -14,6 +31,8 @@ export default function SyncTab() {
   };
 
   const handleClearFailed = async () => {
+    const session = getCurrentUserSession();
+    if (!session.tenantId) return;
     await db.outbox.where('status').equals('failed').delete();
   };
 

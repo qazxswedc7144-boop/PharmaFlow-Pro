@@ -1,5 +1,5 @@
 // src/services/config/configurationSyncService.ts
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { ConfigurationRecord, ConfigSyncPolicy } from '@/core/config/types';
 import { CONFIG_REGISTRY, normalizeConfigKey } from '@/core/config/configKeys';
 
@@ -10,26 +10,53 @@ export class ConfigurationSyncService {
   public getSyncPolicy(key: string): ConfigSyncPolicy {
     const canonicalKey = normalizeConfigKey(key);
     const def = CONFIG_REGISTRY[canonicalKey];
-    return def ? def.syncPolicy : 'SYNCABLE';
+    if (def) return def.syncPolicy;
+
+    // Local, device, runtime, auth, tokens, and diagnostics are strictly LOCAL_ONLY
+    if (
+      canonicalKey.startsWith('device.') ||
+      canonicalKey.startsWith('runtime.') ||
+      canonicalKey.startsWith('system.') ||
+      canonicalKey.startsWith('gdrive.') ||
+      canonicalKey.includes('auth') ||
+      canonicalKey.includes('token') ||
+      canonicalKey.includes('lock') ||
+      canonicalKey.includes('crash') ||
+      canonicalKey.includes('error') ||
+      canonicalKey.includes('refresh') ||
+      canonicalKey.includes('bypass')
+    ) {
+      return 'LOCAL_ONLY';
+    }
+
+    // Defensive default: unconfigured ad-hoc keys must not sync to tenant cloud outbox
+    return 'LOCAL_ONLY';
   }
 
   /**
    * Evaluates and queues configuration changes for synchronization if syncable.
    */
   public async handleConfigMutation(record: ConfigurationRecord<any>): Promise<void> {
+    // 1. Device, Runtime, and System scoped configurations never sync to tenant cloud outbox
+    if (record.scope === 'DEVICE' || record.scope === 'RUNTIME' || record.scope === 'SYSTEM') {
+      return;
+    }
+
+    // 2. Check sync policy
     const policy = this.getSyncPolicy(record.key);
-
-    if (policy === 'LOCAL_ONLY') {
-      // Local only settings are preserved locally without network queueing
+    if (policy === 'LOCAL_ONLY' || policy === 'SERVER_AUTHORITATIVE') {
       return;
     }
 
-    if (policy === 'SERVER_AUTHORITATIVE') {
-      // Server authoritative settings cannot be queued from local client changes
+    // 3. Ensure an active tenant session exists before writing to tenant-scoped outbox
+    const session = getCurrentUserSession();
+    const tenantId = record.context?.tenantId || session?.tenantId;
+    if (!tenantId) {
+      // Cannot queue cloud outbox sync events without an active tenant session
       return;
     }
 
-    // SYNCABLE: Create mutation entry in outbox queue
+    // 4. SYNCABLE: Create mutation entry in outbox queue
     try {
       const mutationId = typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
@@ -42,12 +69,13 @@ export class ConfigurationSyncService {
       await db.outbox.add({
         mutationId,
         idempotencyKey,
+        tenantId,
         type: 'UPDATE_SETTING',
         payload: {
           key: record.key,
           value: record.value,
           scope: record.scope,
-          context: record.context,
+          context: { ...record.context, tenantId },
           version: record.version,
           updatedAt: record.updatedAt
         },

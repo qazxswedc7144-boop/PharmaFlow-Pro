@@ -689,6 +689,8 @@ export class DistributedSyncEngine {
    */
   public async drainQueue(): Promise<void> {
     if (this.isProcessing || (typeof navigator !== 'undefined' && !navigator.onLine)) return;
+    const session = getCurrentUserSession();
+    if (!session.tenantId) return;
     this.isProcessing = true;
 
     try {

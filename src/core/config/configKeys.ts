@@ -294,6 +294,70 @@ export const CONFIG_REGISTRY: Record<string, ConfigurationDefinition<any>> = {
     syncPolicy: 'LOCAL_ONLY',
     legacyKeys: ['pf_last_sync_time'],
     description: 'تاريخ و وقت آخر مزامنة للجهاز'
+  },
+  'system.auth_enabled': {
+    key: 'system.auth_enabled',
+    defaultValue: true,
+    scope: 'DEVICE',
+    syncPolicy: 'LOCAL_ONLY',
+    legacyKeys: ['pharmaflow_auth_enabled', 'authenticationEnabled'],
+    description: 'حالة تفعيل المصادقة محلياً'
+  },
+  'system.auto_lock': {
+    key: 'system.auto_lock',
+    defaultValue: false,
+    scope: 'DEVICE',
+    syncPolicy: 'LOCAL_ONLY',
+    legacyKeys: ['autoLockEnabled'],
+    description: 'حالة القفل التلقائي للشاشة'
+  },
+  'system.lock_on_startup': {
+    key: 'system.lock_on_startup',
+    defaultValue: false,
+    scope: 'DEVICE',
+    syncPolicy: 'LOCAL_ONLY',
+    legacyKeys: ['lockOnStartup'],
+    description: 'القفل التلقائي عند بدء التشغيل'
+  },
+  'system.crash_record': {
+    key: 'system.crash_record',
+    defaultValue: null,
+    scope: 'DEVICE',
+    syncPolicy: 'LOCAL_ONLY',
+    legacyKeys: ['last_critical_error', 'pf_last_render_crash'],
+    description: 'سجلات تشخيص الأعطال المحلية'
+  },
+  'system.page_refresh': {
+    key: 'system.page_refresh',
+    defaultValue: '',
+    scope: 'DEVICE',
+    syncPolicy: 'LOCAL_ONLY',
+    legacyKeys: ['page-force-refresh-timestamp', 'page-has-been-force-refreshed'],
+    description: 'تتبع إعادة تحميل الصفحة محلياً'
+  },
+  'system.db_bypass': {
+    key: 'system.db_bypass',
+    defaultValue: 'false',
+    scope: 'DEVICE',
+    syncPolicy: 'LOCAL_ONLY',
+    legacyKeys: ['PHARMAFLOW_DB_BYPASS'],
+    description: 'تجاوز قاعدة البيانات لأغراض التطوير'
+  },
+  'gdrive.access_token': {
+    key: 'gdrive.access_token',
+    defaultValue: '',
+    scope: 'DEVICE',
+    syncPolicy: 'LOCAL_ONLY',
+    legacyKeys: [],
+    description: 'رمز وصول Google Drive المحلي'
+  },
+  'gdrive.user_email': {
+    key: 'gdrive.user_email',
+    defaultValue: '',
+    scope: 'DEVICE',
+    syncPolicy: 'LOCAL_ONLY',
+    legacyKeys: [],
+    description: 'بريد Google Drive المحلي'
   }
 };
 
