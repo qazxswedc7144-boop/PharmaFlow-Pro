@@ -16,20 +16,8 @@ describe('Purchase Phase 2 Integrity Verification', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    await db.invoices.clear();
-    await db.purchases.clear();
-    await db.products.clear();
-    await db.suppliers.clear();
-    await db.warehouseStock.clear();
-    await db.branchInventory.clear();
-    await db.inventoryTransactions.clear();
-    await db.financialTransactions.clear();
-    await db.journalEntries.clear();
-    await db.journalLines.clear();
-    await db.accounts.clear();
-    await db.idempotencyKeys.clear();
-    IdempotencyRegistry.clearInMemory();
 
+    // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
     const userObj = {
       id: 'usr-p2-tester',
       User_Email: 'tester@pharmaflow.test',
@@ -46,6 +34,20 @@ describe('Purchase Phase 2 Integrity Verification', () => {
       branchId,
       isAuthenticated: true
     });
+
+    await db.invoices.clear();
+    await db.purchases.clear();
+    await db.products.clear();
+    await db.suppliers.clear();
+    await db.warehouseStock.clear();
+    await db.branchInventory.clear();
+    await db.inventoryTransactions.clear();
+    await db.financialTransactions.clear();
+    await db.journalEntries.clear();
+    await db.journalLines.clear();
+    await db.accounts.clear();
+    await db.idempotencyKeys.clear();
+    IdempotencyRegistry.clearInMemory();
 
     if (!db.isOpen()) await db.open();
     await db.branches.clear();

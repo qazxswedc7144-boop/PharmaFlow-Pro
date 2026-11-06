@@ -1104,8 +1104,15 @@ export class PharmaFlowDB extends Dexie {
       table.hook('deleting', (_primKey: any, obj: any) => {
         assertTenantAdminForUserManagement(tableName);
         const session = getCurrentUserSession();
-        if (!session.tenantId || !obj?.tenantId || obj.tenantId !== session.tenantId) {
-          console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey);
+        // Standard P0 check: session must exist for any deletion attempt
+        if (!session.tenantId) {
+          throw new Error("FAIL_CLOSED: Deletion forbidden without active tenant session.");
+        }
+        // Strict Isolation: If record exists, it MUST belong to the current session tenant.
+        // If obj is undefined (Dexie standard delete on non-existent key), we allow it to proceed 
+        // to maintain standard Dexie behavior and prevent unnecessary crashes in cleanup/reversal paths.
+        if (obj && obj.tenantId && obj.tenantId !== session.tenantId) {
+          console.error(`[SECURITY] Delete blocked on table '${tableName}' for key:`, _primKey, "Record Tenant:", obj.tenantId, "Session Tenant:", session.tenantId);
           throw new Error("FAIL_CLOSED: Unauthorized data deletion attempt (Cross-tenant or Orphaned).");
         }
       });

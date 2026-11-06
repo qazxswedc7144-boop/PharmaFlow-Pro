@@ -13,6 +13,15 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
+    TokenProvider.setSession({
+      id: 'user-1',
+      tenantId: validTenant,
+      branchId: validBranch,
+      role: 'ADMIN'
+    } as any, 'token', 'refresh');
+
     await db.products.clear();
     await db.inventoryTransactions.clear();
     await db.warehouseStock.clear();
@@ -34,14 +43,6 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       stockQuantity: 100,
       tenantId: validTenant
     } as any);
-
-    // Default valid session
-    TokenProvider.setSession({
-      id: 'user-1',
-      tenantId: validTenant,
-      branchId: validBranch,
-      role: 'ADMIN'
-    } as any, 'token', 'refresh');
 
     await db.products.add({
       id: productId,

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { db } from '../../src/core/db';
+import { db } from '@/core/db';
 import { UnifiedBusinessWorkflowOrchestrator } from '../../src/services/orchestration/UnifiedBusinessWorkflowOrchestrator';
 import { PurchaseRepository } from '../../src/database/repositories/PurchaseRepository';
 import { useAuthStore } from '@/store/authStore';
@@ -16,30 +16,8 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    (globalThis as any).__FAIL_AT_STAGE__ = undefined;
-    IdempotencyRegistry.clearInMemory();
 
-    // Clear tables
-    await db.invoices.clear();
-    await db.purchases.clear();
-    await db.products.clear();
-    await db.suppliers.clear();
-    await db.warehouseStock.clear();
-    await db.branchInventory.clear();
-    await db.inventoryTransactions.clear();
-    await db.inventory_layers.clear();
-    await db.fifo_consumption_log.clear();
-    await db.financialTransactions.clear();
-    await db.journalEntries.clear();
-    await db.journalLines.clear();
-    await db.accounts.clear();
-    await db.idempotencyRecords.clear();
-    await db.idempotencyKeys.clear();
-    await db.voucherInvoiceLinks.clear();
-    await db.vouchers.clear();
-    await db.auditLogs.clear();
-
-    // Setup authenticated user
+    // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
     const userObj = {
       id: 'usr-pur-auditor',
       user_id: 'usr-pur-auditor',
@@ -64,6 +42,29 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
       permissions: ['ALL', 'purchases.create', 'purchases.edit', 'accounting.voucher.create', 'vouchers.create'],
       isAuthenticated: true
     });
+
+    (globalThis as any).__FAIL_AT_STAGE__ = undefined;
+    IdempotencyRegistry.clearInMemory();
+
+    // Clear tables (Now authorized)
+    await db.invoices.clear();
+    await db.purchases.clear();
+    await db.products.clear();
+    await db.suppliers.clear();
+    await db.warehouseStock.clear();
+    await db.branchInventory.clear();
+    await db.inventoryTransactions.clear();
+    await db.inventory_layers.clear();
+    await db.fifo_consumption_log.clear();
+    await db.financialTransactions.clear();
+    await db.journalEntries.clear();
+    await db.journalLines.clear();
+    await db.accounts.clear();
+    await db.idempotencyRecords.clear();
+    await db.idempotencyKeys.clear();
+    await db.voucherInvoiceLinks.clear();
+    await db.vouchers.clear();
+    await db.auditLogs.clear();
 
     // Seed Supplier with initial balance of 0
     await db.suppliers.put({

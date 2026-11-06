@@ -38,6 +38,9 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
     vi.clearAllMocks();
     if (!db.isOpen()) await db.open();
 
+    // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
+    setupUserSession(tenant1, branchId);
+
     await db.invoices.clear();
     await db.purchases.clear();
     await db.products.clear();

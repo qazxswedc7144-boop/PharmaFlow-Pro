@@ -163,6 +163,14 @@ export const CONFIG_REGISTRY: Record<string, ConfigurationDefinition<any>> = {
     legacyKeys: ['low_stock_threshold'],
     description: 'حد المخزون المنخفض'
   },
+  'inventory.default_warehouse_id': {
+    key: 'inventory.default_warehouse_id',
+    defaultValue: 'WH-MAIN',
+    scope: 'BRANCH',
+    syncPolicy: 'SYNCABLE',
+    legacyKeys: ['inventory.defaultWarehouseId', 'defaultWarehouseId'],
+    description: 'معرف المستودع الافتراضي'
+  },
 
   // Pharmacy Identity
   'pharmacy.name': {

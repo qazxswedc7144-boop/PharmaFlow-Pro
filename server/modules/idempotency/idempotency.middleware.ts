@@ -83,6 +83,12 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
   const endpoint = req.originalUrl || req.path;
   const method = req.method;
 
+  if (!tenantId) {
+    // 🚨 FIX: If no tenant context is found, we cannot safely enforce idempotency 
+    // without risking collisions or breaking public/pre-auth routes. Proceed without idempotency.
+    return next();
+  }
+
   try {
     const result = await IdempotencyService.handlePreRequest(
       key,

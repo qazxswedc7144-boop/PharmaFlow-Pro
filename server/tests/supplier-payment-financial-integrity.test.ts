@@ -16,9 +16,27 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
 
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
+    useAuthStore.setState({
+      user: {
+        id: 'usr-accountant',
+        tenantId,
+        branchId,
+        role: 'accountant',
+        roles: ['accountant'],
+        permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete']
+      } as any,
+      tenantId,
+      branchId,
+      roles: ['accountant'],
+      permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete'],
+      isAuthenticated: true
+    });
+
     IdempotencyRegistry.clearInMemory();
 
-    // Clean tables
+    // Clean tables (Now authorized)
     await db.vouchers.clear();
     await db.invoices.clear();
     await db.suppliers.clear();
@@ -61,23 +79,6 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       tenantId,
       branchId
     } as any);
-
-    // Setup authenticated trusted user
-    useAuthStore.setState({
-      user: {
-        id: 'usr-accountant',
-        tenantId,
-        branchId,
-        role: 'accountant',
-        roles: ['accountant'],
-        permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete']
-      } as any,
-      tenantId,
-      branchId,
-      roles: ['accountant'],
-      permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete'],
-      isAuthenticated: true
-    });
   });
 
   // =========================================================================
