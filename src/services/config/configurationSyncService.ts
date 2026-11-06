@@ -84,6 +84,9 @@ export class ConfigurationSyncService {
         mutationId,
         idempotencyKey,
         tenantId: trustedTenantId, // Force trusted tenant ID
+        userId: session.userId,
+        branchId: session.branchId,
+        deviceId: session.deviceId,
         type: 'UPDATE_SETTING',
         payload: {
           key: record.key,
