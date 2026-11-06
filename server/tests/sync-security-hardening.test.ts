@@ -143,7 +143,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
 
       // Switch back to Tenant A for processing
       setSession(TENANT_A, USER_A);
-      (unifiedTransport.request as any).mockResolvedValue({ ok: true });
+      (unifiedTransport.request as any).mockResolvedValue({ ok: true, status: 200, json: vi.fn().mockResolvedValue({ results: [{ mutationId: 'mut-1', id: 'mut-1', status: 'SUCCESS', success: true }] }) });
 
       const engine = DistributedSyncEngine.getInstance();
       await engine.drainQueue();
