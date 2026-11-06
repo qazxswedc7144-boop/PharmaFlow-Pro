@@ -500,6 +500,84 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
     });
 
 
+    it('scopes legacy queue reads and compaction to the exact user owner', async () => {
+      const addRepositoryRecord = async (userId: string, mutationId: string, syncStatus: string) => {
+        setSession(TENANT_A, userId);
+        await db.syncQueue.add({
+          tenantId: TENANT_A,
+          userId,
+          branchId: BRANCH_A,
+          deviceId: 'device-' + userId,
+          mutationId,
+          entityType: 'PRODUCT',
+          operationType: 'UPDATE',
+          payload: { id: mutationId },
+          syncStatus,
+          retryCount: 0,
+          idempotencyKey: 'idem-' + mutationId,
+          logicalTimestamp: Date.now(),
+          actorId: userId,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        } as any);
+      };
+
+      const addLegacyRecord = async (userId: string, id: string, status: string) => {
+        setSession(TENANT_A, userId);
+        await db.sync_queue.add({
+          id,
+          tenantId: TENANT_A,
+          userId,
+          type: 'TEST',
+          payload: {},
+          timestamp: Date.now(),
+          retryCount: 0,
+          priority: 'LOW',
+          idempotencyKey: 'legacy-' + id,
+          status
+        } as any);
+      };
+
+      await addRepositoryRecord(USER_A, 'repo-a-pending', 'PENDING');
+      await addRepositoryRecord(USER_A, 'repo-a-conflict', 'CONFLICT');
+      await addRepositoryRecord(USER_B, 'repo-b-pending', 'PENDING');
+      await addRepositoryRecord(USER_B, 'repo-b-conflict', 'CONFLICT');
+
+      await addLegacyRecord(USER_A, 'legacy-a-pending', 'PENDING');
+      await addLegacyRecord(USER_A, 'legacy-a-completed', 'COMPLETED');
+      await addLegacyRecord(USER_B, 'legacy-b-pending', 'PENDING');
+      await addLegacyRecord(USER_B, 'legacy-b-completed', 'COMPLETED');
+
+      setSession(TENANT_A, USER_A);
+      const repositoryPending = await syncQueueRepository.getNextPendingBatch(10);
+      const repositoryStats = await syncQueueRepository.getQueueStats();
+      const repositoryDeadLetters = await syncQueueRepository.getDeadLetterMutations();
+      expect(repositoryPending).toHaveLength(1);
+      expect(repositoryPending.every(item => item.userId === USER_A)).toBe(true);
+      expect(repositoryStats.total).toBe(2);
+      expect(repositoryStats.pending).toBe(1);
+      expect(repositoryStats.conflict).toBe(1);
+      expect(repositoryDeadLetters).toHaveLength(1);
+      expect(repositoryDeadLetters[0].userId).toBe(USER_A);
+
+      const legacyQueue = MutationQueue.getInstance();
+      const legacyPending = await legacyQueue.getPendingMutations();
+      expect(legacyPending).toHaveLength(1);
+      expect(legacyPending[0].userId).toBe(USER_A);
+
+      expect(await legacyQueue.compactQueue()).toBe(1);
+      expect(await db.sync_queue.get('legacy-a-completed')).toBeUndefined();
+      expect(await db.sync_queue.get('legacy-b-completed')).toBeDefined();
+
+      const oldEventId = await db.syncEvents.add({
+        eventId: 'ownerless-old-sync-event',
+        sequence: '1',
+        createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+      } as any);
+      expect(await syncQueueRepository.purgeObsoleteEvents(7)).toBe(0);
+      expect(await db.syncEvents.get(oldEventId)).toBeDefined();
+    });
+
     it('does not assign the active user to an ownerless legacy outbox row during update', async () => {
       setSession(TENANT_A, undefined);
       await db.outbox.add({
