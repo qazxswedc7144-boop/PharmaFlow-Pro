@@ -228,7 +228,7 @@ export class SyncProcessorService {
     }
 
     return {
-      success: summary.rejected.length === 0 && summary.unauthorized.length === 0,
+      success: summary.rejected.length === 0 && summary.unauthorized.length === 0 && summary.conflicts.length === 0,
       tenantId, branchId: targetBranchId, serverTimestamp, processedCount: results.length, results, summary
     };
         }
