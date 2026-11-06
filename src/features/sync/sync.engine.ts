@@ -780,6 +780,11 @@ export class DistributedSyncEngine {
           if (!isSyncSessionCurrent(snapshot)) break;
         }
       }
+    } catch (error: any) {
+      // Session changes are expected cancellation boundaries for a queue drain.
+      // Do not let a stale session's cancellation surface as an unhandled failure.
+      if (error?.message?.includes('SESSION_SWITCH_DETECTED') || !isSyncSessionCurrent(snapshot)) return;
+      throw error;
     } finally {
       this.isProcessing = false;
     }
@@ -828,17 +833,26 @@ export class DistributedSyncEngine {
         response = await send();
       }
       assertSyncSessionCurrent(snapshot);
-      if (response.ok) {
-        await (this.db as any).outbox.update(event.id, { status: 'CONFIRMED', updatedAt: new Date().toISOString() });
+      const body = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
+      assertSyncSessionCurrent(snapshot);
+      const result = Array.isArray(body.results)
+        ? body.results.find((item: any) => item?.mutationId === event.mutationId || item?.id === event.mutationId) || body.results[0]
+        : undefined;
+      const resultStatus = String(result?.status || '').toUpperCase();
+
+      if (response.ok && (resultStatus === 'SUCCESS' || resultStatus === 'DUPLICATE')) {
+        await (this.db as any).outbox.update(event.id, { status: 'CONFIRMED', error: undefined, updatedAt: new Date().toISOString() });
         assertSyncSessionCurrent(snapshot);
         return;
       }
-      const body = await response.json().catch(() => ({}));
-      assertSyncSessionCurrent(snapshot);
-      const fatal = [400,401,403].includes(response.status) || body.errorCode === 'SCHEMA_VERSION_MISMATCH';
+
+      const conflict = response.status === 409 || resultStatus === 'CONFLICT' || body.errorType === 'CONFLICT';
+      const rejected = [400,401,403].includes(response.status) ||
+        ['REJECTED','UNAUTHORIZED','INVALID','FAILED'].includes(resultStatus) ||
+        ['SCHEMA_VERSION_MISMATCH','DEVICE_REVOKED'].includes(body.errorCode);
       await (this.db as any).outbox.update(event.id, {
-        status: fatal ? 'FAILED' : 'RETRYING',
-        error: body.message || `HTTP ${response.status}`,
+        status: conflict ? 'CONFLICT' : rejected ? 'FAILED' : 'RETRYING',
+        error: result?.message || result?.conflict?.message || body.message || body.error || `Unexpected sync response (HTTP ${response.status}, result ${resultStatus || 'missing'})`,
         updatedAt: new Date().toISOString()
       });
       assertSyncSessionCurrent(snapshot);
@@ -897,7 +911,14 @@ export class DistributedSyncEngine {
           response = await send();
         }
         assertSyncSessionCurrent(snapshot);
-        if (response.ok) {
+        const body = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
+        assertSyncSessionCurrent(snapshot);
+        const result = Array.isArray(body.results)
+          ? body.results.find((item: any) => item?.mutationId === mutation.mutationId || item?.id === mutation.mutationId) || body.results[0]
+          : undefined;
+        const resultStatus = String(result?.status || '').toUpperCase();
+
+        if (response.ok && (resultStatus === 'SUCCESS' || resultStatus === 'DUPLICATE')) {
           await this.db.syncQueue.delete(mutation.id);
           assertSyncSessionCurrent(snapshot);
           if ((this.db as any).outbox) {
@@ -905,7 +926,7 @@ export class DistributedSyncEngine {
               .and((item: any) => item.tenantId === snapshot.tenantId && (!item.userId || item.userId === snapshot.userId))
               .first().catch(() => null);
             assertSyncSessionCurrent(snapshot);
-            if (matching) await (this.db as any).outbox.update(matching.id, { status: 'CONFIRMED', updatedAt: new Date().toISOString() });
+            if (matching) await (this.db as any).outbox.update(matching.id, { status: 'CONFIRMED', error: undefined, updatedAt: new Date().toISOString() });
             assertSyncSessionCurrent(snapshot);
           }
           const entityId = (mutation.payload as any)?.id;
@@ -920,14 +941,13 @@ export class DistributedSyncEngine {
           }
           return;
         }
-        const body = await response.json().catch(() => ({}));
-        assertSyncSessionCurrent(snapshot);
-        if (response.status === 409 || body.errorType === 'CONFLICT' || body.results?.[0]?.status === 'CONFLICT') {
-          const conflict = body.results?.[0]?.conflict || body;
-          await this.handleConflict(mutation, conflict.message || 'تعارض في مزامنة السجل مع الخادم', snapshot);
+        if (response.status === 409 || resultStatus === 'CONFLICT' || body.errorType === 'CONFLICT') {
+          const conflict = result?.conflict || body;
+          await this.handleConflict(mutation, conflict.message || result?.message || 'تعارض في مزامنة السجل مع الخادم', snapshot);
           return;
         }
         if ([400,401,403].includes(response.status) ||
+            ['REJECTED','UNAUTHORIZED','INVALID','FAILED'].includes(resultStatus) ||
             body.errorCode === 'SCHEMA_VERSION_MISMATCH' || body.errorCode === 'DEVICE_REVOKED') {
           await this.db.syncQueue.update(mutation.id, {
             syncStatus: 'REJECTED',
