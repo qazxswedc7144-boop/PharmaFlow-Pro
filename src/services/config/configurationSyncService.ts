@@ -53,7 +53,7 @@ export class ConfigurationSyncService {
     const session = getCurrentUserSession();
     const activeTenantId = session?.tenantId;
 
-    if (!activeTenantId) {
+    if (!activeTenantId || !session?.userId) {
       // Cannot queue cloud outbox sync events without an active tenant session
       return;
     }
@@ -84,6 +84,8 @@ export class ConfigurationSyncService {
         mutationId,
         idempotencyKey,
         tenantId: trustedTenantId, // Force trusted tenant ID
+        userId: session.userId,
+        branchId: session.branchId,
         type: 'UPDATE_SETTING',
         payload: {
           key: record.key,

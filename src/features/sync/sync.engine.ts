@@ -278,6 +278,9 @@ export class DistributedSyncEngine {
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
 
+    if (!session.userId) {
+      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync enqueue.');
+    }
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
       throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for sync enqueue.');
     }
@@ -312,6 +315,9 @@ export class DistributedSyncEngine {
     const outboxEvent = {
       mutationId,
       tenantId,
+      userId: session.userId,
+      branchId,
+      deviceId: DeviceManager.getDeviceIdentity().deviceId,
       type,
       payload: sanitizedPayload,
       status: 'PENDING',
@@ -384,6 +390,9 @@ export class DistributedSyncEngine {
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     const forbiddenBranches = ['BR-MAIN', 'branch_default', 'default'];
 
+    if (!session.userId) {
+      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync enqueue.');
+    }
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
       throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: No valid trusted tenant context available for transactional sync enqueue.');
     }
@@ -418,6 +427,9 @@ export class DistributedSyncEngine {
     const outboxEvent = {
       mutationId,
       tenantId,
+      userId: session.userId,
+      branchId,
+      deviceId: DeviceManager.getDeviceIdentity().deviceId,
       type,
       payload: sanitizedPayload,
       status: 'PENDING',
@@ -738,7 +750,7 @@ export class DistributedSyncEngine {
         assertSyncSessionCurrent(snapshot);
         for (const item of processing) {
           const updatedAt = new Date(item.updatedAt || item.createdAt || 0).getTime();
-          if (item.tenantId === snapshot.tenantId && (!item.userId || item.userId === snapshot.userId) &&
+          if (item.tenantId === snapshot.tenantId && item.userId === snapshot.userId &&
               Number.isFinite(updatedAt) && updatedAt < staleBefore) {
             assertSyncSessionCurrent(snapshot);
             await this.db.syncQueue.update(item.id!, { syncStatus: 'PENDING', updatedAt: new Date() });
@@ -748,7 +760,7 @@ export class DistributedSyncEngine {
         const batch = await this.db.syncQueue.where('syncStatus').anyOf('PENDING', 'RETRY_PENDING').toArray().catch(() => []);
         assertSyncSessionCurrent(snapshot);
         const eligible = batch.filter(item => item.tenantId === snapshot.tenantId &&
-          (!item.userId || item.userId === snapshot.userId))
+          item.userId === snapshot.userId)
           .sort((a,b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
           .slice(0, SYNC_CONFIG.BATCH_CHUNK_SIZE);
         for (const mutation of eligible) {
@@ -764,7 +776,7 @@ export class DistributedSyncEngine {
         assertSyncSessionCurrent(snapshot);
         for (const event of sending) {
           const updatedAt = new Date(event.updatedAt || event.createdAt || 0).getTime();
-          if (event.tenantId === snapshot.tenantId && (!event.userId || event.userId === snapshot.userId) &&
+          if (event.tenantId === snapshot.tenantId && event.userId === snapshot.userId &&
               Number.isFinite(updatedAt) && updatedAt < staleBefore) {
             assertSyncSessionCurrent(snapshot);
             await (this.db as any).outbox.update(event.id, { status: 'PENDING', updatedAt: new Date().toISOString() });
@@ -774,7 +786,7 @@ export class DistributedSyncEngine {
         const events = await (this.db as any).outbox.where('status').anyOf('PENDING','pending','RETRYING').toArray().catch(() => []);
         assertSyncSessionCurrent(snapshot);
         for (const event of events) {
-          if (event.tenantId !== snapshot.tenantId || (event.userId && event.userId !== snapshot.userId)) continue;
+          if (event.tenantId !== snapshot.tenantId || event.userId !== snapshot.userId) continue;
           assertSyncSessionCurrent(snapshot);
           await this.processOutboxEvent(event);
           if (!isSyncSessionCurrent(snapshot)) break;
@@ -793,7 +805,7 @@ export class DistributedSyncEngine {
   private async processOutboxEvent(event: any): Promise<void> {
     const snapshot = readSyncSessionSnapshot();
     if (!snapshot || !event?.id || event.tenantId !== snapshot.tenantId ||
-        (event.userId && event.userId !== snapshot.userId)) return;
+        event.userId !== snapshot.userId) return;
     try {
       assertSyncSessionCurrent(snapshot);
       const device = DeviceManager.getDeviceIdentity();
@@ -867,7 +879,7 @@ export class DistributedSyncEngine {
   private async processMutationWithRetry(mutation: LocalSyncQueueItem): Promise<void> {
     const snapshot = readSyncSessionSnapshot();
     if (!snapshot || !mutation.id || mutation.tenantId !== snapshot.tenantId ||
-        ((mutation as any).userId && (mutation as any).userId !== snapshot.userId)) return;
+        mutation.userId !== snapshot.userId) return;
     assertSyncSessionCurrent(snapshot);
     await this.db.syncQueue.update(mutation.id, { syncStatus: 'PROCESSING', updatedAt: new Date() });
     assertSyncSessionCurrent(snapshot);
@@ -923,7 +935,7 @@ export class DistributedSyncEngine {
           assertSyncSessionCurrent(snapshot);
           if ((this.db as any).outbox) {
             const matching = await (this.db as any).outbox.where('mutationId').equals(mutation.mutationId)
-              .and((item: any) => item.tenantId === snapshot.tenantId && (!item.userId || item.userId === snapshot.userId))
+              .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
               .first().catch(() => null);
             assertSyncSessionCurrent(snapshot);
             if (matching) await (this.db as any).outbox.update(matching.id, { status: 'CONFIRMED', error: undefined, updatedAt: new Date().toISOString() });

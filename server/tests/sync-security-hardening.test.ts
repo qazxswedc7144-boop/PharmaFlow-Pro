@@ -113,17 +113,111 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       
       const outboxItem = await db.outbox.orderBy('id').last();
       expect(outboxItem.tenantId).toBe(TENANT_A);
+      expect(outboxItem.userId).toBe(USER_A);
       expect(outboxItem.payload.context.tenantId).toBe(TENANT_A);
     });
   });
 
   describe('Phase 2: Sync Engine Race Protection', () => {
+    it('does not process legacy outbox events without an attributable user owner', async () => {
+      // Create the legacy record while a tenant exists but no user can be attributed.
+      // The Dexie creating hook must not silently assign the next authenticated user.
+      setSession(TENANT_A, undefined);
+      await db.outbox.add({
+        id: 90,
+        tenantId: TENANT_A,
+        status: 'PENDING',
+        type: 'TEST',
+        payload: {},
+        mutationId: 'mut-unowned-outbox'
+      } as any);
+
+      expect((await db.outbox.get(90))?.userId).toBeUndefined();
+
+      // A different authenticated session in the same tenant must not adopt it.
+      setSession(TENANT_A, USER_A);
+      const engine = new DistributedSyncEngine(db as any);
+      await engine.drainQueue();
+
+      expect(unifiedTransport.request).not.toHaveBeenCalled();
+      const unchanged = await db.outbox.get(90);
+      expect(unchanged?.status).toBe('PENDING');
+      expect(unchanged?.userId).toBeUndefined();
+    });
+
+    it('does not dispatch legacy syncQueue mutations without an attributable user owner', async () => {
+      setSession(TENANT_A, undefined);
+      const id = await db.syncQueue.add({
+        tenantId: TENANT_A,
+        syncStatus: 'PENDING',
+        retryCount: 0,
+        mutationId: 'mut-unowned-queue',
+        idempotencyKey: 'idem-unowned-queue',
+        entityType: 'PRODUCT',
+        operationType: 'CREATE',
+        payload: { id: 'legacy-product' },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as any);
+
+      expect((await db.syncQueue.get(id))?.userId).toBeUndefined();
+
+      setSession(TENANT_A, USER_A);
+      const engine = new DistributedSyncEngine(db as any);
+      await engine.drainQueue();
+
+      expect(unifiedTransport.request).not.toHaveBeenCalled();
+      const unchanged = await db.syncQueue.get(id);
+      expect(unchanged?.syncStatus).toBe('PENDING');
+      expect(unchanged?.userId).toBeUndefined();
+    });
+
+    it('rejects direct processing of a syncQueue mutation without a matching user owner', async () => {
+      setSession(TENANT_A, USER_A);
+      const engine = new DistributedSyncEngine(db as any);
+      await (engine as any).processMutationWithRetry({
+        id: 901,
+        tenantId: TENANT_A,
+        syncStatus: 'PENDING',
+        userId: undefined,
+        mutationId: 'mut-direct-unowned',
+        idempotencyKey: 'idem-direct-unowned',
+        entityType: 'PRODUCT',
+        operationType: 'CREATE',
+        payload: {},
+        retryCount: 0,
+        createdAt: new Date()
+      });
+
+      expect(unifiedTransport.request).not.toHaveBeenCalled();
+    });
+
+    it('does not process another user\'s outbox event within the same tenant', async () => {
+      setSession(TENANT_A, USER_B);
+      await db.outbox.add({
+        id: 91,
+        tenantId: TENANT_A,
+        userId: USER_A,
+        status: 'PENDING',
+        type: 'TEST',
+        payload: {},
+        mutationId: 'mut-other-user-outbox'
+      } as any);
+
+      const engine = DistributedSyncEngine.getInstance();
+      await engine.drainQueue();
+
+      expect(unifiedTransport.request).not.toHaveBeenCalled();
+      expect((await db.outbox.get(91))?.status).toBe('PENDING');
+    });
+
     it('skips outbox events belonging to another tenant', async () => {
       // Setup: One event for Tenant A
       setSession(TENANT_A, USER_A);
       await db.outbox.add({
         id: 1,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -135,6 +229,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 2,
         tenantId: TENANT_B,
+        userId: USER_B,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -162,6 +257,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 1,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -186,6 +282,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 3,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -210,6 +307,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 4,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
@@ -263,6 +361,7 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       await db.outbox.add({
         id: 1,
         tenantId: TENANT_A,
+        userId: USER_A,
         status: 'PENDING',
         type: 'TEST',
         payload: {},
