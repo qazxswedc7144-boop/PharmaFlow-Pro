@@ -1,4 +1,3 @@
-
 import { SettingsCard } from '../shared/SettingsUI';
 import { RefreshCw, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 import { db, getCurrentUserSession } from '@/core/db';
@@ -43,13 +42,18 @@ export default function SyncTab() {
   const handleClearFailed = async () => {
     const session = getCurrentUserSession();
     if (!session.tenantId) return;
+    const tenantId = session.tenantId;
+    const userId = session.userId;
     
     // 🚨 SECURITY: Only delete failed records belonging to the current tenant
     const failedIds = await db.outbox
       .where('status')
-      .anyOf('failed', 'FAILED')
-      .and(item => item.tenantId === session.tenantId)
+        .anyOf('failed', 'FAILED', 'RETRYING')
+        .and(item => item.tenantId === tenantId)
       .primaryKeys();
+
+    const latestSession = getCurrentUserSession();
+    if (latestSession.tenantId !== tenantId || latestSession.userId !== userId) return;
       
     if (failedIds.length > 0) {
       await db.outbox.bulkDelete(failedIds);
