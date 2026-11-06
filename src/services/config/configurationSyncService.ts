@@ -1,5 +1,5 @@
 // src/services/config/configurationSyncService.ts
-import { db, getCurrentUserSession } from '@/core/db';
+import { db, getTrustedSyncOwner } from '@/core/db';
 import { ConfigurationRecord, ConfigSyncPolicy } from '@/core/config/types';
 import { CONFIG_REGISTRY, normalizeConfigKey } from '@/core/config/configKeys';
 
@@ -50,11 +50,11 @@ export class ConfigurationSyncService {
 
     // 3. Ensure an active tenant session exists before writing to tenant-scoped outbox
     // 🚨 SECURITY HARDENING: Use active session as the ONLY trusted source of truth
-    const session = getCurrentUserSession();
-    const activeTenantId = session?.tenantId;
+    const owner = getTrustedSyncOwner();
+    const activeTenantId = owner?.tenantId;
 
-    if (!activeTenantId || !session?.userId) {
-      // Cannot queue cloud outbox sync events without an active tenant session
+    if (!owner) {
+      // Do not enqueue from a stale user object or an unauthenticated session.
       return;
     }
 
@@ -84,8 +84,8 @@ export class ConfigurationSyncService {
         mutationId,
         idempotencyKey,
         tenantId: trustedTenantId, // Force trusted tenant ID
-        userId: session.userId,
-        branchId: session.branchId,
+        userId: owner.userId,
+        branchId: owner.branchId,
         type: 'UPDATE_SETTING',
         payload: {
           key: record.key,
