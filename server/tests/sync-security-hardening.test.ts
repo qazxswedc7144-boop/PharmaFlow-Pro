@@ -120,7 +120,9 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
 
   describe('Phase 2: Sync Engine Race Protection', () => {
     it('does not process legacy outbox events without an attributable user owner', async () => {
-      setSession(TENANT_A, USER_A);
+      // Create the legacy record while a tenant exists but no user can be attributed.
+      // The Dexie creating hook must not silently assign the next authenticated user.
+      setSession(TENANT_A, undefined);
       await db.outbox.add({
         id: 90,
         tenantId: TENANT_A,
@@ -130,11 +132,64 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
         mutationId: 'mut-unowned-outbox'
       } as any);
 
-      const engine = DistributedSyncEngine.getInstance();
+      expect((await db.outbox.get(90))?.userId).toBeUndefined();
+
+      // A different authenticated session in the same tenant must not adopt it.
+      setSession(TENANT_A, USER_A);
+      const engine = new DistributedSyncEngine(db as any);
       await engine.drainQueue();
 
       expect(unifiedTransport.request).not.toHaveBeenCalled();
-      expect((await db.outbox.get(90))?.status).toBe('PENDING');
+      const unchanged = await db.outbox.get(90);
+      expect(unchanged?.status).toBe('PENDING');
+      expect(unchanged?.userId).toBeUndefined();
+    });
+
+    it('does not dispatch legacy syncQueue mutations without an attributable user owner', async () => {
+      setSession(TENANT_A, undefined);
+      const id = await db.syncQueue.add({
+        tenantId: TENANT_A,
+        syncStatus: 'PENDING',
+        retryCount: 0,
+        mutationId: 'mut-unowned-queue',
+        idempotencyKey: 'idem-unowned-queue',
+        entityType: 'PRODUCT',
+        operationType: 'CREATE',
+        payload: { id: 'legacy-product' },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      } as any);
+
+      expect((await db.syncQueue.get(id))?.userId).toBeUndefined();
+
+      setSession(TENANT_A, USER_A);
+      const engine = new DistributedSyncEngine(db as any);
+      await engine.drainQueue();
+
+      expect(unifiedTransport.request).not.toHaveBeenCalled();
+      const unchanged = await db.syncQueue.get(id);
+      expect(unchanged?.syncStatus).toBe('PENDING');
+      expect(unchanged?.userId).toBeUndefined();
+    });
+
+    it('rejects direct processing of a syncQueue mutation without a matching user owner', async () => {
+      setSession(TENANT_A, USER_A);
+      const engine = new DistributedSyncEngine(db as any);
+      await (engine as any).processMutationWithRetry({
+        id: 901,
+        tenantId: TENANT_A,
+        syncStatus: 'PENDING',
+        userId: undefined,
+        mutationId: 'mut-direct-unowned',
+        idempotencyKey: 'idem-direct-unowned',
+        entityType: 'PRODUCT',
+        operationType: 'CREATE',
+        payload: {},
+        retryCount: 0,
+        createdAt: new Date()
+      });
+
+      expect(unifiedTransport.request).not.toHaveBeenCalled();
     });
 
     it('does not process another user\'s outbox event within the same tenant', async () => {
