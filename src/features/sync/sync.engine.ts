@@ -879,7 +879,7 @@ export class DistributedSyncEngine {
   private async processMutationWithRetry(mutation: LocalSyncQueueItem): Promise<void> {
     const snapshot = readSyncSessionSnapshot();
     if (!snapshot || !mutation.id || mutation.tenantId !== snapshot.tenantId ||
-        ((mutation as any).userId && (mutation as any).userId !== snapshot.userId)) return;
+        mutation.userId !== snapshot.userId) return;
     assertSyncSessionCurrent(snapshot);
     await this.db.syncQueue.update(mutation.id, { syncStatus: 'PROCESSING', updatedAt: new Date() });
     assertSyncSessionCurrent(snapshot);
