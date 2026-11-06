@@ -159,6 +159,22 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       setSession(TENANT_A);
       expect(await db.products.get('product-A')).toBeDefined();
     });
+
+    it('blocks deletion of an existing orphan record but allows deleting a missing key', async () => {
+      setSession(TENANT_A);
+      const nativeDb = (db as any).backendDB();
+      await new Promise<void>((resolve, reject) => {
+        const transaction = nativeDb.transaction('products', 'readwrite');
+        transaction.objectStore('products').put({ id: 'orphan-product', name: 'Legacy orphan' });
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+
+      await expect(db.products.delete('orphan-product'))
+        .rejects.toThrow(/FAIL_CLOSED: Unauthorized data deletion attempt/);
+      await expect(db.products.delete('missing-product')).resolves.toBeUndefined();
+    });
   });
 
   describe('3. Bulk and direct table operation isolation', () => {
