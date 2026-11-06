@@ -472,7 +472,7 @@ function installSyncOwnedTableClearGuards(db: Dexie) {
 
     const guardedTable = table as any;
 
-    guardedTable.clear = async function (this: any) {
+    guardedTable.clear = function (this: any) {
       const owner = getTrustedSyncOwner();
 
       if (!owner) {
@@ -482,32 +482,19 @@ function installSyncOwnedTableClearGuards(db: Dexie) {
       }
 
       const session = requireTenantForTable(this, "Clear");
-
-      if (session.tenantId !== owner.tenantId) {
+      if (
+        session.tenantId !== owner.tenantId ||
+        session.userId !== owner.userId
+      ) {
         throw new Error(
-          "FAIL_CLOSED: Sync table clear owner does not match the active tenant."
+          "FAIL_CLOSED: Sync table clear owner does not match the active tenant/user."
         );
       }
 
-      const records = await this
-        .where("tenantId")
-        .equals(owner.tenantId)
-        .toArray();
-
-      assertTenantUnchanged(this, owner.tenantId, "Clear");
-
-      const ownedKeys = records
-        .filter(
-          (record: any) =>
-            record?.tenantId === owner.tenantId &&
-            record?.userId === owner.userId
-        )
-        .map((record: any) => extractPrimaryKey(this, record))
-        .filter((key: any) => key !== undefined && key !== null);
-
-      for (const key of ownedKeys) {
+      // Delete only rows matching both owner keys in one Dexie transaction.
+      // The deleting hook remains unchanged and validates each matched row.
+      return this.db.transaction("rw", this, async () => {
         const currentOwner = getTrustedSyncOwner();
-
         if (
           !currentOwner ||
           currentOwner.tenantId !== owner.tenantId ||
@@ -520,9 +507,26 @@ function installSyncOwnedTableClearGuards(db: Dexie) {
 
         assertTenantUnchanged(this, owner.tenantId, "Clear");
 
-        // Keep the deleting hook strict; this is the ordinary single-row API.
-        await this.delete(key);
-      }
+        const result = await this
+          .where("tenantId")
+          .equals(owner.tenantId)
+          .and((record: any) => record?.userId === owner.userId)
+          .delete();
+
+        const finalOwner = getTrustedSyncOwner();
+        if (
+          !finalOwner ||
+          finalOwner.tenantId !== owner.tenantId ||
+          finalOwner.userId !== owner.userId
+        ) {
+          throw new Error(
+            "FAIL_CLOSED: Sync table owner changed during clear."
+          );
+        }
+
+        assertTenantUnchanged(this, owner.tenantId, "Clear");
+        return result;
+      });
     };
   }
 }
