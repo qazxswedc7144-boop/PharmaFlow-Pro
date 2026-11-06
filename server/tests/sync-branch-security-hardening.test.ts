@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SyncProcessorService } from "../modules/sync/sync-processor.service.js";
 import { prisma } from "../database/prisma.js";
+import { SyncConflictService } from "../modules/sync/sync-conflict.service.js";
+import { SyncIdempotencyService } from "../modules/sync/sync-idempotency.service.js";
 
 vi.mock("../database/prisma.js", () => ({
   prisma: {
@@ -20,6 +22,11 @@ vi.mock("../database/prisma.js", () => ({
       update: vi.fn(),
     },
     syncAudit: {
+      create: vi.fn(),
+    },
+    product: {
+      findFirst: vi.fn(),
+      update: vi.fn(),
       create: vi.fn(),
     },
     $transaction: vi.fn((cb) => cb(prisma)),
@@ -45,6 +52,19 @@ vi.mock("../../services/rbac/authorization.service.js", () => ({
   },
 }));
 
+vi.mock("../modules/sync/sync-conflict.service.js", () => ({
+  SyncConflictService: {
+    evaluateConflict: vi.fn(() => ({ hasConflict: false })),
+  },
+}));
+
+vi.mock("../modules/sync/sync-idempotency.service.js", () => ({
+  SyncIdempotencyService: {
+    check: vi.fn(async () => ({ isDuplicate: false })),
+    record: vi.fn(async () => {}),
+  },
+}));
+
 describe("Sync Branch Security Hardening Regression Tests", () => {
   const tenantId = "TENANT-001";
   const userId = "USER-001";
@@ -65,6 +85,8 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (SyncConflictService.evaluateConflict as any).mockReturnValue({ hasConflict: false });
+    (SyncIdempotencyService.check as any).mockResolvedValue({ isDuplicate: false });
   });
 
   it("Scenario 1: Authorized User (Member of Branch) -> PASS", async () => {
@@ -184,6 +206,82 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
     // Looking at sync-processor.service.ts, the whole block is not in a try-catch for branch check, 
     // it's caught in the router or by the caller.
     // Wait, let's re-examine processBatch error handling.
+  });
+
+
+  it("Scenario 9: A per-mutation CONFLICT makes the aggregate batch unsuccessful", async () => {
+    const envelope = {
+      ...defaultEnvelope,
+      branchId: null,
+      mutations: [{
+        id: "mutation-conflict-1",
+        entity: "PRODUCT",
+        entityId: "product-1",
+        operation: "UPDATE",
+        payload: { id: "product-1", name: "Local product" },
+        idempotencyKey: "idem-conflict-1",
+        version: 1,
+      }],
+    };
+    (prisma.product.findFirst as any).mockResolvedValue({
+      id: "product-1",
+      tenantId,
+      updatedAt: new Date("2026-11-01T00:00:00.000Z"),
+    });
+    (SyncConflictService.evaluateConflict as any).mockReturnValue({
+      hasConflict: true,
+      category: "SAME_RECORD_CONFLICT",
+      message: "Server record is newer",
+      resolutionStrategy: "SERVER_WINS",
+    });
+
+    const response = await SyncProcessorService.processBatch({
+      envelope,
+      authenticatedTenantId: tenantId,
+      authenticatedUserId: userId,
+      authenticatedUserRole: "TENANT_ADMIN",
+    });
+
+    expect(response.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mutationId: "mutation-conflict-1", status: "CONFLICT", success: false }),
+    ]));
+    expect(response.summary.conflicts).toContain("mutation-conflict-1");
+    expect(response.success).toBe(false);
+    expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+
+  it("Scenario 10: An idempotent DUPLICATE remains a successful batch result", async () => {
+    const envelope = {
+      ...defaultEnvelope,
+      branchId: null,
+      mutations: [{
+        id: "mutation-duplicate-1",
+        entity: "PRODUCT",
+        entityId: "product-1",
+        operation: "CREATE",
+        payload: { id: "product-1", name: "Already applied" },
+        idempotencyKey: "idem-duplicate-1",
+        version: 1,
+      }],
+    };
+    (SyncIdempotencyService.check as any).mockResolvedValue({
+      isDuplicate: true,
+      previousResult: { status: "SUCCESS", success: true },
+    });
+
+    const response = await SyncProcessorService.processBatch({
+      envelope,
+      authenticatedTenantId: tenantId,
+      authenticatedUserId: userId,
+      authenticatedUserRole: "TENANT_ADMIN",
+    });
+
+    expect(response.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mutationId: "mutation-duplicate-1", status: "DUPLICATE", success: true }),
+    ]));
+    expect(response.summary.duplicates).toContain("mutation-duplicate-1");
+    expect(response.success).toBe(true);
+    expect(prisma.product.create).not.toHaveBeenCalled();
   });
 
   it("Scenario 8: User member of branch via UserRole assignment -> PASS", async () => {

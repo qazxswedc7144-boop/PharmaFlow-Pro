@@ -32,7 +32,7 @@ jobs:
         run: npx prisma generate
 
       - name: Run Atomicity and Tenant Isolation Tests
-        run: npx vitest run server/tests/payment-financial-integrity-atomicity.test.ts server/tests/tenant-isolation-phase2.test.ts server/tests/password-hash-compatibility.test.ts server/tests/sync-security-hardening.test.ts
+        run: npx vitest run server/tests/payment-financial-integrity-atomicity.test.ts server/tests/tenant-isolation-phase2.test.ts server/tests/password-hash-compatibility.test.ts server/tests/sync-security-hardening.test.ts server/tests/sync-branch-security-hardening.test.ts
         env:
           NODE_ENV: test
 
