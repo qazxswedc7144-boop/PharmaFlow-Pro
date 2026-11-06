@@ -857,7 +857,7 @@ export class DistributedSyncEngine {
     assertSyncSessionCurrent(snapshot);
     await this.db.syncQueue.update(mutation.id, { syncStatus: 'PROCESSING', updatedAt: new Date() });
     assertSyncSessionCurrent(snapshot);
-    let delay = SYNC_CONFIG.BACKOFF_INITIAL_DELAY_MS;
+    let delay: number = SYNC_CONFIG.BACKOFF_INITIAL_DELAY_MS;
     const device = DeviceManager.getDeviceIdentity();
     const send = async (): Promise<Response> => {
       assertSyncSessionCurrent(snapshot);
@@ -975,21 +975,6 @@ export class DistributedSyncEngine {
       assertSyncSessionCurrent(snapshot);
       await this.db.syncQueue.update(mutation.id!, { syncStatus: 'CONFLICT', updatedAt: new Date() });
       assertSyncSessionCurrent(snapshot);
-    });
-  }
-
-  private async handleConflict(mutation: LocalSyncQueueItem, reason: string): Promise<void> {
-    await this.db.transaction('rw', [this.db.syncQueue, this.db.failedMutations], async () => {
-      await this.db.failedMutations.add({
-        mutationId: mutation.mutationId,
-        reason: reason,
-        payload: mutation.payload,
-        createdAt: new Date(),
-      });
-      await this.db.syncQueue.update(mutation.id!, {
-        syncStatus: 'CONFLICT',
-        updatedAt: new Date(),
-      });
     });
   }
 
