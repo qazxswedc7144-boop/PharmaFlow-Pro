@@ -312,6 +312,9 @@ export class DistributedSyncEngine {
     const outboxEvent = {
       mutationId,
       tenantId,
+      userId: session.userId,
+      branchId,
+      deviceId: DeviceManager.getDeviceIdentity().deviceId,
       type,
       payload: sanitizedPayload,
       status: 'PENDING',
@@ -738,7 +741,7 @@ export class DistributedSyncEngine {
         assertSyncSessionCurrent(snapshot);
         for (const item of processing) {
           const updatedAt = new Date(item.updatedAt || item.createdAt || 0).getTime();
-          if (item.tenantId === snapshot.tenantId && (!item.userId || item.userId === snapshot.userId) &&
+          if (item.tenantId === snapshot.tenantId && item.userId === snapshot.userId &&
               Number.isFinite(updatedAt) && updatedAt < staleBefore) {
             assertSyncSessionCurrent(snapshot);
             await this.db.syncQueue.update(item.id!, { syncStatus: 'PENDING', updatedAt: new Date() });
@@ -764,7 +767,7 @@ export class DistributedSyncEngine {
         assertSyncSessionCurrent(snapshot);
         for (const event of sending) {
           const updatedAt = new Date(event.updatedAt || event.createdAt || 0).getTime();
-          if (event.tenantId === snapshot.tenantId && (!event.userId || event.userId === snapshot.userId) &&
+          if (event.tenantId === snapshot.tenantId && event.userId === snapshot.userId &&
               Number.isFinite(updatedAt) && updatedAt < staleBefore) {
             assertSyncSessionCurrent(snapshot);
             await (this.db as any).outbox.update(event.id, { status: 'PENDING', updatedAt: new Date().toISOString() });
@@ -774,7 +777,7 @@ export class DistributedSyncEngine {
         const events = await (this.db as any).outbox.where('status').anyOf('PENDING','pending','RETRYING').toArray().catch(() => []);
         assertSyncSessionCurrent(snapshot);
         for (const event of events) {
-          if (event.tenantId !== snapshot.tenantId || (event.userId && event.userId !== snapshot.userId)) continue;
+          if (event.tenantId !== snapshot.tenantId || event.userId !== snapshot.userId) continue;
           assertSyncSessionCurrent(snapshot);
           await this.processOutboxEvent(event);
           if (!isSyncSessionCurrent(snapshot)) break;
