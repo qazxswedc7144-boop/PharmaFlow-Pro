@@ -4,7 +4,7 @@
 
 import Dexie, { Table } from 'dexie';
 import { LocalSyncQueueItem, LocalSyncEvent, FailedMutationLog } from './sync.types';
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 
 export interface PharmaFlowDexieExtension {
   syncQueue: Table<LocalSyncQueueItem, number>;
@@ -25,10 +25,27 @@ export class SyncQueueRepository {
     this.db = dexieInstance as Dexie & PharmaFlowDexieExtension;
   }
 
+  private requireTrustedOwner(item: { tenantId?: string; userId?: string }): { tenantId: string; userId: string } {
+    const session = getCurrentUserSession();
+    if (!session.tenantId || !session.userId) {
+      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for sync queue enqueue.');
+    }
+    if (item.tenantId && item.tenantId !== session.tenantId) {
+      throw new Error('TRUSTED_TENANT_CONTEXT_MISMATCH: Sync queue item tenant does not match the active session.');
+    }
+    if (item.userId && item.userId !== session.userId) {
+      throw new Error('TRUSTED_USER_CONTEXT_MISMATCH: Sync queue item user does not match the active session.');
+    }
+    return { tenantId: session.tenantId, userId: session.userId };
+  }
+
   async enqueue(item: Omit<LocalSyncQueueItem, 'id' | 'createdAt' | 'updatedAt' | 'syncStatus' | 'retryCount'>): Promise<number> {
+    const owner = this.requireTrustedOwner(item);
     const now = new Date();
     const queueItem: LocalSyncQueueItem = {
       ...item,
+      tenantId: owner.tenantId,
+      userId: owner.userId,
       syncStatus: 'PENDING',
       retryCount: 0,
       createdAt: now,
@@ -56,9 +73,12 @@ export class SyncQueueRepository {
    * Ensures the caller's business mutation and sync outbox record are committed atomically.
    */
   async enqueueWithinTransaction(item: Omit<LocalSyncQueueItem, 'id' | 'createdAt' | 'updatedAt' | 'syncStatus' | 'retryCount'>): Promise<number> {
+    const owner = this.requireTrustedOwner(item);
     const now = new Date();
     const queueItem: LocalSyncQueueItem = {
       ...item,
+      tenantId: owner.tenantId,
+      userId: owner.userId,
       syncStatus: 'PENDING',
       retryCount: 0,
       createdAt: now,
