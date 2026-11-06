@@ -1,5 +1,5 @@
 // packages/sync-engine/src/queue/mutationQueue.ts
-import { db } from "@/core/db";
+import { db, getCurrentUserSession } from "@/core/db";
 
 export interface Mutation {
   id: string;
@@ -12,6 +12,8 @@ export interface Mutation {
   status: "PENDING" | "PROCESSING" | "FAILED" | "COMPLETED";
   error?: string;
   lastAttemptAt?: number;
+  tenantId?: string;
+  userId?: string;
 }
 
 export class MutationQueue {
@@ -30,9 +32,22 @@ export class MutationQueue {
    * Enqueue a mutation locally. It saves directly to Dexie database 'sync_queue'.
    */
   public async enqueue(mutation: Omit<Mutation, "id" | "timestamp" | "retryCount" | "status">): Promise<Mutation> {
+    const session = getCurrentUserSession();
+    if (!session.tenantId || !session.userId) {
+      throw new Error("TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user is required for legacy sync queue enqueue.");
+    }
+    if (mutation.tenantId && mutation.tenantId !== session.tenantId) {
+      throw new Error("TRUSTED_TENANT_CONTEXT_MISMATCH: Mutation tenant does not match the active session.");
+    }
+    if (mutation.userId && mutation.userId !== session.userId) {
+      throw new Error("TRUSTED_USER_CONTEXT_MISMATCH: Mutation user does not match the active session.");
+    }
+
     const id = db.generateId("MUT");
     const fullMutation: Mutation = {
       ...mutation,
+      tenantId: session.tenantId,
+      userId: session.userId,
       id,
       timestamp: Date.now(),
       retryCount: 0,
