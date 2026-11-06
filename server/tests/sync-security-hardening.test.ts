@@ -457,6 +457,25 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       };
 
       const legacyQueue = MutationQueue.getInstance();
+
+      // A stale user/tenant object without an authenticated session token
+      // must not be treated as a trusted queue owner.
+      setSession(TENANT_A, USER_A);
+      const staleUnauthenticatedSession = {
+        ...(TokenProvider.getCurrentSession() as any),
+        isAuthenticated: false
+      };
+      (TokenProvider.getCurrentSession as any).mockReturnValue(staleUnauthenticatedSession);
+      await expect(syncQueueRepository.enqueue(repositoryItem as any))
+        .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+      await expect(legacyQueue.enqueue({
+        type: 'PRODUCT',
+        payload: { id: 'legacy-queue-stale-session' },
+        priority: 'LOW',
+        idempotencyKey: 'legacy-queue-stale-session-idem'
+      }))
+        .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
+
       setSession(TENANT_A, undefined);
       await expect(syncQueueRepository.enqueue(repositoryItem as any))
         .rejects.toThrow('TRUSTED_USER_CONTEXT_REQUIRED');
