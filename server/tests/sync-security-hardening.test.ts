@@ -101,6 +101,25 @@ describe('PharmaFlow Pro — Sync Security Hardening Tests', () => {
       expect(count).toBe(0);
     });
 
+    it('does not enqueue configuration changes from a stale unauthenticated session', async () => {
+      setSession(TENANT_A, USER_A);
+      (TokenProvider.getCurrentSession as any).mockReturnValue({
+        ...(TokenProvider.getCurrentSession() as any),
+        isAuthenticated: false
+      });
+
+      await configurationSyncService.handleConfigMutation({
+        key: 'system.name',
+        value: 'Must Not Queue',
+        scope: 'TENANT' as any,
+        context: { tenantId: TENANT_A },
+        version: 1,
+        updatedAt: new Date().toISOString()
+      } as any);
+
+      expect(await db.outbox.count()).toBe(0);
+    });
+
     it('forces session tenantId into outbox and payload context', async () => {
       setSession(TENANT_A, USER_A);
       
