@@ -111,7 +111,7 @@ salesPolicyRouter.put("/", requirePermission("settings.update"), async (req, res
           action: "UPDATE",
           entity: "TenantSalesPolicy",
           entityId: updated.id,
-          before: null,
+          before: previous ? JSON.stringify(serializePolicy(previous)) : null,
           after: JSON.stringify(serializePolicy(updated)),
           ipAddress: req.ip
         }
