@@ -382,7 +382,7 @@ export class SyncProcessorService {
             const effects = journalEntry ? [{
               entity: "JOURNAL_ENTRY",
               entityId: journalEntry.id,
-              operation: "CREATE",
+              operation: "CREATE" as const,
               payload: journalEntry
             }] : [];
             return {
