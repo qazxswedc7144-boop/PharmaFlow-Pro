@@ -15,6 +15,7 @@ export interface SalesWorkflowInput {
   customerId?: string;
   items: InvoiceItem[];
   total: number;
+  discountPercent?: number;
   id?: string;
   invoiceNumber?: string;
   date?: string;
@@ -155,7 +156,8 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
       effectiveDate,
       ctx.idempotencyKey,
       ctx.tenantId,
-      ctx.branchId
+      ctx.branchId,
+      input.discountPercent ?? 0
     );
 
     if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_SALES_DOC') {
