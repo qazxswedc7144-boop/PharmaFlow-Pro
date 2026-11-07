@@ -3,34 +3,13 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { Role } from "@prisma/client";
+import { getJwtSecret, getJwtRefreshSecret } from "../../../../../server/security/jwtSecrets.js";
 
 // 🚨 FIX: Centralized constants to prevent expiration drift between JWT and DB records
 const ACCESS_TOKEN_EXPIRY_STR = "4h";
 const ACCESS_TOKEN_EXPIRY_MS = 4 * 60 * 60 * 1000;
 const REFRESH_TOKEN_EXPIRY_STR = "7d";
 const REFRESH_TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
-
-const getJwtSecret = () => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
-    }
-    return 'pharmaflow-local-development-jwt-secure-secret-2026';
-  }
-  return secret;
-};
-
-const getJwtRefreshSecret = () => {
-  const secret = process.env.JWT_REFRESH_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: JWT_REFRESH_SECRET environment variable is missing in production.');
-    }
-    return 'pharmaflow-local-development-jwt-refresh-secure-secret-2026';
-  }
-  return secret;
-};
 
 export interface DecodedAccessToken {
   userId: string;
