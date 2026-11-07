@@ -4,7 +4,7 @@ const { mockPrisma, mockSaas } = vi.hoisted(() => {
   const prisma: any = {
     $transaction: vi.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prisma)),
     product: { findMany: vi.fn() },
-    invoice: { findUnique: vi.fn(), create: vi.fn() },
+    invoice: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     auditLog: { create: vi.fn() },
   };
   return {
@@ -77,6 +77,7 @@ describe("Server-side sales price and discount validation", () => {
     mockSaas.checkSubscriptionLimit.mockResolvedValue({ allowed: true });
     mockSaas.incrementUsage.mockResolvedValue(undefined);
     mockPrisma.invoice.findUnique.mockResolvedValue(null);
+    mockPrisma.invoice.findFirst.mockResolvedValue(null);
     mockPrisma.product.findMany.mockResolvedValue([
       { id: productId, tenantId, price: 30, isActive: true, deletedAt: null },
     ]);
@@ -98,16 +99,22 @@ describe("Server-side sales price and discount validation", () => {
     });
 
     expect(response.statusCode).toBe(201);
-    expect(mockPrisma.invoice.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          totalAmount: 300,
-          items: {
-            create: [expect.objectContaining({ productId, qty: 10, price: 30, total: 300 })],
-          },
-        }),
-      }),
-    );
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.product.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ tenantId, id: { in: [productId] }, isActive: true, deletedAt: null }),
+    }));
+
+    const invoiceData = mockPrisma.invoice.create.mock.calls[0][0].data;
+    expect(invoiceData.totalAmount.toString()).toBe("300");
+    expect(invoiceData.items.create).toHaveLength(1);
+    expect(invoiceData.items.create[0]).toEqual(expect.objectContaining({
+      tenantId,
+      productId,
+      qty: 10,
+      price: expect.objectContaining({ d: expect.any(Array) }),
+    }));
+    expect(invoiceData.items.create[0].price.toString()).toBe("30");
+    expect(invoiceData.items.create[0].total.toString()).toBe("300");
   });
 
 });
