@@ -72,7 +72,8 @@ describe("Tenant sales policy API", () => {
       taxMode: "EXCLUSIVE",
       updatedBy: "policy-admin",
       updatedAt: new Date("2026-11-06T00:00:00.000Z"),
-    });\n    mockPrisma.tenantSalesPolicy.upsert.mockResolvedValue({
+    });
+    mockPrisma.tenantSalesPolicy.upsert.mockResolvedValue({
       id: "policy-a",
       tenantId,
       maxDiscountPercent: 10,
