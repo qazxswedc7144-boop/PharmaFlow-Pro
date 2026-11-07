@@ -154,6 +154,30 @@ describe("Server-side sales price and discount validation", () => {
     );
   });
 
+  it("extracts inclusive tax from the tenant policy and ignores client tax totals", async () => {
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({
+      tenantId, maxDiscountPercent: 15, taxRatePercent: 5, taxMode: "INCLUSIVE",
+    });
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-TAX-INCLUSIVE",
+      type: "SALE",
+      totalAmount: 1,
+      taxAmount: 999,
+      taxRatePercent: 99,
+      taxMode: "EXCLUSIVE",
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 10, price: 1 }],
+    });
+
+    expect(response.statusCode).toBe(201);
+    const invoiceData = mockPrisma.invoice.create.mock.calls[0][0].data;
+    expect(invoiceData.subtotalAmount.toString()).toBe("300");
+    expect(invoiceData.taxMode).toBe("INCLUSIVE");
+    expect(invoiceData.taxRatePercent.toString()).toBe("5");
+    expect(invoiceData.taxAmount.toString()).toBe("14.2857");
+    expect(invoiceData.totalAmount.toString()).toBe("300");
+  });
+
   it("rejects a discount when the authenticated user lacks sales.discount.apply", async () => {
     mockAuthorization.can.mockResolvedValue(false);
     const response = await invokeCreate({
@@ -217,6 +241,9 @@ describe("Server-side sales price and discount validation", () => {
       discountPercent: 25,
       discountAmount: 25,
       tax: 15,
+      taxAmount: 15,
+      taxRatePercent: 99,
+      taxMode: "EXCLUSIVE",
       promotionId: "client-promo",
       tierPrice: 1,
       items: [{ productId, qty: 1, price: 100 }],
