@@ -75,7 +75,7 @@ export default function SalesTab() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...Object.fromEntries(buildAuthHeaders().entries())
+          ...buildAuthHeaders()
         },
         body: JSON.stringify(policy)
       });
