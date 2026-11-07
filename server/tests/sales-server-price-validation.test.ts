@@ -32,6 +32,7 @@ vi.mock("../modules/replication/replication.publisher.js", () => ({ ReplicationP
 vi.mock("../modules/saas/saas.service.js", () => ({ SaasService: mockSaas }));
 
 import { invoiceRouter } from "../routes/invoice.routes.js";
+import { InvoiceSchema } from "../../src/shared/validation/invoice.schema.js";
 
 const tenantId = "tenant-sales-a";
 const productId = "11111111-1111-4111-8111-111111111111";
@@ -114,6 +115,23 @@ describe("Server-side sales price and discount validation", () => {
     }));
     expect(invoiceData.items.create[0].price.toString()).toBe("30");
     expect(invoiceData.items.create[0].total.toString()).toBe("300");
+  });
+
+  it("rejects client-supplied discount, tax, promotion, and tier-price overrides", () => {
+    const result = InvoiceSchema.safeParse({
+      invoiceNumber: "SALE-OVERRIDE-001",
+      type: "SALE",
+      totalAmount: 100,
+      paymentStatus: "UNPAID",
+      discountPercent: 25,
+      discountAmount: 25,
+      tax: 15,
+      promotionId: "client-promo",
+      tierPrice: 1,
+      items: [{ productId, qty: 1, price: 100 }],
+    });
+
+    expect(result.success).toBe(false);
   });
 
 });
