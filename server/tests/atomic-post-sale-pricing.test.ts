@@ -218,4 +218,50 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(mockPost).not.toHaveBeenCalled();
     expect(tx.inventoryMovement.findMany).not.toHaveBeenCalled();
   });
-});
+
+
+  it("promotes an existing tenant-owned draft to POSTED instead of failing with INVOICE_EXISTS", async () => {
+    const draft = { id: "invoice-draft-promote", invoiceNumber: "SYNC-DRAFT-PROMOTE-001", tenantId, type: "SALE", status: "DRAFT", documentStatus: "ACTIVE", items: [] };
+    const posted = { ...draft, status: "CONFIRMED", documentStatus: "POSTED", totalAmount: new Prisma.Decimal(60), items: [] };
+    const tx: any = {
+      invoice: {
+        findFirst: vi.fn().mockResolvedValueOnce(draft).mockResolvedValueOnce(posted),
+        update: vi.fn().mockResolvedValue(posted),
+        create: vi.fn(),
+      },
+      journalEntry: { findFirst: vi.fn().mockResolvedValue({ id: "journal-promote", lines: [] }) },
+      inventoryMovement: { findMany: vi.fn().mockResolvedValue([]) },
+    };
+    const result = await AtomicPostSaleService.executePostSaleCommand({
+      payload: {
+        id: "local-sale-001", refId: "local-sale-001",
+        sale: { id: "local-sale-001", invoiceNumber: draft.invoiceNumber, type: "SALE", status: "POSTED", documentStatus: "POSTED", items: [{ product_id: productId, qty: 2, price: 1 }] },
+      },
+      tenantId, userId: "user-sync-a", branchId: "branch-sync-a", ipAddress: "127.0.0.1", tx, postImmediately: true,
+    });
+    expect(result.success).toBe(true);
+    expect(tx.invoice.create).not.toHaveBeenCalled();
+    expect(tx.invoice.update).toHaveBeenCalledTimes(1);
+    expect(mockCalculate).toHaveBeenCalledTimes(1);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a previously posted sale as an idempotent success without posting stock or ledger again", async () => {
+    const posted = { id: "invoice-already-posted", invoiceNumber: "SYNC-ALREADY-POSTED-001", tenantId, type: "SALE", status: "CONFIRMED", documentStatus: "POSTED", items: [] };
+    const tx: any = {
+      invoice: { findFirst: vi.fn().mockResolvedValue(posted), update: vi.fn(), create: vi.fn() },
+      journalEntry: { findFirst: vi.fn(), },
+      inventoryMovement: { findMany: vi.fn() },
+    };
+    const result = await AtomicPostSaleService.executePostSaleCommand({
+      payload: { refId: "local-sale-posted", sale: { id: "local-sale-posted", invoiceNumber: posted.invoiceNumber, type: "SALE", documentStatus: "POSTED", items: [{ product_id: productId, qty: 2 }] } },
+      tenantId, userId: "user-sync-a", ipAddress: "127.0.0.1", tx, postImmediately: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.idempotent).toBe(true);
+    expect(tx.invoice.update).not.toHaveBeenCalled();
+    expect(tx.invoice.create).not.toHaveBeenCalled();
+    expect(mockCalculate).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+\n});\n
