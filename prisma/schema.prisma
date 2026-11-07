@@ -379,7 +379,6 @@ model TenantSalesPolicy {
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 
-  @@index([tenantId])
   @@map("tenant_sales_policies")
 }
 
