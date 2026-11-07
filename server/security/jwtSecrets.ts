@@ -23,7 +23,8 @@ function validateProductionSecrets(): { access: string; refresh: string } {
 
   const accessHash = createHash("sha256").update(access).digest("hex");
   const refreshHash = createHash("sha256").update(refresh).digest("hex");
-  if (accessHash === LEGACY_ACCESS_SECRET_HASH || refreshHash === LEGACY_REFRESH_SECRET_HASH) {
+  const knownDevelopmentSecretHashes = new Set([LEGACY_ACCESS_SECRET_HASH, LEGACY_REFRESH_SECRET_HASH]);
+  if (knownDevelopmentSecretHashes.has(accessHash) || knownDevelopmentSecretHashes.has(refreshHash)) {
     throw new Error("FATAL: A known development JWT secret cannot be used in production.");
   }
   if (Buffer.byteLength(access, "utf8") < 32 || Buffer.byteLength(refresh, "utf8") < 32) {
