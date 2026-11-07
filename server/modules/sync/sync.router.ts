@@ -134,7 +134,8 @@ if (!authenticatedUserId) {
       envelope,
       authenticatedTenantId,
       authenticatedUserId,
-      authenticatedUserRole
+      authenticatedUserRole,
+      authenticatedUsername: authReq.user?.username
     });
 
     const durationMs = Date.now() - startTime;
