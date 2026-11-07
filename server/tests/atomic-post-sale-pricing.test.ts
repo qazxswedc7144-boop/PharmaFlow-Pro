@@ -226,8 +226,9 @@ describe("Atomic POST_SALE server pricing", () => {
     const draft = { id: "invoice-draft-promote", invoiceNumber: "SYNC-DRAFT-PROMOTE-001", tenantId, type: "SALE", status: "DRAFT", documentStatus: "ACTIVE", items: [] };
     const posted = { ...draft, status: "CONFIRMED", documentStatus: "POSTED", totalAmount: new Prisma.Decimal(60), items: [] };
     const tx: any = {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: draft.id }]),
       invoice: {
-        findFirst: vi.fn().mockResolvedValueOnce(draft).mockResolvedValueOnce(posted),
+        findFirst: vi.fn().mockResolvedValueOnce(draft).mockResolvedValueOnce(draft).mockResolvedValueOnce(posted),
         update: vi.fn().mockResolvedValue(posted),
         create: vi.fn(),
       },
