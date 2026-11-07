@@ -175,7 +175,8 @@ export class FinancialTransactionService {
           item.qty,
           invoice.id,
           "INVOICE",
-          `صرف مبيعات - فاتورة #${invoice.invoiceNumber}`
+          `صرف مبيعات - فاتورة #${invoice.invoiceNumber}`,
+          tenantId
         );
         
         totalComputatedCogs += fifoResult.totalCost;
@@ -240,7 +241,8 @@ export class FinancialTransactionService {
           item.expiryDate,
           invoice.id,
           "INVOICE",
-          `توريد مشتريات - فاتورة #${invoice.invoiceNumber}`
+          `توريد مشتريات - فاتورة #${invoice.invoiceNumber}`,
+          tenantId
         );
       }
 

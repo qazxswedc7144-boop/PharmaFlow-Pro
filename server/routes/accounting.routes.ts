@@ -17,6 +17,15 @@ export const accountingRouter = Router();
  * Uses Row-Level Locking, version checks, and Double-entry balancing enforcement.
  */
 accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN, Role.ACCOUNTANT]), validateRequestBody(AccountingEntrySchema), async (req: AuthenticatedRequest, res: Response) => {
+  const tenantId = req.user?.tenantId?.trim();
+  const requestTenantId = (req as any).tenantId;
+  if (!tenantId || (requestTenantId && requestTenantId !== tenantId)) {
+    return res.status(403).json({
+      error: "TRUSTED_TENANT_CONTEXT_REQUIRED",
+      message: "A trusted, matching tenant session is required to post a journal."
+    });
+  }
+
   const userId = req.user?.userId || "SYSTEM";
   const branchId = "BRH-MAIN-001";
   const key = `purchase:journal:${userId}`;
@@ -48,15 +57,30 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
         throw new Error(`UNBALANCED_ENTRY: Debits sum (${sumDebits}) must exactly equal credits sum (${sumCredits}).`);
       }
 
-      // Lock target account rows to avoid dirty checks
-      const accountIds = data.lines.map((l: any) => l.accountId);
-      await tx.$executeRaw(
-        Prisma.sql`SELECT id FROM accounts WHERE id IN (${Prisma.join(accountIds)}) FOR UPDATE`
+      // Lock only accounts owned by the authenticated tenant.
+      const accountIds: string[] = [...new Set<string>(data.lines.map((line: any) => line.accountId as string))];
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM "accounts"
+          WHERE id IN (${Prisma.join(accountIds)})
+            AND "tenantId" = ${tenantId}
+          FOR UPDATE`
       );
 
-      const tenantId = (req as any).tenantId || req.user?.tenantId;
+      // Resolve every account inside the same tenant before creating any ledger rows.
+      // findFirst is intentional: it allows an explicit tenant predicate in the lookup.
+      const accountsById = new Map<string, { id: string; version: number }>();
+      for (const accountId of accountIds) {
+        const account = await tx.account.findFirst({
+          where: { id: accountId, tenantId },
+          select: { id: true, version: true }
+        });
+        if (!account) {
+          throw new Error("ACCOUNT_NOT_FOUND_OR_FORBIDDEN: One or more accounts do not belong to the authenticated tenant.");
+        }
+        accountsById.set(accountId, { id: account.id, version: account.version });
+      }
 
-      // Create main entry
+      // Create main entry only after all account ownership checks pass.
       const entry = await tx.journalEntry.create({
         data: {
           tenantId,
@@ -81,12 +105,14 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
       // Update account balances with version checking (Optimistic locking)
       for (const line of data.lines) {
         const adjustment = line.debit - line.credit;
-        const currentAccount = await tx.account.findUnique({ where: { id: line.accountId } });
-        if (!currentAccount) throw new Error(`ACCOUNT_NOT_FOUND: Account ID ${line.accountId} doesn't exist.`);
+        const currentAccount = accountsById.get(line.accountId);
+        if (!currentAccount) {
+          throw new Error("ACCOUNT_NOT_FOUND_OR_FORBIDDEN: Account is not available in the authenticated tenant.");
+        }
 
         await tx.account.update({
-          where: { 
-            id: line.accountId,
+          where: {
+            id_tenantId: { id: line.accountId, tenantId },
             version: currentAccount.version
           },
           data: {
@@ -94,6 +120,9 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
             version: { increment: 1 }
           }
         });
+
+        // Preserve optimistic-lock correctness if the same account appears on multiple lines.
+        currentAccount.version += 1;
       }
 
       // Record detailed Audit trail

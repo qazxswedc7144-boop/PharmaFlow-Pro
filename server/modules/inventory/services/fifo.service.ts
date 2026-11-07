@@ -22,23 +22,30 @@ export class FifoService {
     quantityToDeplete: number,
     referenceId: string,
     referenceType: string,
-    reason?: string
+    reason: string | undefined,
+    expectedTenantId: string
   ): Promise<DepletionResult> {
-    if (quantityToDeplete <= 0) {
-      return { allocations: [], totalCost: 0 };
+    if (!expectedTenantId || !expectedTenantId.trim()) {
+      throw new Error("TRUSTED_TENANT_CONTEXT_REQUIRED: Expected tenantId is mandatory for stock depletion.");
+    }
+    if (!Number.isFinite(quantityToDeplete) || quantityToDeplete <= 0) {
+      throw new Error("INVALID_STOCK_QUANTITY: Depletion quantity must be a finite positive number.");
     }
 
-    // 1. Lock the Product row to prevent simultaneous writes to the global stock quantity
+    // 1. Lock the tenant-owned Product row; the tenant must come from trusted auth context.
     const lockedProducts = await tx.$queryRaw<any[]>(
-      Prisma.sql`SELECT id, "stockQuantity", version, "tenantId" FROM products WHERE id = ${productId} FOR UPDATE`
+      Prisma.sql`SELECT id, "stockQuantity", version, "tenantId" FROM products WHERE id = ${productId} AND "tenantId" = ${expectedTenantId} FOR UPDATE`
     );
 
     if (!lockedProducts || lockedProducts.length === 0) {
-      throw new Error(`PRODUCT_NOT_FOUND: Product with ID ${productId} does not exist.`);
+      throw new Error(`PRODUCT_NOT_FOUND_OR_FORBIDDEN: Product ${productId} does not exist in the authenticated tenant.`);
     }
 
     const mainProduct = lockedProducts[0];
     const tenantId = mainProduct.tenantId;
+    if (tenantId !== expectedTenantId) {
+      throw new Error("CROSS_TENANT_VIOLATION: Product does not belong to the authenticated tenant.");
+    }
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
 
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
@@ -57,7 +64,7 @@ export class FifoService {
       Prisma.sql`
         SELECT id, "batchNumber", "stockQuantity", cost, "expiryDate", version 
         FROM inventory_batches 
-        WHERE "productId" = ${productId} AND "stockQuantity" > 0 
+        WHERE "productId" = ${productId} AND "tenantId" = ${expectedTenantId} AND "stockQuantity" > 0 
         ORDER BY "expiryDate" ASC, "createdAt" ASC 
         FOR UPDATE
       `
@@ -146,15 +153,27 @@ export class FifoService {
     expiryDate: Date | null,
     referenceId: string,
     referenceType: string,
-    reason?: string
+    reason: string | undefined,
+    expectedTenantId: string
   ): Promise<void> {
-    if (qty <= 0) return;
+    if (!expectedTenantId || !expectedTenantId.trim()) {
+      throw new Error("TRUSTED_TENANT_CONTEXT_REQUIRED: Expected tenantId is mandatory for stock addition.");
+    }
+    if (!Number.isFinite(qty) || qty <= 0) {
+      throw new Error("INVALID_STOCK_QUANTITY: Addition quantity must be a finite positive number.");
+    }
 
-    // 1. Pessimistic lock on product main row
+    // 1. Pessimistic lock on product row scoped to the authenticated tenant.
     const lockedProducts = await tx.$queryRaw<any[]>(
-      Prisma.sql`SELECT id, "tenantId" FROM products WHERE id = ${productId} FOR UPDATE`
+      Prisma.sql`SELECT id, "tenantId" FROM products WHERE id = ${productId} AND "tenantId" = ${expectedTenantId} FOR UPDATE`
     );
     const tenantId = lockedProducts[0]?.tenantId;
+    if (!tenantId) {
+      throw new Error(`PRODUCT_NOT_FOUND_OR_FORBIDDEN: Product ${productId} does not exist in the authenticated tenant.`);
+    }
+    if (tenantId !== expectedTenantId) {
+      throw new Error("CROSS_TENANT_VIOLATION: Product does not belong to the authenticated tenant.");
+    }
     const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
     if (!tenantId || forbiddenTenants.includes(tenantId)) {
       throw new Error(`TRUSTED_TENANT_CONTEXT_REQUIRED: Product ${productId} has invalid or missing tenant context for addition.`);

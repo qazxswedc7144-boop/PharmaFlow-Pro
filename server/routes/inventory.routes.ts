@@ -18,6 +18,13 @@ export const inventoryRouter = Router();
  */
 inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN, Role.INVENTORY_MANAGER]), validateRequestBody(StockMoveSchema), async (req: AuthenticatedRequest, res: Response) => {
   const data = req.body; // sanitized and verified by validateRequestBody
+  const tenantId = req.user?.tenantId;
+  if (!tenantId) {
+    return res.status(401).json({
+      error: "TENANT_REQUIRED",
+      message: "A trusted tenant context is required for inventory mutations."
+    });
+  }
   const key = `inventory:${data.productId}`;
   const branchId = data.branchId || "BRH-MAIN-001";
   const userId = req.user?.userId || "SYSTEM";
@@ -53,7 +60,8 @@ inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWN
           data.expiryDate,
           refId,
           "ADJUSTMENT",
-          data.reason || "Manual Stock Intake Adjustment"
+          data.reason || "Manual Stock Intake Adjustment",
+          tenantId
         );
       } else {
         // Stock depletion / write off
@@ -63,7 +71,8 @@ inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWN
           Math.abs(data.qty),
           refId,
           "ADJUSTMENT",
-          data.reason || "Manual Stock Depletion Adjustment"
+          data.reason || "Manual Stock Depletion Adjustment",
+          tenantId
         );
       }
 
