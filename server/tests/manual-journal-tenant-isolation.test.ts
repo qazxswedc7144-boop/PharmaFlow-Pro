@@ -140,4 +140,27 @@ describe("POST /api/accounting/journal tenant isolation", () => {
     expect(mocks.auditCreate).not.toHaveBeenCalled();
     expect(mocks.rollback).toHaveBeenCalledTimes(1);
   });
+
+  it("includes the trusted tenant in every account balance update", async () => {
+    const response = await fetch(`${baseUrl}/api/accounting/journal`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        description: "Same-tenant journal",
+        lines: [
+          { accountId: "account-a", debit: 100, credit: 0 },
+          { accountId: "account-c", debit: 0, credit: 100 }
+        ]
+      })
+    });
+
+    expect(response.status).toBe(201);
+    expect(mocks.accountUpdate).toHaveBeenCalledTimes(2);
+    for (const [args] of mocks.accountUpdate.mock.calls) {
+      expect(args.where.id_tenantId.tenantId).toBe("TENANT-A");
+      expect(args.where.version).toBe(4);
+    }
+    expect(mocks.auditCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.rollback).not.toHaveBeenCalled();
+  });
 });
