@@ -15,8 +15,7 @@ export class IntegritySweepService {
   static async runSweep(autoFix = false): Promise<boolean> {
     const { tenantId } = getCurrentUserSession();
     if (!tenantId) {
-      console.warn('[IntegritySweepService] Skipping runSweep: No active tenant session.');
-      return true; // Consider healthy if we can't even check (fail-safe for boot)
+      throw new Error('FAIL_CLOSED: لا يمكن تنفيذ فحص سلامة البيانات دون جلسة مؤسسة نشطة.');
     }
     
     console.log(`Starting Integrity Sweep (autoFix: ${autoFix})...`);
