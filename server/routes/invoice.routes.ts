@@ -12,7 +12,7 @@ import { InvoiceSchema } from "../../src/shared/validation/invoice.schema.js";
 import { validateRequestBody } from "../middleware/validate.js";
 import { UUIDSchema } from "../../src/shared/validation/common.schema.js";
 import { SaasService } from "../modules/saas/saas.service.js";
-import { AuthorizationService } from "../services/rbac/authorization.service.js";
+import { SalesPricingService } from "../modules/accounting/services/salesPricing.service.js";
 
 export const invoiceRouter = Router();
 
@@ -52,27 +52,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       }
     }
 
-    const requestedDiscountPercent = new Prisma.Decimal(data.type === "SALE" ? (data.discountPercent ?? 0) : 0);
-    if (requestedDiscountPercent.gt(0)) {
-      const userContext = {
-        userId: req.user?.userId || "",
-        username: req.user?.username || "",
-        role: req.user?.role,
-        tenantId
-      };
-      const canApplyDiscount = await AuthorizationService.can(
-        userContext,
-        "sales.discount.apply",
-        { tenantId, branchId: req.user?.branchId || undefined }
-      );
 
-      if (!canApplyDiscount) {
-        return res.status(403).json({
-          error: "DISCOUNT_PERMISSION_REQUIRED",
-          message: "ليس لديك صلاحية تطبيق خصم على فاتورة البيع."
-        });
-      }
-    }
 
     const invoice = await prisma.$transaction(async (tx: any) => {
       const existing = await tx.invoice.findFirst({
@@ -86,112 +66,77 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
         throw error;
       }
 
-      const productIds: string[] = [...new Set<string>(
-        data.items.map((item: any) => item.productId as string)
-      )];
-
-      const products = await tx.product.findMany({
-        where: {
-          tenantId,
-          id: { in: productIds },
-          isActive: true,
-          deletedAt: null
-        },
-        select: { id: true, price: true }
-      });
-
-      const productsById = new Map<string, any>(
-        products.map((product: any) => [product.id, product])
-      );
-
-      if (productsById.size !== productIds.length) {
-        const error: any = new Error("PRODUCT_NOT_FOUND_OR_INACTIVE");
-        error.code = "PRODUCT_NOT_FOUND_OR_INACTIVE";
-        throw error;
-      }
-
-      let calculatedSubtotal = new Prisma.Decimal(0);
-      const itemData = data.items.map((item: any) => {
-        const product = productsById.get(item.productId);
-        if (!product) {
-          const error: any = new Error("PRODUCT_NOT_FOUND_OR_INACTIVE");
-          error.code = "PRODUCT_NOT_FOUND_OR_INACTIVE";
-          throw error;
-        }
-
-        const price = data.type === "SALE"
-          ? new Prisma.Decimal(product.price.toString())
-          : new Prisma.Decimal(item.price);
-
-        if (!price.isFinite() || price.isNegative()) {
-          const error: any = new Error("INVALID_SERVER_PRODUCT_PRICE");
-          error.code = "INVALID_SERVER_PRODUCT_PRICE";
-          throw error;
-        }
-
-        const lineTotal = price.mul(item.qty).toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
-        calculatedSubtotal = calculatedSubtotal.plus(lineTotal);
-
-        return {
-          tenantId,
-          productId: item.productId,
-          qty: item.qty,
-          price,
-          cost: new Prisma.Decimal(0),
-          total: lineTotal,
-          expiryDate: item.expiryDate,
-          note: item.note
-        };
-      });
-
+      let itemData: any[];
+      let subtotalAmount = new Prisma.Decimal(0);
       let discountPercent = new Prisma.Decimal(0);
       let discountAmount = new Prisma.Decimal(0);
       let taxRatePercent = new Prisma.Decimal(0);
       let taxAmount = new Prisma.Decimal(0);
       let taxMode: "NONE" | "EXCLUSIVE" | "INCLUSIVE" = "NONE";
-      let calculatedTotal = calculatedSubtotal;
+      let calculatedTotal = new Prisma.Decimal(0);
 
       if (data.type === "SALE") {
-        const policy = await tx.tenantSalesPolicy.findUnique({ where: { tenantId } });
-        const maxDiscountPercent = new Prisma.Decimal(
-          policy?.maxDiscountPercent?.toString?.() ?? "0"
-        );
-
-        if (requestedDiscountPercent.gt(maxDiscountPercent)) {
-          const error: any = new Error("DISCOUNT_LIMIT_EXCEEDED");
-          error.code = "DISCOUNT_LIMIT_EXCEEDED";
+        const pricing = await SalesPricingService.calculate(tx, {
+          tenantId,
+          items: data.items,
+          discountPercent: data.discountPercent,
+          user: {
+            userId: req.user?.userId || "",
+            username: req.user?.username || "",
+            role: req.user?.role,
+            tenantId,
+            branchId: req.user?.branchId || undefined
+          }
+        });
+        itemData = pricing.itemData;
+        subtotalAmount = pricing.subtotalAmount;
+        discountPercent = pricing.discountPercent;
+        discountAmount = pricing.discountAmount;
+        taxRatePercent = pricing.taxRatePercent;
+        taxAmount = pricing.taxAmount;
+        taxMode = pricing.taxMode;
+        calculatedTotal = pricing.totalAmount;
+      } else {
+        const productIds: string[] = [...new Set<string>(
+          data.items.map((item: any) => item.productId as string)
+        )];
+        const products = await tx.product.findMany({
+          where: {
+            tenantId,
+            id: { in: productIds },
+            isActive: true,
+            deletedAt: null
+          },
+          select: { id: true }
+        });
+        const productIdsInTenant = new Set(products.map((product: any) => product.id));
+        if (productIdsInTenant.size !== productIds.length) {
+          const error: any = new Error("PRODUCT_NOT_FOUND_OR_INACTIVE");
+          error.code = "PRODUCT_NOT_FOUND_OR_INACTIVE";
           throw error;
         }
 
-        discountPercent = requestedDiscountPercent;
-        discountAmount = calculatedSubtotal
-          .mul(discountPercent)
-          .div(100)
-          .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
-
-        const taxableBase = calculatedSubtotal.minus(discountAmount);
-        taxMode = policy?.taxMode ?? "NONE";
-        taxRatePercent = taxMode === "NONE"
-          ? new Prisma.Decimal(0)
-          : new Prisma.Decimal(policy?.taxRatePercent?.toString?.() ?? "0");
-
-        if (taxMode === "EXCLUSIVE") {
-          taxAmount = taxableBase
-            .mul(taxRatePercent)
-            .div(100)
-            .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
-          calculatedTotal = taxableBase.plus(taxAmount);
-        } else if (taxMode === "INCLUSIVE") {
-          if (taxRatePercent.gt(0)) {
-            taxAmount = taxableBase
-              .mul(taxRatePercent)
-              .div(new Prisma.Decimal(100).plus(taxRatePercent))
-              .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+        itemData = data.items.map((item: any) => {
+          const price = new Prisma.Decimal(item.price);
+          if (!price.isFinite() || price.isNegative()) {
+            const error: any = new Error("INVALID_SERVER_PRODUCT_PRICE");
+            error.code = "INVALID_SERVER_PRODUCT_PRICE";
+            throw error;
           }
-          calculatedTotal = taxableBase;
-        } else {
-          calculatedTotal = taxableBase;
-        }
+          const lineTotal = price.mul(item.qty).toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+          subtotalAmount = subtotalAmount.plus(lineTotal);
+          return {
+            tenantId,
+            productId: item.productId,
+            qty: item.qty,
+            price,
+            cost: new Prisma.Decimal(0),
+            total: lineTotal,
+            expiryDate: item.expiryDate,
+            note: item.note
+          };
+        });
+        calculatedTotal = subtotalAmount;
       }
 
       const createdInvoice = await tx.invoice.create({
@@ -201,6 +146,12 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           partnerId: data.partnerId,
           partnerType: data.partnerType,
           subtotalAmount: calculatedSubtotal,
+          discountPercent,
+          discountAmount,
+          taxRatePercent,
+          taxAmount,
+          taxMode,
+          subtotalAmount,
           discountPercent,
           discountAmount,
           taxRatePercent,
@@ -244,6 +195,15 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
     }
     if (err.code === "PRODUCT_NOT_FOUND_OR_INACTIVE") {
       return res.status(404).json({ error: "PRODUCT_NOT_FOUND_OR_INACTIVE", message: "أحد المنتجات غير موجود أو غير نشط داخل المؤسسة." });
+    }
+    if (err.code === "DISCOUNT_PERMISSION_REQUIRED") {
+      return res.status(403).json({ error: "DISCOUNT_PERMISSION_REQUIRED", message: "ليس لديك صلاحية تطبيق خصم على فاتورة البيع." });
+    }
+    if (err.code === "DISCOUNT_LIMIT_EXCEEDED") {
+      return res.status(422).json({ error: "DISCOUNT_LIMIT_EXCEEDED", message: "نسبة الخصم تتجاوز الحد المعتمد للمؤسسة." });
+    }
+    if (err.code === "INVALID_DISCOUNT_PERCENT" || err.code === "INVALID_SALE_QUANTITY" || err.code === "INVALID_SALES_POLICY") {
+      return res.status(422).json({ error: err.code, message: "بيانات سياسة التسعير أو الخصم غير صالحة." });
     }
     if (err.code === "INVALID_SERVER_PRODUCT_PRICE") {
       return res.status(422).json({ error: "INVALID_SERVER_PRODUCT_PRICE", message: "سعر المنتج المحفوظ غير صالح." });
