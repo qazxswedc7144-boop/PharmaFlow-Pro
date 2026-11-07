@@ -141,7 +141,7 @@ describe('Sync Engine Phase 6 — client lifecycle E2E', () => {
     const queued = await engine.enqueue('CREATE', { id: 'product-recovery' }, 'PRODUCT', 'idem-recovery');
     const outbox = await db.outbox.where('mutationId').equals(queued.mutationId).first();
     await db.outbox.update(outbox.id, {
-      status: 'PROCESSING',
+      status: 'processing',
       createdAt: new Date(Date.now() - 10 * 60 * 1000),
       updatedAt: new Date(Date.now() - 10 * 60 * 1000)
     });
@@ -158,16 +158,17 @@ describe('Sync Engine Phase 6 — client lifecycle E2E', () => {
 
   it('coalesces overlapping syncNow calls into a single active cycle', async () => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
-    const queued = await engine.enqueue('CREATE', { id: 'product-single-flight' }, 'PRODUCT', 'idem-single-flight');
-    let resolveRequest!: (value: any) => void;
-    (unifiedTransport.request as any).mockReturnValue(new Promise(resolve => { resolveRequest = resolve; }));
+    let finishCycle!: () => void;
+    const cycle = new Promise<void>(resolve => { finishCycle = resolve; });
+    const executeCycle = vi.spyOn(engine as any, 'executeSyncCycle').mockReturnValue(cycle);
 
     const one = engine.syncNow();
     const two = engine.syncNow();
-    await vi.waitFor(() => expect(unifiedTransport.request).toHaveBeenCalledTimes(1));
-    resolveRequest(response('SUCCESS', queued.mutationId));
-    await Promise.all([one, two]);
 
-    expect(unifiedTransport.request).toHaveBeenCalledTimes(1);
+    expect(executeCycle).toHaveBeenCalledTimes(1);
+    expect(two).toBe(one);
+
+    finishCycle();
+    await Promise.all([one, two]);
   });
 });
