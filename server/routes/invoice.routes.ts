@@ -84,8 +84,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
             userId: req.user?.userId || "",
             username: req.user?.username || "",
             role: req.user?.role,
-            tenantId,
-            branchId: req.user?.branchId || undefined
+            tenantId
           }
         });
         itemData = pricing.itemData;
