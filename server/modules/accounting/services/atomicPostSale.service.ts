@@ -104,10 +104,31 @@ export class AtomicPostSaleService {
             include: { items: true }
           })
         : null;
-      const existing = existingByClientRef || await tx.invoice.findFirst({
+      let existing = existingByClientRef || await tx.invoice.findFirst({
         where: { tenantId, invoiceNumber: validated.invoiceNumber },
         include: { items: true }
       });
+
+      // Lock and re-read the draft before changing it. Two different sync keys
+      // can race; the second transaction must observe POSTED after the first commits.
+      if (existing) {
+        const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id
+            FROM "invoices"
+           WHERE id = ${existing.id} AND "tenantId" = ${tenantId}
+           FOR UPDATE
+        `;
+        if (!lockedRows?.length) {
+          throw new Error("INVOICE_NOT_FOUND: Invoice disappeared while acquiring its tenant-scoped lock.");
+        }
+        existing = await tx.invoice.findFirst({
+          where: { id: existing.id, tenantId },
+          include: { items: true }
+        });
+        if (!existing) {
+          throw new Error("INVOICE_NOT_FOUND: Invoice disappeared after acquiring its lock.");
+        }
+      }
 
       if (existing && existing.type !== "SALE") {
         throw new Error("INVOICE_TYPE_CONFLICT: Existing invoice is not a SALE.");
