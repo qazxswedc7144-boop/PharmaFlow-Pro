@@ -142,21 +142,34 @@ export class FinancialTransactionService {
     }
 
     const totalInvoiceAmount = Number(invoice.totalAmount);
+    const taxAmount = Number(invoice.taxAmount ?? 0);
+    if (!Number.isFinite(totalInvoiceAmount) || totalInvoiceAmount < 0 ||
+        !Number.isFinite(taxAmount) || taxAmount < 0 || taxAmount > totalInvoiceAmount + 0.0001) {
+      throw new Error("INVALID_INVOICE_FINANCIAL_BREAKDOWN: Invoice totals or tax amount are invalid.");
+    }
+    // The customer receivable/cash equals the invoice total. Sales revenue excludes
+    // tax for both inclusive and exclusive tax modes; the tax portion is a liability.
+    const salesRevenueAmount = totalInvoiceAmount - taxAmount;
     const isCash = invoice.paymentStatus === "PAID" || invoice.paymentStatus === "CASH" as any;
 
-    // 2. Lock core accounts involved in the transaction to prevent concurrent race conditions
-    // We will bootstrap core accounts: Cash ('101001'), A/R ('101002'), Inventory ('101003'), Rev ('401001'), COGS ('501001'), A/P ('201001')
+    // 2. Lock core accounts involved in the transaction to prevent concurrent race conditions.
     const cashAcc = await this.getOrCreateAccount(tx, "101001", "الصندوق والبنك (النقدية)", "ASSET", tenantId);
     const arAcc = await this.getOrCreateAccount(tx, "101002", "ذمم مدنية عملاء (أوراق القبض)", "ASSET", tenantId);
     const invAcc = await this.getOrCreateAccount(tx, "101003", "مخزون الأدوية والمواد الطبية", "ASSET", tenantId);
     const revAcc = await this.getOrCreateAccount(tx, "401001", "إيرادات المبيعات الدوائية", "REVENUE", tenantId);
     const cogsAcc = await this.getOrCreateAccount(tx, "501001", "تكلفة المبيعات (COGS)", "EXPENSE", tenantId);
     const apAcc = await this.getOrCreateAccount(tx, "201001", "ذمم دائنة موردين (أوراق الدفع)", "LIABILITY", tenantId);
+    const taxPayableAcc = taxAmount > 0
+      ? await this.getOrCreateAccount(tx, "202001", "ضرائب مبيعات مستحقة", "LIABILITY", tenantId)
+      : null;
 
-    // Lock current accounts for row-level balance security
-    const accountIdsToLock = [cashAcc.id, arAcc.id, invAcc.id, revAcc.id, cogsAcc.id, apAcc.id];
-    await tx.$executeRaw(
-      Prisma.sql`SELECT id FROM accounts WHERE id IN (${Prisma.join(accountIdsToLock)}) FOR UPDATE`
+    // Lock account rows using a SELECT ... FOR UPDATE query scoped to the tenant.
+    const accountIdsToLock = [
+      cashAcc.id, arAcc.id, invAcc.id, revAcc.id, cogsAcc.id, apAcc.id,
+      ...(taxPayableAcc ? [taxPayableAcc.id] : [])
+    ];
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM accounts WHERE id IN (${Prisma.join(accountIdsToLock)}) AND "tenantId" = ${tenantId} FOR UPDATE`
     );
 
     let totalComputatedCogs = 0;
@@ -208,9 +221,18 @@ export class FinancialTransactionService {
       ledgerLines.push({
         accountId: revAcc.id,
         debit: 0,
-        credit: totalInvoiceAmount,
-        description: `مبيعات فاتورة #${invoice.invoiceNumber}`
+        credit: salesRevenueAmount,
+        description: `صافي إيراد المبيعات بعد الخصم والضريبة - فاتورة #${invoice.invoiceNumber}`
       });
+
+      if (taxAmount > 0 && taxPayableAcc) {
+        ledgerLines.push({
+          accountId: taxPayableAcc.id,
+          debit: 0,
+          credit: taxAmount,
+          description: `ضريبة مبيعات مستحقة - فاتورة #${invoice.invoiceNumber}`
+        });
+      }
 
       // Ledger Entry for COGS: Debit COGS, Credit Inventory
       if (totalComputatedCogs > 0) {
