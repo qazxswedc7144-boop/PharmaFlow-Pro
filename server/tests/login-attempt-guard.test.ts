@@ -192,10 +192,11 @@ describe("Redis-backed atomic login attempt protection", () => {
       .rejects.toBeInstanceOf(LoginAttemptAuditError);
   });
 
-  it("exposes a typed store error for Redis failures", async () => {
-    testState.pingFails = true;
-    const { res } = await runGuard("store-error-user", "203.0.113.101");
-    expect(res.status).toHaveBeenCalledWith(503);
-    expect(LoginAttemptStoreError).toBeDefined();
+  it("throws a typed store error if releasing a successful reservation fails", async () => {
+    const { req, next } = await runGuard("release-store-error", "203.0.113.101");
+    expect(next).toHaveBeenCalledOnce();
+    testState.redisFails = true;
+
+    await expect(releaseLoginAttempt(req)).rejects.toBeInstanceOf(LoginAttemptStoreError);
   });
 });
