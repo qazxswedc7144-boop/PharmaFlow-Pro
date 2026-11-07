@@ -58,7 +58,7 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
       }
 
       // Lock only accounts owned by the authenticated tenant.
-      const accountIds = [...new Set(data.lines.map((line: any) => line.accountId))];
+      const accountIds: string[] = [...new Set<string>(data.lines.map((line: any) => line.accountId as string))];
       await tx.$queryRaw(
         Prisma.sql`SELECT id FROM "accounts"
           WHERE id IN (${Prisma.join(accountIds)})
