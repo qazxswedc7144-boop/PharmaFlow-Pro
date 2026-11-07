@@ -35,6 +35,7 @@ export const useAccountingStore = create<AccountingState>((set) => ({
         customerId: rawPayload.customerId || rawPayload.customer_id,
         items: rawPayload.items || [],
         total: rawPayload.total || rawPayload.subtotal || 0,
+        discountPercent: rawPayload.discountPercent ?? options.discountPercent ?? 0,
         id: rawPayload.id,
         invoiceNumber: rawPayload.invoiceNumber || rawPayload.invoice_number || rawPayload.id,
         date: rawPayload.date || options.date,
