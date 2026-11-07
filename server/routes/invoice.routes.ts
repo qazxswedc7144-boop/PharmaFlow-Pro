@@ -7,7 +7,7 @@ import { FinancialTransactionService } from "../modules/accounting/services/fina
 import { authenticateToken, requireRoles, AuthenticatedRequest } from "../middleware/auth.middleware.js";
 import { LockingService } from "../modules/locking/locking.service.js";
 import { ReplicationPublisher } from "../modules/replication/replication.publisher.js";
-import { InvoiceStatus, DocumentStatus, Role } from "@prisma/client";
+import { InvoiceStatus, DocumentStatus, Role, Prisma } from "@prisma/client";
 import { InvoiceSchema } from "../../src/shared/validation/invoice.schema.js";
 import { validateRequestBody } from "../middleware/validate.js";
 import { UUIDSchema } from "../../src/shared/validation/common.schema.js";
@@ -22,9 +22,17 @@ export const invoiceRouter = Router();
 invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN, Role.ACCOUNTANT, Role.PHARMACIST, Role.INVENTORY_MANAGER]), validateRequestBody(InvoiceSchema), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const data = req.body; // sanitized and verified by validateRequestBody
-    const tenantId = req.user?.tenantId;
+    const tenantId = req.user?.tenantId?.trim();
 
-    if (tenantId) {
+    // Tenant identity is security context, never optional client input.
+    if (!tenantId) {
+      return res.status(403).json({
+        error: "TENANT_REQUIRED",
+        message: "لا يمكن إنشاء فاتورة دون سياق مؤسسة موثوق."
+      });
+    }
+
+    if (data.type === "SALE") {
       const checkLimit = await SaasService.checkSubscriptionLimit(tenantId);
       if (!checkLimit.allowed) {
         return res.status(403).json({
@@ -34,77 +42,137 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       }
     }
 
-    const existing = await prisma.invoice.findUnique({
-      where: { invoiceNumber: data.invoiceNumber }
-    });
-
-    if (existing) {
-      return res.status(400).json({
-        error: "INVOICE_EXISTS",
-        message: `فاتورة برقم "${data.invoiceNumber}" مسجلة مسبقاً في النظام.`
+    // Product lookup, authoritative pricing, invoice creation, and audit write
+    // must commit or roll back together. Client price/total values are never
+    // used for SALE invoices.
+    const invoice = await prisma.$transaction(async (tx: any) => {
+      const existing = await tx.invoice.findFirst({
+        where: { tenantId, invoiceNumber: data.invoiceNumber },
+        select: { id: true }
       });
-    }
 
-    // Calculate invoice total amount by summing up items
-    let calculatedTotal = 0;
-    const itemData = data.items.map((item: any) => {
-      const lineTotal = item.qty * item.price;
-      calculatedTotal += lineTotal;
-      return {
-        productId: item.productId,
-        qty: item.qty,
-        price: item.price,
-        cost: 0, // calculated later during GL posting/depletion
-        total: lineTotal,
-        expiryDate: item.expiryDate,
-        note: item.note
-      };
-    });
+      if (existing) {
+        const error: any = new Error("INVOICE_EXISTS");
+        error.code = "INVOICE_EXISTS";
+        throw error;
+      }
 
-    const invoice = await prisma.invoice.create({
-      data: {
-        invoiceNumber: data.invoiceNumber,
-        type: data.type,
-        partnerId: data.partnerId,
-        partnerType: data.partnerType,
-        totalAmount: calculatedTotal,
-        status: InvoiceStatus.DRAFT,
-        paymentStatus: data.paymentStatus,
-        documentStatus: DocumentStatus.ACTIVE,
-        tenantId: tenantId || null,
-        items: {
-          create: itemData
+      const productIds: string[] = [...new Set<string>(
+        data.items.map((item: any) => item.productId as string)
+      )];
+
+      const products = await tx.product.findMany({
+        where: {
+          tenantId,
+          id: { in: productIds },
+          isActive: true,
+          deletedAt: null
+        },
+        select: { id: true, price: true }
+      });
+
+      const productsById = new Map<string, any>(
+        products.map((product: any) => [product.id, product])
+      );
+
+      if (productsById.size !== productIds.length) {
+        const error: any = new Error("PRODUCT_NOT_FOUND_OR_INACTIVE");
+        error.code = "PRODUCT_NOT_FOUND_OR_INACTIVE";
+        throw error;
+      }
+
+      let calculatedTotal = new Prisma.Decimal(0);
+      const itemData = data.items.map((item: any) => {
+        const product = productsById.get(item.productId);
+        if (!product) {
+          const error: any = new Error("PRODUCT_NOT_FOUND_OR_INACTIVE");
+          error.code = "PRODUCT_NOT_FOUND_OR_INACTIVE";
+          throw error;
         }
-      },
-      include: {
-        items: true
-      }
+
+        // Sales use the tenant-owned catalog price. Purchase invoices retain
+        // their supplier purchase price, since Product.price is a retail price.
+        const price = data.type === "SALE"
+          ? new Prisma.Decimal(product.price.toString())
+          : new Prisma.Decimal(item.price);
+
+        if (!price.isFinite() || price.isNegative()) {
+          const error: any = new Error("INVALID_SERVER_PRODUCT_PRICE");
+          error.code = "INVALID_SERVER_PRODUCT_PRICE";
+          throw error;
+        }
+
+        const lineTotal = price.mul(item.qty);
+        calculatedTotal = calculatedTotal.plus(lineTotal);
+
+        return {
+          tenantId,
+          productId: item.productId,
+          qty: item.qty,
+          price,
+          cost: new Prisma.Decimal(0),
+          total: lineTotal,
+          expiryDate: item.expiryDate,
+          note: item.note
+        };
+      });
+
+      const createdInvoice = await tx.invoice.create({
+        data: {
+          invoiceNumber: data.invoiceNumber,
+          type: data.type,
+          partnerId: data.partnerId,
+          partnerType: data.partnerType,
+          totalAmount: calculatedTotal,
+          status: InvoiceStatus.DRAFT,
+          paymentStatus: data.paymentStatus,
+          documentStatus: DocumentStatus.ACTIVE,
+          tenantId,
+          items: { create: itemData }
+        },
+        include: { items: true }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: req.user?.userId || null,
+          action: "CREATE_INVOICE",
+          entity: "Invoice",
+          entityId: createdInvoice.id,
+          before: null,
+          after: JSON.stringify(createdInvoice),
+          ipAddress: req.ip
+        }
+      });
+
+      return createdInvoice;
     });
 
-    // Write audit details
-    await prisma.auditLog.create({
-      data: {
-        userId: req.user?.userId || null,
-        action: "CREATE_INVOICE",
-        entity: "Invoice",
-        entityId: invoice.id,
-        before: null,
-        after: JSON.stringify(invoice),
-        ipAddress: req.ip
-      }
-    });
-
-    // Increment SaaS usage counter if tenant is configured
-    if (tenantId) {
-      await SaasService.incrementUsage(tenantId);
-    }
+    // Usage is incremented only after the invoice transaction commits.
+    await SaasService.incrementUsage(tenantId);
 
     return res.status(201).json({
       success: true,
       invoice
     });
   } catch (err: any) {
-    return res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+    if (err.code === "INVOICE_EXISTS") {
+      return res.status(409).json({ error: "INVOICE_EXISTS", message: "رقم الفاتورة مستخدم مسبقاً داخل المؤسسة." });
+    }
+    if (err.code === "PRODUCT_NOT_FOUND_OR_INACTIVE") {
+      return res.status(404).json({ error: "PRODUCT_NOT_FOUND_OR_INACTIVE", message: "أحد المنتجات غير موجود أو غير نشط داخل المؤسسة." });
+    }
+    if (err.code === "P2002") {
+      return res.status(409).json({ error: "INVOICE_EXISTS", message: "رقم الفاتورة مستخدم مسبقاً داخل المؤسسة." });
+    }
+    if (err.code === "INVALID_SERVER_PRODUCT_PRICE") {
+      return res.status(422).json({ error: "INVALID_SERVER_PRODUCT_PRICE", message: "سعر المنتج المحفوظ غير صالح." });
+    }
+    if (err instanceof OfflineDatabaseError) {
+      return res.status(503).json({ error: "DATABASE_UNAVAILABLE", message: "قاعدة البيانات غير متاحة حالياً." });
+    }
+    return res.status(500).json({ error: "INTERNAL_ERROR", message: "تعذر إنشاء الفاتورة حالياً." });
   }
 });
 
