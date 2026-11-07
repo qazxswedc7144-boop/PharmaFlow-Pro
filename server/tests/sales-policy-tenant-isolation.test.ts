@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockPrisma, mockAuthorization } = vi.hoisted(() => {
   const prisma: any = {
-    tenantSalesPolicy: { upsert: vi.fn() },
+    tenantSalesPolicy: { upsert: vi.fn(), findUnique: vi.fn() },
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prisma)),
   };
@@ -64,7 +64,7 @@ describe("Tenant sales policy API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthorization.can.mockResolvedValue(true);
-    mockPrisma.tenantSalesPolicy.upsert.mockResolvedValue({
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({\n      id: "policy-a", tenantId, maxDiscountPercent: 10, taxRatePercent: 5, taxMode: "EXCLUSIVE", updatedBy: "policy-admin", updatedAt: new Date("2026-11-06T00:00:00.000Z"),\n    });\n    mockPrisma.tenantSalesPolicy.upsert.mockResolvedValue({
       id: "policy-a",
       tenantId,
       maxDiscountPercent: 10,
@@ -104,7 +104,7 @@ describe("Tenant sales policy API", () => {
       update: expect.objectContaining({ taxMode: "INCLUSIVE", updatedBy: "policy-admin" }),
     }));
     expect(mockPrisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ tenantId, entity: "TenantSalesPolicy", entityId: "policy-a" }),
+      data: expect.objectContaining({ tenantId, entity: "TenantSalesPolicy", entityId: "policy-a", before: expect.any(String) }),
     }));
   });
 
