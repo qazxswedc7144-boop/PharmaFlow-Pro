@@ -36,9 +36,11 @@ export class FinancialDefenseSystem {
    * Analyzes user actions and patterns
    */
   static async calculateBehaviorScore(): Promise<number> {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) {
+      throw new Error('FAIL_CLOSED: لا يمكن حساب مؤشر السلوك دون جلسة مؤسسة نشطة.');
+    }
     try {
-      const { tenantId } = getCurrentUserSession();
-      if (!tenantId) return 0;
 
       const now = Date.now();
       const oneHourAgo = new Date(now - 3600000).toISOString();
@@ -71,9 +73,11 @@ export class FinancialDefenseSystem {
    * Deep scan of data consistency
    */
   static async calculateIntegrityScore(): Promise<number> {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) {
+      throw new Error('FAIL_CLOSED: لا يمكن حساب مؤشر النزاهة دون جلسة مؤسسة نشطة.');
+    }
     try {
-      const { tenantId } = getCurrentUserSession();
-      if (!tenantId) return 0;
 
       const sales = await db.sales.toArray();
       const journalEntries = await db.journalEntries.toArray();
@@ -100,13 +104,7 @@ export class FinancialDefenseSystem {
   static async evaluateSystemThreat(): Promise<DefenseReport> {
     const { tenantId } = getCurrentUserSession();
     if (!tenantId) {
-      return {
-        riskScore: 0,
-        integrityScore: 0,
-        behaviorScore: 0,
-        threatLevel: 0,
-        timestamp: new Date().toISOString()
-      };
+      throw new Error('FAIL_CLOSED: لا يمكن تقييم تهديدات النظام دون جلسة مؤسسة نشطة.');
     }
 
     // Get RiskScore from existing engine logic (simplified here or imported)
