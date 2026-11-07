@@ -64,7 +64,15 @@ describe("Tenant sales policy API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthorization.can.mockResolvedValue(true);
-    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({\n      id: "policy-a", tenantId, maxDiscountPercent: 10, taxRatePercent: 5, taxMode: "EXCLUSIVE", updatedBy: "policy-admin", updatedAt: new Date("2026-11-06T00:00:00.000Z"),\n    });\n    mockPrisma.tenantSalesPolicy.upsert.mockResolvedValue({
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({
+      id: "policy-a",
+      tenantId,
+      maxDiscountPercent: 10,
+      taxRatePercent: 5,
+      taxMode: "EXCLUSIVE",
+      updatedBy: "policy-admin",
+      updatedAt: new Date("2026-11-06T00:00:00.000Z"),
+    });\n    mockPrisma.tenantSalesPolicy.upsert.mockResolvedValue({
       id: "policy-a",
       tenantId,
       maxDiscountPercent: 10,
