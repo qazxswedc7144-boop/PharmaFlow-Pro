@@ -49,6 +49,7 @@ jobs:
           server/tests/sales-policy-tenant-isolation.test.ts
           server/tests/sales-tax-ledger-posting.test.ts
           server/tests/tenant-sales-policy-isolation.test.ts
+          server/tests/atomic-post-sale-pricing.test.ts
         env:
           NODE_ENV: test
 
