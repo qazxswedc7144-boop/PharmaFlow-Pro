@@ -82,7 +82,7 @@ describe("Server-side sales price and discount validation", () => {
     mockSaas.incrementUsage.mockResolvedValue(undefined);
     mockAuthorization.can.mockResolvedValue(true);
     mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({
-      tenantId, maxDiscountPercent: 15, taxRatePercent: 5, taxMode: "EXCLUSIVE",
+      tenantId, maxDiscountPercent: 15, taxRatePercent: 0, taxMode: "NONE",
     });
     mockPrisma.invoice.findUnique.mockResolvedValue(null);
     mockPrisma.invoice.findFirst.mockResolvedValue(null);
@@ -125,6 +125,9 @@ describe("Server-side sales price and discount validation", () => {
   });
 
   it("calculates discount and tax from the tenant policy inside the invoice transaction", async () => {
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({
+      tenantId, maxDiscountPercent: 15, taxRatePercent: 5, taxMode: "EXCLUSIVE",
+    });
     const response = await invokeCreate({
       invoiceNumber: "SALE-POLICY-001",
       type: "SALE",
