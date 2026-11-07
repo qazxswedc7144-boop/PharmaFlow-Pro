@@ -379,7 +379,7 @@ export class SyncProcessorService {
             const journalEntry = postResult.journalId
               ? await tx.journalEntry.findFirst({ where: { id: postResult.journalId, tenantId }, include: { lines: true } })
               : null;
-            const effects: SyncEffect[] = journalEntry ? [{
+            const effects = journalEntry ? [{
               entity: "JOURNAL_ENTRY",
               entityId: journalEntry.id,
               operation: "CREATE",
