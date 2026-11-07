@@ -4,7 +4,7 @@ import { AuthenticatedRequest } from "./auth.middleware.js";
 import { AuthService } from "./auth.service.js";
 import { AuditService } from "../audit/audit.service.js";
 import { prisma } from "../../../../../server/database/prisma.js";
-import { LoginAttemptAuditError, recordFailedLoginAttempt } from "../../../../../server/security/loginAttemptGuard.js";
+import { LoginAttemptAuditError, LoginAttemptStoreError, recordFailedLoginAttempt, releaseLoginAttempt } from "../../../../../server/security/loginAttemptGuard.js";
 
 export class AuthController {
   /**
@@ -36,6 +36,9 @@ export class AuthController {
         await recordFailedLoginAttempt(username, req.ip, user.id, fallbackTenantId);
         return res.status(401).json({ error: "INVALID_CREDENTIALS", message: "خطأ في اسم المستخدم أو كلمة المرور." });
       }
+
+      // Release the failed-attempt reservation immediately after password verification.
+      await releaseLoginAttempt(req);
 
       if (!user.isActive) {
         return res.status(403).json({ error: "ACCOUNT_SUSPENDED", message: "حساب المستخدم معطل حالياً." });
@@ -90,7 +93,7 @@ export class AuthController {
       });
     } catch (err: any) {
       console.error("[AUTH] Login error:", err);
-      if (err instanceof LoginAttemptAuditError) {
+      if (err instanceof LoginAttemptAuditError || err instanceof LoginAttemptStoreError) {
         return res.status(503).json({
           error: "AUTH_TEMPORARILY_UNAVAILABLE",
           message: "تعذر تسجيل محاولة الدخول بأمان. يرجى المحاولة لاحقاً."
