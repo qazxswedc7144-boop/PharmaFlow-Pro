@@ -88,14 +88,14 @@ async function getRedisClient(): Promise<Redis> {
     });
   }
 
-  if (redisClient.status === "wait") {
-    if (!redisConnectPromise) {
-      redisConnectPromise = redisClient.connect().then(() => undefined).finally(() => {
-        redisConnectPromise = null;
-      });
-    }
-    await redisConnectPromise;
+  if (redisClient.status === "wait" && !redisConnectPromise) {
+    redisConnectPromise = redisClient.connect().then(() => undefined).finally(() => {
+      redisConnectPromise = null;
+    });
   }
+
+  // Concurrent cold-start requests must await the same in-flight connection.
+  if (redisConnectPromise) await redisConnectPromise;
 
   if (redisClient.status !== "ready") throw new LoginAttemptStoreError();
   return redisClient;
