@@ -10,7 +10,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -31,8 +31,16 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
-      - name: Run Atomicity and Tenant Isolation Tests
-        run: npx vitest run server/tests/payment-financial-integrity-atomicity.test.ts server/tests/tenant-isolation-phase2.test.ts server/tests/password-hash-compatibility.test.ts server/tests/sync-security-hardening.test.ts server/tests/sync-branch-security-hardening.test.ts
+      - name: Run Atomicity, Tenant Isolation, and Sync Lifecycle Tests
+        run: >-
+          npx vitest run
+          server/tests/payment-financial-integrity-atomicity.test.ts
+          server/tests/tenant-isolation-phase2.test.ts
+          server/tests/password-hash-compatibility.test.ts
+          server/tests/sync-security-hardening.test.ts
+          server/tests/sync-branch-security-hardening.test.ts
+          server/tests/legacy-local-sync-cleanup.test.ts
+          server/tests/sync-engine-phase6-e2e.test.ts
         env:
           NODE_ENV: test
 
