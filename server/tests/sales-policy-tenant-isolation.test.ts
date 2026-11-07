@@ -129,6 +129,17 @@ describe("Tenant sales policy API", () => {
     expect(mockPrisma.tenantSalesPolicy.upsert).not.toHaveBeenCalled();
   });
 
+  it("rejects policy percentages with more precision than the database can persist", async () => {
+    const response = await invoke("put", {
+      maxDiscountPercent: 10.001,
+      taxRatePercent: 0,
+      taxMode: "NONE",
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(mockPrisma.tenantSalesPolicy.upsert).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid tax mode/rate combinations", async () => {
     const response = await invoke("put", {
       maxDiscountPercent: 12,
