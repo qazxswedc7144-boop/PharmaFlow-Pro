@@ -85,6 +85,12 @@ enum DocumentStatus {
   LOCKED
 }
 
+enum SalesTaxMode {
+  NONE
+  EXCLUSIVE
+  INCLUSIVE
+}
+
 enum MovementType {
   STOCK_IN
   STOCK_OUT
@@ -362,6 +368,21 @@ model Supplier {
   @@map("suppliers")
 }
 
+model TenantSalesPolicy {
+  id                 String       @id @default(uuid())
+  tenantId           String       @unique
+  tenant             Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  maxDiscountPercent Decimal      @default(0.00) @db.Decimal(5, 2)
+  taxRatePercent     Decimal      @default(0.00) @db.Decimal(5, 2)
+  taxMode            SalesTaxMode @default(NONE)
+  updatedBy          String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@index([tenantId])
+  @@map("tenant_sales_policies")
+}
+
 model Invoice {
   id             String         @id @default(uuid())
   invoiceNumber  String
@@ -369,6 +390,12 @@ model Invoice {
   type           InvoiceType
   partnerId      String? // References Customer or Supplier uuid
   partnerType    String? // "CUSTOMER" or "SUPPLIER"
+  subtotalAmount Decimal        @default(0.00) @db.Decimal(18, 4)
+  discountPercent Decimal       @default(0.00) @db.Decimal(5, 2)
+  discountAmount Decimal        @default(0.00) @db.Decimal(18, 4)
+  taxRatePercent Decimal        @default(0.00) @db.Decimal(5, 2)
+  taxAmount      Decimal        @default(0.00) @db.Decimal(18, 4)
+  taxMode        SalesTaxMode   @default(NONE)
   totalAmount    Decimal        @default(0.00) @db.Decimal(18, 4)
   status         InvoiceStatus  @default(DRAFT)
   paymentStatus  PaymentStatus  @default(UNPAID)
@@ -793,6 +820,7 @@ model Tenant {
   userOverrides       UserPermissionOverride[]
   branchTransferItems BranchTransferItem[]
   branchUsers         BranchUser[]
+  salesPolicy         TenantSalesPolicy?
 
   @@map("tenants")
 }
