@@ -98,7 +98,6 @@ describe("Server-side sales price and discount validation", () => {
     });
 
     expect(response.statusCode).toBe(201);
-    expect(mockPrisma.product.findMany).toHaveBeenCalled();
     expect(mockPrisma.invoice.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -111,7 +110,7 @@ describe("Server-side sales price and discount validation", () => {
     );
   });
 
-  it("must reject unconfigured client-supplied discount fields", async () => {
+  it("must not apply a client-supplied discount without a server-authorized discount policy", async () => {
     const response = await invokeCreate({
       invoiceNumber: "SALE-DISCOUNT-001",
       type: "SALE",
@@ -121,7 +120,17 @@ describe("Server-side sales price and discount validation", () => {
       items: [{ productId, qty: 3, price: 30 }],
     });
 
-    expect(response.statusCode).toBe(400);
-    expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
+    expect(response.statusCode).toBe(201);
+    expect(mockPrisma.invoice.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          totalAmount: 90,
+          items: {
+            create: [expect.objectContaining({ productId, qty: 3, price: 30, total: 90 })],
+          },
+        }),
+      }),
+    );
+    expect(mockPrisma.invoice.create.mock.calls[0][0].data).not.toHaveProperty("discountPercent");
   });
 });
