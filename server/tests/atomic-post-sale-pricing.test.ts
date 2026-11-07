@@ -112,5 +112,61 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(savedInvoiceData.totalAmount.toString()).toBe("60");
     expect(savedInvoiceData.items.create[0].price.toString()).toBe("30");
     expect(mockPost).toHaveBeenCalledTimes(1);
+  it("creates a priced draft without inventory or ledger posting until an explicit POST", async () => {
+    const createdInvoice = {
+      id: "invoice-draft-a",
+      invoiceNumber: "SYNC-DRAFT-001",
+      tenantId,
+      status: "DRAFT",
+      documentStatus: "ACTIVE",
+      totalAmount: new Prisma.Decimal(60),
+      items: [],
+    };
+    const tx: any = {
+      invoice: {
+        findFirst: vi.fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(createdInvoice),
+        create: vi.fn().mockResolvedValue(createdInvoice),
+      },
+      journalEntry: {
+        findFirst: vi.fn(),
+      },
+      inventoryMovement: {
+        findMany: vi.fn(),
+      },
+    };
+
+    const result = await AtomicPostSaleService.executePostSaleCommand({
+      payload: {
+        refId: "SYNC-DRAFT-001",
+        sale: {
+          invoiceNumber: "SYNC-DRAFT-001",
+          type: "SALE",
+          documentStatus: "DRAFT",
+          paymentStatus: "Credit",
+          items: [{ product_id: productId, qty: 2, price: 1 }],
+        },
+      },
+      tenantId,
+      userId: "user-sync-a",
+      username: "sync-cashier",
+      userRole: "CASHIER",
+      branchId: "branch-sync-a",
+      ipAddress: "127.0.0.1",
+      tx,
+      postImmediately: false,
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockCalculate).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ tenantId, discountPercent: 0 }),
+    );
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(tx.journalEntry.findFirst).not.toHaveBeenCalled();
+    expect(tx.inventoryMovement.findMany).not.toHaveBeenCalled();
+    expect(result.effects[0].operation).toBe("CREATE");
+  });
   });
 });
