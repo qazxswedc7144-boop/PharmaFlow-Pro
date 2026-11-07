@@ -27,7 +27,7 @@ describe("TenantSalesPolicy Prisma isolation", () => {
 
   it("scopes policy reads to the trusted tenant context", async () => {
     await runWithTenantContext({ tenantId: "tenant-A" }, async () => {
-      await tenantPrisma.tenantSalesPolicy.findUnique({ where: { tenantId: "tenant-A" } });
+      await tenantPrisma.tenantSalesPolicy.findFirst({ where: { tenantId: "tenant-A" } });
     });
 
     expect(mockPrisma.tenantSalesPolicy.findFirst).toHaveBeenCalledWith(
@@ -38,7 +38,7 @@ describe("TenantSalesPolicy Prisma isolation", () => {
   it("rejects a policy lookup attempting to cross tenant boundaries", async () => {
     await runWithTenantContext({ tenantId: "tenant-A" }, async () => {
       await expect(
-        tenantPrisma.tenantSalesPolicy.findUnique({ where: { tenantId: "tenant-B" } }),
+        tenantPrisma.tenantSalesPolicy.findFirst({ where: { tenantId: "tenant-B" } }),
       ).rejects.toThrow(/SECURITY_VIOLATION/);
     });
 
