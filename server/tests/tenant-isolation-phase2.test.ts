@@ -3,6 +3,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { db, dbInstance, PharmaFlowDB, upgradeOwnLegacyPassword } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { FinancialHealthService } from '@/features/accounting/services/FinancialHealthService';
+import { IntegritySweepService } from '@/services/integrity/IntegritySweepService';
+import { FinancialDefenseSystem } from '@/services/integrity/FinancialDefenseSystem';
 import { cashboxTransferWorkflow } from '@/features/accounting/workflows/CashboxTransferWorkflow';
 import { hashLocalPassword, verifyLocalPassword } from '@features/auth/services/localPasswordService';
 
@@ -548,12 +550,24 @@ describe('PHARMAFLOW PRO — TENANT ISOLATION PHASE 2 — SECURITY VERIFICATION'
       expect(snapshotA?.tenantId).toBe(TENANT_A);
     });
 
-    it('does not create a financial snapshot without an active tenant', async () => {
+    it('fails closed when financial health is requested without an active tenant', async () => {
       setSession(undefined);
       await expect(FinancialHealthService.refreshHealthMonitor())
         .rejects.toThrow(/FAIL_CLOSED/);
       setSession(TENANT_A);
       expect(await db.financialHealthSnapshots.toCollection().toArray()).toHaveLength(0);
+    });
+
+    it('never reports an integrity sweep as healthy when no tenant was checked', async () => {
+      setSession(undefined);
+      await expect(IntegritySweepService.runSweep(false)).rejects.toThrow(/FAIL_CLOSED/);
+      setSession(TENANT_A);
+    });
+
+    it('never reports a zero-threat assessment without an active tenant', async () => {
+      setSession(undefined);
+      await expect(FinancialDefenseSystem.evaluateSystemThreat()).rejects.toThrow(/FAIL_CLOSED/);
+      setSession(TENANT_A);
     });
 
     it('clearOldAlerts deletes only alerts belonging to the active tenant', async () => {
