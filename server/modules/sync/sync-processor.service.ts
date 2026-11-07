@@ -14,6 +14,7 @@ import { SyncChangelogService } from "./sync-changelog.service.js";
 import { SyncAuditService } from "./sync-audit.service.js";
 import { AuthorizationService } from "../../services/rbac/authorization.service.js";
 import { AtomicPostSaleService } from "../accounting/services/atomicPostSale.service.js";
+import { FinancialTransactionService } from "../accounting/services/financialTransaction.service.js";
 
 const KNOWN_ENTITIES = new Set([
   "INVOICE", "SALE", "PRODUCT", "PAYMENT", "VOUCHER", "JOURNAL_ENTRY", 
@@ -286,12 +287,145 @@ export class SyncProcessorService {
     const { modelName } = entityConfig;
     const model = tx[modelName];
 
-    // 🚨 SECURITY FIX: Case-insensitive POST detection
-    const isSalePostCommand =
-      (upperEntity === "INVOICE" && operation === "POST") ||
-      (upperEntity === "SALE" && (operation === "POST" || operation === "CREATE"));
+    // Route invoice posting by the persisted invoice type. Never send every
+    // INVOICE POST command through the SALE-only service.
+    if (upperEntity === "INVOICE" && operation === "POST") {
+      try {
+        const lookupClauses: any[] = [];
+        if (entityId) lookupClauses.push({ id: entityId });
+        if (data.invoiceNumber) lookupClauses.push({ invoiceNumber: data.invoiceNumber });
+        if (data.refId || data.id) lookupClauses.push({ clientRefId: data.refId || data.id });
+        if (data.sale?.invoiceNumber) lookupClauses.push({ invoiceNumber: data.sale.invoiceNumber });
 
-    if (isSalePostCommand) {
+        const existingInvoice = lookupClauses.length > 0
+          ? await model.findFirst({
+              where: { tenantId, OR: lookupClauses },
+              include: { items: { include: { product: true } } }
+            })
+          : null;
+
+        const requestedType = String(
+          data.type ?? data.sale?.type ?? existingInvoice?.type ?? ""
+        ).toUpperCase();
+
+        if (existingInvoice && data.type && String(data.type).toUpperCase() !== String(existingInvoice.type).toUpperCase()) {
+          return { id: mutationId, mutationId, status: "FAILED", success: false, errorCode: "INVOICE_TYPE_MISMATCH", message: "Invoice type does not match the tenant-owned server record." };
+        }
+
+        switch (requestedType) {
+          case "SALE": {
+            const saleSource = data.sale && typeof data.sale === "object" ? data.sale : data;
+            const salePayload = {
+              ...data,
+              refId: data.refId ?? data.id ?? existingInvoice?.clientRefId ?? existingInvoice?.id,
+              sale: {
+                ...(existingInvoice || {}),
+                ...saleSource,
+                type: "SALE",
+                invoiceNumber: saleSource.invoiceNumber ?? existingInvoice?.invoiceNumber,
+                items: Array.isArray(saleSource.items)
+                  ? saleSource.items
+                  : (Array.isArray(data.items) ? data.items : (existingInvoice?.items || []))
+              }
+            };
+            const postResult = await AtomicPostSaleService.executePostSaleCommand({
+              payload: salePayload,
+              tenantId,
+              userId: params.userId,
+              username,
+              userRole,
+              branchId,
+              ipAddress: "127.0.0.1",
+              tx,
+              postImmediately: true
+            });
+            return {
+              id: mutationId,
+              mutationId,
+              status: "SUCCESS",
+              success: true,
+              serverVersion: version + 1,
+              processedAt: new Date().toISOString(),
+              details: postResult,
+              effects: postResult.effects || []
+            };
+          }
+
+          case "PURCHASE": {
+            if (!existingInvoice || existingInvoice.type !== "PURCHASE") {
+              return { id: mutationId, mutationId, status: "FAILED", success: false, errorCode: "INVOICE_NOT_FOUND", message: "The tenant-owned purchase invoice to post was not found." };
+            }
+            if (existingInvoice.documentStatus === "POSTED" ||
+                existingInvoice.documentStatus === "LOCKED" ||
+                existingInvoice.status === "CONFIRMED") {
+              return {
+                id: mutationId,
+                mutationId,
+                status: "SUCCESS",
+                success: true,
+                serverVersion: version + 1,
+                processedAt: new Date().toISOString(),
+                details: { success: true, idempotent: true, invoiceId: existingInvoice.id },
+                effects: []
+              };
+            }
+            const postResult = await FinancialTransactionService.executeInvoiceLedgerPosting(
+              tx,
+              existingInvoice,
+              params.userId,
+              "127.0.0.1",
+              tenantId
+            );
+            const journalEntry = postResult.journalId
+              ? await tx.journalEntry.findFirst({ where: { id: postResult.journalId, tenantId }, include: { lines: true } })
+              : null;
+            const effects: SyncEffect[] = journalEntry ? [{
+              entity: "JOURNAL_ENTRY",
+              entityId: journalEntry.id,
+              operation: "CREATE",
+              payload: journalEntry
+            }] : [];
+            return {
+              id: mutationId,
+              mutationId,
+              status: "SUCCESS",
+              success: true,
+              serverVersion: version + 1,
+              processedAt: new Date().toISOString(),
+              details: postResult,
+              effects
+            };
+          }
+
+          case "RETURN_SALE":
+          case "RETURN_PURCHASE":
+            return {
+              id: mutationId,
+              mutationId,
+              status: "FAILED",
+              success: false,
+              errorCode: "INVOICE_POST_HANDLER_UNAVAILABLE",
+              message: `Posting for ${requestedType} is fail-closed until its original-document reversal workflow is implemented.`
+            };
+
+          default:
+            return {
+              id: mutationId,
+              mutationId,
+              status: "FAILED",
+              success: false,
+              errorCode: "UNSUPPORTED_INVOICE_POST_TYPE",
+              message: "Invoice type is missing or does not have a registered posting handler."
+            };
+        }
+      } catch (err: any) {
+        return { id: mutationId, mutationId, status: "FAILED", success: false, errorCode: "INVOICE_POST_FAILED", message: err.message };
+      }
+    }
+
+    // SALE entity CREATE/POST is the dedicated server-authoritative sale workflow.
+    const isSaleCommand = upperEntity === "SALE" && (operation === "POST" || operation === "CREATE");
+    if (isSaleCommand) {
       try {
         const postResult = await AtomicPostSaleService.executePostSaleCommand({
           payload: data,
@@ -304,7 +438,16 @@ export class SyncProcessorService {
           tx,
           postImmediately: operation === "POST"
         });
-        return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
+        return {
+          id: mutationId,
+          mutationId,
+          status: "SUCCESS",
+          success: true,
+          serverVersion: version + 1,
+          processedAt: new Date().toISOString(),
+          details: postResult,
+          effects: postResult.effects || []
+        };
       } catch (err: any) {
         return { id: mutationId, mutationId, status: "FAILED", success: false, errorCode: "BUSINESS_COMMAND_FAILED", message: err.message };
       }
