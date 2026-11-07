@@ -252,7 +252,8 @@ describe("Atomic POST_SALE server pricing", () => {
   it("treats a previously posted sale as an idempotent success without posting stock or ledger again", async () => {
     const posted = { id: "invoice-already-posted", invoiceNumber: "SYNC-ALREADY-POSTED-001", tenantId, type: "SALE", status: "CONFIRMED", documentStatus: "POSTED", items: [] };
     const tx: any = {
-      invoice: { findFirst: vi.fn().mockResolvedValue(posted), update: vi.fn(), create: vi.fn() },
+      $queryRaw: vi.fn().mockResolvedValue([{ id: posted.id }]),
+      invoice: { findFirst: vi.fn().mockResolvedValueOnce(posted).mockResolvedValueOnce(posted), update: vi.fn(), create: vi.fn() },
       journalEntry: { findFirst: vi.fn(), },
       inventoryMovement: { findMany: vi.fn() },
     };
@@ -267,4 +268,5 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(mockCalculate).not.toHaveBeenCalled();
     expect(mockPost).not.toHaveBeenCalled();
   });
-\n});\n
+
+});
