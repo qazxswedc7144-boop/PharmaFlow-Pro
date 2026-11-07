@@ -11,6 +11,7 @@ export const ENTERPRISE_PERMISSIONS: StandardPermission[] = [
   { key: 'sales.invoice.export', module: 'sales', action: 'export', description: 'تصدير وطباعة فواتير المبيعات' },
   { key: 'sales.refund', module: 'sales', action: 'manage', description: 'معالجة مرتجعات المبيعات' },
   { key: 'sales.pos.access', module: 'sales', action: 'view', description: 'الوصول إلى شاشة نقطة البيع السريعة' },
+  { key: 'sales.discount.apply', module: 'sales', action: 'apply', description: 'تطبيق خصم ضمن الحد المعتمد للمؤسسة' },
 
   // 2. Purchases Module
   { key: 'purchases.invoice.view', module: 'purchases', action: 'view', description: 'عرض فواتير المشتريات' },
@@ -125,7 +126,7 @@ export const ENTERPRISE_PERMISSIONS: StandardPermission[] = [
 export const SYSTEM_ROLE_PERMISSIONS: Record<string, string[]> = {
   PLATFORM_OWNER: ['*'],
   TENANT_ADMIN: [
-    'sales.invoice.view', 'sales.invoice.create', 'sales.invoice.update', 'sales.invoice.delete', 'sales.invoice.approve', 'sales.invoice.export', 'sales.refund', 'sales.pos.access',
+    'sales.invoice.view', 'sales.invoice.create', 'sales.invoice.update', 'sales.invoice.delete', 'sales.invoice.approve', 'sales.invoice.export', 'sales.refund', 'sales.pos.access', 'sales.discount.apply',
     'purchases.invoice.view', 'purchases.invoice.create', 'purchases.invoice.update', 'purchases.invoice.delete', 'purchases.invoice.approve', 'purchases.invoice.export',
     'inventory.product.view', 'inventory.product.create', 'inventory.product.update', 'inventory.product.delete', 'inventory.adjust', 'inventory.batch.view', 'inventory.batch.manage', 'inventory.audit.view', 'inventory.audit.perform', 'inventory.transfer.create', 'inventory.transfer.approve',
     'accounting.journal.view', 'accounting.journal.create', 'accounting.journal.post', 'accounting.account.view', 'accounting.account.manage', 'accounting.voucher.create', 'accounting.voucher.view', 'accounting.reconcile',
@@ -136,7 +137,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<string, string[]> = {
     'sync.view', 'sync.trigger', 'sync.configure', 'api.access', 'api.keys.manage'
   ],
   ADMIN: [
-    'sales.invoice.view', 'sales.invoice.create', 'sales.invoice.update', 'sales.invoice.delete', 'sales.invoice.approve', 'sales.invoice.export', 'sales.refund', 'sales.pos.access',
+    'sales.invoice.view', 'sales.invoice.create', 'sales.invoice.update', 'sales.invoice.delete', 'sales.invoice.approve', 'sales.invoice.export', 'sales.refund', 'sales.pos.access', 'sales.discount.apply',
     'purchases.invoice.view', 'purchases.invoice.create', 'purchases.invoice.update', 'purchases.invoice.delete', 'purchases.invoice.approve', 'purchases.invoice.export',
     'inventory.product.view', 'inventory.product.create', 'inventory.product.update', 'inventory.product.delete', 'inventory.adjust', 'inventory.batch.view', 'inventory.batch.manage', 'inventory.audit.view', 'inventory.audit.perform', 'inventory.transfer.create', 'inventory.transfer.approve',
     'accounting.journal.view', 'accounting.journal.create', 'accounting.account.view', 'accounting.voucher.create', 'accounting.voucher.view', 'accounting.reconcile',
