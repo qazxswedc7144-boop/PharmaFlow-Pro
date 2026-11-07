@@ -290,7 +290,7 @@ export class SyncProcessorService {
     if ((upperEntity === "INVOICE" || upperEntity === "SALE") && operation === "POST") {
       try {
         const postResult = await AtomicPostSaleService.executePostSaleCommand({
-          payload: { ...data, tenantId }, tenantId, userId: params.userId, username, userRole, branchId, ipAddress: "127.0.0.1", tx
+          payload: data, tenantId, userId: params.userId, username, userRole, branchId, ipAddress: "127.0.0.1", tx
         });
         return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
       } catch (err: any) {
