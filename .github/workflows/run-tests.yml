@@ -41,6 +41,8 @@ jobs:
           server/tests/sync-branch-security-hardening.test.ts
           server/tests/legacy-local-sync-cleanup.test.ts
           server/tests/sync-engine-phase6-e2e.test.ts
+          server/tests/jwt-secrets.test.ts
+          server/tests/login-attempt-guard.test.ts
         env:
           NODE_ENV: test
 
