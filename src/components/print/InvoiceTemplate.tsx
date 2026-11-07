@@ -54,7 +54,9 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   const total = Number(data.totalAmount ?? data.finalTotal ?? data.amount ?? 0);
   const currencyCode = data.currency || CurrencyService.getCurrentCurrencyCode();
   const currencySymbol = CurrencyService.getCurrencySymbol(currencyCode);
-  const subtotalRaw = data.subtotalAmount ?? data.subtotal;
+  // Only show the detailed breakdown when it was persisted by the server.
+  // Legacy/local subtotal fields may still contain a client-computed final amount.
+  const subtotalRaw = data.subtotalAmount;
   const hasFinancialBreakdown = subtotalRaw !== undefined && subtotalRaw !== null;
   const subtotalAmount = hasFinancialBreakdown ? Number(subtotalRaw) : 0;
   const discountAmount = Number(data.discountAmount ?? data.discountTotal ?? 0);
