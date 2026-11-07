@@ -117,7 +117,7 @@ describe("Atomic POST_SALE server pricing", () => {
       id: "invoice-draft-a",
       invoiceNumber: "SYNC-DRAFT-001",
       tenantId,
-      status: "DRAFT",
+      status: "PENDING",
       documentStatus: "ACTIVE",
       totalAmount: new Prisma.Decimal(60),
       items: [],
@@ -143,7 +143,7 @@ describe("Atomic POST_SALE server pricing", () => {
         sale: {
           invoiceNumber: "SYNC-DRAFT-001",
           type: "SALE",
-          documentStatus: "DRAFT",
+          documentStatus: "PENDING",
           paymentStatus: "Credit",
           items: [{ product_id: productId, qty: 2, price: 1 }],
         },
@@ -167,6 +167,7 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(tx.journalEntry.findFirst).not.toHaveBeenCalled();
     expect(tx.inventoryMovement.findMany).not.toHaveBeenCalled();
     expect(result.effects[0].operation).toBe("CREATE");
+    expect(tx.invoice.create.mock.calls[0][0].data.status).toBe("PENDING");
   });
   });
 });
