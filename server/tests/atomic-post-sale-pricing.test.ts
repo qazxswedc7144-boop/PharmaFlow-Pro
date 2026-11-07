@@ -179,5 +179,42 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(tx.inventoryMovement.findMany).not.toHaveBeenCalled();
     expect(result.effects[0].operation).toBe("CREATE");
     expect(tx.invoice.create.mock.calls[0][0].data.status).toBe("PENDING");
+  it("preserves cancelled sale status when syncing a non-posting CREATE", async () => {
+    const tx: any = {
+      invoice: {
+        findFirst: vi.fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: "invoice-cancelled-a", tenantId, items: [] }),
+        create: vi.fn().mockResolvedValue({ id: "invoice-cancelled-a", tenantId, items: [] }),
+      },
+      journalEntry: { findFirst: vi.fn() },
+      inventoryMovement: { findMany: vi.fn() },
+    };
+
+    await AtomicPostSaleService.executePostSaleCommand({
+      payload: {
+        refId: "SYNC-CANCELLED-001",
+        sale: {
+          invoiceNumber: "SYNC-CANCELLED-001",
+          type: "SALE",
+          InvoiceStatus: "CANCELLED",
+          paymentStatus: "Credit",
+          items: [{ product_id: productId, qty: 1, price: 1 }],
+        },
+      },
+      tenantId,
+      userId: "user-sync-a",
+      username: "sync-cashier",
+      userRole: "CASHIER",
+      branchId: "branch-sync-a",
+      ipAddress: "127.0.0.1",
+      tx,
+      postImmediately: false,
+    });
+
+    expect(tx.invoice.create.mock.calls[0][0].data.status).toBe("CANCELLED");
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(tx.inventoryMovement.findMany).not.toHaveBeenCalled();
+  });
   });
 });
