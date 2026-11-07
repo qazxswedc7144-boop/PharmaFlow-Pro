@@ -78,7 +78,7 @@ export class AtomicPostSaleService {
           productId: item?.productId ?? item?.product_id,
           qty: item?.qty ?? item?.quantity,
           expiryDate: parsedExpiry && Number.isFinite(parsedExpiry.getTime()) ? parsedExpiry : null,
-          note: item?.note ?? item?.notes ?? item?.name ?? null
+          note: item?.note ?? item?.notes ?? null
         };
       })
     };
