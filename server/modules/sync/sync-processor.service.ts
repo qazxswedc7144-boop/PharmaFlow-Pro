@@ -29,7 +29,7 @@ export class SyncProcessorService {
     authenticatedUserId: string;
     authenticatedUserRole?: string;
   }): Promise<SyncPushResponse> {
-    const { envelope, authenticatedTenantId, authenticatedUserId, authenticatedUserRole } = params;
+    const { envelope, authenticatedTenantId, authenticatedUserId, authenticatedUserRole, authenticatedUsername } = params;
     const serverTimestamp = Date.now();
     const results: PerMutationResult[] = [];
 
@@ -192,7 +192,7 @@ export class SyncProcessorService {
       try {
         const fullResult = await prisma.$transaction(async (tx) => {
           const mutationResult = await this.executeEntityMutation({
-            mutation, tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId, version: version || 1, tx
+            mutation, tenantId, branchId: targetBranchId, userId: authenticatedUserId, username: authenticatedUsername, userRole: authenticatedUserRole, deviceId: envelope.deviceId, version: version || 1, tx
           });
 
           const result: PerMutationResult = { ...mutationResult, id: mutationId, mutationId };
@@ -268,9 +268,9 @@ export class SyncProcessorService {
   }
 
   private static async executeEntityMutation(params: {
-    mutation: SyncMutation; tenantId: string; branchId: string | null; userId: string; deviceId: string; version: number; tx: any;
+    mutation: SyncMutation; tenantId: string; branchId: string | null; userId: string; username?: string; userRole?: string; deviceId: string; version: number; tx: any;
   }): Promise<PerMutationResult> {
-    const { mutation, tenantId, branchId, version, tx } = params;
+    const { mutation, tenantId, branchId, version, tx, username, userRole } = params;
     const { id: mutationId, entity, payload } = mutation;
     const data = payload || {};
     const entityId = mutation.entityId || data.id || mutationId;
@@ -289,7 +289,7 @@ export class SyncProcessorService {
     if ((upperEntity === "INVOICE" || upperEntity === "SALE") && operation === "POST") {
       try {
         const postResult = await AtomicPostSaleService.executePostSaleCommand({
-          payload: { ...data, tenantId }, tenantId, userId: params.userId, ipAddress: "127.0.0.1", tx
+          payload: { ...data, tenantId }, tenantId, userId: params.userId, username, userRole, branchId, ipAddress: "127.0.0.1", tx
         });
         return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
       } catch (err: any) {
