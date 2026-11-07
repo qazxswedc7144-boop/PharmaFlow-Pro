@@ -51,19 +51,27 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
   });
   
   const finalItems: InvoiceItem[] = propItems || data.items || [];
-  const total = Number(data.finalTotal || data.totalAmount || data.amount || 0);
+  const total = Number(data.totalAmount ?? data.finalTotal ?? data.amount ?? 0);
   const currencyCode = data.currency || CurrencyService.getCurrentCurrencyCode();
   const currencySymbol = CurrencyService.getCurrencySymbol(currencyCode);
-  const taxRate = 0.05; // 5% VAT
-  const vatAmount = total * (taxRate / (1 + taxRate)); // inclusive tax calculation
-  const netTotal = total - vatAmount;
+  const subtotalRaw = data.subtotalAmount ?? data.subtotal;
+  const hasFinancialBreakdown = subtotalRaw !== undefined && subtotalRaw !== null;
+  const subtotalAmount = hasFinancialBreakdown ? Number(subtotalRaw) : 0;
+  const discountAmount = Number(data.discountAmount ?? data.discountTotal ?? 0);
+  const taxAmount = Number(data.taxAmount ?? data.taxTotal ?? 0);
+  const taxRatePercent = Number(data.taxRatePercent ?? 0);
+  const taxMode = data.taxMode || (taxAmount > 0 ? 'INCLUSIVE' : 'NONE');
+  const taxableBase = Math.max(0, subtotalAmount - discountAmount);
+  const netAmount = taxMode === 'INCLUSIVE'
+    ? Math.max(0, taxableBase - taxAmount)
+    : taxableBase;
 
   // Render raw notes safely using SanitizeHTML constraint
   const rawNoteHTML = data.notes || data.Notes || '';
   const sanitizedNote = sanitizeHTML(rawNoteHTML);
 
   // QR Code payload text
-  const qrDataText = `الشركة: ${invoiceConfig.pharmacyName}\nرقم المستند: #${refId}\nالتاريخ: ${displayDate}\nالإجمالي: ${total.toFixed(2)} ${currencySymbol}\nالضريبة: ${vatAmount.toFixed(2)} ${currencySymbol}`;
+  const qrDataText = `الشركة: ${invoiceConfig.pharmacyName}\nرقم المستند: #${refId}\nالتاريخ: ${displayDate}\nالإجمالي: ${total.toFixed(2)} ${currencySymbol}\nالضريبة: ${taxAmount.toFixed(2)} ${currencySymbol}`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrDataText)}`;
 
   if (mode === '58mm' || mode === '80mm' || mode === 'THERMAL') {
@@ -158,14 +166,30 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
 
         {/* Totals Section */}
         <div className={`space-y-1 ${fontSizeBase} pb-2 mb-2 border-b border-dashed border-gray-400`}>
-          <div className="flex justify-between text-opacity-80">
-            <span>الإجمالي الخاضع (Net):</span>
-            <span>{netTotal.toFixed(2)} {currencySymbol}</span>
-          </div>
-          <div className="flex justify-between text-opacity-80">
-            <span>الضريبة (5% VAT):</span>
-            <span>{vatAmount.toFixed(2)} {currencySymbol}</span>
-          </div>
+          {hasFinancialBreakdown && (
+            <>
+              <div className="flex justify-between text-opacity-80">
+                <span>الإجمالي قبل الخصم:</span>
+                <span>{subtotalAmount.toFixed(2)} {currencySymbol}</span>
+              </div>
+              {discountAmount > 0 && (
+                <div className="flex justify-between text-opacity-80">
+                  <span>الخصم:</span>
+                  <span>-{discountAmount.toFixed(2)} {currencySymbol}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-opacity-80">
+                <span>صافي القيمة قبل الضريبة:</span>
+                <span>{netAmount.toFixed(2)} {currencySymbol}</span>
+              </div>
+              {taxAmount > 0 && (
+                <div className="flex justify-between text-opacity-80">
+                  <span>الضريبة ({taxRatePercent}%):</span>
+                  <span>{taxAmount.toFixed(2)} {currencySymbol}</span>
+                </div>
+              )}
+            </>
+          )}
           <div className="flex justify-between text-[11px] font-black pt-1 border-t border-dotted border-gray-500">
             <span>المجموع النهائي (Total):</span>
             <span>{total.toFixed(2)} {currencySymbol}</span>
@@ -369,14 +393,30 @@ export const InvoiceTemplate: React.FC<InvoiceTemplateProps> = ({
             </div>
           </div>
           <div className="w-72 space-y-2 text-right">
-            <div className="flex justify-between text-xs text-slate-500 font-bold">
-              <span>قيمة البضاعة غير شامل الضريبة:</span>
-              <span>{netTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencySymbol}</span>
-            </div>
-            <div className="flex justify-between text-xs text-slate-500 font-bold">
-              <span>ضريبة القيمة المضافة (5% VAT):</span>
-              <span>{vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencySymbol}</span>
-            </div>
+            {hasFinancialBreakdown && (
+              <>
+                <div className="flex justify-between text-xs text-slate-500 font-bold">
+                  <span>الإجمالي قبل الخصم:</span>
+                  <span>{subtotalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencySymbol}</span>
+                </div>
+                {discountAmount > 0 && (
+                  <div className="flex justify-between text-xs text-slate-500 font-bold">
+                    <span>الخصم:</span>
+                    <span>-{discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencySymbol}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-xs text-slate-500 font-bold">
+                  <span>صافي القيمة قبل الضريبة:</span>
+                  <span>{netAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencySymbol}</span>
+                </div>
+                {taxAmount > 0 && (
+                  <div className="flex justify-between text-xs text-slate-500 font-bold">
+                    <span>ضريبة القيمة المضافة ({taxRatePercent}%):</span>
+                    <span>{taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })} {currencySymbol}</span>
+                  </div>
+                )}
+              </>
+            )}
             <div 
               className="flex justify-between text-lg font-black pt-3 border-t-2 border-slate-100/80"
               style={{ color: layoutConfig.primaryColor }}
