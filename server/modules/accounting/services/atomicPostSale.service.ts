@@ -131,7 +131,7 @@ export class AtomicPostSaleService {
           taxAmount: pricing.taxAmount,
           taxMode: pricing.taxMode,
           totalAmount: pricing.totalAmount,
-          status: postImmediately ? InvoiceStatus.DRAFT : (validated.status === "PENDING" ? InvoiceStatus.PENDING : InvoiceStatus.DRAFT),
+          status: postImmediately ? InvoiceStatus.DRAFT : (validated.status === "CANCELLED" ? InvoiceStatus.CANCELLED : validated.status === "PENDING" ? InvoiceStatus.PENDING : InvoiceStatus.DRAFT),
           paymentStatus: validated.paymentStatus,
           date: validated.date,
           documentStatus: DocumentStatus.ACTIVE,
