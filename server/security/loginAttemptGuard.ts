@@ -98,7 +98,6 @@ async function getRedisClient(): Promise<Redis> {
   }
 
   if (redisClient.status !== "ready") throw new LoginAttemptStoreError();
-  await redisClient.ping();
   return redisClient;
 }
 
