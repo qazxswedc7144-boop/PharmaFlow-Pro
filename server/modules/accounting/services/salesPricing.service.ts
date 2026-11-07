@@ -55,7 +55,7 @@ export class SalesPricingService {
       throw pricingError("INVALID_DISCOUNT_PERCENT");
     }
 
-    if (!discountPercent.isFinite() || discountPercent.isNegative() || discountPercent.gt(100)) {
+    if (!discountPercent.isFinite() || discountPercent.isNegative() || discountPercent.gt(100) || discountPercent.decimalPlaces() > 2) {
       throw pricingError("INVALID_DISCOUNT_PERCENT");
     }
 
