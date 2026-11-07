@@ -50,6 +50,8 @@ jobs:
           server/tests/sales-tax-ledger-posting.test.ts
           server/tests/tenant-sales-policy-isolation.test.ts
           server/tests/atomic-post-sale-pricing.test.ts
+          server/tests/sync-processor-sale-routing.test.ts
+          server/tests/invoice-schema-financial-overrides.test.ts
         env:
           NODE_ENV: test
 
