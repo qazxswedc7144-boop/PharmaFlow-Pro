@@ -44,6 +44,7 @@ export interface WorkflowSalePayload {
   customerId?: string;
   items: InvoiceItem[];
   total: number;
+  discountPercent?: number;
   id?: string;
   invoiceNumber?: string;
   date?: string;
@@ -281,6 +282,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
         supplierId: payload.supplierId,
         items: payload.items,
         total: payload.total,
+        discountPercent: payload.discountPercent ?? options?.discountPercent ?? 0,
         id: payload.id,
         invoiceNumber: payload.invoiceNumber,
         date: payload.date || options?.date,
