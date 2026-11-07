@@ -6,6 +6,14 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 
 type SalesTaxMode = 'NONE' | 'EXCLUSIVE' | 'INCLUSIVE';
 
+function buildAuthHeaders(): Headers {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(TokenProvider.getAuthHeaders())) {
+    if (typeof value === 'string' && value.length > 0) headers.set(key, value);
+  }
+  return headers;
+}
+
 interface SalesPolicy {
   maxDiscountPercent: number;
   taxRatePercent: number;
@@ -32,7 +40,7 @@ export default function SalesTab() {
     ]).then(setSettings);
 
     fetch('/api/sales-policy', {
-      headers: { ...TokenProvider.getAuthHeaders() }
+      headers: buildAuthHeaders()
     })
       .then(async (response) => {
         const payload = await response.json().catch(() => ({}));
@@ -68,7 +76,7 @@ export default function SalesTab() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...TokenProvider.getAuthHeaders()
+          ...Object.fromEntries(buildAuthHeaders().entries())
         },
         body: JSON.stringify(policy)
       });
