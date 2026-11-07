@@ -14,6 +14,7 @@ const { mockPrisma, mockSaas, mockAuthorization } = vi.hoisted(() => {
       checkSubscriptionLimit: vi.fn(),
       incrementUsage: vi.fn(),
     },
+    mockAuthorization: { can: vi.fn() },
   };
 });
 
@@ -30,7 +31,8 @@ vi.mock("../middleware/auth.middleware.js", () => ({
 }));
 vi.mock("../modules/locking/locking.service.js", () => ({ LockingService: {} }));
 vi.mock("../modules/replication/replication.publisher.js", () => ({ ReplicationPublisher: {} }));
-vi.mock("../modules/saas/saas.service.js", () => ({ SaasService: mockSaas }));\nvi.mock("../services/rbac/authorization.service.js", () => ({ AuthorizationService: mockAuthorization }));
+vi.mock("../modules/saas/saas.service.js", () => ({ SaasService: mockSaas }));
+vi.mock("../services/rbac/authorization.service.js", () => ({ AuthorizationService: mockAuthorization }));
 
 import { invoiceRouter } from "../routes/invoice.routes.js";
 import { InvoiceSchema } from "../../src/shared/validation/invoice.schema.js";
@@ -61,7 +63,7 @@ async function invokeCreate(payload: Record<string, unknown>) {
 
   const req: any = {
     body: payload,
-    user: { tenantId, userId: "user-sales-a" },
+    user: { tenantId, userId: "user-sales-a", username: "cashier", role: "CASHIER" },
     ip: "127.0.0.1",
   };
   const res = makeResponse();
@@ -77,7 +79,11 @@ describe("Server-side sales price and discount validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSaas.checkSubscriptionLimit.mockResolvedValue({ allowed: true });
-    mockSaas.incrementUsage.mockResolvedValue(undefined);\n    mockAuthorization.can.mockResolvedValue(true);\n    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({\n      tenantId, maxDiscountPercent: 15, taxRatePercent: 5, taxMode: "EXCLUSIVE",\n    });
+    mockSaas.incrementUsage.mockResolvedValue(undefined);
+    mockAuthorization.can.mockResolvedValue(true);
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({
+      tenantId, maxDiscountPercent: 15, taxRatePercent: 5, taxMode: "EXCLUSIVE",
+    });
     mockPrisma.invoice.findUnique.mockResolvedValue(null);
     mockPrisma.invoice.findFirst.mockResolvedValue(null);
     mockPrisma.product.findMany.mockResolvedValue([
@@ -174,7 +180,7 @@ describe("Server-side sales price and discount validation", () => {
     expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
   });
 
-  it("rejects client-supplied discount, tax, promotion, and tier-price overrides", () => {
+  it("rejects client-supplied discount amounts, tax overrides, promotions, and tier prices", () => {
     const result = InvoiceSchema.safeParse({
       invoiceNumber: "SALE-OVERRIDE-001",
       type: "SALE",
@@ -190,5 +196,4 @@ describe("Server-side sales price and discount validation", () => {
 
     expect(result.success).toBe(false);
   });
-
 });
