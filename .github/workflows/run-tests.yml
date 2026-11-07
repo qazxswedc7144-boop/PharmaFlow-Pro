@@ -48,6 +48,7 @@ jobs:
           server/tests/sales-server-price-validation.test.ts
           server/tests/sales-policy-tenant-isolation.test.ts
           server/tests/sales-tax-ledger-posting.test.ts
+          server/tests/tenant-sales-policy-isolation.test.ts
         env:
           NODE_ENV: test
 
