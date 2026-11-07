@@ -56,6 +56,10 @@ export class AtomicPostSaleService {
       : paymentStatusRaw === "PARTIALLY_PAID" || paymentStatusRaw === "PARTIALLY PAID"
         ? "PARTIALLY_PAID"
         : "UNPAID";
+    const sourceDocumentStatus = String(
+      source?.documentStatus ?? source?.InvoiceStatus ?? source?.invoiceStatus ?? "DRAFT"
+    ).toUpperCase();
+    const createStatus = sourceDocumentStatus === "PENDING" ? "PENDING" : "DRAFT";
 
     const rawItems = Array.isArray(source?.items) ? source.items : [];
     const sanitizedPayload = {
@@ -65,6 +69,7 @@ export class AtomicPostSaleService {
       partnerType: partnerId ? (source?.partnerType ?? "CUSTOMER") : null,
       date: source?.date ?? source?.Date,
       paymentStatus,
+      status: createStatus,
       discountPercent: source?.discountPercent ?? source?.discount_percent ?? payload?.discountPercent ?? 0,
       items: rawItems.map((item: any) => {
         const rawExpiry = item?.expiryDate ?? item?.ExpiryDate;
@@ -122,7 +127,7 @@ export class AtomicPostSaleService {
           taxAmount: pricing.taxAmount,
           taxMode: pricing.taxMode,
           totalAmount: pricing.totalAmount,
-          status: InvoiceStatus.DRAFT,
+          status: postImmediately ? InvoiceStatus.DRAFT : (validated.status === "PENDING" ? InvoiceStatus.PENDING : InvoiceStatus.DRAFT),
           paymentStatus: validated.paymentStatus,
           date: validated.date,
           documentStatus: DocumentStatus.ACTIVE,
