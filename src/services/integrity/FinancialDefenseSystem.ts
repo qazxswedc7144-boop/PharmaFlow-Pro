@@ -1,5 +1,5 @@
 
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { IS_PREVIEW } from '@/constants';
 
 export interface DefenseReport {
@@ -37,6 +37,9 @@ export class FinancialDefenseSystem {
    */
   static async calculateBehaviorScore(): Promise<number> {
     try {
+      const { tenantId } = getCurrentUserSession();
+      if (!tenantId) return 0;
+
       const now = Date.now();
       const oneHourAgo = new Date(now - 3600000).toISOString();
       
@@ -69,6 +72,9 @@ export class FinancialDefenseSystem {
    */
   static async calculateIntegrityScore(): Promise<number> {
     try {
+      const { tenantId } = getCurrentUserSession();
+      if (!tenantId) return 0;
+
       const sales = await db.sales.toArray();
       const journalEntries = await db.journalEntries.toArray();
       
@@ -92,6 +98,17 @@ export class FinancialDefenseSystem {
    * Composite Threat Level Calculation
    */
   static async evaluateSystemThreat(): Promise<DefenseReport> {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) {
+      return {
+        riskScore: 0,
+        integrityScore: 0,
+        behaviorScore: 0,
+        threatLevel: 0,
+        timestamp: new Date().toISOString()
+      };
+    }
+
     // Get RiskScore from existing engine logic (simplified here or imported)
     const riskScore = parseInt(await db.getSetting('SYSTEM_RISK_SCORE', '0'));
     const integrityScore = await this.calculateIntegrityScore();
@@ -144,6 +161,9 @@ export class FinancialDefenseSystem {
    */
   static async resetSecuritySystem(): Promise<void> {
     try {
+      const { tenantId } = getCurrentUserSession();
+      if (!tenantId) return;
+
       // 1. Enable security bypass to allow clearing audit logs
       if (typeof db.setBypassSecurity === 'function') {
         db.setBypassSecurity(true);

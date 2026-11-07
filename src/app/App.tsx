@@ -11,7 +11,7 @@ import { useSalesStore } from '@/store/useSalesStore';
 import { useSettingsStore } from '@/store/useSettingsStore';
 import { motion, AnimatePresence, MotionConfig } from 'motion/react';
 import { useAdaptivePerformance } from '@/hooks/useAdaptivePerformance';
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { DistributedSyncEngine } from '@features/sync/sync.engine';
 import { heartbeatService } from '@/services/heartbeatService';
 import { backupService } from '@/services/backupScheduler';
@@ -631,6 +631,14 @@ function MainLayout() {
       }
 
       await AccountingEngine.seedAccounts().catch(e => console.error(e));
+      
+      const session = getCurrentUserSession();
+      if (!session.tenantId) {
+        console.warn("[App] Post-DB-Open initialization deferred: No active tenant session.");
+        refreshGlobal();
+        return;
+      }
+
       await PeriodLockEngine.seedDefaultPeriod().catch(e => console.error(e));
 
       heartbeatService.start(); 

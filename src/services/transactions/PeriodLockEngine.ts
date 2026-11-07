@@ -1,5 +1,5 @@
 
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { PeriodLockedError, ErrorManager } from '@/core/errors';
 
 export class PeriodLockEngine {
@@ -39,6 +39,12 @@ export class PeriodLockEngine {
   }
 
   static async seedDefaultPeriod() {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) {
+      console.warn('[PeriodLockEngine] Skipping seedDefaultPeriod: No active tenant session.');
+      return;
+    }
+    
     const count = await db.accountingPeriods.count();
     if (count === 0) {
       const now = new Date();

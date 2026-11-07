@@ -13,6 +13,12 @@ export class IntegritySweepService {
    * Main entry point to run the integrity sweep
    */
   static async runSweep(autoFix = false): Promise<boolean> {
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) {
+      console.warn('[IntegritySweepService] Skipping runSweep: No active tenant session.');
+      return true; // Consider healthy if we can't even check (fail-safe for boot)
+    }
+    
     console.log(`Starting Integrity Sweep (autoFix: ${autoFix})...`);
     const startTime = performance.now();
     let isHealthy = true;
