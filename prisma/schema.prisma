@@ -385,6 +385,7 @@ model TenantSalesPolicy {
 model Invoice {
   id             String         @id @default(uuid())
   invoiceNumber  String
+  clientRefId    String?
   date           DateTime       @default(now())
   type           InvoiceType
   partnerId      String? // References Customer or Supplier uuid
@@ -409,6 +410,7 @@ model Invoice {
 
   @@unique([id, tenantId])
   @@unique([tenantId, invoiceNumber])
+  @@unique([tenantId, clientRefId])
   @@index([date])
   @@index([partnerId])
   @@index([createdAt])
