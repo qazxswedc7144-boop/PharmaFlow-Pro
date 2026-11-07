@@ -193,6 +193,20 @@ describe("Server-side sales price and discount validation", () => {
     expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
   });
 
+  it("rejects discount precision that cannot be stored consistently", async () => {
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-DISCOUNT-PRECISION",
+      type: "SALE",
+      discountPercent: 1.234,
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 1, price: 1 }],
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.body.error).toBe("INVALID_DISCOUNT_PERCENT");
+    expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
+  });
+
   it("rejects a discount above the tenant policy maximum", async () => {
     const response = await invokeCreate({
       invoiceNumber: "SALE-DISCOUNT-CAP",
