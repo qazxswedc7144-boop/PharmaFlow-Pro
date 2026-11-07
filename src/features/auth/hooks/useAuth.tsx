@@ -6,6 +6,7 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 import { User } from '@/types/auth.types';
 import { db, upgradeOwnLegacyPassword } from '@/core/db';
 import { hashLocalPassword, verifyLocalPassword } from '@features/auth/services/localPasswordService';
+import { cleanupLegacyLocalSyncRecords } from '@features/sync/legacySyncCleanup';
 
 interface AuthContextType {
   user: User | null;
@@ -150,6 +151,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       TokenProvider.setSession(authenticatedUser, access, refresh);
+      cleanupLegacyLocalSyncRecords().catch(error => console.warn('[SYNC CLEANUP] Legacy local cleanup skipped:', error));
 
       configurationService.set('pharmaflow_auth_enabled', 'true').catch(() => {});
       setAuthenticationEnabledState(true);
@@ -220,6 +222,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   throw upgradeError;
                 }
               }
+              cleanupLegacyLocalSyncRecords().catch(error => console.warn('[SYNC CLEANUP] Legacy local cleanup skipped:', error));
               setAccessToken(offlineToken);
               setRefreshTokenState(null);
               setUser(offlineUser);
