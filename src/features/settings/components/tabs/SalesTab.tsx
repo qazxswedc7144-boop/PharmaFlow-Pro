@@ -32,7 +32,7 @@ export default function SalesTab() {
     ]).then(setSettings);
 
     fetch('/api/sales-policy', {
-      headers: TokenProvider.getAuthHeaders()
+      headers: { ...TokenProvider.getAuthHeaders() }
     })
       .then(async (response) => {
         const payload = await response.json().catch(() => ({}));
