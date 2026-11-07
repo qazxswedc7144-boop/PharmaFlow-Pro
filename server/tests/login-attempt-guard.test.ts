@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const testState = vi.hoisted(() => ({
   counters: new Map<string, { count: number; expiresAt: number }>(),
@@ -110,6 +110,11 @@ describe("Redis-backed atomic login attempt protection", () => {
     vi.clearAllMocks();
     testState.prismaCreate.mockResolvedValue({ id: "audit-attempt-1" });
     resetLoginAttemptGuardForTests();
+  });
+
+  afterEach(() => {
+    resetLoginAttemptGuardForTests();
+    vi.unstubAllEnvs();
   });
 
   it("releases the reservation immediately after a successful password verification", async () => {
