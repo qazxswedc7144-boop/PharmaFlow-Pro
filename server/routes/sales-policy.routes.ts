@@ -9,8 +9,8 @@ import { requirePermission } from "../middleware/permission.middleware.js";
 export const salesPolicyRouter = Router();
 
 const SalesPolicySchema = z.object({
-  maxDiscountPercent: z.number().finite().min(0).max(100),
-  taxRatePercent: z.number().finite().min(0).max(100),
+  maxDiscountPercent: z.number().finite().min(0).max(100).refine(value => Math.abs(value * 100 - Math.round(value * 100)) < 1e-8, "يجب ألا تتجاوز الدقة منزلتين عشريتين."),
+  taxRatePercent: z.number().finite().min(0).max(100).refine(value => Math.abs(value * 100 - Math.round(value * 100)) < 1e-8, "يجب ألا تتجاوز الدقة منزلتين عشريتين."),
   taxMode: z.enum(["NONE", "EXCLUSIVE", "INCLUSIVE"])
 }).strict().superRefine((policy, ctx) => {
   if (policy.taxMode === "NONE" && policy.taxRatePercent !== 0) {
