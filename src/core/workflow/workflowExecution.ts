@@ -140,13 +140,23 @@ export class WorkflowExecutionPipeline {
 
       try {
         const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
+        const saleDocumentStatus = String(
+          (domainResult as any)?.sale?.documentStatus ??
+          (domainResult as any)?.sale?.InvoiceStatus ??
+          ''
+        ).toUpperCase();
+        const syncOperation = workflow.id.toUpperCase() === 'SALE' &&
+          ['DRAFT', 'PENDING'].includes(saleDocumentStatus)
+          ? 'CREATE'
+          : workflow.operationType;
+
         await DistributedSyncEngine.getInstance().enqueue(
-          workflow.operationType,
+          syncOperation,
           {
             id: (domainResult as any)?.refId || ctx.workflowId,
             ...(typeof domainResult === 'object' && domainResult !== null ? domainResult : {}),
             workflowId: ctx.workflowId,
-            operationType: workflow.operationType
+            operationType: syncOperation
           },
           workflow.id.toUpperCase(),
           ctx.idempotencyKey,
