@@ -184,6 +184,10 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       invoice
     });
   } catch (err: any) {
+    console.error("[InvoiceCreate] Failed to create invoice:", {
+      code: err?.code || null,
+      message: err?.message || "Unknown error"
+    });
     if (err.code === "INVOICE_EXISTS" || err.code === "P2002") {
       return res.status(409).json({ error: "INVOICE_EXISTS", message: "رقم الفاتورة مستخدم مسبقاً داخل المؤسسة." });
     }
