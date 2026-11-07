@@ -133,7 +133,7 @@ describe("POST /api/accounting/journal tenant isolation", () => {
       select: { id: true, version: true }
     });
     const accountLockQuery = mocks.queryRaw.mock.calls[0][0];
-    expect(accountLockQuery.sql.join(" ")).toContain('"tenantId"');
+    expect(accountLockQuery.sql).toContain('"tenantId"');
     expect(accountLockQuery.values).toContain("TENANT-A");
     expect(mocks.journalCreate).not.toHaveBeenCalled();
     expect(mocks.accountUpdate).not.toHaveBeenCalled();
