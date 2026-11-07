@@ -10,7 +10,7 @@ export const TENANT_OWNED_MODELS = [
   "branchTransferItem", "branchUser", "payment", "expense",
   "reservation", "customRole", "userRole", "userPermissionOverride",
   "auditLog", "idempotencyKey", "syncQueue", "syncEvent",
-  "tenantUser", "tenantSubscription", "license", "usageCounter",
+  "tenantUser", "tenantSubscription", "tenantSalesPolicy", "license", "usageCounter",
   "crashLog", "deviceRegistration", "aiUsageLog"
 ] as const;
 
