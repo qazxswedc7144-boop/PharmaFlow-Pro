@@ -138,6 +138,7 @@ describe("Atomic POST_SALE server pricing", () => {
       invoice: {
         findFirst: vi.fn()
           .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(null)
           .mockResolvedValueOnce(createdInvoice),
         create: vi.fn().mockResolvedValue(createdInvoice),
       },
