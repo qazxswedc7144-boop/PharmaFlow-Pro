@@ -146,7 +146,7 @@ export class WorkflowExecutionPipeline {
           ''
         ).toUpperCase();
         const syncOperation = workflow.id.toUpperCase() === 'SALE' &&
-          ['DRAFT', 'PENDING'].includes(saleDocumentStatus)
+          !['POSTED', 'LOCKED'].includes(saleDocumentStatus)
           ? 'CREATE'
           : workflow.operationType;
 
