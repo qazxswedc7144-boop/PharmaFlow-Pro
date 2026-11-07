@@ -47,6 +47,7 @@ jobs:
           server/tests/login-attempt-guard.test.ts
           server/tests/sales-server-price-validation.test.ts
           server/tests/sales-policy-tenant-isolation.test.ts
+          server/tests/sales-tax-ledger-posting.test.ts
         env:
           NODE_ENV: test
 
