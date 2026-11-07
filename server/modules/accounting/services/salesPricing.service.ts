@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { AuthorizationService } from "../../../services/rbac/authorization.service.js";
-import { UserIdentityContext } from "../../../services/rbac/types.js";
+import type { UserIdentityContext } from "../../../services/rbac/types.js";
 
 export interface SalePricingResult {
   itemData: Array<{
