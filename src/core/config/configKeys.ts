@@ -131,11 +131,12 @@ export const CONFIG_REGISTRY: Record<string, ConfigurationDefinition<any>> = {
   },
   'sales.max_discount_percent': {
     key: 'sales.max_discount_percent',
-    defaultValue: 15,
+    defaultValue: 0,
     scope: 'TENANT',
-    syncPolicy: 'SYNCABLE',
-    legacyKeys: ['max_discount_percent'],
-    description: 'الحد الأقصى المسموح به للخصم (%)'
+    syncPolicy: 'SERVER_AUTHORITATIVE',
+    readOnly: true,
+    legacyKeys: [],
+    description: 'الحد الأقصى المسموح به للخصم (%) — تتم إدارته من الخادم'
   },
 
   // Inventory
