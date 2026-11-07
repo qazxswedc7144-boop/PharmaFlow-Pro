@@ -86,6 +86,7 @@ salesPolicyRouter.put("/", requirePermission("settings.update"), async (req, res
 
   try {
     const policy = await prisma.$transaction(async (tx: any) => {
+      const previous = await tx.tenantSalesPolicy.findUnique({ where: { tenantId } });
       const updated = await tx.tenantSalesPolicy.upsert({
         where: { tenantId },
         create: {
