@@ -59,7 +59,11 @@ export class AtomicPostSaleService {
     const sourceDocumentStatus = String(
       source?.documentStatus ?? source?.InvoiceStatus ?? source?.invoiceStatus ?? "DRAFT"
     ).toUpperCase();
-    const createStatus = sourceDocumentStatus === "PENDING" ? "PENDING" : "DRAFT";
+    const createStatus = sourceDocumentStatus === "PENDING"
+      ? "PENDING"
+      : sourceDocumentStatus === "CANCELLED" || sourceDocumentStatus === "VOID"
+        ? "CANCELLED"
+        : "DRAFT";
 
     const rawItems = Array.isArray(source?.items) ? source.items : [];
     const sanitizedPayload = {
@@ -154,6 +158,13 @@ export class AtomicPostSaleService {
             tenantId
           )
         : { journalId: null, cogs: 0 };
+
+      if (postImmediately && sourceDocumentStatus === "LOCKED") {
+        await tx.invoice.update({
+          where: { id_tenantId: { id: invoice.id, tenantId } },
+          data: { documentStatus: DocumentStatus.LOCKED }
+        });
+      }
 
       const finalInvoice = await tx.invoice.findFirst({
         where: { id: invoice.id, tenantId },
