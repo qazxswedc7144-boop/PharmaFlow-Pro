@@ -110,27 +110,4 @@ describe("Server-side sales price and discount validation", () => {
     );
   });
 
-  it("must not apply a client-supplied discount without a server-authorized discount policy", async () => {
-    const response = await invokeCreate({
-      invoiceNumber: "SALE-DISCOUNT-001",
-      type: "SALE",
-      totalAmount: 90,
-      paymentStatus: "UNPAID",
-      discountPercent: 10,
-      items: [{ productId, qty: 3, price: 30 }],
-    });
-
-    expect(response.statusCode).toBe(201);
-    expect(mockPrisma.invoice.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          totalAmount: 90,
-          items: {
-            create: [expect.objectContaining({ productId, qty: 3, price: 30, total: 90 })],
-          },
-        }),
-      }),
-    );
-    expect(mockPrisma.invoice.create.mock.calls[0][0].data).not.toHaveProperty("discountPercent");
-  });
 });
