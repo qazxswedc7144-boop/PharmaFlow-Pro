@@ -12,6 +12,7 @@ import { InvoiceSchema } from "../../src/shared/validation/invoice.schema.js";
 import { validateRequestBody } from "../middleware/validate.js";
 import { UUIDSchema } from "../../src/shared/validation/common.schema.js";
 import { SaasService } from "../modules/saas/saas.service.js";
+import { AuthorizationService } from "../services/rbac/authorization.service.js";
 
 export const invoiceRouter = Router();
 
@@ -21,14 +22,23 @@ export const invoiceRouter = Router();
  */
 invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN, Role.ACCOUNTANT, Role.PHARMACIST, Role.INVENTORY_MANAGER]), validateRequestBody(InvoiceSchema), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const data = req.body; // sanitized and verified by validateRequestBody
+    const data = req.body;
     const tenantId = req.user?.tenantId?.trim();
 
-    // Tenant identity is security context, never optional client input.
     if (!tenantId) {
       return res.status(403).json({
         error: "TENANT_REQUIRED",
         message: "لا يمكن إنشاء فاتورة دون سياق مؤسسة موثوق."
+      });
+    }
+
+    // A return must reference an original posted sale so its historical price,
+    // tax, and discount can be reversed exactly. This API contract does not yet
+    // carry that reference, and posting does not support RETURN_SALE.
+    if (data.type === "RETURN_SALE") {
+      return res.status(422).json({
+        error: "RETURN_WORKFLOW_NOT_SUPPORTED",
+        message: "مرتجع المبيعات يتطلب ربطه بفاتورة بيع أصلية؛ هذا المسار غير متاح حالياً."
       });
     }
 
@@ -42,9 +52,28 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       }
     }
 
-    // Product lookup, authoritative pricing, invoice creation, and audit write
-    // must commit or roll back together. Client price/total values are never
-    // used for SALE invoices.
+    const requestedDiscountPercent = new Prisma.Decimal(data.type === "SALE" ? (data.discountPercent ?? 0) : 0);
+    if (requestedDiscountPercent.gt(0)) {
+      const userContext = {
+        userId: req.user?.userId || "",
+        username: req.user?.username || "",
+        role: req.user?.role,
+        tenantId
+      };
+      const canApplyDiscount = await AuthorizationService.can(
+        userContext,
+        "sales.discount.apply",
+        { tenantId, branchId: req.user?.branchId || undefined }
+      );
+
+      if (!canApplyDiscount) {
+        return res.status(403).json({
+          error: "DISCOUNT_PERMISSION_REQUIRED",
+          message: "ليس لديك صلاحية تطبيق خصم على فاتورة البيع."
+        });
+      }
+    }
+
     const invoice = await prisma.$transaction(async (tx: any) => {
       const existing = await tx.invoice.findFirst({
         where: { tenantId, invoiceNumber: data.invoiceNumber },
@@ -81,7 +110,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
         throw error;
       }
 
-      let calculatedTotal = new Prisma.Decimal(0);
+      let calculatedSubtotal = new Prisma.Decimal(0);
       const itemData = data.items.map((item: any) => {
         const product = productsById.get(item.productId);
         if (!product) {
@@ -90,8 +119,6 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           throw error;
         }
 
-        // Sales use the tenant-owned catalog price. Purchase invoices retain
-        // their supplier purchase price, since Product.price is a retail price.
         const price = data.type === "SALE"
           ? new Prisma.Decimal(product.price.toString())
           : new Prisma.Decimal(item.price);
@@ -102,8 +129,8 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           throw error;
         }
 
-        const lineTotal = price.mul(item.qty);
-        calculatedTotal = calculatedTotal.plus(lineTotal);
+        const lineTotal = price.mul(item.qty).toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+        calculatedSubtotal = calculatedSubtotal.plus(lineTotal);
 
         return {
           tenantId,
@@ -117,12 +144,68 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
         };
       });
 
+      let discountPercent = new Prisma.Decimal(0);
+      let discountAmount = new Prisma.Decimal(0);
+      let taxRatePercent = new Prisma.Decimal(0);
+      let taxAmount = new Prisma.Decimal(0);
+      let taxMode: "NONE" | "EXCLUSIVE" | "INCLUSIVE" = "NONE";
+      let calculatedTotal = calculatedSubtotal;
+
+      if (data.type === "SALE") {
+        const policy = await tx.tenantSalesPolicy.findUnique({ where: { tenantId } });
+        const maxDiscountPercent = new Prisma.Decimal(
+          policy?.maxDiscountPercent?.toString?.() ?? "0"
+        );
+
+        if (requestedDiscountPercent.gt(maxDiscountPercent)) {
+          const error: any = new Error("DISCOUNT_LIMIT_EXCEEDED");
+          error.code = "DISCOUNT_LIMIT_EXCEEDED";
+          throw error;
+        }
+
+        discountPercent = requestedDiscountPercent;
+        discountAmount = calculatedSubtotal
+          .mul(discountPercent)
+          .div(100)
+          .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+
+        const taxableBase = calculatedSubtotal.minus(discountAmount);
+        taxMode = policy?.taxMode ?? "NONE";
+        taxRatePercent = taxMode === "NONE"
+          ? new Prisma.Decimal(0)
+          : new Prisma.Decimal(policy?.taxRatePercent?.toString?.() ?? "0");
+
+        if (taxMode === "EXCLUSIVE") {
+          taxAmount = taxableBase
+            .mul(taxRatePercent)
+            .div(100)
+            .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+          calculatedTotal = taxableBase.plus(taxAmount);
+        } else if (taxMode === "INCLUSIVE") {
+          if (taxRatePercent.gt(0)) {
+            taxAmount = taxableBase
+              .mul(taxRatePercent)
+              .div(new Prisma.Decimal(100).plus(taxRatePercent))
+              .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+          }
+          calculatedTotal = taxableBase;
+        } else {
+          calculatedTotal = taxableBase;
+        }
+      }
+
       const createdInvoice = await tx.invoice.create({
         data: {
           invoiceNumber: data.invoiceNumber,
           type: data.type,
           partnerId: data.partnerId,
           partnerType: data.partnerType,
+          subtotalAmount: calculatedSubtotal,
+          discountPercent,
+          discountAmount,
+          taxRatePercent,
+          taxAmount,
+          taxMode,
           totalAmount: calculatedTotal,
           status: InvoiceStatus.DRAFT,
           paymentStatus: data.paymentStatus,
@@ -149,7 +232,6 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       return createdInvoice;
     });
 
-    // Usage is incremented only after the invoice transaction commits.
     await SaasService.incrementUsage(tenantId);
 
     return res.status(201).json({
@@ -157,17 +239,17 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       invoice
     });
   } catch (err: any) {
-    if (err.code === "INVOICE_EXISTS") {
+    if (err.code === "INVOICE_EXISTS" || err.code === "P2002") {
       return res.status(409).json({ error: "INVOICE_EXISTS", message: "رقم الفاتورة مستخدم مسبقاً داخل المؤسسة." });
     }
     if (err.code === "PRODUCT_NOT_FOUND_OR_INACTIVE") {
       return res.status(404).json({ error: "PRODUCT_NOT_FOUND_OR_INACTIVE", message: "أحد المنتجات غير موجود أو غير نشط داخل المؤسسة." });
     }
-    if (err.code === "P2002") {
-      return res.status(409).json({ error: "INVOICE_EXISTS", message: "رقم الفاتورة مستخدم مسبقاً داخل المؤسسة." });
-    }
     if (err.code === "INVALID_SERVER_PRODUCT_PRICE") {
       return res.status(422).json({ error: "INVALID_SERVER_PRODUCT_PRICE", message: "سعر المنتج المحفوظ غير صالح." });
+    }
+    if (err.code === "DISCOUNT_LIMIT_EXCEEDED") {
+      return res.status(422).json({ error: "DISCOUNT_LIMIT_EXCEEDED", message: "نسبة الخصم تتجاوز الحد المعتمد للمؤسسة." });
     }
     if (err instanceof OfflineDatabaseError) {
       return res.status(503).json({ error: "DATABASE_UNAVAILABLE", message: "قاعدة البيانات غير متاحة حالياً." });
