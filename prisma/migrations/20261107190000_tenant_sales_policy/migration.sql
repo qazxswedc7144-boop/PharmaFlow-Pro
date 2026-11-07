@@ -33,3 +33,11 @@ ALTER TABLE "tenant_sales_policies"
   ADD CONSTRAINT "tenant_sales_policies_tenantId_fkey"
   FOREIGN KEY ("tenantId") REFERENCES "tenants"("id")
   ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+-- Stable offline invoice identity for safe draft promotion across sync retries.
+ALTER TABLE "invoices"
+  ADD COLUMN "clientRefId" TEXT;
+
+CREATE UNIQUE INDEX "invoices_tenantId_clientRefId_key"
+  ON "invoices"("tenantId", "clientRefId");
