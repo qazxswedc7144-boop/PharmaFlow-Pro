@@ -5,6 +5,7 @@ import { AuthController } from "./auth.controller.js";
 import { authMiddleware } from "./auth.middleware.js";
 import { LoginSchema, RefreshTokenSchema } from "./auth.schema.js";
 import { validateRequestBody } from "../../../../../server/middleware/validate.js";
+import { loginAttemptGuard } from "../../../../../server/security/loginAttemptGuard.js";
 
 export const authV1Router = Router();
 
@@ -34,7 +35,7 @@ const refreshTokenLimiter = rateLimit({
   validate: { default: false }
 });
 
-authV1Router.post("/login", loginFallbackLimiter, validateRequestBody(LoginSchema), AuthController.login);
+authV1Router.post("/login", loginFallbackLimiter, validateRequestBody(LoginSchema), loginAttemptGuard, AuthController.login);
 authV1Router.post("/refresh", refreshTokenLimiter, validateRequestBody(RefreshTokenSchema), AuthController.refresh);
 // Note: /logout intentionally lacks authMiddleware to allow session revocation even if the access token is expired.
 authV1Router.post("/logout", AuthController.logout);
