@@ -28,6 +28,7 @@ export class SyncProcessorService {
     authenticatedTenantId: string;
     authenticatedUserId: string;
     authenticatedUserRole?: string;
+    authenticatedUsername?: string;
   }): Promise<SyncPushResponse> {
     const { envelope, authenticatedTenantId, authenticatedUserId, authenticatedUserRole, authenticatedUsername } = params;
     const serverTimestamp = Date.now();
