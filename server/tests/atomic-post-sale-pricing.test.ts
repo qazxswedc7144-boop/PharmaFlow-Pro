@@ -1,0 +1,113 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
+
+const { mockCalculate, mockPost } = vi.hoisted(() => ({
+  mockCalculate: vi.fn(),
+  mockPost: vi.fn(),
+}));
+
+vi.mock("../modules/accounting/services/salesPricing.service.js", () => ({
+  SalesPricingService: { calculate: mockCalculate },
+}));
+vi.mock("../modules/accounting/services/financialTransaction.service.js", () => ({
+  FinancialTransactionService: { executeInvoiceLedgerPosting: mockPost },
+}));
+vi.mock("../core/database/transactionGuard.js", () => ({
+  runInTransaction: vi.fn(),
+}));
+
+import { AtomicPostSaleService } from "../modules/accounting/services/atomicPostSale.service.js";
+
+describe("Atomic POST_SALE server pricing", () => {
+  const tenantId = "tenant-sync-a";
+  const productId = "11111111-1111-4111-8111-111111111111";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCalculate.mockResolvedValue({
+      itemData: [{
+        tenantId,
+        productId,
+        qty: 2,
+        price: new Prisma.Decimal(30),
+        cost: new Prisma.Decimal(0),
+        total: new Prisma.Decimal(60),
+      }],
+      subtotalAmount: new Prisma.Decimal(60),
+      discountPercent: new Prisma.Decimal(0),
+      discountAmount: new Prisma.Decimal(0),
+      taxRatePercent: new Prisma.Decimal(0),
+      taxAmount: new Prisma.Decimal(0),
+      taxMode: "NONE",
+      totalAmount: new Prisma.Decimal(60),
+    });
+    mockPost.mockResolvedValue({ journalId: "journal-sync-a", cogs: 20 });
+  });
+
+  it("ignores client price and total and uses the shared server pricing service inside the transaction", async () => {
+    const createdInvoice = {
+      id: "invoice-sync-a",
+      invoiceNumber: "SYNC-SALE-001",
+      tenantId,
+      totalAmount: new Prisma.Decimal(60),
+      items: [],
+    };
+    const tx: any = {
+      invoice: {
+        findFirst: vi.fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce(createdInvoice),
+        create: vi.fn().mockResolvedValue(createdInvoice),
+      },
+      journalEntry: {
+        findFirst: vi.fn().mockResolvedValue({ id: "journal-sync-a", lines: [] }),
+      },
+      inventoryMovement: {
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    };
+
+    const result = await AtomicPostSaleService.executePostSaleCommand({
+      payload: {
+        invoiceNumber: "SYNC-SALE-001",
+        type: "SALE",
+        totalAmount: 1,
+        paymentStatus: "UNPAID",
+        items: [{ productId, qty: 2, price: 1 }],
+      },
+      tenantId,
+      userId: "user-sync-a",
+      username: "sync-cashier",
+      userRole: "CASHIER",
+      branchId: "branch-sync-a",
+      ipAddress: "127.0.0.1",
+      tx,
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockCalculate).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        tenantId,
+        discountPercent: undefined,
+        user: expect.objectContaining({
+          userId: "user-sync-a",
+          username: "sync-cashier",
+          role: "CASHIER",
+          tenantId,
+          branchId: "branch-sync-a",
+        }),
+      }),
+    );
+    expect(tx.invoice.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        subtotalAmount: expect.any(Prisma.Decimal),
+        totalAmount: new Prisma.Decimal(60),
+        items: {
+          create: [expect.objectContaining({ price: new Prisma.Decimal(30) })],
+        },
+      }),
+    }));
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+});
