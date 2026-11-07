@@ -1,115 +1,97 @@
 // server/modules/accounting/services/atomicPostSale.service.ts
-import { prisma } from "../../../database/prisma.js";
 import { runInTransaction } from "../../../core/database/transactionGuard.js";
 import { FinancialTransactionService } from "./financialTransaction.service.js";
+import { SalesPricingService } from "./salesPricing.service.js";
 import { InvoiceStatus, DocumentStatus } from "@prisma/client";
 import { InvoiceSchema } from "../../../../src/shared/validation/invoice.schema.js";
-import { SyncEffect } from "../../sync/sync.types.js";
+import type { SyncEffect } from "../../sync/sync.types.js";
 
 export class AtomicPostSaleService {
   /**
-   * Executes a complete, atomic "POST_SALE" business operation.
-   * 1. Validates and recalculates the payload.
-   * 2. Persists the invoice and items.
-   * 3. Executes inventory depletion via FIFO.
-   * 4. Generates balanced journal entries.
-   * 5. Updates account balances.
-   * 6. Marks the operation as POSTED.
-   * 7. Returns side-effects for sync propagation.
+   * Executes a complete, atomic POST_SALE operation. The authoritative catalog
+   * price, tenant discount policy, tax calculation, invoice, FIFO depletion,
+   * journal posting, and sync effects all execute in the same transaction.
    */
   static async executePostSaleCommand(params: {
     payload: any;
     tenantId: string;
     userId: string;
+    username?: string;
+    userRole?: string;
+    branchId?: string | null;
     ipAddress: string;
     tx?: any;
   }) {
-    const { payload, tenantId, userId, ipAddress, tx: providedTx } = params;
+    const {
+      payload,
+      tenantId,
+      userId,
+      username,
+      userRole,
+      branchId,
+      ipAddress,
+      tx: providedTx
+    } = params;
 
-    // 0. Sanitize input (Handle 'عميل نقدي' case)
+    if (!tenantId?.trim()) {
+      throw new Error("TENANT_REQUIRED");
+    }
+
     const sanitizedPayload = { ...payload };
     if (sanitizedPayload.partnerId === "عميل نقدي") {
       sanitizedPayload.partnerId = null;
     }
 
-    // 1. Validation using shared schema
     const validated = InvoiceSchema.parse(sanitizedPayload);
-    
     if (validated.type !== "SALE") {
       throw new Error("Invalid command: POST_SALE only supports SALE type.");
     }
 
-    // 2. Price Verification & Total Recalculation
-    // Fetch authoritative product prices to detect client-side tampering
-    const productIds = validated.items.map(i => i.productId);
-    const client = providedTx || prisma;
-    const products = await client.product.findMany({
-      where: { id: { in: productIds }, tenantId },
-      select: { id: true, price: true, basePrice: true }
-    });
-    const productMap = new Map(products.map((p: any) => [p.id, Number(p.basePrice || p.price || 0)]));
-
-    let calculatedTotal = 0;
-    const itemsData = validated.items.map(item => {
-      const serverPriceRaw = productMap.get(item.productId);
-      if (serverPriceRaw === undefined) {
-        throw new Error(`PRODUCT_NOT_FOUND: Product ${item.productId} does not exist in tenant catalog.`);
-      }
-      
-      const serverPrice = Number(serverPriceRaw);
-      const clientPrice = Number(item.price);
-
-      // Strict price verification
-      if (Math.abs(serverPrice - clientPrice) > 0.01) {
-        throw new Error(`PRICE_TAMPERING: Client price [${item.price}] for product [${item.productId}] does not match server price [${serverPrice}].`);
-      }
-
-      const lineTotal = Number(item.qty) * serverPrice;
-      calculatedTotal += lineTotal;
-      return {
-        productId: item.productId,
-        qty: item.qty,
-        price: serverPrice,
-        total: lineTotal,
-        cost: 0, // Will be updated by FIFO logic
-        note: item.note
-      };
-    });
-
-    // Precision-safe comparison (2 decimal places)
-    const diff = Math.abs(calculatedTotal - Number(validated.totalAmount));
-    if (diff > 0.01) {
-      throw new Error(`TOTAL_MISMATCH: Client total [${validated.totalAmount}] does not match server recalculated total [${calculatedTotal.toFixed(2)}]. Difference: ${diff.toFixed(4)}`);
-    }
-
-    // 3. Atomic Execution within Transaction
     const executeLogic = async (tx: any) => {
-      // a. Check for duplicate invoice number within tenant to prevent collisions
       const existing = await tx.invoice.findFirst({
-        where: { 
+        where: {
           invoiceNumber: validated.invoiceNumber,
-          tenantId 
+          tenantId
         }
       });
-      
+
       if (existing) {
         throw new Error(`INVOICE_EXISTS: رقم الفاتورة [${validated.invoiceNumber}] مسجل مسبقاً.`);
       }
 
-      // b. Create Invoice and items in DRAFT state first
+      const pricing = await SalesPricingService.calculate(tx, {
+        tenantId,
+        items: validated.items,
+        discountPercent: validated.discountPercent,
+        user: {
+          userId,
+          username: username || userId,
+          role: userRole,
+          tenantId,
+          branchId: branchId || undefined
+        }
+      });
+
       const invoice: any = await tx.invoice.create({
         data: {
           invoiceNumber: validated.invoiceNumber,
           type: "SALE",
           partnerId: validated.partnerId,
           partnerType: validated.partnerType,
-          totalAmount: calculatedTotal,
+          branchId: branchId || undefined,
+          subtotalAmount: pricing.subtotalAmount,
+          discountPercent: pricing.discountPercent,
+          discountAmount: pricing.discountAmount,
+          taxRatePercent: pricing.taxRatePercent,
+          taxAmount: pricing.taxAmount,
+          taxMode: pricing.taxMode,
+          totalAmount: pricing.totalAmount,
           status: InvoiceStatus.DRAFT,
           paymentStatus: validated.paymentStatus,
           documentStatus: DocumentStatus.ACTIVE,
           tenantId,
           items: {
-            create: itemsData
+            create: pricing.itemData
           }
         },
         include: {
@@ -121,7 +103,6 @@ export class AtomicPostSaleService {
         }
       });
 
-      // c. Delegate to core ledger posting logic
       const postResult = await FinancialTransactionService.executeInvoiceLedgerPosting(
         tx,
         invoice,
@@ -130,19 +111,18 @@ export class AtomicPostSaleService {
         tenantId
       );
 
-      // d. Collect side-effects for sync propagation
-      const finalInvoice = await tx.invoice.findUnique({
-        where: { id: invoice.id },
+      const finalInvoice = await tx.invoice.findFirst({
+        where: { id: invoice.id, tenantId },
         include: { items: true }
       });
 
-      const journalEntry = await tx.journalEntry.findUnique({
-        where: { id: postResult.journalId },
+      const journalEntry = await tx.journalEntry.findFirst({
+        where: { id: postResult.journalId, tenantId },
         include: { lines: true }
       });
 
       const movements = await tx.inventoryMovement.findMany({
-        where: { referenceId: invoice.id, referenceType: "INVOICE" }
+        where: { referenceId: invoice.id, referenceType: "INVOICE", tenantId }
       });
 
       const effects: SyncEffect[] = [];
@@ -165,12 +145,12 @@ export class AtomicPostSaleService {
         });
       }
 
-      for (const mov of movements) {
+      for (const movement of movements) {
         effects.push({
           entity: "INVENTORY_MOVEMENT",
-          entityId: mov.id,
+          entityId: movement.id,
           operation: "CREATE",
-          payload: mov
+          payload: movement
         });
       }
 
@@ -184,10 +164,8 @@ export class AtomicPostSaleService {
       };
     };
 
-    if (providedTx) {
-      return await executeLogic(providedTx);
-    } else {
-      return await runInTransaction("AtomicPostSaleCommand", executeLogic);
-    }
+    return providedTx
+      ? executeLogic(providedTx)
+      : runInTransaction("AtomicPostSaleCommand", executeLogic);
   }
 }
