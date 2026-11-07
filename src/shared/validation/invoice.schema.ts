@@ -21,6 +21,9 @@ export const InvoiceSchema = z.object({
   // Never authoritative for SALE; retained as optional for legacy clients.
   totalAmount: MoneySchema.optional(),
   discountPercent: z.number().finite().min(0).max(100).optional(),
+  // These amounts are calculated from tenant policy on the server and are never client inputs.
+  taxAmount: z.never().optional(),
+  discountAmount: z.never().optional(),
   status: z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELLED"]).default("DRAFT"),
   paymentStatus: z.enum(["PAID", "UNPAID", "PARTIALLY_PAID"]).default("UNPAID"),
   documentStatus: z.enum(["ACTIVE", "POSTED", "ARCHIVED", "LOCKED"]).default("ACTIVE"),
