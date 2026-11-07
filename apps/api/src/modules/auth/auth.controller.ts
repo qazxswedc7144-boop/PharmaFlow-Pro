@@ -4,6 +4,7 @@ import { AuthenticatedRequest } from "./auth.middleware.js";
 import { AuthService } from "./auth.service.js";
 import { AuditService } from "../audit/audit.service.js";
 import { prisma } from "../../../../../server/database/prisma.js";
+import { LoginAttemptAuditError, recordFailedLoginAttempt } from "../../../../../server/security/loginAttemptGuard.js";
 
 export class AuthController {
   /**
@@ -24,7 +25,7 @@ export class AuthController {
 
       // 🚨 فحص أمني: لا نكشف إن كان المستخدم موجوداً أو لا
       if (!user || user.passwordHash === "") {
-        await AuditService.logLoginAttempt(undefined, undefined, username, "FAILED", req.ip);
+        await recordFailedLoginAttempt(username, req.ip);
         return res.status(401).json({ error: "INVALID_CREDENTIALS", message: "خطأ في اسم المستخدم أو كلمة المرور." });
       }
 
@@ -32,7 +33,7 @@ export class AuthController {
       if (!isValid) {
         // نحتاج لمعرفة المؤسسة لتسجيل الفشل بدقة (نستخدم الأولى كاحتياط)
         const fallbackTenantId = user.tenantUsers[0]?.tenantId;
-        await AuditService.logLoginAttempt(fallbackTenantId, user.id, username, "FAILED", req.ip);
+        await recordFailedLoginAttempt(username, req.ip, user.id, fallbackTenantId);
         return res.status(401).json({ error: "INVALID_CREDENTIALS", message: "خطأ في اسم المستخدم أو كلمة المرور." });
       }
 
@@ -89,6 +90,12 @@ export class AuthController {
       });
     } catch (err: any) {
       console.error("[AUTH] Login error:", err);
+      if (err instanceof LoginAttemptAuditError) {
+        return res.status(503).json({
+          error: "AUTH_TEMPORARILY_UNAVAILABLE",
+          message: "تعذر تسجيل محاولة الدخول بأمان. يرجى المحاولة لاحقاً."
+        });
+      }
       return res.status(500).json({ 
         error: "INTERNAL_ERROR", 
         message: process.env.NODE_ENV === 'production' ? "خطأ داخلي في الخادم." : err.message 
