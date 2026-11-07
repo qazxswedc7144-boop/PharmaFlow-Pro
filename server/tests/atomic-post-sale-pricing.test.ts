@@ -269,4 +269,29 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(mockPost).not.toHaveBeenCalled();
   });
 
+
+  it("never posts a cancelled draft or invokes FIFO/ledger posting", async () => {
+    const tx: any = {
+      invoice: { findFirst: vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(null), create: vi.fn(), update: vi.fn() },
+      journalEntry: { findFirst: vi.fn() },
+      inventoryMovement: { findMany: vi.fn() },
+    };
+    await expect(AtomicPostSaleService.executePostSaleCommand({
+      payload: {
+        refId: "local-cancelled-sale",
+        sale: {
+          invoiceNumber: "SYNC-CANCELLED-POST-001",
+          type: "SALE",
+          InvoiceStatus: "CANCELLED",
+          items: [{ product_id: productId, qty: 1 }],
+        },
+      },
+      tenantId, userId: "user-sync-a", ipAddress: "127.0.0.1", tx, postImmediately: true,
+    })).rejects.toThrow("INVOICE_CANCELLED");
+    expect(tx.invoice.create).not.toHaveBeenCalled();
+    expect(tx.invoice.update).not.toHaveBeenCalled();
+    expect(mockCalculate).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
 });
