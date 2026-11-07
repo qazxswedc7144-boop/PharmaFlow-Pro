@@ -11,44 +11,13 @@ import { authenticateToken, requireRoles, AuthenticatedRequest } from "../middle
 import { AuthorizationService } from "../services/rbac/authorization.service.js";
 import { PermissionService } from "../services/rbac/permission.service.js";
 
-import rateLimit from "express-rate-limit";
 import { verifyPasswordHash } from '../security/passwordHash.js';
+import { getJwtSecret, getJwtRefreshSecret } from "../security/jwtSecrets.js";
+import { loginAttemptGuard, releaseLoginAttempt, recordFailedLoginAttempt, LoginAttemptAuditError, LoginAttemptStoreError } from "../security/loginAttemptGuard.js";
 
 export const authRouter = Router();
 
-const getJwtSecret = () => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
-    }
-    return 'pharmaflow-local-development-jwt-secure-secret-2026';
-  }
-  return secret;
-};
 
-const getJwtRefreshSecret = () => {
-  const secret = process.env.JWT_REFRESH_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: JWT_REFRESH_SECRET environment variable is missing in production.');
-    }
-    return 'pharmaflow-local-development-jwt-refresh-secure-secret-2026';
-  }
-  return secret;
-};
-
-const loginRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: {
-    error: "RATE_LIMIT_EXCEEDED",
-    message: "تم تقييد محاولات تسجيل الدخول حماية للحسابات من هجمات القوة الغاشمة. يرجى الانتظار 15 دقيقة."
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: { default: false }
-});
 
 /**
  * GET /api/auth/bootstrap-status
@@ -305,7 +274,7 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
  * POST /api/auth/login
  * Standard user authenticate credentials with audit tracking
  */
-authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), async (req: Request, res: Response) => {
+authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 
@@ -315,6 +284,7 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), as
     });
 
     if (!user) {
+      await recordFailedLoginAttempt(String(username), req.ip || req.socket.remoteAddress || "unknown");
       return res.status(401).json({
         error: "INVALID_CREDENTIALS",
         message: "اسم المستخدم أو كلمة المرور غير صحيحة."
@@ -323,6 +293,7 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), as
 
     // 2. Verify bcrypt legacy or PBKDF2 temporary password hash
     if (!user.passwordHash) {
+      await recordFailedLoginAttempt(String(username), req.ip || req.socket.remoteAddress || "unknown", user.id);
       return res.status(401).json({
         error: "INVALID_CREDENTIALS",
         message: "اسم المستخدم أو كلمة المرور غير صحيحة."
@@ -330,11 +301,15 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), as
     }
     const isPasswordValid = await verifyPasswordHash(String(password || ''), String(user.passwordHash));
     if (!isPasswordValid) {
+      await recordFailedLoginAttempt(String(username), req.ip || req.socket.remoteAddress || "unknown", user.id);
       return res.status(401).json({
         error: "INVALID_CREDENTIALS",
         message: "اسم المستخدم أو كلمة المرور غير صحيحة."
       });
     }
+
+    // A valid password must not consume a failed-login reservation.
+    await releaseLoginAttempt(req);
 
     // 3. Reject inactive users
     if (!user.isActive) {
@@ -507,7 +482,13 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), as
       permissions
     });
   } catch (err: any) {
-    return res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+    if (err instanceof LoginAttemptAuditError || err instanceof LoginAttemptStoreError) {
+      return res.status(503).json({
+        error: "AUTH_TEMPORARILY_UNAVAILABLE",
+        message: "تعذر تسجيل محاولة الدخول بأمان. يرجى المحاولة لاحقاً."
+      });
+    }
+    return res.status(500).json({ error: "INTERNAL_ERROR", message: process.env.NODE_ENV === "production" ? "Internal server error." : err.message });
   }
 });
 

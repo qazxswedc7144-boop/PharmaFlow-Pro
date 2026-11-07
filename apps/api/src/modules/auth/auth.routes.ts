@@ -5,21 +5,9 @@ import { AuthController } from "./auth.controller.js";
 import { authMiddleware } from "./auth.middleware.js";
 import { LoginSchema, RefreshTokenSchema } from "./auth.schema.js";
 import { validateRequestBody } from "../../../../../server/middleware/validate.js";
+import { loginAttemptGuard } from "../../../../../server/security/loginAttemptGuard.js";
 
 export const authV1Router = Router();
-
-// Brute-force credentials limit protection layer
-const loginFallbackLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes duration
-  max: 10, // Max 10 attempts
-  message: {
-    error: "RATE_LIMIT_EXCEEDED",
-    message: "تم تقييد محاولات تسجيل الدخول حماية للحسابات من هجمات القوة الغاشمة. يرجى الانتظار 15 دقيقة."
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: { default: false }
-});
 
 // 🚨 SECURITY FIX: Add rate limiting to the refresh endpoint to prevent DoS and token brute-forcing
 const refreshTokenLimiter = rateLimit({
@@ -34,7 +22,7 @@ const refreshTokenLimiter = rateLimit({
   validate: { default: false }
 });
 
-authV1Router.post("/login", loginFallbackLimiter, validateRequestBody(LoginSchema), AuthController.login);
+authV1Router.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, AuthController.login);
 authV1Router.post("/refresh", refreshTokenLimiter, validateRequestBody(RefreshTokenSchema), AuthController.refresh);
 // Note: /logout intentionally lacks authMiddleware to allow session revocation even if the access token is expired.
 authV1Router.post("/logout", AuthController.logout);

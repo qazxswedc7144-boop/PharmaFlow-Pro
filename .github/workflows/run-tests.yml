@@ -2,7 +2,7 @@ name: Run Tests
 
 on:
   push:
-    branches: [ main, fix/tenant-isolation-phase2-hardening ]
+    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1 ]
   pull_request:
     branches: [ main, fix/sync-outbox-ownership-phase3 ]
   workflow_dispatch:
@@ -41,11 +41,15 @@ jobs:
           server/tests/sync-branch-security-hardening.test.ts
           server/tests/legacy-local-sync-cleanup.test.ts
           server/tests/sync-engine-phase6-e2e.test.ts
+          server/tests/jwt-secrets.test.ts
+          server/tests/login-attempt-guard.test.ts
         env:
           NODE_ENV: test
 
       - name: TypeScript Typecheck
+        if: always()
         run: npm run typecheck
 
       - name: Production Build
+        if: always()
         run: npm run build

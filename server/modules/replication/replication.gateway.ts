@@ -10,6 +10,7 @@ import { Role } from "@prisma/client";
 import { ReplicationSubscriber } from "./replication.subscriber.js";
 import { ReplicationEvent, ClientConnectionInfo } from "./replication.types.js";
 import { tenantPrisma } from "../../database/tenantPrisma.js";
+import { getJwtSecret } from "../../security/jwtSecrets.js";
 
 // ---------------------------------------------------------------------------
 // الإعدادات (Config)
@@ -22,17 +23,6 @@ const RATE_LIMIT_WINDOW_MS = 1_000;
 const RATE_LIMIT_MAX_MESSAGES = 50;
 
 
-
-const getJwtSecret = (): string => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("FATAL: JWT_SECRET environment variable is missing in production.");
-    }
-    return "pharmaflow-local-development-jwt-secure-secret-2026";
-  }
-  return secret;
-};
 
 const AUTHORIZED_ROLES = new Set<string>([
   Role.ADMIN,

@@ -2,6 +2,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { Role } from "@prisma/client";
+import { getJwtSecret, isProductionRuntime } from "../security/jwtSecrets.js";
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -15,20 +16,10 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 
-const getJwtSecret = () => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
-    }
-    return 'pharmaflow-local-development-jwt-secure-secret-2026';
-  }
-  return secret;
-};
-
 const isDevLocalTokenAllowed = () => {
-  // 🚨 تأكد من أن هذا المتغير لا يوضع أبداً في بيئة الإنتاج (Vercel)
-  return process.env.NODE_ENV === 'development' && process.env.DEV_ALLOW_LOCAL_TOKEN === 'true';
+  return !isProductionRuntime() &&
+    process.env.NODE_ENV === 'development' &&
+    process.env.DEV_ALLOW_LOCAL_TOKEN === 'true';
 };
 
 /**

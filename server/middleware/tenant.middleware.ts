@@ -4,25 +4,17 @@ import jwt from "jsonwebtoken";
 import { prisma } from "../database/prisma.js";
 import { runWithTenantContext, TenantContext } from "../context/tenantContext.js";
 import { AuthenticatedRequest } from "./auth.middleware.js";
+import { getJwtSecret, isProductionRuntime } from "../security/jwtSecrets.js";
 
 export interface TenantScopedRequest extends AuthenticatedRequest {
   tenantContext?: TenantContext;
   tenantId?: string;
 }
 
-const getJwtSecret = () => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: JWT_SECRET environment variable is missing in production.');
-    }
-    return 'pharmaflow-local-development-jwt-secure-secret-2026';
-  }
-  return secret;
-};
-
 const isDevLocalTokenAllowed = () => {
-  return process.env.NODE_ENV === 'development' && process.env.DEV_ALLOW_LOCAL_TOKEN === 'true';
+  return !isProductionRuntime() &&
+    process.env.NODE_ENV === 'development' &&
+    process.env.DEV_ALLOW_LOCAL_TOKEN === 'true';
 };
 
 /**
