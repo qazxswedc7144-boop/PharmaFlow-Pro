@@ -37,10 +37,44 @@ export class AtomicPostSaleService {
       throw new Error("TENANT_REQUIRED");
     }
 
-    const sanitizedPayload = { ...payload };
-    if (sanitizedPayload.partnerId === "عميل نقدي") {
-      sanitizedPayload.partnerId = null;
-    }
+    // WorkflowExecution enqueues the committed domain result as { refId, sale }.
+    // Support that established outbox shape and direct POST_SALE payloads.
+    const source = payload?.sale && typeof payload.sale === "object"
+      ? payload.sale
+      : payload;
+
+    const rawPartnerId = source?.partnerId ?? source?.partner_id ?? null;
+    const partnerId = [null, undefined, "", "عميل نقدي", "CUST-GEN", "CUST-GENERAL"].includes(rawPartnerId)
+      ? null
+      : rawPartnerId;
+
+    const paymentStatusRaw = String(source?.paymentStatus ?? source?.payment_status ?? "UNPAID").toUpperCase();
+    const paymentStatus = paymentStatusRaw === "CASH" || paymentStatusRaw === "PAID"
+      ? "PAID"
+      : paymentStatusRaw === "PARTIALLY_PAID" || paymentStatusRaw === "PARTIALLY PAID"
+        ? "PARTIALLY_PAID"
+        : "UNPAID";
+
+    const rawItems = Array.isArray(source?.items) ? source.items : [];
+    const sanitizedPayload = {
+      invoiceNumber: source?.invoiceNumber ?? source?.invoice_number ?? source?.invoiceId ?? source?.SaleID ?? payload?.refId,
+      type: source?.type ?? "SALE",
+      partnerId,
+      partnerType: partnerId ? (source?.partnerType ?? "CUSTOMER") : null,
+      date: source?.date ?? source?.Date,
+      paymentStatus,
+      discountPercent: source?.discountPercent ?? source?.discount_percent ?? payload?.discountPercent ?? 0,
+      items: rawItems.map((item: any) => {
+        const rawExpiry = item?.expiryDate ?? item?.ExpiryDate;
+        const parsedExpiry = rawExpiry ? new Date(rawExpiry) : null;
+        return {
+          productId: item?.productId ?? item?.product_id,
+          qty: item?.qty ?? item?.quantity,
+          expiryDate: parsedExpiry && Number.isFinite(parsedExpiry.getTime()) ? parsedExpiry : null,
+          note: item?.note ?? item?.notes ?? item?.name ?? null
+        };
+      })
+    };
 
     const validated = InvoiceSchema.parse(sanitizedPayload);
     if (validated.type !== "SALE") {
@@ -88,6 +122,7 @@ export class AtomicPostSaleService {
           totalAmount: pricing.totalAmount,
           status: InvoiceStatus.DRAFT,
           paymentStatus: validated.paymentStatus,
+          date: validated.date,
           documentStatus: DocumentStatus.ACTIVE,
           tenantId,
           items: {
