@@ -99,15 +99,10 @@ describe("Atomic POST_SALE server pricing", () => {
         }),
       }),
     );
-    expect(tx.invoice.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({
-        subtotalAmount: expect.any(Prisma.Decimal),
-        totalAmount: new Prisma.Decimal(60),
-        items: {
-          create: [expect.objectContaining({ price: new Prisma.Decimal(30) })],
-        },
-      }),
-    }));
+    const savedInvoiceData = tx.invoice.create.mock.calls[0][0].data;
+    expect(savedInvoiceData.subtotalAmount.toString()).toBe("60");
+    expect(savedInvoiceData.totalAmount.toString()).toBe("60");
+    expect(savedInvoiceData.items.create[0].price.toString()).toBe("30");
     expect(mockPost).toHaveBeenCalledTimes(1);
   });
 });
