@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const testState = vi.hoisted(() => ({
   counters: new Map<string, { count: number; expiresAt: number }>(),
-  pingFails: false,
+  redisFails: false,
   prismaCreate: vi.fn()
 }));
 
@@ -12,11 +12,8 @@ vi.mock("ioredis", () => {
     on() { return this; }
     connect = vi.fn(async () => { this.status = "ready"; });
     disconnect = vi.fn();
-    ping = vi.fn(async () => {
-      if (testState.pingFails) throw new Error("Redis unavailable");
-      return "PONG";
-    });
     eval = vi.fn(async (script: string, numberOfKeys: number, ...args: string[]) => {
+      if (testState.redisFails) throw new Error("Redis unavailable");
       const keys = args.slice(0, numberOfKeys);
       const values = args.slice(numberOfKeys);
       const now = Date.now();
@@ -106,7 +103,7 @@ describe("Redis-backed atomic login attempt protection", () => {
     vi.stubEnv("VERCEL_ENV", "production");
     vi.stubEnv("REDIS_URL", "redis://test.invalid:6379");
     testState.counters.clear();
-    testState.pingFails = false;
+    testState.redisFails = false;
     vi.clearAllMocks();
     testState.prismaCreate.mockResolvedValue({ id: "audit-attempt-1" });
     resetLoginAttemptGuardForTests();
@@ -154,7 +151,7 @@ describe("Redis-backed atomic login attempt protection", () => {
   });
 
   it("returns an explicit 503 and does not continue when Redis is unavailable", async () => {
-    testState.pingFails = true;
+    testState.redisFails = true;
     const { res, next } = await runGuard("redis-down-user", "203.0.113.99");
 
     expect(res.status).toHaveBeenCalledWith(503);
