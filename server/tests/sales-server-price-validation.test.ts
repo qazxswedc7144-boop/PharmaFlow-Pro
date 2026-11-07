@@ -183,6 +183,31 @@ describe("Server-side sales price and discount validation", () => {
     expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
   });
 
+  it("allows SALE requests to omit all client price and total fields", () => {
+    const result = InvoiceSchema.safeParse({
+      invoiceNumber: "SALE-NO-CLIENT-PRICE",
+      type: "SALE",
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 2 }],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("fails closed for RETURN_SALE until the original posted invoice is referenced", async () => {
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-RETURN-001",
+      type: "RETURN_SALE",
+      totalAmount: 1,
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 1, price: 1 }],
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.body.error).toBe("RETURN_WORKFLOW_NOT_SUPPORTED");
+    expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
+  });
+
   it("rejects client-supplied discount amounts, tax overrides, promotions, and tier prices", () => {
     const result = InvoiceSchema.safeParse({
       invoiceNumber: "SALE-OVERRIDE-001",
