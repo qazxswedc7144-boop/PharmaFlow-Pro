@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockPrisma, mockSaas } = vi.hoisted(() => {
+const { mockPrisma, mockSaas, mockAuthorization } = vi.hoisted(() => {
   const prisma: any = {
     $transaction: vi.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prisma)),
     product: { findMany: vi.fn() },
     invoice: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     auditLog: { create: vi.fn() },
+    tenantSalesPolicy: { findUnique: vi.fn(), upsert: vi.fn() },
   };
   return {
     mockPrisma: prisma,
@@ -29,7 +30,7 @@ vi.mock("../middleware/auth.middleware.js", () => ({
 }));
 vi.mock("../modules/locking/locking.service.js", () => ({ LockingService: {} }));
 vi.mock("../modules/replication/replication.publisher.js", () => ({ ReplicationPublisher: {} }));
-vi.mock("../modules/saas/saas.service.js", () => ({ SaasService: mockSaas }));
+vi.mock("../modules/saas/saas.service.js", () => ({ SaasService: mockSaas }));\nvi.mock("../services/rbac/authorization.service.js", () => ({ AuthorizationService: mockAuthorization }));
 
 import { invoiceRouter } from "../routes/invoice.routes.js";
 import { InvoiceSchema } from "../../src/shared/validation/invoice.schema.js";
@@ -76,7 +77,7 @@ describe("Server-side sales price and discount validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSaas.checkSubscriptionLimit.mockResolvedValue({ allowed: true });
-    mockSaas.incrementUsage.mockResolvedValue(undefined);
+    mockSaas.incrementUsage.mockResolvedValue(undefined);\n    mockAuthorization.can.mockResolvedValue(true);\n    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({\n      tenantId, maxDiscountPercent: 15, taxRatePercent: 5, taxMode: "EXCLUSIVE",\n    });
     mockPrisma.invoice.findUnique.mockResolvedValue(null);
     mockPrisma.invoice.findFirst.mockResolvedValue(null);
     mockPrisma.product.findMany.mockResolvedValue([
@@ -115,6 +116,62 @@ describe("Server-side sales price and discount validation", () => {
     }));
     expect(invoiceData.items.create[0].price.toString()).toBe("30");
     expect(invoiceData.items.create[0].total.toString()).toBe("300");
+  });
+
+  it("calculates discount and tax from the tenant policy inside the invoice transaction", async () => {
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-POLICY-001",
+      type: "SALE",
+      totalAmount: 1,
+      discountPercent: 10,
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 10, price: 1 }],
+    });
+
+    expect(response.statusCode).toBe(201);
+    const invoiceData = mockPrisma.invoice.create.mock.calls[0][0].data;
+    expect(invoiceData.subtotalAmount.toString()).toBe("300");
+    expect(invoiceData.discountPercent.toString()).toBe("10");
+    expect(invoiceData.discountAmount.toString()).toBe("30");
+    expect(invoiceData.taxRatePercent.toString()).toBe("5");
+    expect(invoiceData.taxAmount.toString()).toBe("13.5");
+    expect(invoiceData.taxMode).toBe("EXCLUSIVE");
+    expect(invoiceData.totalAmount.toString()).toBe("283.5");
+    expect(mockPrisma.tenantSalesPolicy.findUnique).toHaveBeenCalledWith({ where: { tenantId } });
+    expect(mockAuthorization.can).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-sales-a", tenantId }),
+      "sales.discount.apply",
+      expect.objectContaining({ tenantId }),
+    );
+  });
+
+  it("rejects a discount when the authenticated user lacks sales.discount.apply", async () => {
+    mockAuthorization.can.mockResolvedValue(false);
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-DISCOUNT-DENIED",
+      type: "SALE",
+      totalAmount: 300,
+      discountPercent: 5,
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 10, price: 30 }],
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a discount above the tenant policy maximum", async () => {
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-DISCOUNT-CAP",
+      type: "SALE",
+      totalAmount: 300,
+      discountPercent: 20,
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 10, price: 30 }],
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
   });
 
   it("rejects client-supplied discount, tax, promotion, and tier-price overrides", () => {
