@@ -107,6 +107,15 @@ describe("Atomic POST_SALE server pricing", () => {
         }),
       }),
     );
+    const pricingInput = mockCalculate.mock.calls[0][1];
+    expect(pricingInput.items[0]).toEqual({
+      productId,
+      qty: 2,
+      expiryDate: null,
+      note: null,
+    });
+    expect(pricingInput.items[0]).not.toHaveProperty("price");
+    expect(pricingInput).not.toHaveProperty("totalAmount");
     const savedInvoiceData = tx.invoice.create.mock.calls[0][0].data;
     expect(savedInvoiceData.subtotalAmount.toString()).toBe("60");
     expect(savedInvoiceData.totalAmount.toString()).toBe("60");
