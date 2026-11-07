@@ -121,6 +121,8 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(savedInvoiceData.totalAmount.toString()).toBe("60");
     expect(savedInvoiceData.items.create[0].price.toString()).toBe("30");
     expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
   it("creates a priced draft without inventory or ledger posting until an explicit POST", async () => {
     const createdInvoice = {
       id: "invoice-draft-a",
@@ -177,6 +179,5 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(tx.inventoryMovement.findMany).not.toHaveBeenCalled();
     expect(result.effects[0].operation).toBe("CREATE");
     expect(tx.invoice.create.mock.calls[0][0].data.status).toBe("PENDING");
-  });
   });
 });
