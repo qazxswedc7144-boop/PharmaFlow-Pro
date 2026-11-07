@@ -6,8 +6,8 @@ import { prisma } from "../database/prisma.js";
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILED_ATTEMPTS_PER_USERNAME = 10;
 const MAX_FAILED_ATTEMPTS_PER_IP = 100;
-const USER_KEY_PREFIX = "pharmaflow:auth:login:user:";
-const IP_KEY_PREFIX = "pharmaflow:auth:login:ip:";
+const USER_KEY_PREFIX = "pharmaflow:{auth-login}:user:";
+const IP_KEY_PREFIX = "pharmaflow:{auth-login}:ip:";
 
 type MemoryCounter = { count: number; expiresAt: number };
 type Reservation = { usernameKey: string; ipKey: string };
