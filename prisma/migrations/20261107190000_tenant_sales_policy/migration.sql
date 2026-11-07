@@ -9,6 +9,11 @@ ALTER TABLE "invoices"
   ADD COLUMN "taxAmount" DECIMAL(18,4) NOT NULL DEFAULT 0.00,
   ADD COLUMN "taxMode" "SalesTaxMode" NOT NULL DEFAULT 'NONE';
 
+-- Preserve the historical invoice base amount for records created before this migration.
+UPDATE "invoices"
+SET "subtotalAmount" = "totalAmount"
+WHERE "subtotalAmount" = 0.00 AND "totalAmount" <> 0.00;
+
 CREATE TABLE "tenant_sales_policies" (
   "id" TEXT NOT NULL,
   "tenantId" TEXT NOT NULL,
@@ -24,9 +29,6 @@ CREATE TABLE "tenant_sales_policies" (
 
 CREATE UNIQUE INDEX "tenant_sales_policies_tenantId_key"
   ON "tenant_sales_policies"("tenantId");
-CREATE INDEX "tenant_sales_policies_tenantId_idx"
-  ON "tenant_sales_policies"("tenantId");
-
 ALTER TABLE "tenant_sales_policies"
   ADD CONSTRAINT "tenant_sales_policies_tenantId_fkey"
   FOREIGN KEY ("tenantId") REFERENCES "tenants"("id")
