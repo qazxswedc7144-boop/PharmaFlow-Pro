@@ -21,6 +21,7 @@ export class AtomicPostSaleService {
     branchId?: string | null;
     ipAddress: string;
     tx?: any;
+    postImmediately?: boolean;
   }) {
     const {
       payload,
@@ -30,7 +31,8 @@ export class AtomicPostSaleService {
       userRole,
       branchId,
       ipAddress,
-      tx: providedTx
+      tx: providedTx,
+      postImmediately = true
     } = params;
 
     if (!tenantId?.trim()) {
@@ -138,27 +140,33 @@ export class AtomicPostSaleService {
         }
       });
 
-      const postResult = await FinancialTransactionService.executeInvoiceLedgerPosting(
-        tx,
-        invoice,
-        userId,
-        ipAddress,
-        tenantId
-      );
+      const postResult = postImmediately
+        ? await FinancialTransactionService.executeInvoiceLedgerPosting(
+            tx,
+            invoice,
+            userId,
+            ipAddress,
+            tenantId
+          )
+        : { journalId: null, cogs: 0 };
 
       const finalInvoice = await tx.invoice.findFirst({
         where: { id: invoice.id, tenantId },
         include: { items: true }
       });
 
-      const journalEntry = await tx.journalEntry.findFirst({
-        where: { id: postResult.journalId, tenantId },
-        include: { lines: true }
-      });
+      const journalEntry = postResult.journalId
+        ? await tx.journalEntry.findFirst({
+            where: { id: postResult.journalId, tenantId },
+            include: { lines: true }
+          })
+        : null;
 
-      const movements = await tx.inventoryMovement.findMany({
-        where: { referenceId: invoice.id, referenceType: "INVOICE", tenantId }
-      });
+      const movements = postImmediately
+        ? await tx.inventoryMovement.findMany({
+            where: { referenceId: invoice.id, referenceType: "INVOICE", tenantId }
+          })
+        : [];
 
       const effects: SyncEffect[] = [];
 
@@ -166,7 +174,7 @@ export class AtomicPostSaleService {
         effects.push({
           entity: "INVOICE",
           entityId: finalInvoice.id,
-          operation: "POST",
+          operation: postImmediately ? "POST" : "CREATE",
           payload: finalInvoice
         });
       }
