@@ -47,7 +47,9 @@ jobs:
           NODE_ENV: test
 
       - name: TypeScript Typecheck
+        if: always()
         run: npm run typecheck
 
       - name: Production Build
+        if: always()
         run: npm run build
