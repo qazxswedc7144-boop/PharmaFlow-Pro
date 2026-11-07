@@ -98,9 +98,6 @@ export class AtomicPostSaleService {
       : null;
 
     const executeLogic = async (tx: any) => {
-      const identityClauses: any[] = [{ invoiceNumber: validated.invoiceNumber }];
-      if (clientRefId) identityClauses.unshift({ clientRefId });
-
       const existingByClientRef = clientRefId
         ? await tx.invoice.findFirst({
             where: { tenantId, clientRefId },
