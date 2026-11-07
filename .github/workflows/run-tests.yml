@@ -35,6 +35,7 @@ jobs:
         run: >-
           npx vitest run
           server/tests/fifo-tenant-boundary.test.ts
+          server/tests/manual-journal-tenant-isolation.test.ts
           server/tests/payment-financial-integrity-atomicity.test.ts
           server/tests/tenant-isolation-phase2.test.ts
           server/tests/password-hash-compatibility.test.ts
