@@ -613,6 +613,7 @@ function MainLayout() {
   useEffect(() => {
     let stopCurrencyObserver: (() => void) | null = null;
     let syncEngine: DistributedSyncEngine | null = null;
+    let initializedTenantId: string | null = null;
 
     const init = async () => { 
       if (initDoneRef.current) return;
@@ -634,10 +635,14 @@ function MainLayout() {
       
       const session = getCurrentUserSession();
       if (!session.tenantId) {
+        // Do not mark initialization complete: the auth context can become available
+        // after the login screen mounts, and this effect will retry on tenant changes.
+        initDoneRef.current = false;
         console.warn("[App] Post-DB-Open initialization deferred: No active tenant session.");
         refreshGlobal();
         return;
       }
+      initializedTenantId = session.tenantId;
 
       await PeriodLockEngine.seedDefaultPeriod().catch(e => console.error(e));
 
@@ -691,6 +696,11 @@ function MainLayout() {
     });
     window.addEventListener('hashchange', parseRoute);
     return () => {
+      // If the authenticated tenant changed or logged out, allow a later session
+      // to initialize its own tenant-scoped background services.
+      if (initializedTenantId && getCurrentUserSession().tenantId !== initializedTenantId) {
+        initDoneRef.current = false;
+      }
       heartbeatService.stop();
       backupService.stopAutoTimer();
       if (syncEngine) {
@@ -704,7 +714,7 @@ function MainLayout() {
       window.removeEventListener('hashchange', parseRoute);
       RealtimeReplicationService.disconnect();
     };
-  }, [refreshGlobal, parseRoute, setCurrency, setSystemStatus, addToast]);
+  }, [refreshGlobal, parseRoute, setCurrency, setSystemStatus, addToast, loading, profile?.tenantId]);
 
   // Separate, lightweight adaptive threat monitor interval to prevent mobile CPU overload
   useEffect(() => {

@@ -60,12 +60,11 @@ export class FinancialHealthService {
   /**
    * Main entry point to refresh financial health data
    */
-  static async refreshHealthMonitor(): Promise<FinancialHealthSnapshot | null> {
+  static async refreshHealthMonitor(): Promise<FinancialHealthSnapshot> {
     const session = getCurrentUserSession();
     const tenantId = session.tenantId;
     if (!tenantId) {
-      console.warn('[FinancialHealthService] Skipping refreshHealthMonitor: No active tenant session.');
-      return null;
+      throw new Error('FAIL_CLOSED: لا يمكن تحديث المؤشر المالي دون جلسة مؤسسة نشطة.');
     }
     const assertTenantSession = () => {
       if (getCurrentUserSession().tenantId !== tenantId) {
