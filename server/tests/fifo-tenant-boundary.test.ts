@@ -39,6 +39,7 @@ describe("FifoService trusted tenant boundary", () => {
     expect(tx.inventoryMovement.create).not.toHaveBeenCalled();
     expect(tx.product.update).not.toHaveBeenCalled();
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw.mock.calls[0][0].values).toContain("TENANT-A");
   });
 
   it("rejects stock addition when the product belongs to a different tenant before creating a batch", async () => {
@@ -63,6 +64,7 @@ describe("FifoService trusted tenant boundary", () => {
     expect(tx.inventoryBatch.create).not.toHaveBeenCalled();
     expect(tx.inventoryMovement.create).not.toHaveBeenCalled();
     expect(tx.product.update).not.toHaveBeenCalled();
+    expect(tx.$queryRaw.mock.calls[0][0].values).toContain("TENANT-A");
   });
 
   it("fails closed when the trusted tenant is missing", async () => {
