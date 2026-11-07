@@ -179,6 +179,8 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(tx.inventoryMovement.findMany).not.toHaveBeenCalled();
     expect(result.effects[0].operation).toBe("CREATE");
     expect(tx.invoice.create.mock.calls[0][0].data.status).toBe("PENDING");
+  });
+
   it("preserves cancelled sale status when syncing a non-posting CREATE", async () => {
     const tx: any = {
       invoice: {
@@ -215,6 +217,5 @@ describe("Atomic POST_SALE server pricing", () => {
     expect(tx.invoice.create.mock.calls[0][0].data.status).toBe("CANCELLED");
     expect(mockPost).not.toHaveBeenCalled();
     expect(tx.inventoryMovement.findMany).not.toHaveBeenCalled();
-  });
   });
 });
