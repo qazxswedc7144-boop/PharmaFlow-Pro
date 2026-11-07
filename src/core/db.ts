@@ -1504,7 +1504,8 @@ export class PharmaFlowDB extends Dexie {
     _riskLevel: string, refId: string, _attachment: string, isReturn: boolean, date: string,
     transactionUuid?: string,
     tenantId?: string,
-    branchId?: string
+    branchId?: string,
+    discountPercent: number = 0
   ) {
     const invNum = this.generateId('INV');
     const nowIso = new Date().toISOString();
@@ -1532,6 +1533,7 @@ export class PharmaFlowDB extends Dexie {
       type: 'SALE',
       totalAmount: total || 0,
       subtotal: total || 0,
+      discountPercent: Number.isFinite(discountPercent) ? discountPercent : 0,
       tax: 0,
       finalTotal: total || 0,
       paidAmount: calculatedPaid,
