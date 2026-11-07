@@ -287,10 +287,22 @@ export class SyncProcessorService {
     const model = tx[modelName];
 
     // 🚨 SECURITY FIX: Case-insensitive POST detection
-    if ((upperEntity === "INVOICE" || upperEntity === "SALE") && operation === "POST") {
+    const isSalePostCommand =
+      (upperEntity === "INVOICE" && operation === "POST") ||
+      (upperEntity === "SALE" && (operation === "POST" || operation === "CREATE"));
+
+    if (isSalePostCommand) {
       try {
         const postResult = await AtomicPostSaleService.executePostSaleCommand({
-          payload: data, tenantId, userId: params.userId, username, userRole, branchId, ipAddress: "127.0.0.1", tx
+          payload: data,
+          tenantId,
+          userId: params.userId,
+          username,
+          userRole,
+          branchId,
+          ipAddress: "127.0.0.1",
+          tx,
+          postImmediately: operation === "POST"
         });
         return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
       } catch (err: any) {
