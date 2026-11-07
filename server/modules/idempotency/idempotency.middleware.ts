@@ -3,6 +3,7 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { IdempotencyService } from "./idempotency.service.js";
 import { getTenantContext } from "../../context/tenantContext.js";
+import { getJwtSecret } from "../../security/jwtSecrets.js";
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -13,17 +14,6 @@ export interface AuthenticatedRequest extends Request {
   };
   tenantId?: string;
 }
-
-const getJwtSecret = () => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("FATAL: JWT_SECRET environment variable is missing in production.");
-    }
-    return "pharmaflow-local-development-jwt-secure-secret-2026";
-  }
-  return secret;
-};
 
 /**
  * Enterprise Idempotency Middleware.
