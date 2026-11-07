@@ -85,7 +85,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
             username: req.user?.username || "",
             role: req.user?.role,
             tenantId,
-            branchId: typeof req.headers["x-branch-id"] === "string" ? req.headers["x-branch-id"] : undefined
+            branchId: req.user?.branchId || undefined
           }
         });
         itemData = pricing.itemData;
@@ -145,12 +145,6 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           type: data.type,
           partnerId: data.partnerId,
           partnerType: data.partnerType,
-          subtotalAmount: calculatedSubtotal,
-          discountPercent,
-          discountAmount,
-          taxRatePercent,
-          taxAmount,
-          taxMode,
           subtotalAmount,
           discountPercent,
           discountAmount,
