@@ -4,6 +4,7 @@ import rateLimit from "express-rate-limit";
 import securityRouter from "./routes/security.routes.js";
 import { authRouter } from "./routes/auth.routes.js";
 import { invoiceRouter } from "./routes/invoice.routes.js";
+import { salesPolicyRouter } from "./routes/sales-policy.routes.js";
 import { accountingRouter } from "./routes/accounting.routes.js";
 import { inventoryRouter } from "./routes/inventory.routes.js";
 import { lockingRouter } from "./modules/locking/locking.router.js";
@@ -220,6 +221,7 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   app.use("/api/v1/sync", syncV1Router);
   app.use("/api/sync", syncV1Router);
   app.use("/api/invoices", invoiceRouter);
+  app.use("/api/sales-policy", salesPolicyRouter);
   app.use("/api/accounting", accountingRouter);
   app.use("/api/inventory", inventoryRouter);
   app.use("/api/locks", lockingRouter);
