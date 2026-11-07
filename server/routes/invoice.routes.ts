@@ -141,6 +141,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       const createdInvoice = await tx.invoice.create({
         data: {
           invoiceNumber: data.invoiceNumber,
+          date: data.date,
           type: data.type,
           partnerId: data.partnerId,
           partnerType: data.partnerType,
