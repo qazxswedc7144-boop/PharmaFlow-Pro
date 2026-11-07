@@ -2,7 +2,7 @@ import express from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  executeRaw: vi.fn(),
+  queryRaw: vi.fn(),
   journalCreate: vi.fn(),
   findUnique: vi.fn(),
   findFirst: vi.fn(),
@@ -60,7 +60,7 @@ describe("POST /api/accounting/journal tenant isolation", () => {
 
     mocks.acquireLock.mockResolvedValue({ id: "lock-1" });
     mocks.releaseLock.mockResolvedValue(undefined);
-    mocks.executeRaw.mockResolvedValue([{ id: "account-a" }]);
+    mocks.queryRaw.mockResolvedValue([{ id: "account-a" }]);
     mocks.journalCreate.mockResolvedValue({ id: "journal-created" });
     mocks.findUnique.mockImplementation(async ({ where }: any) => ({
       id: where.id,
@@ -79,7 +79,7 @@ describe("POST /api/accounting/journal tenant isolation", () => {
 
     mocks.runInTransaction.mockImplementation(async (_service: string, callback: (tx: any) => Promise<any>) => {
       const tx = {
-        $executeRaw: mocks.executeRaw,
+        $queryRaw: mocks.queryRaw,
         journalEntry: { create: mocks.journalCreate },
         account: {
           findUnique: mocks.findUnique,
@@ -127,10 +127,14 @@ describe("POST /api/accounting/journal tenant isolation", () => {
     });
 
     expect(response.status).toBe(400);
-    expect(mocks.executeRaw).toHaveBeenCalled();
+    expect(mocks.queryRaw).toHaveBeenCalled();
     expect(mocks.findFirst).toHaveBeenCalledWith({
-      where: { id: "account-b", tenantId: "TENANT-A" }
+      where: { id: "account-b", tenantId: "TENANT-A" },
+      select: { id: true, version: true }
     });
+    const accountLockQuery = mocks.queryRaw.mock.calls[0][0];
+    expect(accountLockQuery.sql.join(" ")).toContain('"tenantId"');
+    expect(accountLockQuery.values).toContain("TENANT-A");
     expect(mocks.journalCreate).not.toHaveBeenCalled();
     expect(mocks.accountUpdate).not.toHaveBeenCalled();
     expect(mocks.auditCreate).not.toHaveBeenCalled();
