@@ -38,7 +38,10 @@ describe("sync INVOICE POST type routing", () => {
 
   it("routes PURCHASE POST to the purchase-capable ledger service, not the SALE service", async () => {
     const purchaseInvoice = { id: "purchase-invoice-a", tenantId: base.tenantId, type: "PURCHASE", documentStatus: "ACTIVE", status: "DRAFT", items: [] };
-    const tx: any = { invoice: { findFirst: vi.fn().mockResolvedValue(purchaseInvoice) } };
+    const tx: any = {
+      invoice: { findFirst: vi.fn().mockResolvedValue(purchaseInvoice) },
+      journalEntry: { findFirst: vi.fn().mockResolvedValue({ id: "journal-purchase", lines: [] }) },
+    };
     const result = await (SyncProcessorService as any).executeEntityMutation({
       ...base, tx,
       mutation: { id: "mutation-purchase-a", entity: "INVOICE", entityId: purchaseInvoice.id, operation: "POST", payload: { id: purchaseInvoice.id, type: "PURCHASE" } },
