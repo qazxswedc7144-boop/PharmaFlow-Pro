@@ -101,8 +101,14 @@ export class AtomicPostSaleService {
       const identityClauses: any[] = [{ invoiceNumber: validated.invoiceNumber }];
       if (clientRefId) identityClauses.unshift({ clientRefId });
 
-      const existing = await tx.invoice.findFirst({
-        where: { tenantId, OR: identityClauses },
+      const existingByClientRef = clientRefId
+        ? await tx.invoice.findFirst({
+            where: { tenantId, clientRefId },
+            include: { items: true }
+          })
+        : null;
+      const existing = existingByClientRef || await tx.invoice.findFirst({
+        where: { tenantId, invoiceNumber: validated.invoiceNumber },
         include: { items: true }
       });
 
