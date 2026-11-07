@@ -3,17 +3,7 @@ import { Response, NextFunction } from "express";
 import { AuthenticatedRequest } from "./auth.middleware.js";
 import { SaasService } from "../modules/saas/saas.service.js";
 import jwt from "jsonwebtoken";
-
-const getJwtSecret = () => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("FATAL: JWT_SECRET environment variable is missing in production.");
-    }
-    return "pharmaflow-local-development-jwt-secure-secret-2026";
-  }
-  return secret;
-};
+import { getJwtSecret } from "../security/jwtSecrets.js";
 
 /**
  * Route-level interceptor that filters all mutations (POST, PUT, DELETE).
