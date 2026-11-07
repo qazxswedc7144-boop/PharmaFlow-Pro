@@ -494,6 +494,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
             options: { 
               isCash: header.payment_method === 'Cash', 
               paymentStatus: header.payment_method === 'Cash' ? 'Cash' : 'Credit',
+              discountPercent: adjData.discountPercent,
               isReturn: header.isReturn, 
               currency,
               invoiceStatus: header.status,
@@ -654,6 +655,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
           options: { 
             isCash: header.payment_method === 'Cash', 
             paymentStatus: header.payment_method === 'Cash' ? 'Cash' : 'Credit',
+            discountPercent: adjData.discountPercent,
             invoiceStatus: nextStatus, 
             isReturn: header.isReturn, 
             currency,
