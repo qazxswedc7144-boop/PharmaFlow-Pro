@@ -68,12 +68,20 @@ describe("Atomic POST_SALE server pricing", () => {
     };
 
     const result = await AtomicPostSaleService.executePostSaleCommand({
+      // This is the actual outbox shape emitted by WorkflowExecution:
+      // { refId, sale: { ...legacy local invoice fields... } }.
       payload: {
-        invoiceNumber: "SYNC-SALE-001",
-        type: "SALE",
-        totalAmount: 1,
-        paymentStatus: "UNPAID",
-        items: [{ productId, qty: 2, price: 1 }],
+        id: "invoice-sync-a",
+        refId: "SYNC-SALE-001",
+        sale: {
+          invoiceNumber: "SYNC-SALE-001",
+          type: "SALE",
+          partnerId: "CUST-GEN",
+          paymentStatus: "Cash",
+          totalAmount: 2,
+          discountPercent: 5,
+          items: [{ product_id: productId, qty: 2, price: 1, sum: 2, name: "Tampered item" }],
+        },
       },
       tenantId,
       userId: "user-sync-a",
@@ -89,7 +97,7 @@ describe("Atomic POST_SALE server pricing", () => {
       tx,
       expect.objectContaining({
         tenantId,
-        discountPercent: undefined,
+        discountPercent: 5,
         user: expect.objectContaining({
           userId: "user-sync-a",
           username: "sync-cashier",
