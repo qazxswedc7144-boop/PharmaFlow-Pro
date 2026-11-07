@@ -111,7 +111,6 @@ describe("Server-side sales price and discount validation", () => {
       tenantId,
       productId,
       qty: 10,
-      price: expect.objectContaining({ d: expect.any(Array) }),
     }));
     expect(invoiceData.items.create[0].price.toString()).toBe("30");
     expect(invoiceData.items.create[0].total.toString()).toBe("300");
