@@ -508,7 +508,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     } finally {
       setIsAutoSaving(false);
     }
-  }, [header, items, vTotalSum, isDuplicate, isAdmin, isLocked, editingInvoiceId, currency]);
+  }, [header, items, adjData, vTotalSum, isDuplicate, isAdmin, isLocked, editingInvoiceId, currency]);
 
   const selectProduct = useCallback(async (p: Product) => {
     try {
@@ -722,7 +722,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     } finally {
       setIsSaving(false);
     }
-  }, [items, isLocked, isDuplicate, savePhase, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification]);
+  }, [items, isLocked, isDuplicate, savePhase, vTotalSum, adjData, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification]);
 
   const getStatusLabel = (status: string) => {
     switch(status) {
