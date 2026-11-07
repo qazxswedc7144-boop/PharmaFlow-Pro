@@ -92,16 +92,61 @@ export class AtomicPostSaleService {
       throw new Error("Invalid command: POST_SALE only supports SALE type.");
     }
 
+    const clientRefCandidate = payload?.refId ?? payload?.id ?? source?.id;
+    const clientRefId = typeof clientRefCandidate === "string" && clientRefCandidate.trim()
+      ? clientRefCandidate.trim()
+      : null;
+
     const executeLogic = async (tx: any) => {
+      const identityClauses: any[] = [{ invoiceNumber: validated.invoiceNumber }];
+      if (clientRefId) identityClauses.unshift({ clientRefId });
+
       const existing = await tx.invoice.findFirst({
-        where: {
-          invoiceNumber: validated.invoiceNumber,
-          tenantId
-        }
+        where: { tenantId, OR: identityClauses },
+        include: { items: true }
       });
 
-      if (existing) {
-        throw new Error(`INVOICE_EXISTS: رقم الفاتورة [${validated.invoiceNumber}] مسجل مسبقاً.`);
+      if (existing && existing.type !== "SALE") {
+        throw new Error("INVOICE_TYPE_CONFLICT: Existing invoice is not a SALE.");
+      }
+      if (existing && clientRefId && existing.clientRefId && existing.clientRefId !== clientRefId) {
+        throw new Error("INVOICE_IDENTITY_CONFLICT: Invoice number belongs to another offline document.");
+      }
+      if (existing && (existing.documentStatus === DocumentStatus.POSTED ||
+          existing.documentStatus === DocumentStatus.LOCKED ||
+          existing.status === InvoiceStatus.CONFIRMED)) {
+        return {
+          success: true,
+          idempotent: true,
+          invoiceId: existing.id,
+          invoiceNumber: existing.invoiceNumber,
+          journalId: null,
+          cogs: 0,
+          effects: []
+        };
+      }
+      if (existing && existing.documentStatus === DocumentStatus.ARCHIVED) {
+        throw new Error("INVOICE_ARCHIVED: Archived invoices cannot be changed or posted.");
+      }
+      if (existing && existing.status === InvoiceStatus.CANCELLED) {
+        if (postImmediately) {
+          throw new Error("INVOICE_CANCELLED: Cancelled invoices cannot be posted.");
+        }
+        return {
+          success: true,
+          idempotent: true,
+          invoiceId: existing.id,
+          invoiceNumber: existing.invoiceNumber,
+          journalId: null,
+          cogs: 0,
+          effects: []
+        };
+      }
+      if (postImmediately && createStatus === "CANCELLED") {
+        throw new Error("INVOICE_CANCELLED: Cancelled invoices cannot be posted.");
+      }
+      if (existing?.branchId && branchId && existing.branchId !== branchId) {
+        throw new Error("INVOICE_BRANCH_MISMATCH: Draft belongs to a different branch.");
       }
 
       const pricing = await SalesPricingService.calculate(tx, {
@@ -117,37 +162,50 @@ export class AtomicPostSaleService {
         }
       });
 
-      const invoice: any = await tx.invoice.create({
-        data: {
-          invoiceNumber: validated.invoiceNumber,
-          type: "SALE",
-          partnerId: validated.partnerId,
-          partnerType: validated.partnerType,
-          branchId: branchId || undefined,
-          subtotalAmount: pricing.subtotalAmount,
-          discountPercent: pricing.discountPercent,
-          discountAmount: pricing.discountAmount,
-          taxRatePercent: pricing.taxRatePercent,
-          taxAmount: pricing.taxAmount,
-          taxMode: pricing.taxMode,
-          totalAmount: pricing.totalAmount,
-          status: postImmediately ? InvoiceStatus.DRAFT : (validated.status === "CANCELLED" ? InvoiceStatus.CANCELLED : validated.status === "PENDING" ? InvoiceStatus.PENDING : InvoiceStatus.DRAFT),
-          paymentStatus: validated.paymentStatus,
-          date: validated.date,
-          documentStatus: DocumentStatus.ACTIVE,
-          tenantId,
-          items: {
-            create: pricing.itemData
-          }
-        },
-        include: {
-          items: {
-            include: {
-              product: true
-            }
-          }
-        }
-      });
+      // A repeated CREATE updates the same tenant-owned draft; POST promotes that
+      // draft using freshly calculated catalog prices, discount policy, and tax.
+      const invoiceData = {
+        invoiceNumber: validated.invoiceNumber,
+        clientRefId: clientRefId ?? existing?.clientRefId ?? undefined,
+        type: "SALE" as const,
+        partnerId: validated.partnerId ?? existing?.partnerId ?? null,
+        partnerType: validated.partnerType ?? existing?.partnerType ?? null,
+        branchId: branchId || existing?.branchId || undefined,
+        subtotalAmount: pricing.subtotalAmount,
+        discountPercent: pricing.discountPercent,
+        discountAmount: pricing.discountAmount,
+        taxRatePercent: pricing.taxRatePercent,
+        taxAmount: pricing.taxAmount,
+        taxMode: pricing.taxMode,
+        totalAmount: pricing.totalAmount,
+        status: postImmediately
+          ? InvoiceStatus.DRAFT
+          : (createStatus === "CANCELLED" ? InvoiceStatus.CANCELLED : createStatus === "PENDING" ? InvoiceStatus.PENDING : InvoiceStatus.DRAFT),
+        paymentStatus: validated.paymentStatus,
+        date: validated.date ?? existing?.date,
+        documentStatus: DocumentStatus.ACTIVE,
+        tenantId
+      };
+
+      const invoice: any = existing
+        ? await tx.invoice.update({
+            where: { id_tenantId: { id: existing.id, tenantId } },
+            data: {
+              ...invoiceData,
+              items: {
+                deleteMany: {},
+                create: pricing.itemData
+              }
+            },
+            include: { items: { include: { product: true } } }
+          })
+        : await tx.invoice.create({
+            data: {
+              ...invoiceData,
+              items: { create: pricing.itemData }
+            },
+            include: { items: { include: { product: true } } }
+          });
 
       const postResult = postImmediately
         ? await FinancialTransactionService.executeInvoiceLedgerPosting(
@@ -185,7 +243,6 @@ export class AtomicPostSaleService {
         : [];
 
       const effects: SyncEffect[] = [];
-
       if (finalInvoice) {
         effects.push({
           entity: "INVOICE",
@@ -194,7 +251,6 @@ export class AtomicPostSaleService {
           payload: finalInvoice
         });
       }
-
       if (journalEntry) {
         effects.push({
           entity: "JOURNAL_ENTRY",
@@ -203,7 +259,6 @@ export class AtomicPostSaleService {
           payload: journalEntry
         });
       }
-
       for (const movement of movements) {
         effects.push({
           entity: "INVENTORY_MOVEMENT",
@@ -215,6 +270,7 @@ export class AtomicPostSaleService {
 
       return {
         success: true,
+        idempotent: false,
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         journalId: postResult.journalId,
