@@ -11,24 +11,13 @@ import { authenticateToken, requireRoles, AuthenticatedRequest } from "../middle
 import { AuthorizationService } from "../services/rbac/authorization.service.js";
 import { PermissionService } from "../services/rbac/permission.service.js";
 
-import rateLimit from "express-rate-limit";
 import { verifyPasswordHash } from '../security/passwordHash.js';
 import { getJwtSecret, getJwtRefreshSecret } from "../security/jwtSecrets.js";
-import { loginAttemptGuard, recordFailedLoginAttempt, LoginAttemptAuditError } from "../security/loginAttemptGuard.js";
+import { loginAttemptGuard, releaseLoginAttempt, recordFailedLoginAttempt, LoginAttemptAuditError, LoginAttemptStoreError } from "../security/loginAttemptGuard.js";
 
 export const authRouter = Router();
 
-const loginRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: {
-    error: "RATE_LIMIT_EXCEEDED",
-    message: "تم تقييد محاولات تسجيل الدخول حماية للحسابات من هجمات القوة الغاشمة. يرجى الانتظار 15 دقيقة."
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: { default: false }
-});
+
 
 /**
  * GET /api/auth/bootstrap-status
@@ -285,7 +274,7 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
  * POST /api/auth/login
  * Standard user authenticate credentials with audit tracking
  */
-authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), loginAttemptGuard, async (req: Request, res: Response) => {
+authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
 
@@ -318,6 +307,9 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), lo
         message: "اسم المستخدم أو كلمة المرور غير صحيحة."
       });
     }
+
+    // A valid password must not consume a failed-login reservation.
+    await releaseLoginAttempt(req);
 
     // 3. Reject inactive users
     if (!user.isActive) {
@@ -490,7 +482,7 @@ authRouter.post("/login", loginRateLimiter, validateRequestBody(LoginSchema), lo
       permissions
     });
   } catch (err: any) {
-    if (err instanceof LoginAttemptAuditError) {
+    if (err instanceof LoginAttemptAuditError || err instanceof LoginAttemptStoreError) {
       return res.status(503).json({
         error: "AUTH_TEMPORARILY_UNAVAILABLE",
         message: "تعذر تسجيل محاولة الدخول بأمان. يرجى المحاولة لاحقاً."
