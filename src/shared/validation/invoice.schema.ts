@@ -14,6 +14,7 @@ export const InvoiceItemSchema = z.object({
 
 export const InvoiceSchema = z.object({
   invoiceNumber: z.string().trim().min(3, "رقم الفاتورة يجب أن يحتوي على 3 أرقام أو حروف على الأقل").max(50),
+  date: z.coerce.date().optional(),
   type: z.enum(["SALE", "PURCHASE", "RETURN_SALE", "RETURN_PURCHASE"]),
   partnerId: z.string().uuid("معرّف الشريك يجب أن يكون UUID صالح").nullable().optional(),
   partnerType: z.enum(["CUSTOMER", "SUPPLIER"]).nullable().optional(),
