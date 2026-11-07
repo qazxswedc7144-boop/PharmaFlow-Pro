@@ -92,16 +92,85 @@ export class AtomicPostSaleService {
       throw new Error("Invalid command: POST_SALE only supports SALE type.");
     }
 
+    const clientRefCandidate = payload?.refId ?? payload?.id ?? source?.id;
+    const clientRefId = typeof clientRefCandidate === "string" && clientRefCandidate.trim()
+      ? clientRefCandidate.trim()
+      : null;
+
     const executeLogic = async (tx: any) => {
-      const existing = await tx.invoice.findFirst({
-        where: {
-          invoiceNumber: validated.invoiceNumber,
-          tenantId
-        }
+      const existingByClientRef = clientRefId
+        ? await tx.invoice.findFirst({
+            where: { tenantId, clientRefId },
+            include: { items: true }
+          })
+        : null;
+      let existing = existingByClientRef || await tx.invoice.findFirst({
+        where: { tenantId, invoiceNumber: validated.invoiceNumber },
+        include: { items: true }
       });
 
+      // Lock and re-read the draft before changing it. Two different sync keys
+      // can race; the second transaction must observe POSTED after the first commits.
       if (existing) {
-        throw new Error(`INVOICE_EXISTS: رقم الفاتورة [${validated.invoiceNumber}] مسجل مسبقاً.`);
+        const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT id
+            FROM "invoices"
+           WHERE id = ${existing.id} AND "tenantId" = ${tenantId}
+           FOR UPDATE
+        `;
+        if (!lockedRows?.length) {
+          throw new Error("INVOICE_NOT_FOUND: Invoice disappeared while acquiring its tenant-scoped lock.");
+        }
+        existing = await tx.invoice.findFirst({
+          where: { id: existing.id, tenantId },
+          include: { items: true }
+        });
+        if (!existing) {
+          throw new Error("INVOICE_NOT_FOUND: Invoice disappeared after acquiring its lock.");
+        }
+      }
+
+      if (existing && existing.type !== "SALE") {
+        throw new Error("INVOICE_TYPE_CONFLICT: Existing invoice is not a SALE.");
+      }
+      if (existing && clientRefId && existing.clientRefId && existing.clientRefId !== clientRefId) {
+        throw new Error("INVOICE_IDENTITY_CONFLICT: Invoice number belongs to another offline document.");
+      }
+      if (existing && (existing.documentStatus === DocumentStatus.POSTED ||
+          existing.documentStatus === DocumentStatus.LOCKED ||
+          existing.status === InvoiceStatus.CONFIRMED)) {
+        return {
+          success: true,
+          idempotent: true,
+          invoiceId: existing.id,
+          invoiceNumber: existing.invoiceNumber,
+          journalId: null,
+          cogs: 0,
+          effects: []
+        };
+      }
+      if (existing && existing.documentStatus === DocumentStatus.ARCHIVED) {
+        throw new Error("INVOICE_ARCHIVED: Archived invoices cannot be changed or posted.");
+      }
+      if (existing && existing.status === InvoiceStatus.CANCELLED) {
+        if (postImmediately) {
+          throw new Error("INVOICE_CANCELLED: Cancelled invoices cannot be posted.");
+        }
+        return {
+          success: true,
+          idempotent: true,
+          invoiceId: existing.id,
+          invoiceNumber: existing.invoiceNumber,
+          journalId: null,
+          cogs: 0,
+          effects: []
+        };
+      }
+      if (postImmediately && createStatus === "CANCELLED") {
+        throw new Error("INVOICE_CANCELLED: Cancelled invoices cannot be posted.");
+      }
+      if (existing?.branchId && branchId && existing.branchId !== branchId) {
+        throw new Error("INVOICE_BRANCH_MISMATCH: Draft belongs to a different branch.");
       }
 
       const pricing = await SalesPricingService.calculate(tx, {
@@ -117,37 +186,50 @@ export class AtomicPostSaleService {
         }
       });
 
-      const invoice: any = await tx.invoice.create({
-        data: {
-          invoiceNumber: validated.invoiceNumber,
-          type: "SALE",
-          partnerId: validated.partnerId,
-          partnerType: validated.partnerType,
-          branchId: branchId || undefined,
-          subtotalAmount: pricing.subtotalAmount,
-          discountPercent: pricing.discountPercent,
-          discountAmount: pricing.discountAmount,
-          taxRatePercent: pricing.taxRatePercent,
-          taxAmount: pricing.taxAmount,
-          taxMode: pricing.taxMode,
-          totalAmount: pricing.totalAmount,
-          status: postImmediately ? InvoiceStatus.DRAFT : (validated.status === "CANCELLED" ? InvoiceStatus.CANCELLED : validated.status === "PENDING" ? InvoiceStatus.PENDING : InvoiceStatus.DRAFT),
-          paymentStatus: validated.paymentStatus,
-          date: validated.date,
-          documentStatus: DocumentStatus.ACTIVE,
-          tenantId,
-          items: {
-            create: pricing.itemData
-          }
-        },
-        include: {
-          items: {
-            include: {
-              product: true
-            }
-          }
-        }
-      });
+      // A repeated CREATE updates the same tenant-owned draft; POST promotes that
+      // draft using freshly calculated catalog prices, discount policy, and tax.
+      const invoiceData = {
+        invoiceNumber: validated.invoiceNumber,
+        clientRefId: clientRefId ?? existing?.clientRefId ?? undefined,
+        type: "SALE" as const,
+        partnerId: validated.partnerId ?? existing?.partnerId ?? null,
+        partnerType: validated.partnerType ?? existing?.partnerType ?? null,
+        branchId: branchId || existing?.branchId || undefined,
+        subtotalAmount: pricing.subtotalAmount,
+        discountPercent: pricing.discountPercent,
+        discountAmount: pricing.discountAmount,
+        taxRatePercent: pricing.taxRatePercent,
+        taxAmount: pricing.taxAmount,
+        taxMode: pricing.taxMode,
+        totalAmount: pricing.totalAmount,
+        status: postImmediately
+          ? InvoiceStatus.DRAFT
+          : (createStatus === "CANCELLED" ? InvoiceStatus.CANCELLED : createStatus === "PENDING" ? InvoiceStatus.PENDING : InvoiceStatus.DRAFT),
+        paymentStatus: validated.paymentStatus,
+        date: validated.date ?? existing?.date,
+        documentStatus: DocumentStatus.ACTIVE,
+        tenantId
+      };
+
+      const invoice: any = existing
+        ? await tx.invoice.update({
+            where: { id_tenantId: { id: existing.id, tenantId } },
+            data: {
+              ...invoiceData,
+              items: {
+                deleteMany: {},
+                create: pricing.itemData
+              }
+            },
+            include: { items: { include: { product: true } } }
+          })
+        : await tx.invoice.create({
+            data: {
+              ...invoiceData,
+              items: { create: pricing.itemData }
+            },
+            include: { items: { include: { product: true } } }
+          });
 
       const postResult = postImmediately
         ? await FinancialTransactionService.executeInvoiceLedgerPosting(
@@ -185,7 +267,6 @@ export class AtomicPostSaleService {
         : [];
 
       const effects: SyncEffect[] = [];
-
       if (finalInvoice) {
         effects.push({
           entity: "INVOICE",
@@ -194,7 +275,6 @@ export class AtomicPostSaleService {
           payload: finalInvoice
         });
       }
-
       if (journalEntry) {
         effects.push({
           entity: "JOURNAL_ENTRY",
@@ -203,7 +283,6 @@ export class AtomicPostSaleService {
           payload: journalEntry
         });
       }
-
       for (const movement of movements) {
         effects.push({
           entity: "INVENTORY_MOVEMENT",
@@ -215,6 +294,7 @@ export class AtomicPostSaleService {
 
       return {
         success: true,
+        idempotent: false,
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         journalId: postResult.journalId,
