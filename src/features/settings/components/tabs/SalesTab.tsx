@@ -6,12 +6,11 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 
 type SalesTaxMode = 'NONE' | 'EXCLUSIVE' | 'INCLUSIVE';
 
-function buildAuthHeaders(): Headers {
-  const headers = new Headers();
-  for (const [key, value] of Object.entries(TokenProvider.getAuthHeaders())) {
-    if (typeof value === 'string' && value.length > 0) headers.set(key, value);
-  }
-  return headers;
+function buildAuthHeaders(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(TokenProvider.getAuthHeaders())
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0)
+  );
 }
 
 interface SalesPolicy {
