@@ -138,8 +138,9 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
       include: { lines: { include: { account: true } } },
     });
     expect(journal).toBeTruthy();
-    expect(Number(journal?.debitTotal)).toBe(10.35);
-    expect(Number(journal?.creditTotal)).toBe(10.35);
+    // The journal includes the balanced FIFO COGS / inventory pair in addition to the sale settlement.
+    expect(Number(journal?.debitTotal)).toBe(13.35);
+    expect(Number(journal?.creditTotal)).toBe(13.35);
     expect(journal?.lines.some((line) => line.account.code === "401001" && Number(line.credit) === 9)).toBe(true);
     expect(journal?.lines.some((line) => line.account.code === "203001" && Number(line.credit) === 1.35)).toBe(true);
   });
