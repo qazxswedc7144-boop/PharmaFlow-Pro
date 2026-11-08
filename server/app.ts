@@ -11,7 +11,7 @@ import { consolidationRouter } from "./modules/consolidation/consolidation.route
 import { replicationRouter } from "./modules/replication/replication.router.js";
 import { saasRouter } from "./modules/saas/saas.router.js";
 import { aiRouter } from "./routes/ai.routes.js";
-import { idempotencyMiddleware } from "./modules/idempotency/idempotency.middleware.js";
+import { idempotencyMiddleware, shouldApplyIdempotency } from "./modules/idempotency/idempotency.middleware.js";
 import { requestContextPlugin } from "../apps/api/src/plugins/request-context.js";
 import { authV1Router } from "../apps/api/src/modules/auth/auth.routes.js";
 import { syncV1Router } from "../apps/api/src/modules/sync/sync.routes.js";
