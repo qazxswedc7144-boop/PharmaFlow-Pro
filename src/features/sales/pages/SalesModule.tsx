@@ -370,7 +370,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
                       <p className="text-[11px] font-bold text-slate-400">{p.categoryName || 'عام'}</p>
                     </div>
                     <div className="text-left">
-                      <p className="text-[11px] font-black text-emerald-600">{p.UnitPrice} {currency}</p>
+                      <p className="text-[11px] font-black text-emerald-600">{(p as any).price ?? p.UnitPrice ?? 0} {currency}</p>
                     </div>
                   </button>
                 ))}
