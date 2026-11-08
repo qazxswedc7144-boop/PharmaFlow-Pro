@@ -5,8 +5,18 @@ import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integr
 definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
   it("registers a device and executes Sync Push/Pull over real HTTP with PostgreSQL persistence", async () => {
     const ctx = getContext();
+    const logMemory = (stage: string) => {
+      const memory = process.memoryUsage();
+      console.info(`[PostgreSQL HTTP] Sync test ${stage} (MB):`, {
+        rss: Math.round(memory.rss / 1024 / 1024),
+        heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memory.heapTotal / 1024 / 1024),
+      });
+    };
+    logMemory("started");
     const { prisma } = await import("../database/prisma.js");
     const deviceId = `ci-device-${ctx.suffix}`;
+    logMemory("before device registration");
     const registration = await request(ctx, "/api/v1/sync/device/register", {
       method: "POST",
       token: ctx.tokenA,
@@ -21,6 +31,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
 
     expect(registration.status, JSON.stringify(registration.body)).toBe(200);
     expect(registration.body.success).toBe(true);
+    logMemory("after device registration");
 
     const persistedDevice = await prisma.deviceRegistration.findUnique({ where: { deviceId } });
     expect(persistedDevice?.tenantId).toBe(ctx.tenantAId);
@@ -29,6 +40,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     const customerId = randomUUID();
     const mutationId = randomUUID();
     const mutationKey = randomUUID();
+    logMemory("before push request");
     const push = await request(ctx, "/api/v1/sync/push", {
       method: "POST",
       token: ctx.tokenA,
@@ -51,6 +63,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
 
     expect(push.status, JSON.stringify(push.body)).toBe(200);
     expect(push.body.results?.[0]?.status).toBe("SUCCESS");
+    logMemory("after push request");
 
     const persistedCustomer = await prisma.customer.findUnique({ where: { id: customerId } });
     expect(persistedCustomer?.tenantId).toBe(ctx.tenantAId);
@@ -61,6 +74,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     });
     expect(persistedIdempotency).toBeTruthy();
 
+    logMemory("before pull request");
     const pull = await request(ctx, "/api/v1/sync/pull", {
       method: "POST",
       token: ctx.tokenA,
@@ -68,6 +82,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     });
     expect(pull.status, JSON.stringify(pull.body)).toBe(200);
     expect(pull.body.success).toBe(true);
+    logMemory("after pull request");
     expect(pull.body.tenantId).toBe(ctx.tenantAId);
     expect(pull.body.changes).toEqual(
       expect.arrayContaining([expect.objectContaining({ entity: "CUSTOMER", entityId: customerId })])
