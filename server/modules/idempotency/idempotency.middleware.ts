@@ -23,22 +23,19 @@ export function shouldApplyIdempotency(req: Pick<Request, "method" | "path" | "o
   const method = req.method.toUpperCase();
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
 
-  const requestPath = (req.path || req.originalUrl || "").split("?")[0].replace(/\\/+$/, "") || "/";
+  const rawPath = (req.path || req.originalUrl || "").split("?")[0];
+  let requestPath = rawPath;
+
+  // Remove trailing slashes without regular expressions.
+  while (requestPath.length > 1 && requestPath.endsWith("/")) {
+    requestPath = requestPath.slice(0, -1);
+  }
+
   // Sync pull is a read operation despite using POST for its transport contract.
-  if (/^\\/api\\/(?:v1\\/)?sync\\/pull$/i.test(requestPath)) return false;
-
-  return true;
+  const normalizedPath = requestPath.toLowerCase();
+  return normalizedPath !== "/api/sync/pull" &&
+    normalizedPath !== "/api/v1/sync/pull";
 }
-
-export function shouldApplyIdempotency(req: Pick<Request, "method" | "path" | "originalUrl">): boolean {
-  const method = req.method.toUpperCase();
-  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
-
-  const requestPath = (req.path || req.originalUrl || "").split("?")[0].replace(/\/+$/, "") || "/";
-  // Sync pull is a read operation despite using POST for its transport contract.
-  return !/^\/api\/(?:v1\/)?sync\/pull$/i.test(requestPath);
-}
-
 export async function idempotencyMiddleware(req: Request, res: Response, next: NextFunction) {
   const keyHeader = req.headers["idempotency-key"];
   
