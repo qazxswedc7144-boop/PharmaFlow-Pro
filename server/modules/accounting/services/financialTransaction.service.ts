@@ -274,7 +274,7 @@ export class FinancialTransactionService {
       ledgerLines.push({
         accountId: invAcc.id,
         debit: totalInvoiceAmount,
-        credit: 0,
+        credit: ZERO,
         description: `زيادة مخزون مشتريات فاتورة #${invoice.invoiceNumber}`
       });
 
