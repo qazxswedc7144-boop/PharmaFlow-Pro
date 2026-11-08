@@ -3,9 +3,21 @@ import { AccountingEngine } from './AccountingEngine';
 import { CurrencyService } from '@/services/localization/CurrencyService';
 import 'fake-indexeddb/auto';
 import { db } from '@/core/db';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 
 describe('AccountingEngine local SALE tax split', () => {
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    TokenProvider.setSession(
+      { id: 'USER-UNIT-001', tenantId: 'TENANT-UNIT-001', role: 'admin' } as any,
+      'unit-test-access-token',
+      { tenantId: 'TENANT-UNIT-001', branchId: 'BRANCH-UNIT-001', roles: ['admin'] }
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    TokenProvider.clearSession();
+  });
 
   it('debits receivables for gross total and credits net revenue plus tax payable', async () => {
     const accounts: Record<string, string> = {
