@@ -3,6 +3,7 @@ import { PrismaClient } from "@prisma/client";
 // Retry configuration
 const MAX_RETRIES = 3;
 const INITIAL_DELAY = 1000;
+const OFFLINE_RETRY_INTERVAL_MS = 5000;
 
 export class OfflineDatabaseError extends Error {
   constructor(model: string, operation: string) {
@@ -14,6 +15,22 @@ export class OfflineDatabaseError extends Error {
 let basePrisma: PrismaClient | null = null;
 let isDatabaseDisabled = false;
 let disabledUntil = 0;
+
+function refreshDatabaseState(): void {
+  if (isDatabaseDisabled && disabledUntil > 0 && Date.now() >= disabledUntil) {
+    isDatabaseDisabled = false;
+    disabledUntil = 0;
+    console.info("[Prisma] Offline cooldown elapsed. A new database connection will be attempted.");
+  }
+}
+
+function enterOfflineMode(reason?: unknown): void {
+  isDatabaseDisabled = true;
+  disabledUntil = Date.now() + OFFLINE_RETRY_INTERVAL_MS;
+  if (reason) {
+    console.info("[Prisma] Database temporarily unavailable; retry scheduled after cooldown.");
+  }
+}
 
 function isConnectionError(err: any): boolean {
   if (!err) return false;
@@ -69,60 +86,38 @@ function handleOfflineFallback<T>(operationName: string): T {
   return null as unknown as T;
 }
 
+/**
+ * Preserve Prisma's delegate shape while the database is unavailable.
+ * Every database operation rejects explicitly; no fake records or success values
+ * are returned from this proxy in any environment.
+ */
 function getOfflineProxy(): PrismaClient {
   return new Proxy({} as any, {
     get: (_target, prop) => {
       if (prop === '$connect' || prop === '$disconnect') return async () => {};
-      
-      // In production, the proxy should throw for all operations to prevent silent failures
-      if (isProduction) {
+      if (prop === '$transaction' || prop === '$queryRaw' || prop === '$executeRaw' || prop === '$executeRawUnsafe' || prop === '$queryRawUnsafe') {
         return async () => {
           throw new OfflineDatabaseError('Prisma', String(prop));
         };
       }
+      if (typeof prop === 'symbol' || prop === 'then' || prop === 'toJSON') return undefined;
 
-      if (prop === '$transaction') {
-        return async () => {
-          throw new OfflineDatabaseError('Prisma', '$transaction');
-        };
-      }
-      if (prop === '$queryRaw' || prop === '$executeRaw' || prop === '$executeRawUnsafe' || prop === '$queryRawUnsafe') {
-        return async () => [];
-      }
-      
       return new Proxy({}, {
         get: (_modelTarget, modelProp) => {
-          const operation = String(modelProp);
-          
-          // Read operations
-          if (['findUnique', 'findFirst', 'findUniqueOrThrow', 'findFirstOrThrow'].includes(operation)) {
-            return async () => null;
-          }
-          if (['findMany', 'groupBy'].includes(operation)) {
-            return async () => [];
-          }
-          if (operation === 'count') {
-            return async () => 0;
-          }
-          
-          // Write operations
-          if (['createMany', 'updateMany', 'deleteMany'].includes(operation)) {
-            return async () => ({ count: 0 });
-          }
-          if (['create', 'update', 'delete', 'upsert'].includes(operation)) {
-            return async () => ({ id: 'offline-' + Date.now(), createdAt: new Date(), updatedAt: new Date() });
-          }
-          
-          return async () => null;
+          if (typeof modelProp === 'symbol') return undefined;
+          return async () => {
+            throw new OfflineDatabaseError(String(prop), String(modelProp));
+          };
         }
       });
     }
   });
 }
 
-// Resilient wrapper with retry and offline fallback on connection/auth errors
+// Resilient wrapper with bounded offline cooldown and automatic reconnect attempts.
 async function withRetry<T>(operation: () => Promise<T>, operationName: string): Promise<T> {
-  if (isDatabaseDisabled || (disabledUntil > 0 && Date.now() < disabledUntil)) {
+  refreshDatabaseState();
+  if (isDatabaseDisabled) {
     return handleOfflineFallback<T>(operationName);
   }
 
@@ -131,17 +126,17 @@ async function withRetry<T>(operation: () => Promise<T>, operationName: string):
       return await operation();
     } catch (error: any) {
       if (isConnectionError(error)) {
-        isDatabaseDisabled = true;
+        enterOfflineMode(error);
         if (basePrisma) {
           const clientToDisconnect = basePrisma;
           basePrisma = null;
           try {
-            clientToDisconnect.$disconnect().catch(() => {});
+            await clientToDisconnect.$disconnect();
           } catch {
-            // ignore
+            // ignore disconnect failures
           }
         }
-        console.info(`[Prisma] Offline/local mode activated for '${operationName}' due to error: ${error?.message || error}`);
+        console.info(`[Prisma] Offline mode activated for '${operationName}' after a database connection failure.`);
         break;
       }
 
@@ -158,18 +153,19 @@ async function withRetry<T>(operation: () => Promise<T>, operationName: string):
 }
 
 function getPrismaClient(): PrismaClient {
-  if (isDatabaseDisabled || (disabledUntil > 0 && Date.now() < disabledUntil)) {
+  refreshDatabaseState();
+  if (isDatabaseDisabled) {
     return getOfflineProxy();
   }
 
   if (basePrisma) return basePrisma;
 
   let databaseUrl = process.env.DATABASE_URL?.trim().replace(/^['"]|['"]$/g, '');
-  
+
   const isValidUrl = databaseUrl && databaseUrl !== "undefined" && databaseUrl !== "null" && databaseUrl !== "" && databaseUrl.includes("://");
   if (!isValidUrl) {
-    console.info("[Prisma] DATABASE_URL is not set or empty. Running in offline/local mode.");
-    isDatabaseDisabled = true;
+    console.info("[Prisma] DATABASE_URL is not set or empty. Running in offline mode.");
+    enterOfflineMode();
     return getOfflineProxy();
   }
 
@@ -190,8 +186,8 @@ function getPrismaClient(): PrismaClient {
     console.log("[Prisma] Client initialized successfully.");
     return basePrisma;
   } catch (_error) {
-    console.info("[Prisma] Bypassing direct Prisma connection. Defaulting to local offline proxy.");
-    isDatabaseDisabled = true;
+    enterOfflineMode(_error);
+    console.info("[Prisma] Prisma client initialization failed. A connection retry will be attempted after cooldown.");
     return getOfflineProxy();
   }
 }
@@ -199,15 +195,18 @@ function getPrismaClient(): PrismaClient {
 // Resilient dynamic proxy wrapper
 const prismaTarget: any = {
   disable: () => {
-    isDatabaseDisabled = true;
-    console.warn("[Prisma] Database client disabled due to persistent connection failures.");
+    enterOfflineMode();
+    console.warn("[Prisma] Database client temporarily disabled.");
   },
   enable: () => {
     isDatabaseDisabled = false;
     disabledUntil = 0;
     console.log("[Prisma] Database client re-enabled.");
   },
-  isConnected: () => !isDatabaseDisabled && (disabledUntil === 0 || Date.now() >= disabledUntil),
+  isConnected: () => {
+    refreshDatabaseState();
+    return !isDatabaseDisabled;
+  },
 };
 
 const prismaClient = new Proxy(prismaTarget, {
@@ -218,14 +217,12 @@ const prismaClient = new Proxy(prismaTarget, {
 
     const currentClient = getPrismaClient();
 
-    // Standard behavior for essential properties
     if (typeof prop === 'symbol' || prop === 'then' || prop === 'toJSON') {
       return Reflect.get(currentClient, prop, receiver);
     }
 
     const value = (currentClient as any)[prop];
 
-    // Handle top-level functions directly
     if (typeof value === 'function') {
       if (prop === '$transaction') {
         return (callback: any, options?: any) => withRetry(() => (getPrismaClient() as any).$transaction(callback, options), '$transaction');
@@ -233,20 +230,19 @@ const prismaClient = new Proxy(prismaTarget, {
       return value.bind(currentClient);
     }
 
-    // Handle models (objects that don't start with '$')
     if (typeof value === 'object' && value !== null && !String(prop).startsWith('$')) {
       return new Proxy(value, {
         get(_modelTarget, modelProp) {
           const freshModel = (getPrismaClient() as any)[prop];
           const modelValue = freshModel ? freshModel[modelProp] : undefined;
-          
+
           if (typeof modelValue === 'function') {
             return (...args: any[]) => withRetry(() => {
               const latestModel = (getPrismaClient() as any)[prop];
               return latestModel[modelProp].apply(latestModel, args);
             }, `${String(prop)}.${String(modelProp)}`);
           }
-          
+
           return modelValue;
         }
       });
@@ -269,4 +265,3 @@ process.on("beforeExit", async () => {
     }
   }
 });
-
