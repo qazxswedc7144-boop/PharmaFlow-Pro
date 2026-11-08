@@ -95,7 +95,10 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
   app.use(requestContextPlugin);
-  app.use(idempotencyMiddleware);
+  app.use((req, res, next) => {
+    if (!shouldApplyIdempotency(req)) return next();
+    return idempotencyMiddleware(req, res, next);
+  });
 
   // =========================================================================
   // 3. PUBLIC ROUTES (No Auth Required)
