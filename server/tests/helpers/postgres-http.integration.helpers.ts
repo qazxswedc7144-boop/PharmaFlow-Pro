@@ -3,7 +3,14 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { buildApp } from "../../app.js";
+import express from "express";
+import { authV1Router } from "../../../apps/api/src/modules/auth/auth.routes.js";
+import { syncV1Router } from "../../../apps/api/src/modules/sync/sync.routes.js";
+import { requestContextPlugin } from "../../../apps/api/src/plugins/request-context.js";
+import { authenticateToken } from "../../middleware/auth.middleware.js";
+import { tenantContextMiddleware } from "../../middleware/tenant.middleware.js";
+import { subscriptionGuard } from "../../middleware/subscription.middleware.js";
+import { idempotencyMiddleware, shouldApplyIdempotency } from "../../modules/idempotency/idempotency.middleware.js";
 import { prisma } from "../../database/prisma.js";
 
 const enabled = Boolean(process.env.DATABASE_URL);
@@ -181,7 +188,22 @@ async function initialize(ctx: PostgresHttpContext): Promise<void> {
   });
   ctx.invoiceBId = invoiceB.id;
 
-  const app = buildApp();
+  // Mount the real production auth/sync routers with the same relevant
+  // middleware chain, without importing unrelated reporting, AI, inventory,
+  // and platform route trees into this focused integration worker.
+  const app = express();
+  app.use(express.json({ limit: "10mb" }));
+  app.use(requestContextPlugin);
+  app.use((req, res, next) => {
+    if (!shouldApplyIdempotency(req)) return next();
+    return idempotencyMiddleware(req, res, next);
+  });
+  app.use("/api/v1/auth", authV1Router);
+  app.use("/api", authenticateToken);
+  app.use("/api", tenantContextMiddleware);
+  app.use("/api", subscriptionGuard);
+  app.use("/api/v1/sync", syncV1Router);
+
   ctx.server = app.listen(0);
   await new Promise<void>((resolve, reject) => {
     ctx.server?.once("listening", resolve);
