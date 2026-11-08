@@ -90,7 +90,10 @@ async function login(ctx: PostgresHttpContext, username: string): Promise<string
   return response.body.accessToken as string;
 }
 
-async function initialize(ctx: PostgresHttpContext): Promise<void> {
+async function initialize(
+  ctx: PostgresHttpContext,
+  options: { includeInvoiceRoutes?: boolean } = {}
+): Promise<void> {
   // A real connection is mandatory: fail rather than allowing Prisma's offline fallback.
   await prisma.$connect();
   await prisma.$queryRaw`SELECT 1`;
@@ -204,6 +207,13 @@ async function initialize(ctx: PostgresHttpContext): Promise<void> {
   app.use("/api", subscriptionGuard);
   app.use("/api/v1/sync", syncV1Router);
 
+  // Load the heavier invoice route tree only for the invoice suite. This keeps
+  // the auth/sync worker isolated from accounting and inventory dependencies.
+  if (options.includeInvoiceRoutes) {
+    const { invoiceRouter } = await import("../../routes/invoice.routes.js");
+    app.use("/api/invoices", invoiceRouter);
+  }
+
   ctx.server = app.listen(0);
   await new Promise<void>((resolve, reject) => {
     ctx.server?.once("listening", resolve);
@@ -247,12 +257,13 @@ async function cleanup(ctx: PostgresHttpContext): Promise<void> {
 
 export function definePostgresHttpSuite(
   name: string,
-  registerTests: (getContext: () => PostgresHttpContext) => void
+  registerTests: (getContext: () => PostgresHttpContext) => void,
+  options: { includeInvoiceRoutes?: boolean } = {}
 ): void {
   const suite = enabled ? describe : describe.skip;
   suite(name, { concurrent: false }, () => {
     const ctx = createContext();
-    beforeAll(async () => initialize(ctx), 60000);
+    beforeAll(async () => initialize(ctx, options), 60000);
     afterAll(async () => cleanup(ctx), 30000);
     registerTests(() => ctx);
   });
