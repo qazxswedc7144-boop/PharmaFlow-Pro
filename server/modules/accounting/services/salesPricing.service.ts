@@ -34,8 +34,8 @@ export class SalesPricingService {
 
   static calculate(
     items: SalesPricingItem[],
-    requestedDiscountPercent: Prisma.Decimal | string | number = ZERO,
-    policy: SalesPricingPolicy
+    policy: SalesPricingPolicy,
+    requestedDiscountPercent: Prisma.Decimal | string | number = ZERO
   ): SalesPricingResult {
     if (!items.length) throw new Error("SALE_ITEMS_REQUIRED");
 
