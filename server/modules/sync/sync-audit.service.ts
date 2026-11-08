@@ -51,9 +51,9 @@ export class SyncAuditService {
         await prisma.auditLog.create({
           data: {
             action: params.operation === "SYNC_PUSH" ? "UPDATE" : "CREATE",
-            targetType: "SYNC_TRANSACTION",
-            targetId: params.mutationId || id,
-            details: JSON.stringify({
+            entity: "SyncTransaction",
+            entityId: params.mutationId || id,
+            after: JSON.stringify({
               operation: params.operation,
               result: params.result,
               deviceId: params.deviceId,
@@ -64,7 +64,7 @@ export class SyncAuditService {
             }),
             tenantId: params.tenantId,
             branchId: params.branchId || null,
-            userId: params.userId || "system",
+            userId: params.userId || null,
             timestamp: new Date(timestamp)
           }
         }).catch((err) => {
