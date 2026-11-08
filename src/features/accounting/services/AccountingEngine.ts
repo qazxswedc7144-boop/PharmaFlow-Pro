@@ -104,6 +104,12 @@ export class AccountingEngine {
     const tenantId = (sale as any).tenantId;
     const branchId = (sale as any).branchId;
 
+    // Resolve tax payable strictly from the active tenant's own chart of accounts.
+    // Missing or ambiguous configuration fails closed; no global/default account is allowed.
+    const taxPayableAccount = taxAmount.greaterThan(0)
+      ? await this.resolveTenantTaxPayableAccount(tenantId)
+      : null;
+
     // 1. Settlement and revenue/tax split.
     if (sale.paymentStatus === 'Cash') {
       lines.push(await this.createLine(entryId, cashAcc, baseAmount.toNumber(), 0, tenantId, branchId));
@@ -114,17 +120,15 @@ export class AccountingEngine {
       lines.push(await this.createLine(entryId, revenueAcc, 0, baseRevenue.toNumber(), tenantId, branchId));
     }
     if (baseTax.greaterThan(0)) {
-      const taxPayableAcc = await this.getCoreAccount('TAX_PAYABLE');
-      const taxAccount = await db.accounts.get(taxPayableAcc);
-      if (!taxAccount || (taxAccount.tenantId && taxAccount.tenantId !== tenantId)) {
+      if (!taxPayableAccount) {
         throw new AccountingError({
-          message: 'Tenant tax payable account is not configured or is outside the active tenant.',
-          arabicMessage: 'حساب الضريبة المستحقة غير مهيأ للمؤسسة الحالية أو لا يتبعها.',
+          message: 'Tenant tax payable account could not be resolved.',
+          arabicMessage: 'تعذر تحديد حساب الضريبة المستحقة للمؤسسة الحالية.',
           module: 'ACCOUNTING',
-          metadata: { taxPayableAcc, tenantId }
+          metadata: { tenantId }
         });
       }
-      lines.push(await this.createLine(entryId, taxPayableAcc, 0, baseTax.toNumber(), tenantId, branchId));
+      lines.push(await this.createLine(entryId, taxPayableAccount.id, 0, baseTax.toNumber(), tenantId, branchId));
     }
 
     // 2. COGS Impact
@@ -155,6 +159,46 @@ export class AccountingEngine {
       lastModified: new Date().toISOString(),
       timestamp: new Date().toISOString()
     };
+  }
+
+  private static async resolveTenantTaxPayableAccount(tenantId?: string): Promise<{ id: string }> {
+    if (!tenantId || !tenantId.trim()) {
+      throw new AccountingError({
+        message: 'Trusted tenant context is required to resolve the tax payable account.',
+        arabicMessage: 'يلزم سياق مؤسسة موثوق لتحديد حساب الضريبة المستحقة.',
+        module: 'ACCOUNTING'
+      });
+    }
+
+    const tenantAccounts = await db.accounts
+      .where('tenantId')
+      .equals(tenantId)
+      .toArray();
+
+    const candidates = tenantAccounts.filter((account: any) => {
+      const accountType = String(account.type ?? account.account_type ?? '').toUpperCase();
+      const accountName = String(account.name ?? account.account_name ?? '').toLowerCase();
+      const isTaxLiability = /tax|vat|ضريب|زكاة/.test(accountName);
+      return account.tenantId === tenantId &&
+        accountType === 'LIABILITY' &&
+        account.isActive !== false &&
+        isTaxLiability;
+    });
+
+    if (candidates.length !== 1 || !candidates[0]?.id) {
+      throw new AccountingError({
+        message: candidates.length === 0
+          ? 'No tenant-owned active tax payable liability account is configured.'
+          : 'Multiple tenant-owned tax payable accounts are configured; an explicit account mapping is required.',
+        arabicMessage: candidates.length === 0
+          ? 'لا يوجد حساب التزام ضريبي نشط ومملوك للمؤسسة في دليل الحسابات.'
+          : 'يوجد أكثر من حساب ضريبي للمؤسسة؛ يلزم تحديد الحساب المعتمد صراحةً.',
+        module: 'ACCOUNTING',
+        metadata: { tenantId, matchingAccountCount: candidates.length }
+      });
+    }
+
+    return { id: candidates[0].id };
   }
 
   static async generatePurchaseEntry(purchase: Purchase): Promise<AccountingEntry> {
