@@ -74,6 +74,17 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     });
     expect(persistedIdempotency).toBeTruthy();
 
+    const persistedChange = await prisma.syncEvent.findFirst({
+      where: {
+        tenantId: ctx.tenantAId,
+        deviceId,
+        entityType: "CUSTOMER",
+        entityId: customerId,
+        eventType: "CREATE",
+      },
+    });
+    expect(persistedChange?.userId).toBe(ctx.userAId);
+
     logMemory("before pull request");
     const pull = await request(ctx, "/api/v1/sync/pull", {
       method: "POST",
