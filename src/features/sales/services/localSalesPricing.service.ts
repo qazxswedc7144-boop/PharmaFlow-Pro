@@ -42,13 +42,13 @@ export class LocalSalesPricingService {
     const configuredTaxRate = new Decimal(policy.taxRatePercent);
 
     if (
-      !maxDiscount.isFinite() || maxDiscount.isNegative() || maxDiscount.greaterThan(HUNDRED) ||
-      !configuredTaxRate.isFinite() || configuredTaxRate.isNegative() || configuredTaxRate.greaterThan(HUNDRED)
+      !Number.isFinite(Number(maxDiscount.toString())) || maxDiscount.isNegative() || maxDiscount.greaterThan(HUNDRED) ||
+      !Number.isFinite(Number(configuredTaxRate.toString())) || configuredTaxRate.isNegative() || configuredTaxRate.greaterThan(HUNDRED)
     ) {
       throw new Error('INVALID_SALES_POLICY');
     }
     if (
-      !requestedDiscount.isFinite() || requestedDiscount.isNegative() ||
+      !Number.isFinite(Number(requestedDiscount.toString())) || requestedDiscount.isNegative() ||
       requestedDiscount.greaterThan(maxDiscount)
     ) {
       throw new Error('DISCOUNT_LIMIT_EXCEEDED');
