@@ -94,6 +94,56 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(movementCount).toBe(1);
   });
 
+
+  it("posts SALE tax separately to the tenant tax-payable account without changing FIFO behavior", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+
+    await prisma.tenantSalesPolicy.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        maxDiscountPercent: 10,
+        taxRatePercent: 15,
+        taxMode: "EXCLUSIVE",
+      },
+    });
+
+    const created = await request(ctx, "/api/invoices/create", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        invoiceNumber: `TAX-SALE-${ctx.suffix}`,
+        type: "SALE",
+        totalAmount: 1,
+        paymentStatus: "UNPAID",
+        discountPercent: 10,
+        items: [{ productId: ctx.productAId, qty: 1, price: 1 }],
+      },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(Number(created.body.invoice.subtotalAmount)).toBe(10);
+    expect(Number(created.body.invoice.discountAmount)).toBe(1);
+    expect(Number(created.body.invoice.taxAmount)).toBe(1.35);
+    expect(Number(created.body.invoice.totalAmount)).toBe(10.35);
+
+    const posted = await request(ctx, "/api/invoices/post", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: { invoiceId: created.body.invoice.id },
+    });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(200);
+
+    const journal = await prisma.journalEntry.findFirst({
+      where: { tenantId: ctx.tenantAId, sourceId: created.body.invoice.id, sourceType: "INVOICE" },
+      include: { lines: { include: { account: true } } },
+    });
+    expect(journal).toBeTruthy();
+    expect(Number(journal?.debitTotal)).toBe(10.35);
+    expect(Number(journal?.creditTotal)).toBe(10.35);
+    expect(journal?.lines.some((line) => line.account.code === "401001" && Number(line.credit) === 9)).toBe(true);
+    expect(journal?.lines.some((line) => line.account.code === "203001" && Number(line.credit) === 1.35)).toBe(true);
+  });
+
   it("persists lock acquire, extend, and release audit events in PostgreSQL", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
