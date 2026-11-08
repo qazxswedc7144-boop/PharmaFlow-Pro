@@ -12,6 +12,7 @@ import { InvoiceSchema } from "../../src/shared/validation/invoice.schema.js";
 import { validateRequestBody } from "../middleware/validate.js";
 import { UUIDSchema } from "../../src/shared/validation/common.schema.js";
 import { SaasService } from "../modules/saas/saas.service.js";
+import { SalesPricingService } from "../modules/accounting/services/salesPricing.service.js";
 
 export const invoiceRouter = Router();
 
@@ -82,6 +83,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       }
 
       let calculatedTotal = new Prisma.Decimal(0);
+      let salesPricing: ReturnType<typeof SalesPricingService.calculate> | null = null;
       const itemData = data.items.map((item: any) => {
         const product = productsById.get(item.productId);
         if (!product) {
@@ -123,6 +125,24 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
         };
       });
 
+      if (data.type === "SALE") {
+        const policy = await tx.tenantSalesPolicy.findUnique({ where: { tenantId } });
+        salesPricing = SalesPricingService.calculate(
+          itemData.map((item: any) => ({ price: item.price, qty: item.qty })),
+          data.discountPercent ?? 0,
+          {
+            maxDiscountPercent: policy?.maxDiscountPercent ?? 0,
+            taxRatePercent: policy?.taxRatePercent ?? 0,
+            taxMode: policy?.taxMode ?? "NONE"
+          }
+        );
+        calculatedTotal = salesPricing.totalAmount;
+      } else if (data.discountPercent !== undefined && new Prisma.Decimal(data.discountPercent).greaterThan(0)) {
+        const error: any = new Error("DISCOUNT_ONLY_ALLOWED_ON_SALE");
+        error.code = "DISCOUNT_ONLY_ALLOWED_ON_SALE";
+        throw error;
+      }
+
       const createdInvoice = await tx.invoice.create({
         data: {
           invoiceNumber: data.invoiceNumber,
@@ -130,6 +150,14 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           partnerId: data.partnerId,
           partnerType: data.partnerType,
           totalAmount: calculatedTotal,
+          ...(salesPricing ? {
+            subtotalAmount: salesPricing.subtotalAmount,
+            discountPercent: salesPricing.discountPercent,
+            discountAmount: salesPricing.discountAmount,
+            taxRatePercent: salesPricing.taxRatePercent,
+            taxAmount: salesPricing.taxAmount,
+            taxMode: salesPricing.taxMode
+          } : {}),
           status: InvoiceStatus.DRAFT,
           paymentStatus: data.paymentStatus,
           documentStatus: DocumentStatus.ACTIVE,
@@ -174,6 +202,15 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
     }
     if (err.code === "INVALID_SERVER_PRODUCT_PRICE") {
       return res.status(422).json({ error: "INVALID_SERVER_PRODUCT_PRICE", message: "سعر المنتج المحفوظ غير صالح." });
+    }
+    if (err.code === "DISCOUNT_ONLY_ALLOWED_ON_SALE") {
+      return res.status(422).json({ error: "DISCOUNT_ONLY_ALLOWED_ON_SALE", message: "الخصم متاح لفواتير المبيعات فقط." });
+    }
+    if (err.message === "DISCOUNT_LIMIT_EXCEEDED") {
+      return res.status(422).json({ error: "DISCOUNT_LIMIT_EXCEEDED", message: "نسبة الخصم تتجاوز الحد المسموح للمؤسسة." });
+    }
+    if (err.message === "INVALID_SALES_POLICY") {
+      return res.status(422).json({ error: "INVALID_SALES_POLICY", message: "إعدادات التسعير والضريبة للمؤسسة غير صالحة." });
     }
     if (err instanceof OfflineDatabaseError) {
       return res.status(503).json({ error: "DATABASE_UNAVAILABLE", message: "قاعدة البيانات غير متاحة حالياً." });
