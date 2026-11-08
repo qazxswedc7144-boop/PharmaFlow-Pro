@@ -83,5 +83,5 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     });
     expect(journalCount).toBe(1);
     expect(movementCount).toBe(1);
-  });
+  }, { includeInvoiceRoutes: true });
 });
