@@ -108,8 +108,10 @@ export const InvoiceItemEditModal: React.FC<InvoiceItemEditModalProps> = ({
               <input 
                 type="number"
                 value={localItem.price === 0 ? '' : localItem.price}
+                disabled={mode === 'sale'}
+                readOnly={mode === 'sale'}
                 onChange={(e) => handleFieldChange('price', Number(e.target.value))}
-                className="w-full p-2.5 border border-slate-200 dark:border-slate-800 rounded-xl bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white text-xs font-mono font-bold focus:ring-2 focus:ring-teal-500 outline-none"
+                className={`w-full p-2.5 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-mono font-bold outline-none ${mode === 'sale' ? 'bg-slate-100 dark:bg-slate-900/50 text-slate-400 cursor-not-allowed' : 'bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white focus:ring-2 focus:ring-teal-500'}`}
               />
             </div>
             <div>
