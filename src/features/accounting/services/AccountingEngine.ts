@@ -5,6 +5,7 @@ import { CurrencyService } from '@/services/localization/CurrencyService';
 import { AccountingError } from '@/core/errors';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { generateTransactionUuid } from '@/utils/uuid';
+import Decimal from 'decimal.js-light';
 
 export interface SaleAdjustment {
   Type: 'Discount' | 'Tax Adjustment' | string;
@@ -32,7 +33,7 @@ export class AccountingEngine {
     return (purchase.items || []).reduce((acc, item) => acc + ((item.qty ?? 0) * (item.price ?? 0)), 0);
   }
 
-  static async getCoreAccount(type: 'CASH' | 'BANK' | 'RECEIVABLE' | 'PAYABLE' | 'INVENTORY' | 'SALES_REVENUE' | 'COGS' | 'EXPENSE'): Promise<string> {
+  static async getCoreAccount(type: 'CASH' | 'BANK' | 'RECEIVABLE' | 'PAYABLE' | 'INVENTORY' | 'SALES_REVENUE' | 'TAX_PAYABLE' | 'COGS' | 'EXPENSE'): Promise<string> {
     try {
       const setting = configurationService.getSync<any>(`ACCOUNT_${type}`);
       if (setting) return typeof setting === 'string' ? setting : setting.value || setting;
@@ -48,6 +49,7 @@ export class AccountingEngine {
       PAYABLE: 'ACC-201',
       INVENTORY: 'ACC-102',
       SALES_REVENUE: 'ACC-401',
+      TAX_PAYABLE: 'ACC-202',
       COGS: 'ACC-501',
       EXPENSE: 'ACC-502'
     };
@@ -68,21 +70,53 @@ export class AccountingEngine {
     const lines: JournalLine[] = [];
     const entryId = generateTransactionUuid('JE');
 
-    // Multi-currency conversion
+    // Convert net revenue and tax separately. This preserves the liability split
+    // and guarantees that the receivable/cash debit equals the two credit lines.
     const currencyCode = (sale as any).currencyCode || CurrencyService.getCurrentCurrencyCode();
     const rawTotal = (sale as any).totalAmount ?? (sale as any).finalTotal ?? (sale as any).total ?? 0;
-    const { baseAmount } = await CurrencyService.convertToBase(rawTotal, currencyCode, sale.date || new Date().toISOString());
+    const totalAmount = new Decimal(String(rawTotal));
+    const taxAmount = new Decimal(String((sale as any).taxAmount ?? 0));
+    const revenueAmount = new Decimal(String(
+      (sale as any).revenueAmount !== undefined
+        ? (sale as any).revenueAmount
+        : totalAmount.minus(taxAmount).toString()
+    ));
+
+    if (!totalAmount.isFinite() || totalAmount.isNegative() ||
+        !taxAmount.isFinite() || taxAmount.isNegative() ||
+        !revenueAmount.isFinite() || revenueAmount.isNegative() ||
+        !revenueAmount.plus(taxAmount).minus(totalAmount).abs().lessThanOrEqualTo('0.0001')) {
+      throw new AccountingError({
+        message: 'Invalid local sales financial breakdown.',
+        arabicMessage: 'تفاصيل الإيراد والضريبة في فاتورة المبيعات غير صالحة.',
+        module: 'ACCOUNTING',
+        metadata: { totalAmount: totalAmount.toString(), revenueAmount: revenueAmount.toString(), taxAmount: taxAmount.toString() }
+      });
+    }
+
+    const conversionDate = sale.date || new Date().toISOString();
+    const { baseAmount: baseRevenueRaw } = await CurrencyService.convertToBase(revenueAmount.toNumber(), currencyCode, conversionDate);
+    const { baseAmount: baseTaxRaw } = await CurrencyService.convertToBase(taxAmount.toNumber(), currencyCode, conversionDate);
+    const baseRevenue = new Decimal(String(baseRevenueRaw)).toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
+    const baseTax = new Decimal(String(baseTaxRaw)).toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
+    const baseAmount = baseRevenue.plus(baseTax).toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
 
     const tenantId = (sale as any).tenantId;
     const branchId = (sale as any).branchId;
 
-    // 1. Revenue Impact
+    // 1. Settlement and revenue/tax split.
     if (sale.paymentStatus === 'Cash') {
-      lines.push(await this.createLine(entryId, cashAcc, baseAmount, 0, tenantId, branchId));
+      lines.push(await this.createLine(entryId, cashAcc, baseAmount.toNumber(), 0, tenantId, branchId));
     } else {
-      lines.push(await this.createLine(entryId, arAcc, baseAmount, 0, tenantId, branchId));
+      lines.push(await this.createLine(entryId, arAcc, baseAmount.toNumber(), 0, tenantId, branchId));
     }
-    lines.push(await this.createLine(entryId, revenueAcc, 0, baseAmount, tenantId, branchId));
+    if (baseRevenue.greaterThan(0)) {
+      lines.push(await this.createLine(entryId, revenueAcc, 0, baseRevenue.toNumber(), tenantId, branchId));
+    }
+    if (baseTax.greaterThan(0)) {
+      const taxPayableAcc = await this.getCoreAccount('TAX_PAYABLE');
+      lines.push(await this.createLine(entryId, taxPayableAcc, 0, baseTax.toNumber(), tenantId, branchId));
+    }
 
     // 2. COGS Impact
     const totalCalculatedCost = await this.calculateTotalCOGS(items);
@@ -341,14 +375,14 @@ export class AccountingEngine {
   }
 
   private static validateEntryBalance(lines: JournalLine[]) {
-    const totalDebit = lines.reduce((sum, l) => sum + l.debit, 0);
-    const totalCredit = lines.reduce((sum, l) => sum + l.credit, 0);
-    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    const totalDebit = lines.reduce((sum, l) => sum.plus(new Decimal(String(l.debit || 0))), new Decimal(0));
+    const totalCredit = lines.reduce((sum, l) => sum.plus(new Decimal(String(l.credit || 0))), new Decimal(0));
+    if (totalDebit.minus(totalCredit).abs().greaterThan('0.0001')) {
       throw new AccountingError({
         message: `Unbalanced journal entry: Total Debit (${totalDebit}) does not equal Total Credit (${totalCredit}).`,
         arabicMessage: `القيد المحاسبي غير متوازن (إجمالي المدين ${totalDebit} لا يساوي الدائن ${totalCredit}).`,
         module: 'ACCOUNTING',
-        metadata: { totalDebit, totalCredit },
+        metadata: { totalDebit: totalDebit.toString(), totalCredit: totalCredit.toString() },
       });
     }
   }
