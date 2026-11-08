@@ -21,11 +21,13 @@ export class SyncChangelogService {
   /**
    * Appends a new change record to the sync change log
    */
-  static recordChange(change: Omit<SyncChange, "id" | "cursor" | "createdAt">, tx?: any): any {
+  static recordChange(change: Omit<SyncChange, "id" | "cursor" | "createdAt">, tx?: any): SyncChange {
     const cursor = this.getNextCursor();
     const id = `CHG-${cursor}-${Math.random().toString(36).substring(2, 7)}`;
     const createdAt = new Date().toISOString();
 
+    // This is a plain value, not a Promise/thenable. Returning a thenable that
+    // resolves to itself causes Promise assimilation to recurse until heap exhaustion.
     const fullChange = {
       ...change,
       id,
@@ -33,8 +35,7 @@ export class SyncChangelogService {
       createdAt,
       valueOf() { return this.cursor; },
       [Symbol.toPrimitive]() { return this.cursor; },
-      then(onfulfilled: any) { return Promise.resolve(fullChange).then(onfulfilled); }
-    };
+    } as SyncChange & { valueOf(): number; [Symbol.toPrimitive](): number };
 
     // 1. Record in-memory for immediate use in current request lifecycle/process
     this.changes.push(fullChange as any);
