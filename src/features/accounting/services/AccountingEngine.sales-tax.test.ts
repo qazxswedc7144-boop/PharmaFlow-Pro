@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountingEngine } from './AccountingEngine';
 import { CurrencyService } from '@/services/localization/CurrencyService';
+import 'fake-indexeddb/auto';
+import { db } from '@/core/db';
 
 describe('AccountingEngine local SALE tax split', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -16,6 +18,10 @@ describe('AccountingEngine local SALE tax split', () => {
     };
 
     vi.spyOn(AccountingEngine, 'getCoreAccount').mockImplementation(async (type: any) => accounts[type] || 'ACC-GENERIC');
+    vi.spyOn(db.accounts, 'get').mockResolvedValue({
+      id: 'ACC-202',
+      tenantId: 'TENANT-UNIT-001'
+    } as any);
     vi.spyOn(CurrencyService, 'convertToBase').mockImplementation(async (amount: number) => ({
       baseAmount: amount,
       rate: 1
