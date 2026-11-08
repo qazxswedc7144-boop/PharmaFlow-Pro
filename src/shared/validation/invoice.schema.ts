@@ -16,6 +16,7 @@ export const InvoiceSchema = z.object({
   partnerId: z.string().uuid("معرّف الشريك يجب أن يكون UUID صالح").nullable().optional(),
   partnerType: z.enum(["CUSTOMER", "SUPPLIER"]).nullable().optional(),
   totalAmount: MoneySchema,
+  discountPercent: z.coerce.number().finite().min(0).max(100).optional(),
   status: z.enum(["DRAFT", "PENDING", "CONFIRMED", "CANCELLED"]).default("DRAFT"),
   paymentStatus: z.enum(["PAID", "UNPAID", "PARTIALLY_PAID"]).default("UNPAID"),
   documentStatus: z.enum(["ACTIVE", "POSTED", "ARCHIVED", "LOCKED"]).default("ACTIVE"),
