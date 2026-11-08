@@ -13,6 +13,35 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(allowed.body.invoice.tenantId).toBe(ctx.tenantBId);
   });
 
+  it("returns only the authenticated tenant's sales policy", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+
+    await prisma.tenantSalesPolicy.upsert({
+      where: { tenantId: ctx.tenantAId },
+      create: { tenantId: ctx.tenantAId, maxDiscountPercent: 7, taxRatePercent: 15, taxMode: "EXCLUSIVE" },
+      update: { maxDiscountPercent: 7, taxRatePercent: 15, taxMode: "EXCLUSIVE" },
+    });
+    await prisma.tenantSalesPolicy.upsert({
+      where: { tenantId: ctx.tenantBId },
+      create: { tenantId: ctx.tenantBId, maxDiscountPercent: 2, taxRatePercent: 5, taxMode: "INCLUSIVE" },
+      update: { maxDiscountPercent: 2, taxRatePercent: 5, taxMode: "INCLUSIVE" },
+    });
+
+    const policyA = await request(ctx, "/api/invoices/sales-policy", { token: ctx.tokenA });
+    const policyB = await request(ctx, "/api/invoices/sales-policy", { token: ctx.tokenB });
+
+    expect(policyA.status).toBe(200);
+    expect(policyA.body.policy.tenantId).toBe(ctx.tenantAId);
+    expect(policyA.body.policy.maxDiscountPercent).toBe("7");
+    expect(policyA.body.policy.taxMode).toBe("EXCLUSIVE");
+
+    expect(policyB.status).toBe(200);
+    expect(policyB.body.policy.tenantId).toBe(ctx.tenantBId);
+    expect(policyB.body.policy.maxDiscountPercent).toBe("2");
+    expect(policyB.body.policy.taxMode).toBe("INCLUSIVE");
+  });
+
   it("posts a persisted Draft through HTTP and verifies FIFO stock plus balanced PostgreSQL ledger rows", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
