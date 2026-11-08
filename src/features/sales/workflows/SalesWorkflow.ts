@@ -360,7 +360,9 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
           id: refId,
           transactionUuid: ctx.idempotencyKey,
           tenantId: ctx.tenantId,
-          branchId: ctx.branchId
+          branchId: ctx.branchId,
+          paymentStatus: input.isCash ? 'Cash' : 'Credit',
+          currencyCode: input.currency || CurrencyService.getCurrentCurrencyCode()
         },
         costResult,
         tx
