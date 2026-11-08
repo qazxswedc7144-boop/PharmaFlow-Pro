@@ -15,7 +15,7 @@ describe('AccountingEngine local SALE tax split', () => {
       INVENTORY: 'ACC-102'
     };
 
-    vi.spyOn(AccountingEngine, 'getCoreAccount').mockImplementation(async (type: any) => accounts[type]);
+    vi.spyOn(AccountingEngine, 'getCoreAccount').mockImplementation(async (type: any) => accounts[type] || 'ACC-GENERIC');
     vi.spyOn(CurrencyService, 'convertToBase').mockImplementation(async (amount: number) => ({
       baseAmount: amount,
       rate: 1
