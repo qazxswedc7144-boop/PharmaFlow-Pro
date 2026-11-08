@@ -4,7 +4,6 @@
 import { Router, Request, Response } from "express";
 import { authenticateToken, AuthenticatedRequest } from "../../middleware/auth.middleware.js";
 import { tenantContextMiddleware } from "../../middleware/tenant.middleware.js";
-import { SyncProcessorService } from "./sync-processor.service.js";
 import { SyncChangelogService } from "./sync-changelog.service.js";
 import { DeviceService } from "./device.service.js";
 import { SyncConflictService } from "./sync-conflict.service.js";
@@ -130,6 +129,8 @@ if (!authenticatedUserId) {
       mutations: Array.isArray(rawBody.mutations) ? rawBody.mutations : []
     };
 
+    // Load the mutation processor only for push requests; status, pull, and device routes do not need it.
+    const { SyncProcessorService } = await import("./sync-processor.service.js");
     const response = await SyncProcessorService.processBatch({
       envelope,
       authenticatedTenantId,
