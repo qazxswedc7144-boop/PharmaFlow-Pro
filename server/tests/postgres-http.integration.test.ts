@@ -288,27 +288,25 @@ describe.skipIf(!enabled).sequential("Real PostgreSQL + Express HTTP integration
   });
 
   it("posts a persisted Draft through HTTP and verifies FIFO stock plus balanced PostgreSQL ledger rows", async () => {
-    const draft = await prisma.invoice.create({
-      data: {
-        tenantId: tenantAId,
+    const created = await request("/api/invoices/create", {
+      method: "POST",
+      token: tokenA,
+      body: {
         invoiceNumber: `FIFO-SALE-${suffix}`,
         type: "SALE",
-        totalAmount: 20,
-        status: "DRAFT",
+        totalAmount: 9999,
         paymentStatus: "PAID",
-        documentStatus: "ACTIVE",
-        items: {
-          create: [{
-            tenantId: tenantAId,
-            productId: productAId,
-            qty: 2,
-            price: 10,
-            cost: 0,
-            total: 20,
-          }],
-        },
+        items: [{ productId: productAId, qty: 2, price: 9999 }],
       },
     });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.success).toBe(true);
+    const draft = created.body.invoice;
+    expect(draft.status).toBe("DRAFT");
+    expect(draft.documentStatus).toBe("ACTIVE");
+    // The server must use the tenant catalog price (10), not the client-supplied price (9999).
+    expect(Number(draft.totalAmount)).toBe(20);
+    expect(draft.items).toHaveLength(1);
 
     const posted = await request("/api/invoices/post", {
       method: "POST",
