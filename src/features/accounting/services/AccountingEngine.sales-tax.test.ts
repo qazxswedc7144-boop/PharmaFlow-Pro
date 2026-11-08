@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountingEngine } from './AccountingEngine';
 import { CurrencyService } from '@/services/localization/CurrencyService';
 import 'fake-indexeddb/auto';
