@@ -563,8 +563,11 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
       setManualItemName(p.Name || p.name);
       setCategoryName(p.categoryName || (p as any).category || '');
       setTempExpiry(p.ExpiryDate || p.expiryDate || '');
-      const suggestion = await priceIntelligenceService.getSuggestedPrice(p.id, 'SALE', header.customer_id);
-      setTempPrice(suggestion.suggestedPrice || p.UnitPrice || p.price || 0);
+      // Match SalesWorkflow: product.price is the authoritative sale price.
+      // Price intelligence remains advisory and must not alter the posted preview.
+      await priceIntelligenceService.getSuggestedPrice(p.id, 'SALE', header.customer_id).catch(() => null);
+      if (p.price === undefined || p.price === null) throw new Error('LOCAL_PRODUCT_PRICE_UNAVAILABLE');
+      setTempPrice(Number(p.price));
       setTempQty(1);
       
       if ((p.StockQuantity || p.stock) !== undefined) {
