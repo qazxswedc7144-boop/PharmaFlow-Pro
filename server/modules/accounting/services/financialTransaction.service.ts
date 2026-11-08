@@ -172,7 +172,7 @@ export class FinancialTransactionService {
       Prisma.sql`SELECT id FROM accounts WHERE id IN (${Prisma.join(accountIdsToLock)}) FOR UPDATE`
     );
 
-    let totalComputatedCogs = 0;
+    let totalComputatedCogs = ZERO;
     const ledgerLines: { accountId: string; debit: Prisma.Decimal; credit: Prisma.Decimal; description: string }[] = [];
     const ZERO = new Prisma.Decimal(0);
 
@@ -193,12 +193,13 @@ export class FinancialTransactionService {
           tenantId
         );
         
-        totalComputatedCogs += fifoResult.totalCost;
+        const fifoCost = new Prisma.Decimal(fifoResult.totalCost.toString());
+        totalComputatedCogs = totalComputatedCogs.plus(fifoCost);
 
-        // Update actual cost in line item
+        // Persist FIFO-derived unit cost using Decimal arithmetic.
         await tx.invoiceItem.update({
           where: { id: item.id },
-          data: { cost: fifoResult.totalCost / item.qty }
+          data: { cost: fifoCost.div(item.qty) }
         });
       }
 
@@ -236,8 +237,8 @@ export class FinancialTransactionService {
       }
 
       // Ledger Entry for COGS: Debit COGS, Credit Inventory
-      if (totalComputatedCogs > 0) {
-        const cogsAmount = new Prisma.Decimal(totalComputatedCogs.toString());
+      if (totalComputatedCogs.greaterThan(0)) {
+        const cogsAmount = totalComputatedCogs;
         ledgerLines.push({
           accountId: cogsAcc.id,
           debit: cogsAmount,
@@ -414,7 +415,7 @@ export class FinancialTransactionService {
       success: true,
       journalId: journalEntry.id,
       invoiceNumber: invoice.invoiceNumber,
-      cogs: totalComputatedCogs
+      cogs: totalComputatedCogs.toNumber()
     };
   }
 
