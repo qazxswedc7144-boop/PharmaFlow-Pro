@@ -38,6 +38,7 @@ invoiceRouter.get("/sales-policy", authenticateToken, async (req: AuthenticatedR
       }
     });
 
+    res.setHeader("Cache-Control", "private, no-store");
     return res.json({
       success: true,
       policy: {
