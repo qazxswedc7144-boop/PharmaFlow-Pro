@@ -115,6 +115,15 @@ export class AccountingEngine {
     }
     if (baseTax.greaterThan(0)) {
       const taxPayableAcc = await this.getCoreAccount('TAX_PAYABLE');
+      const taxAccount = await db.accounts.get(taxPayableAcc);
+      if (!taxAccount || (taxAccount.tenantId && taxAccount.tenantId !== tenantId)) {
+        throw new AccountingError({
+          message: 'Tenant tax payable account is not configured or is outside the active tenant.',
+          arabicMessage: 'حساب الضريبة المستحقة غير مهيأ للمؤسسة الحالية أو لا يتبعها.',
+          module: 'ACCOUNTING',
+          metadata: { taxPayableAcc, tenantId }
+        });
+      }
       lines.push(await this.createLine(entryId, taxPayableAcc, 0, baseTax.toNumber(), tenantId, branchId));
     }
 
