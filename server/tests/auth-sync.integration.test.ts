@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
 definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication + Sync", (getContext) => {
@@ -41,9 +42,9 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication + Sync", (getCo
     expect(persistedDevice?.tenantId).toBe(ctx.tenantAId);
     expect(persistedDevice?.branchId).toBe(ctx.branchAId);
 
-    const customerId = (await import("node:crypto")).randomUUID();
-    const mutationId = (await import("node:crypto")).randomUUID();
-    const mutationKey = (await import("node:crypto")).randomUUID();
+    const customerId = randomUUID();
+    const mutationId = randomUUID();
+    const mutationKey = randomUUID();
     const push = await request(ctx, "/api/v1/sync/push", {
       method: "POST",
       token: ctx.tokenA,
