@@ -21,7 +21,12 @@ export class SyncChangelogService {
   /**
    * Appends a new change record to the sync change log
    */
-  static recordChange(change: Omit<SyncChange, "id" | "cursor" | "createdAt">, tx?: any): SyncChange {
+  static recordChange(change: Omit<SyncChange, "id" | "cursor" | "createdAt">, tx: any): Promise<SyncChange>;
+  static recordChange(change: Omit<SyncChange, "id" | "cursor" | "createdAt">): SyncChange;
+  static recordChange(
+    change: Omit<SyncChange, "id" | "cursor" | "createdAt">,
+    tx?: any
+  ): SyncChange | Promise<SyncChange> {
     const cursor = this.getNextCursor();
     const id = `CHG-${cursor}-${Math.random().toString(36).substring(2, 7)}`;
     const createdAt = new Date().toISOString();
@@ -45,7 +50,8 @@ export class SyncChangelogService {
       this.changes.splice(0, this.changes.length - this.MAX_IN_MEMORY_LOGS);
     }
 
-    // 2. Persist to Prisma SyncEvent log (Atomic if tx is provided, otherwise async)
+    // 2. Persist to Prisma SyncEvent log. In a business transaction, return a
+    // Promise that resolves only after the event is written on that same tx.
     const client = tx || prisma;
     const eventPromise = client.syncEvent.create({
       data: {
@@ -62,13 +68,16 @@ export class SyncChangelogService {
       }
     });
 
-    if (!tx) {
-      // Async fire-and-forget for non-critical legacy paths
-      if (prisma.isConnected && prisma.isConnected()) {
-        eventPromise.catch((err: any) => {
-          console.warn("[SyncChangelog] Prisma sync event logging warning:", err.message);
-        });
-      }
+    if (tx) {
+      return eventPromise.then(() => fullChange);
+    }
+
+    // Preserve the synchronous in-memory return for legacy non-transactional
+    // callers while keeping their durable write best-effort as before.
+    if (prisma.isConnected && prisma.isConnected()) {
+      eventPromise.catch((err: any) => {
+        console.warn("[SyncChangelog] Prisma sync event logging warning:", err.message);
+      });
     }
 
     return fullChange;
