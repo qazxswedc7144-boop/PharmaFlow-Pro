@@ -13,7 +13,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication + Sync", (getCo
     expect(meB.status).toBe(200);
     expect(meB.body.user.tenantId).toBe(ctx.tenantBId);
 
-    const sessions = await (await import("../../database/prisma.js")).prisma.session.count({
+    const sessions = await (await import("../database/prisma.js")).prisma.session.count({
       where: { userId: { in: [ctx.userAId, ctx.userBId] } },
     });
     expect(sessions).toBe(2);
@@ -21,7 +21,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication + Sync", (getCo
 
   it("registers a device and executes Sync Push/Pull over real HTTP with PostgreSQL persistence", async () => {
     const ctx = getContext();
-    const { prisma } = await import("../../database/prisma.js");
+    const { prisma } = await import("../database/prisma.js");
     const deviceId = `ci-device-${ctx.suffix}`;
     const registration = await request(ctx, "/api/v1/sync/device/register", {
       method: "POST",
