@@ -1545,6 +1545,7 @@ export class PharmaFlowDB extends Dexie {
       partner_id: customerId || 'CUST-GEN',
       partnerName: 'Customer',
       type: 'SALE',
+      currencyCode: _currency || 'USD',
       totalAmount: total || 0,
       subtotal: pricing?.subtotalAmount ?? total ?? 0,
       subtotalAmount: pricing?.subtotalAmount ?? total ?? 0,
