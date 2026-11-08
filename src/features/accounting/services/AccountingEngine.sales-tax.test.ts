@@ -112,6 +112,9 @@ describe('AccountingEngine local SALE tax split', () => {
       { tenantId: 'TENANT-OTHER', branchId: 'BRANCH-OTHER-001', roles: ['admin'] }
     );
     await db.accounts.put({ id: 'ACC-TAX-OTHER-TENANT', code: '2201', name: 'VAT Payable', type: 'LIABILITY', isActive: true, tenantId: 'TENANT-OTHER' } as any);
+    await expect(db.accounts.get('ACC-TAX-OTHER-TENANT')).resolves.toMatchObject({
+      tenantId: 'TENANT-OTHER'
+    });
 
     // Restore the sale tenant before invoking AccountingEngine.
     TokenProvider.setSession(
