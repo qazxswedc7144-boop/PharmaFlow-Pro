@@ -43,8 +43,13 @@ export class LocalSalesPricingService {
 
     if (
       !maxDiscount.isFinite() || maxDiscount.isNegative() || maxDiscount.greaterThan(HUNDRED) ||
-      !configuredTaxRate.isFinite() || configuredTaxRate.isNegative() || configuredTaxRate.greaterThan(HUNDRED) ||
-      !requestedDiscount.isFinite() || requestedDiscount.isNegative() || requestedDiscount.greaterThan(maxDiscount)
+      !configuredTaxRate.isFinite() || configuredTaxRate.isNegative() || configuredTaxRate.greaterThan(HUNDRED)
+    ) {
+      throw new Error('INVALID_SALES_POLICY');
+    }
+    if (
+      !requestedDiscount.isFinite() || requestedDiscount.isNegative() ||
+      requestedDiscount.greaterThan(maxDiscount)
     ) {
       throw new Error('DISCOUNT_LIMIT_EXCEEDED');
     }
