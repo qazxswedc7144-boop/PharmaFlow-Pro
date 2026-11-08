@@ -130,7 +130,25 @@ if (!authenticatedUserId) {
     };
 
     // Load the mutation processor only for push requests; status, pull, and device routes do not need it.
+    const processorImportStartedAt = Date.now();
+    if (process.env.NODE_ENV === "test") {
+      const memory = process.memoryUsage();
+      console.info("[Sync Push] Before SyncProcessorService import (MB):", {
+        rss: Math.round(memory.rss / 1024 / 1024),
+        heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memory.heapTotal / 1024 / 1024),
+      });
+    }
     const { SyncProcessorService } = await import("./sync-processor.service.js");
+    if (process.env.NODE_ENV === "test") {
+      const memory = process.memoryUsage();
+      console.info("[Sync Push] After SyncProcessorService import (MB):", {
+        elapsedMs: Date.now() - processorImportStartedAt,
+        rss: Math.round(memory.rss / 1024 / 1024),
+        heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memory.heapTotal / 1024 / 1024),
+      });
+    }
     const response = await SyncProcessorService.processBatch({
       envelope,
       authenticatedTenantId,
