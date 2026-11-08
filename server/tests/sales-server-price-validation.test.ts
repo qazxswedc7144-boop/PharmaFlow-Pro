@@ -109,8 +109,11 @@ describe("Server-side sales price and discount validation", () => {
     expect(invoiceData.totalAmount.toString()).toBe("300");
     expect(invoiceData.items.create).toHaveLength(1);
     expect(invoiceData.items.create[0]).toEqual(expect.objectContaining({
-      tenantId,
-      productId,
+      product: {
+        connect: {
+          id_tenantId: { id: productId, tenantId },
+        },
+      },
       qty: 10,
     }));
     expect(invoiceData.items.create[0].price.toString()).toBe("30");

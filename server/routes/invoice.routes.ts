@@ -106,8 +106,14 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
         calculatedTotal = calculatedTotal.plus(lineTotal);
 
         return {
-          tenantId,
-          productId: item.productId,
+          // The parent Invoice relation supplies tenantId to InvoiceItem.
+          // Connect Product through its composite key so Prisma enforces the
+          // same tenant boundary for the item/product relation.
+          product: {
+            connect: {
+              id_tenantId: { id: item.productId, tenantId }
+            }
+          },
           qty: item.qty,
           price,
           cost: new Prisma.Decimal(0),
@@ -137,7 +143,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
         data: {
           tenantId,
           userId: req.user?.userId || null,
-          action: "CREATE_INVOICE",
+          action: "CREATE",
           entity: "Invoice",
           entityId: createdInvoice.id,
           before: null,

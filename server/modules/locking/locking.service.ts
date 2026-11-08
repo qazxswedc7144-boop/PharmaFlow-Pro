@@ -78,8 +78,17 @@ export class LockingService {
       lockType
     };
 
-    // Log atomic database audit record (LOCK_ACQUIRED)
-    await this.logAuditRecord(record, "LOCK_ACQUIRED", `Lock acquired on key: ${key}`);
+    // A lock must not be left active when its mandatory audit record cannot be persisted.
+    try {
+      await this.logAuditRecord(record, "LOCK_ACQUIRED", `Lock acquired on key: ${key}`);
+    } catch (auditError) {
+      try {
+        await RedisConnectionManager.eval(this.LUA_RELEASE, 1, redisKey, lockId);
+      } catch (releaseError) {
+        console.error("[LockService] Failed to release lock after audit persistence failure:", releaseError);
+      }
+      throw auditError;
+    }
 
     return record;
   }
@@ -211,30 +220,27 @@ export class LockingService {
    * Internal immutable audit logger, writing directly to Postgres via Prisma.
    */
   private static async logAuditRecord(record: RedisLockRecord, action: string, details: string): Promise<void> {
-    try {
-      await prisma.auditLog.create({
-        data: {
-          id: crypto.randomUUID(),
-          timestamp: new Date(),
-          userId: record.ownerId !== "SYSTEM" && record.ownerId !== "RECOVERY_DAEMON" ? record.ownerId : null,
-          action,
-          entity: "DistributedLock",
-          entityId: record.id,
-          after: JSON.stringify({
-            lockKey: record.lockKey,
-            branchId: record.branchId,
-            ttl: record.ttl,
-            lockType: record.lockType,
-            idempotencyKey: record.idempotencyKey,
-            status: record.status
-          }),
+    // Audit persistence is mandatory: propagate failures to the caller instead of
+    // silently treating a missing audit row as a successful lock operation.
+    await prisma.auditLog.create({
+      data: {
+        id: crypto.randomUUID(),
+        timestamp: new Date(),
+        userId: record.ownerId !== "SYSTEM" && record.ownerId !== "RECOVERY_DAEMON" ? record.ownerId : null,
+        action,
+        entity: "DistributedLock",
+        entityId: record.id,
+        after: JSON.stringify({
+          lockKey: record.lockKey,
           branchId: record.branchId,
-          requestId: details
-        }
-      });
-    } catch (err) {
-      // Degrade gracefully if DB is closed or key constraint errors occur
-      console.warn("[LockService] Audit record write bypassed gracefully:", err);
-    }
+          ttl: record.ttl,
+          lockType: record.lockType,
+          idempotencyKey: record.idempotencyKey,
+          status: record.status
+        }),
+        branchId: record.branchId,
+        requestId: details
+      }
+    });
   }
 }
