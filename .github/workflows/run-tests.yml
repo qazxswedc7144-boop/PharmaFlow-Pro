@@ -119,14 +119,28 @@ jobs:
 
       - name: Verify migrated schema
         run: |
-          npx prisma db execute --stdin <<'SQL'
-          SELECT
-            (SELECT COUNT(*) FROM information_schema.tables
-             WHERE table_schema = 'public' AND table_type = 'BASE TABLE') AS table_count,
-            (SELECT COUNT(*) FROM pg_type t
-             JOIN pg_namespace n ON n.oid = t.typnamespace
-             WHERE n.nspname = 'public' AND t.typtype = 'e') AS enum_count;
-          SQL
+          node --input-type=module <<'NODE'
+          import pg from "pg";
+          const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+          await client.connect();
+          try {
+            const { rows } = await client.query(`
+              SELECT
+                (SELECT COUNT(*) FROM information_schema.tables
+                 WHERE table_schema = 'public' AND table_type = 'BASE TABLE')::int AS table_count,
+                (SELECT COUNT(*) FROM pg_type t
+                 JOIN pg_namespace n ON n.oid = t.typnamespace
+                 WHERE n.nspname = 'public' AND t.typtype = 'e')::int AS enum_count,
+                (SELECT COUNT(*) FROM "_prisma_migrations" WHERE finished_at IS NOT NULL)::int AS applied_migrations
+            `);
+            console.log("PostgreSQL migration verification:", JSON.stringify(rows[0]));
+            if (rows[0].table_count < 40 || rows[0].enum_count < 10 || rows[0].applied_migrations < 1) {
+              throw new Error("Migrated schema is incomplete.");
+            }
+          } finally {
+            await client.end();
+          }
+          NODE
 
       - name: Run real PostgreSQL HTTP integration tests
         run: npx vitest run server/tests/postgres-http.integration.test.ts --reporter=verbose
