@@ -125,6 +125,13 @@ async function withRetry<T>(operation: () => Promise<T>, operationName: string):
     try {
       return await operation();
     } catch (error: any) {
+      // Validation, constraint, and business errors are not connectivity
+      // failures. Preserve their original type/code instead of retrying and
+      // incorrectly converting them into OfflineDatabaseError.
+      if (!isConnectionError(error)) {
+        throw error;
+      }
+
       if (isConnectionError(error)) {
         enterOfflineMode(error);
         if (basePrisma) {
