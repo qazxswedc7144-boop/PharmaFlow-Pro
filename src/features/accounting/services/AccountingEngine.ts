@@ -375,14 +375,14 @@ export class AccountingEngine {
   }
 
   private static validateEntryBalance(lines: JournalLine[]) {
-    const totalDebit = lines.reduce((sum, l) => sum.plus(new Decimal(String(l.debit || 0))), new Decimal(0));
-    const totalCredit = lines.reduce((sum, l) => sum.plus(new Decimal(String(l.credit || 0))), new Decimal(0));
-    if (totalDebit.minus(totalCredit).abs().greaterThan('0.0001')) {
+    const totalDebit = lines.reduce((sum, l) => sum + l.debit, 0);
+    const totalCredit = lines.reduce((sum, l) => sum + l.credit, 0);
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
       throw new AccountingError({
         message: `Unbalanced journal entry: Total Debit (${totalDebit}) does not equal Total Credit (${totalCredit}).`,
         arabicMessage: `القيد المحاسبي غير متوازن (إجمالي المدين ${totalDebit} لا يساوي الدائن ${totalCredit}).`,
         module: 'ACCOUNTING',
-        metadata: { totalDebit: totalDebit.toString(), totalCredit: totalCredit.toString() },
+        metadata: { totalDebit, totalCredit },
       });
     }
   }
