@@ -209,42 +209,35 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   }, [editingInvoiceId]);
 
   const restoreDraft = useCallback(async () => {
-    if (recoveryDraftData) {
+    if (!recoveryDraftData) return;
+    try {
       const data = recoveryDraftData.totals?.header ? recoveryDraftData.totals : (recoveryDraftData.payload || recoveryDraftData);
       if (data) {
-        if (data.header) {
-          setHeader(data.header);
-        }
         const draftItems = recoveryDraftData.items || data.items || [];
-        // Legacy manual adjustments are intentionally ignored. Restore only
-        // catalog-backed lines and rehydrate their authoritative local prices.
+        // Ignore legacy manual discount/tax/fee adjustments. Rehydrate each
+        // line from the current tenant catalog before restoring it.
         const restoredItems = await Promise.all(draftItems.map(async (item: any) => {
           const productId = item.product_id || item.productId;
-          if (!productId || String(productId).startsWith('manual-')) {
-            throw new Error('DRAFT_ITEM_PRODUCT_REFERENCE_MISSING');
-          }
+          if (!productId || String(productId).startsWith('manual-')) throw new Error('DRAFT_ITEM_PRODUCT_REFERENCE_MISSING');
           const product = await db.products.get(productId);
-          if (!product || product.price === undefined || product.price === null) {
-            throw new Error('DRAFT_ITEM_PRODUCT_PRICE_UNAVAILABLE');
-          }
+          if (!product || product.price === undefined || product.price === null) throw new Error('DRAFT_ITEM_PRODUCT_PRICE_UNAVAILABLE');
           const qty = Number(item.qty ?? item.quantity);
-          if (!Number.isSafeInteger(qty) || qty <= 0) {
-            throw new Error('DRAFT_ITEM_QUANTITY_INVALID');
-          }
+          if (!Number.isSafeInteger(qty) || qty <= 0) throw new Error('DRAFT_ITEM_QUANTITY_INVALID');
           const price = Number(product.price);
           return { ...item, product_id: productId, price, unitPrice: price, qty, sum: price * qty };
         }));
+        if (data.header) setHeader(data.header);
         setItems(restoredItems);
-        if (recoveryDraftData.partner?.partnerName) {
-          setCustomerSearchTerm(recoveryDraftData.partner.partnerName);
-        } else if (data.partner?.partnerName) {
-          setCustomerSearchTerm(data.partner.partnerName);
-        }
+        const partnerName = recoveryDraftData.partner?.partnerName || data.partner?.partnerName;
+        if (partnerName) setCustomerSearchTerm(partnerName);
       }
-      addToast("تمت استعادة المسودة الحية بنجاح 💾", "success");
+      addToast("تمت استعادة المسودة وإعادة تسعيرها وفق سياسة المؤسسة 💾", "success");
+      setIsRecoveryModalOpen(false);
+      setRecoveryDraftData(null);
+    } catch (error: any) {
+      console.error('[SalesDraft] Safe restore rejected:', error);
+      addToast('تعذر استعادة المسودة: يوجد صنف دون مرجع أو سعر صالح في المخزون.', 'error');
     }
-    setIsRecoveryModalOpen(false);
-    setRecoveryDraftData(null);
   }, [recoveryDraftData, addToast]);
 
   const discardDraft = useCallback(async () => {
@@ -482,7 +475,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [items, header, adjData, vTotalSum, editingInvoiceId, customers]);
+  }, [items, header, vTotalSum, editingInvoiceId, customers]);
 
   // Immediate save on specific changes: Add Item, Remove Item, Change Qty/Price, Change Customer, Change Notes
   const prevItemsRef = useRef<InvoiceItem[]>(items);
@@ -519,7 +512,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
       };
       triggerImmediateSave().catch(e => console.error("Immediate save error:", e));
     }
-  }, [items, header, adjData, vTotalSum, editingInvoiceId, customers]);
+  }, [items, header, vTotalSum, editingInvoiceId, customers]);
 
   const persistToDB = useCallback(async () => {
     try {
