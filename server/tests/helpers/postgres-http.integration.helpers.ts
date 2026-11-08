@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, type TestContext } from "vitest";
+import { afterAll, beforeAll, describe } from "vitest";
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
