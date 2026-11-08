@@ -30,9 +30,15 @@ jobs:
 
       - name: Validate Prisma Schema
         run: npx prisma validate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
 
       - name: Generate Prisma Client
         run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
 
       - name: Run Atomicity, Tenant Isolation, and Sync Lifecycle Tests
         run: >-
