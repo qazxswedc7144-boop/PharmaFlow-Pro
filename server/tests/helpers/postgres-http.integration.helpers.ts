@@ -14,6 +14,16 @@ import { prisma } from "../../database/prisma.js";
 const enabled = Boolean(process.env.DATABASE_URL);
 const password = "Ci-Only-Password-2026!";
 
+function logProcessMemory(stage: string): void {
+  const memory = process.memoryUsage();
+  console.info(`[PostgreSQL HTTP] ${stage} (MB):`, {
+    rss: Math.round(memory.rss / 1024 / 1024),
+    heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+    heapTotal: Math.round(memory.heapTotal / 1024 / 1024),
+    external: Math.round(memory.external / 1024 / 1024),
+  });
+}
+
 export interface PostgresHttpContext {
   suffix: string;
   usernameA: string;
@@ -209,21 +219,9 @@ async function initialize(
   app.use("/api", subscriptionGuard);
 
   if (options.includeSyncRoutes) {
-    const beforeImport = process.memoryUsage();
-    console.info("[PostgreSQL HTTP] Memory before production Sync router import (MB):", {
-      rss: Math.round(beforeImport.rss / 1024 / 1024),
-      heapUsed: Math.round(beforeImport.heapUsed / 1024 / 1024),
-      heapTotal: Math.round(beforeImport.heapTotal / 1024 / 1024),
-      external: Math.round(beforeImport.external / 1024 / 1024),
-    });
+    logProcessMemory("Before production Sync router import");
     const { syncV1Router } = await import("../../../apps/api/src/modules/sync/sync.routes.js");
-    const afterImport = process.memoryUsage();
-    console.info("[PostgreSQL HTTP] Memory after production Sync router import (MB):", {
-      rss: Math.round(afterImport.rss / 1024 / 1024),
-      heapUsed: Math.round(afterImport.heapUsed / 1024 / 1024),
-      heapTotal: Math.round(afterImport.heapTotal / 1024 / 1024),
-      external: Math.round(afterImport.external / 1024 / 1024),
-    });
+    logProcessMemory("After production Sync router import");
     app.use("/api/v1/sync", syncV1Router);
   }
 
@@ -233,6 +231,7 @@ async function initialize(
     app.use("/api/invoices", invoiceRouter);
   }
 
+  logProcessMemory("Before HTTP server listen");
   ctx.server = app.listen(0);
   await new Promise<void>((resolve, reject) => {
     ctx.server?.once("listening", resolve);
@@ -240,9 +239,14 @@ async function initialize(
   });
   const address = ctx.server.address() as AddressInfo;
   ctx.baseUrl = `http://127.0.0.1:${address.port}`;
+  logProcessMemory("After HTTP server listen");
 
+  logProcessMemory("Before tenant A login");
   ctx.tokenA = await login(ctx, ctx.usernameA);
+  logProcessMemory("After tenant A login");
+  logProcessMemory("Before tenant B login");
   ctx.tokenB = await login(ctx, ctx.usernameB);
+  logProcessMemory("After tenant B login");
 }
 
 async function cleanup(ctx: PostgresHttpContext): Promise<void> {
