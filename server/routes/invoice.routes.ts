@@ -129,12 +129,12 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
         const policy = await tx.tenantSalesPolicy.findUnique({ where: { tenantId } });
         salesPricing = SalesPricingService.calculate(
           itemData.map((item: any) => ({ price: item.price, qty: item.qty })),
-          data.discountPercent ?? 0,
           {
             maxDiscountPercent: policy?.maxDiscountPercent ?? 0,
             taxRatePercent: policy?.taxRatePercent ?? 0,
             taxMode: policy?.taxMode ?? "NONE"
-          }
+          },
+          data.discountPercent ?? 0
         );
         calculatedTotal = salesPricing.totalAmount;
       } else if (data.discountPercent !== undefined && new Prisma.Decimal(data.discountPercent).greaterThan(0)) {
