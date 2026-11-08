@@ -56,3 +56,77 @@ jobs:
       - name: Production Build
         if: always()
         run: npm run build
+
+  postgres-integration:
+    name: PostgreSQL + HTTP Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: pharmaflow_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pharmaflow_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pharmaflow_test?schema=public
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/pharmaflow_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-only-access-secret-32-characters-minimum
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-32-characters-minimum
+      ENCRYPTION_KEY: ci-only-encryption-key-32-characters-minimum
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Remove stale lock file
+        run: rm -f package-lock.json
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --legacy-peer-deps
+        env:
+          npm_config_cache: /tmp/.npm-cache
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Apply repository migrations to isolated PostgreSQL
+        run: npx prisma migrate deploy
+
+      - name: Verify migrated schema
+        run: |
+          npx prisma db execute --stdin <<'SQL'
+          SELECT
+            (SELECT COUNT(*) FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_type = 'BASE TABLE') AS table_count,
+            (SELECT COUNT(*) FROM pg_type t
+             JOIN pg_namespace n ON n.oid = t.typnamespace
+             WHERE n.nspname = 'public' AND t.typtype = 'e') AS enum_count;
+          SQL
+
+      - name: Run real PostgreSQL HTTP integration tests
+        run: npx vitest run server/tests/postgres-http.integration.test.ts --reporter=verbose
