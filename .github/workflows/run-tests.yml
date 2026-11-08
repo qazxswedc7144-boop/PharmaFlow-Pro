@@ -28,6 +28,9 @@ jobs:
         env:
           npm_config_cache: /tmp/.npm-cache
 
+      - name: Validate Prisma Schema
+        run: npx prisma validate
+
       - name: Generate Prisma Client
         run: npx prisma generate
 
@@ -110,6 +113,9 @@ jobs:
         run: npm install --no-audit --no-fund --legacy-peer-deps
         env:
           npm_config_cache: /tmp/.npm-cache
+
+      - name: Validate Prisma Schema
+        run: npx prisma validate
 
       - name: Generate Prisma Client
         run: npx prisma generate
