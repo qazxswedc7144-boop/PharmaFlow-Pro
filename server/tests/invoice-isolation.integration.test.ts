@@ -43,6 +43,15 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(posted.status, JSON.stringify(posted.body)).toBe(200);
     expect(posted.body.success).toBe(true);
 
+    const replicationAudit = await prisma.auditLog.findFirst({
+      where: {
+        action: "REPLICATION_PUBLISHED",
+        entity: "ReplicationEvent",
+        userId: ctx.userAId,
+      },
+    });
+    expect(replicationAudit).toBeTruthy();
+
     const storedInvoice = await prisma.invoice.findUnique({ where: { id: draft.id } });
     expect(storedInvoice?.status).toBe("CONFIRMED");
     expect(storedInvoice?.documentStatus).toBe("POSTED");
@@ -83,6 +92,56 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     });
     expect(journalCount).toBe(1);
     expect(movementCount).toBe(1);
+  });
+
+  it("persists lock acquire, extend, and release audit events in PostgreSQL", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const { LockingService } = await import("../modules/locking/locking.service.js");
+    const lockKey = `ci-audit-lock-${ctx.suffix}`;
+
+    const lock = await LockingService.acquireLock({
+      key: lockKey,
+      branchId: ctx.branchAId,
+      ttl: 30000,
+      lockType: "GENERIC",
+      ownerId: ctx.userAId,
+    });
+    expect(lock).toBeTruthy();
+
+    try {
+      const extended = await LockingService.extendLock(
+        lockKey,
+        lock!.id,
+        ctx.branchAId,
+        45000,
+        ctx.userAId,
+      );
+      expect(extended).toBe(true);
+
+      const released = await LockingService.releaseLock(
+        lockKey,
+        lock!.id,
+        ctx.branchAId,
+        ctx.userAId,
+      );
+      expect(released).toBe(true);
+
+      const auditRows = await prisma.auditLog.findMany({
+        where: { entity: "DistributedLock", entityId: lock!.id },
+        orderBy: { timestamp: "asc" },
+        select: { action: true },
+      });
+      expect(auditRows.map((row) => row.action)).toEqual([
+        "LOCK_ACQUIRED",
+        "LOCK_EXTENDED",
+        "LOCK_RELEASED",
+      ]);
+    } finally {
+      if (await LockingService.isLocked(lockKey, ctx.branchAId)) {
+        await LockingService.releaseLock(lockKey, lock!.id, ctx.branchAId, ctx.userAId);
+      }
+    }
   });
 }, { includeInvoiceRoutes: true });
 
