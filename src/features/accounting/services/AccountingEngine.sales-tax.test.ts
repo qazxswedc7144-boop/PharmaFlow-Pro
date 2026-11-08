@@ -7,15 +7,14 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 
 describe('AccountingEngine local SALE tax split', () => {
   beforeEach(async () => {
-    // Each test must start with an isolated tenant chart of accounts.
-    // Without clearing this table, prior VAT fixtures accumulate and make
-    // the production fail-closed ambiguity check reject later test cases.
-    await db.accounts.clear();
     TokenProvider.setSession(
       { id: 'USER-UNIT-001', tenantId: 'TENANT-UNIT-001', role: 'admin' } as any,
       'unit-test-access-token',
       { tenantId: 'TENANT-UNIT-001', branchId: 'BRANCH-UNIT-001', roles: ['admin'] }
     );
+    // Clear only the active tenant's accounts after establishing its session.
+    // The DB guard intentionally rejects tenant-scoped mutations without a session.
+    await db.accounts.clear();
   });
 
   afterEach(() => {
