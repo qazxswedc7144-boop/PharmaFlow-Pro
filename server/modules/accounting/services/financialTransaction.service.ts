@@ -141,6 +141,7 @@ export class FinancialTransactionService {
       );
     }
 
+    const ZERO = new Prisma.Decimal(0);
     const totalInvoiceAmount = new Prisma.Decimal(invoice.totalAmount.toString());
     const isCash = invoice.paymentStatus === "PAID" || invoice.paymentStatus === "CASH" as any;
     const isSale = invoice.type === InvoiceType.SALE;
@@ -174,7 +175,6 @@ export class FinancialTransactionService {
 
     let totalComputatedCogs = ZERO;
     const ledgerLines: { accountId: string; debit: Prisma.Decimal; credit: Prisma.Decimal; description: string }[] = [];
-    const ZERO = new Prisma.Decimal(0);
 
     // Preserve snapshot state before mutation for auditing purposes
     const invoiceSnapshotBefore = JSON.stringify(invoice);
