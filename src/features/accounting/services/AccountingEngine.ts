@@ -135,7 +135,7 @@ export class AccountingEngine {
       date: sale.date || new Date().toISOString(),
       referenceId: sale.SaleID || sale.id,
       description: `فاتورة مبيعات رقم ${sale.SaleID || sale.id}`,
-      TotalAmount: baseAmount,
+      TotalAmount: baseAmount.toNumber(),
       status: 'Posted',
       sourceId: sale.id,
       sourceType: 'SALE',
