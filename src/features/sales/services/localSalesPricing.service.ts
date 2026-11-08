@@ -62,7 +62,7 @@ export class LocalSalesPricingService {
         throw new Error('INVALID_SALE_QUANTITY');
       }
       const price = new Decimal(item.price);
-      if (!price.isFinite() || price.isNegative()) {
+      if (!Number.isFinite(Number(price.toString())) || price.isNegative()) {
         throw new Error('INVALID_SERVER_PRODUCT_PRICE');
       }
       return sum.plus(price.mul(item.qty));
