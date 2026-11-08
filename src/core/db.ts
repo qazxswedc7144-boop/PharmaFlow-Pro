@@ -50,7 +50,7 @@ const TENANT_SCOPED_TABLES = new Set([
   'accounts', 'journalLines', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
   'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
   'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments',
-  'financialHealthSnapshots', 'systemAlerts', 'accountingPeriods'
+  'financialHealthSnapshots', 'systemAlerts', 'accountingPeriods', 'tenantSalesPolicies'
 ]);
 
 function requireTenantForTable(table: any, operation: string) {
@@ -736,6 +736,7 @@ export class PharmaFlowDB extends Dexie {
   users!: Table<any, string>;
   userPermissions!: Table<any, string>;
   systemSettings!: Table<{ key: string; value: any }>;
+  tenantSalesPolicies!: Table<{ tenantId: string; maxDiscountPercent: string; taxRatePercent: string; taxMode: 'NONE' | 'EXCLUSIVE' | 'INCLUSIVE'; updatedAt: string; cachedAt: string }, string>;
   medicineBatches!: Table<any>;
   exchangeRates!: Table<any>;
   systemBackups!: Table<SystemBackup>;
@@ -1092,6 +1093,11 @@ export class PharmaFlowDB extends Dexie {
       journalLines: '&id, entry_id, entryId, account_id, accountId, [entry_id+account_id], [entryId+accountId], tenantId, branchId'
     }).upgrade(async () => {
       // Existing tenant-less records remain untouched for manual ownership review.
+    });
+
+    // Version 39: Tenant-scoped offline cache for server-authoritative sales policy.
+    this.version(39).stores({
+      tenantSalesPolicies: '&tenantId, updatedAt'
     });
 
     // Handle structural integrity and recovery
@@ -2371,7 +2377,7 @@ export const ALL_SCHEMA_TABLE_NAMES = [
   'idempotencyKeys', 'projectionCheckpoints', 'projectionEvents', 'supplierAliases',
   'productAliases', 'supplierProductReferences', 'aliasRejections', 'aliasAuditLogs',
   'inventoryCorrectionCases', 'system_diagnostics', 'error_aggregates', 'recovery_events',
-  'system_health', 'integrity_audit_logs', 'integrity_repair_records', 'idempotency_records'
+  'system_health', 'tenantSalesPolicies', 'integrity_audit_logs', 'integrity_repair_records', 'idempotency_records'
 ];
 
 export function getDatabaseName(_tenantId?: string | null, _userId?: string | null): string {
