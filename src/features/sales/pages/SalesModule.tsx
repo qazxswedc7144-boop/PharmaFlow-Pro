@@ -597,7 +597,6 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
             moduleName="فاتورة مبيعات الكاشير"
             updatedAt={(recoveryDraftData as any).updatedAt || (recoveryDraftData as any).timestamp || new Date().toISOString()}
             itemCount={((recoveryDraftData as any).payload?.items || (recoveryDraftData as any).items)?.length || 0}
-            totalAmount={Number((recoveryDraftData as any).payload?.totals?.subtotal || (recoveryDraftData as any).totals?.subtotal || 0)}
             onRestore={restoreDraft}
             onDiscard={discardDraft}
           />
