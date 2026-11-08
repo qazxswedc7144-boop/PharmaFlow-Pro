@@ -185,12 +185,12 @@ if (mode === 'sale') {
   if (suggested?.suggestedPrice && suggested.suggestedPrice > 0) {
     setLastSellingPriceSuggestion(suggested.suggestedPrice);
     setPriceInsight(suggested.insight || `آخر سعر بيع: ${suggested.suggestedPrice} ${currency}`);
-    setTempPrice(suggested.suggestedPrice);
-  } else if (prod?.UnitPrice || (prod as any)?.price) {
-    const uPrice = prod.UnitPrice || (prod as any).price || 0;
-    setLastSellingPriceSuggestion(uPrice);
-    setPriceInsight(`سعر البيع الافتراضي: ${uPrice} ${currency}`);
-    setTempPrice(uPrice);
+  }
+  // The posting workflow uses products.price as the authoritative amount.
+  // Keep the preview aligned; intelligence suggestions remain informational only.
+  const authoritativePrice = (prod as any)?.price;
+  if (authoritativePrice !== undefined && authoritativePrice !== null) {
+    setTempPrice(authoritativePrice);
   }
 }
     } catch (err) {
@@ -607,9 +607,11 @@ if (mode === 'sale') {
                   type="number" 
                   step="any" 
                   value={tempPrice} 
+                  disabled={mode === 'sale'}
+                  readOnly={mode === 'sale'}
                   onChange={e => setTempPrice(e.target.value)} 
                   onKeyDown={e => e.key === 'Enter' && (mode === 'sale' ? noteInputRef.current?.focus() : categoryInputRef.current?.focus())} 
-                  className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-2 text-center text-[14px] font-semibold text-[#1E4D4D] outline-none" 
+                  className={`w-full box-border h-10 border border-slate-200 rounded-xl px-2 text-center text-[14px] font-semibold text-[#1E4D4D] outline-none ${mode === 'sale' ? 'bg-slate-100/80 cursor-not-allowed' : 'bg-slate-50'}`}
                   placeholder="0.00" 
                 />
               </div>
