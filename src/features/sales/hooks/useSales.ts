@@ -19,6 +19,9 @@ import { DraftService } from '@/services/system/DraftService';
 import { reportCache } from '@features/reports/services/reportCacheService';
 import { ReportEngine } from '@/services/reports/reportEngine';
 import { configurationService } from '@/services/config/configurationService';
+import { TokenProvider } from '@/services/auth/tokenProvider';
+import { TenantSalesPolicyService, type CachedTenantSalesPolicy } from '@features/sales/services/tenantSalesPolicy.service';
+import { LocalSalesPricingService, type LocalSalesPricingResult } from '@features/sales/services/localSalesPricing.service';
 
 const DRAFT_KEY = 'pharmaflow_sales_draft';
 
@@ -43,7 +46,9 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   const [isDuplicate, setIsDuplicate] = useState(false);
   const [hasDependencies, setHasDependencies] = useState(false);
   
-  const [adjData, setAdjData] = useState({ discountPercent: 0, otherFees: 0, tax: 0 });
+  const [salesPolicy, setSalesPolicy] = useState<CachedTenantSalesPolicy | null>(null);
+  const [salesPolicyError, setSalesPolicyError] = useState<string | null>(null);
+  const [isSalesPolicyLoading, setIsSalesPolicyLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [manualItemName, setManualItemName] = useState<string>('');
   const [tempQty, setTempQty] = useState<number | string>('');
@@ -112,7 +117,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         attachment: ''
       });
       setItems([]);
-      setAdjData({ discountPercent: 0, otherFees: 0, tax: 0 });
+      setSalesPolicyError(null);
       setCustomerSearchTerm('');
       setEditingInvoiceId(null);
     } catch (e) {
@@ -210,18 +215,26 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         if (data.header) {
           setHeader(data.header);
         }
-        if (recoveryDraftData.items) {
-          setItems(recoveryDraftData.items);
-        } else if (data.items) {
-          setItems(data.items);
-        }
-        if (data.adjData) {
-          setAdjData(data.adjData);
-        } else if (data.totals?.adjData) {
-          setAdjData(data.totals.adjData);
-        } else if (recoveryDraftData.totals?.adjData) {
-          setAdjData(recoveryDraftData.totals.adjData);
-        }
+        const draftItems = recoveryDraftData.items || data.items || [];
+        // Legacy manual adjustments are intentionally ignored. Restore only
+        // catalog-backed lines and rehydrate their authoritative local prices.
+        const restoredItems = await Promise.all(draftItems.map(async (item: any) => {
+          const productId = item.product_id || item.productId;
+          if (!productId || String(productId).startsWith('manual-')) {
+            throw new Error('DRAFT_ITEM_PRODUCT_REFERENCE_MISSING');
+          }
+          const product = await db.products.get(productId);
+          if (!product || product.price === undefined || product.price === null) {
+            throw new Error('DRAFT_ITEM_PRODUCT_PRICE_UNAVAILABLE');
+          }
+          const qty = Number(item.qty ?? item.quantity);
+          if (!Number.isSafeInteger(qty) || qty <= 0) {
+            throw new Error('DRAFT_ITEM_QUANTITY_INVALID');
+          }
+          const price = Number(product.price);
+          return { ...item, product_id: productId, price, unitPrice: price, qty, sum: price * qty };
+        }));
+        setItems(restoredItems);
         if (recoveryDraftData.partner?.partnerName) {
           setCustomerSearchTerm(recoveryDraftData.partner.partnerName);
         } else if (data.partner?.partnerName) {
@@ -394,10 +407,57 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     }
   }, [header.invoice_number, editingInvoiceId]);
 
-  const vTotalSum = useMemo(() => {
-    const sub = items.reduce((acc, it) => acc + (it.sum || 0), 0);
-    return sub - (sub * (adjData.discountPercent / 100)) + adjData.otherFees + adjData.tax;
-  }, [items, adjData]);
+  useEffect(() => {
+    let active = true;
+    const loadPolicy = async () => {
+      setIsSalesPolicyLoading(true);
+      setSalesPolicyError(null);
+      try {
+        const session = TokenProvider.getCurrentSession();
+        if (!session.isAuthenticated || !session.tenantId) {
+          throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED');
+        }
+        const policy = await TenantSalesPolicyService.getForTenant(session.tenantId);
+        if (!active || policy.tenantId !== session.tenantId) return;
+        setSalesPolicy(policy);
+      } catch (error: any) {
+        if (active) {
+          setSalesPolicy(null);
+          setSalesPolicyError(error?.message || 'SALES_POLICY_UNAVAILABLE');
+        }
+      } finally {
+        if (active) setIsSalesPolicyLoading(false);
+      }
+    };
+    void loadPolicy();
+    return () => { active = false; };
+  }, []);
+
+  const pricingState = useMemo(() => {
+    if (items.length === 0) return { result: null as LocalSalesPricingResult | null, error: null as string | null };
+    if (!salesPolicy) return { result: null as LocalSalesPricingResult | null, error: salesPolicyError || 'SALES_POLICY_UNAVAILABLE' };
+    try {
+      const pricedItems = items.map((item: any) => {
+        const productId = item.product_id || item.productId;
+        const product = productId ? products.find((p: any) => p.id === productId) : undefined;
+        if (!productId || !product || product.price === undefined || product.price === null) {
+          throw new Error('LOCAL_PRODUCT_PRICE_UNAVAILABLE');
+        }
+        return { price: String(product.price), qty: Number(item.qty ?? item.quantity) };
+      });
+      return {
+        result: LocalSalesPricingService.calculate(pricedItems, salesPolicy, 0),
+        error: null
+      };
+    } catch (error: any) {
+      return { result: null, error: error?.message || 'SALES_PRICING_FAILED' };
+    }
+  }, [items, products, salesPolicy, salesPolicyError]);
+
+  const vTotalSum = useMemo(
+    () => pricingState.result ? Number(pricingState.result.totalAmount) : 0,
+    [pricingState.result]
+  );
 
   // 2. Smart Auto Save Draft Engine (Task 5 / Phase 5.2.5-C)
   // Backup Interval: Auto-save draft every 5 seconds
@@ -412,7 +472,6 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         const partner = customers.find(c => c.id === header.customer_id);
         const partnerName = partner ? partner.Supplier_Name : '';
         await DraftService.saveInvoiceDraft('sales_draft_current', 'SALE', items, {
-          adjData,
           subtotal: vTotalSum,
           header,
           partner: { partnerName }
@@ -429,7 +488,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   const prevItemsRef = useRef<InvoiceItem[]>(items);
   const prevCustomerIdRef = useRef<string>(header.customer_id);
   const prevNotesRef = useRef<string>(header.notes);
-  const prevAdjDataRef = useRef<{ discountPercent: number; otherFees: number; tax: number }>(adjData);
+
 
   useEffect(() => {
     if (editingInvoiceId) return;
@@ -440,20 +499,16 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     const itemsChanged = JSON.stringify(items) !== JSON.stringify(prevItemsRef.current);
     const customerChanged = header.customer_id !== prevCustomerIdRef.current;
     const notesChanged = header.notes !== prevNotesRef.current;
-    const adjChanged = JSON.stringify(adjData) !== JSON.stringify(prevAdjDataRef.current);
-
-    if (itemsChanged || customerChanged || notesChanged || adjChanged) {
+    if (itemsChanged || customerChanged || notesChanged) {
       prevItemsRef.current = items;
       prevCustomerIdRef.current = header.customer_id;
       prevNotesRef.current = header.notes;
-      prevAdjDataRef.current = adjData;
 
       const triggerImmediateSave = async () => {
         try {
           const partner = customers.find(c => c.id === header.customer_id);
           const partnerName = partner ? partner.Supplier_Name : '';
           await DraftService.saveInvoiceDraft('sales_draft_current', 'SALE', items, {
-            adjData,
             subtotal: vTotalSum,
             header,
             partner: { partnerName }
@@ -469,7 +524,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   const persistToDB = useCallback(async () => {
     try {
       const isPeriodLocked = await db.isDateLocked(header.date || "") && !isAdmin;
-      if (isPeriodLocked || isDuplicate) return;
+      if (isPeriodLocked || isDuplicate || !salesPolicy || !pricingState.result || pricingState.error) return;
       
       setIsAutoSaving(true);
       
@@ -507,7 +562,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     } finally {
       setIsAutoSaving(false);
     }
-  }, [header, items, vTotalSum, isDuplicate, isAdmin, isLocked, editingInvoiceId, currency]);
+  }, [header, items, vTotalSum, isDuplicate, isAdmin, isLocked, editingInvoiceId, currency, salesPolicy, pricingState]);
 
   const selectProduct = useCallback(async (p: Product) => {
     try {
@@ -546,8 +601,12 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         prod = products.find(p => (p.Name || p.name || '').toLowerCase() === name.toLowerCase()) || null;
       }
       
-      const priceVal = typeof tempPrice === 'number' ? tempPrice : parseFloat(tempPrice) || 0;
       const qtyVal = typeof tempQty === 'number' ? tempQty : Number(tempQty) || 1;
+      const authoritativePrice = prod?.price;
+      if (!prod?.id || authoritativePrice === undefined || authoritativePrice === null) {
+        throw new Error('LOCAL_PRODUCT_PRICE_UNAVAILABLE');
+      }
+      const priceVal = Number(authoritativePrice);
 
       const newItem: any = {
         id: db.generateId('SALE_DET'), parent_id: header.invoice_number,
@@ -627,7 +686,10 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
 
   const handlePost = useCallback(async () => {
     if (savePhase === 'saving') return;
-    if (items.length === 0 || isLocked || isDuplicate) return;
+    if (items.length === 0 || isLocked || isDuplicate || !salesPolicy || !pricingState.result || pricingState.error) {
+      addToast('تعذر الحفظ: سياسة التسعير أو سعر أحد الأصناف غير متاح.', 'error');
+      return;
+    }
     
     // OPTIMISTIC: Show success immediately and block UI only enough to navigate
     showNotification('⌛ جاري طباعة الإيصال وترحيل الصندوق...', 'info');
@@ -720,7 +782,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     } finally {
       setIsSaving(false);
     }
-  }, [items, isLocked, isDuplicate, savePhase, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification]);
+  }, [items, isLocked, isDuplicate, savePhase, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification, salesPolicy, pricingState]);
 
   const getStatusLabel = (status: string) => {
     switch(status) {
@@ -752,7 +814,11 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     isAdding,
     isDuplicate,
     hasDependencies,
-    adjData, setAdjData,
+    salesPolicy,
+    salesPolicyError,
+    isSalesPolicyLoading,
+    pricingResult: pricingState.result,
+    pricingError: pricingState.error,
     selectedProduct, setSelectedProduct,
     manualItemName, setManualItemName,
     tempQty, setTempQty,
