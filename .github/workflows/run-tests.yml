@@ -142,8 +142,14 @@ jobs:
           }
           NODE
 
-      - name: Run PostgreSQL HTTP Authentication + Sync integration tests
-        run: npx vitest run server/tests/auth-sync.integration.test.ts --reporter=verbose --maxWorkers=1
+      - name: Run PostgreSQL HTTP Authentication integration tests
+        run: npx vitest run server/tests/auth.integration.test.ts --reporter=verbose --maxWorkers=1
+        env:
+          NODE_OPTIONS: "--max-old-space-size=5120"
+
+      - name: Run PostgreSQL HTTP Sync integration tests
+        if: always()
+        run: npx vitest run server/tests/sync.integration.test.ts --reporter=verbose --maxWorkers=1
         env:
           NODE_OPTIONS: "--max-old-space-size=5120"
 
