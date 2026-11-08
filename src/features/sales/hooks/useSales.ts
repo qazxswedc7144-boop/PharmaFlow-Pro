@@ -22,6 +22,7 @@ import { configurationService } from '@/services/config/configurationService';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { TenantSalesPolicyService, type CachedTenantSalesPolicy } from '@features/sales/services/tenantSalesPolicy.service';
 import { LocalSalesPricingService, type LocalSalesPricingResult } from '@features/sales/services/localSalesPricing.service';
+import { restoreSalesDraftItems } from '@features/sales/services/salesDraftRecovery.service';
 
 const DRAFT_KEY = 'pharmaflow_sales_draft';
 
@@ -213,19 +214,9 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     try {
       const data = recoveryDraftData.totals?.header ? recoveryDraftData.totals : (recoveryDraftData.payload || recoveryDraftData);
       if (data) {
-        const draftItems = recoveryDraftData.items || data.items || [];
-        // Ignore legacy manual discount/tax/fee adjustments. Rehydrate each
-        // line from the current tenant catalog before restoring it.
-        const restoredItems = await Promise.all(draftItems.map(async (item: any) => {
-          const productId = item.product_id || item.productId;
-          if (!productId || String(productId).startsWith('manual-')) throw new Error('DRAFT_ITEM_PRODUCT_REFERENCE_MISSING');
-          const product = await db.products.get(productId);
-          if (!product || product.price === undefined || product.price === null) throw new Error('DRAFT_ITEM_PRODUCT_PRICE_UNAVAILABLE');
-          const qty = Number(item.qty ?? item.quantity);
-          if (!Number.isSafeInteger(qty) || qty <= 0) throw new Error('DRAFT_ITEM_QUANTITY_INVALID');
-          const price = Number(product.price);
-          return { ...item, product_id: productId, price, unitPrice: price, qty, sum: price * qty };
-        }));
+        // Legacy adjData/totals are intentionally excluded. Restore catalog
+        // references only; pricing is recalculated by LocalSalesPricingService.
+        const restoredItems = await restoreSalesDraftItems(recoveryDraftData, (productId) => db.products.get(productId));
         if (data.header) setHeader(data.header);
         setItems(restoredItems);
         const partnerName = recoveryDraftData.partner?.partnerName || data.partner?.partnerName;
