@@ -23,17 +23,6 @@ export function shouldApplyIdempotency(req: Pick<Request, "method" | "path" | "o
   const method = req.method.toUpperCase();
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
 
-  const requestPath = (req.path || req.originalUrl || "").split("?")[0].replace(/\\/+$/, "") || "/";
-  // Sync pull is a read operation despite using POST for its transport contract.
-  if (/^\\/api\\/(?:v1\\/)?sync\\/pull$/i.test(requestPath)) return false;
-
-  return true;
-}
-
-export function shouldApplyIdempotency(req: Pick<Request, "method" | "path" | "originalUrl">): boolean {
-  const method = req.method.toUpperCase();
-  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
-
   const requestPath = (req.path || req.originalUrl || "").split("?")[0].replace(/\/+$/, "") || "/";
   // Sync pull is a read operation despite using POST for its transport contract.
   return !/^\/api\/(?:v1\/)?sync\/pull$/i.test(requestPath);
