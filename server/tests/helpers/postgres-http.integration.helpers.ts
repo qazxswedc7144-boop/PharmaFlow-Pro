@@ -209,7 +209,21 @@ async function initialize(
   app.use("/api", subscriptionGuard);
 
   if (options.includeSyncRoutes) {
+    const beforeImport = process.memoryUsage();
+    console.info("[PostgreSQL HTTP] Memory before production Sync router import (MB):", {
+      rss: Math.round(beforeImport.rss / 1024 / 1024),
+      heapUsed: Math.round(beforeImport.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(beforeImport.heapTotal / 1024 / 1024),
+      external: Math.round(beforeImport.external / 1024 / 1024),
+    });
     const { syncV1Router } = await import("../../../apps/api/src/modules/sync/sync.routes.js");
+    const afterImport = process.memoryUsage();
+    console.info("[PostgreSQL HTTP] Memory after production Sync router import (MB):", {
+      rss: Math.round(afterImport.rss / 1024 / 1024),
+      heapUsed: Math.round(afterImport.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(afterImport.heapTotal / 1024 / 1024),
+      external: Math.round(afterImport.external / 1024 / 1024),
+    });
     app.use("/api/v1/sync", syncV1Router);
   }
 
@@ -244,19 +258,107 @@ async function cleanup(ctx: PostgresHttpContext): Promise<void> {
     }
 
     const tenantIds = [ctx.tenantAId, ctx.tenantBId].filter(Boolean);
-    if (tenantIds.length) {
-      await prisma.auditLog.deleteMany({ where: { tenantId: { in: tenantIds } } }).catch(() => {});
-      await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } }).catch(() => {});
-    }
     const userIds = [ctx.userAId, ctx.userBId].filter(Boolean);
+
+    if (tenantIds.length || userIds.length || ctx.planId) {
+      await prisma.$transaction(async (tx) => {
+        if (tenantIds.length) {
+          const tenantScope = { tenantId: { in: tenantIds } };
+
+          // Audit rows may not carry tenantId on every legacy path; also scope
+          // cleanup by the two uniquely-created CI users.
+          await tx.auditLog.deleteMany({
+            where: {
+              OR: [
+                { tenantId: { in: tenantIds } },
+                ...(userIds.length ? [{ userId: { in: userIds } }] : []),
+              ],
+            },
+          });
+
+          // Remove restrictive children before their parents using the actual
+          // Prisma FK graph. No constraints are disabled and no broad CASCADE is used.
+          await tx.journalLine.deleteMany({ where: tenantScope });
+          await tx.journalEntry.deleteMany({ where: tenantScope });
+
+          await tx.invoiceItem.deleteMany({ where: tenantScope });
+          await tx.invoice.deleteMany({ where: tenantScope });
+
+          await tx.inventoryMovement.deleteMany({ where: tenantScope });
+          await tx.reservation.deleteMany({ where: tenantScope });
+          await tx.branchTransferItem.deleteMany({ where: tenantScope });
+          await tx.branchTransfer.deleteMany({ where: tenantScope });
+          await tx.branchInventory.deleteMany({ where: tenantScope });
+          await tx.inventoryBatch.deleteMany({ where: tenantScope });
+
+          await tx.product.deleteMany({ where: tenantScope });
+          await tx.account.deleteMany({ where: tenantScope });
+          await tx.customer.deleteMany({ where: tenantScope });
+          await tx.supplier.deleteMany({ where: tenantScope });
+          await tx.payment.deleteMany({ where: tenantScope });
+          await tx.expense.deleteMany({ where: tenantScope });
+
+          await tx.deviceRegistration.deleteMany({ where: tenantScope });
+          await tx.usageCounter.deleteMany({ where: tenantScope });
+          await tx.syncQueue.deleteMany({ where: tenantScope });
+          await tx.syncEvent.deleteMany({ where: tenantScope });
+          await tx.idempotencyKey.deleteMany({ where: tenantScope });
+          await tx.tenantSubscription.deleteMany({ where: tenantScope });
+          await tx.license.deleteMany({ where: tenantScope });
+
+          await tx.branchUser.deleteMany({ where: tenantScope });
+          await tx.userRole.deleteMany({ where: tenantScope });
+          await tx.userPermissionOverride.deleteMany({ where: tenantScope });
+          await tx.tenantUser.deleteMany({ where: tenantScope });
+          await tx.branch.deleteMany({ where: tenantScope });
+          await tx.tenant.deleteMany({ where: { id: { in: tenantIds } } });
+        }
+
+        if (userIds.length) {
+          await tx.auditLog.deleteMany({ where: { userId: { in: userIds } } });
+          await tx.user.deleteMany({ where: { id: { in: userIds } } });
+        }
+
+        if (ctx.planId) {
+          await tx.tenantSubscription.deleteMany({ where: { planId: ctx.planId } });
+          await tx.subscriptionPlan.deleteMany({ where: { id: ctx.planId } });
+        }
+      });
+    }
+
+    // Verify that this run's uniquely-scoped fixtures were actually removed.
+    const remaining: Record<string, number> = {};
+    if (tenantIds.length) {
+      const [tenants, invoices, journalEntries, journalLines, products, customers, branches, subscriptions, devices, idempotencyKeys, syncEvents] =
+        await Promise.all([
+          prisma.tenant.count({ where: { id: { in: tenantIds } } }),
+          prisma.invoice.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.journalEntry.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.journalLine.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.product.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.customer.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.branch.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.tenantSubscription.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.deviceRegistration.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.idempotencyKey.count({ where: { tenantId: { in: tenantIds } } }),
+          prisma.syncEvent.count({ where: { tenantId: { in: tenantIds } } }),
+        ]);
+      Object.assign(remaining, { tenants, invoices, journalEntries, journalLines, products, customers, branches, subscriptions, devices, idempotencyKeys, syncEvents });
+    }
     if (userIds.length) {
-      await prisma.user.deleteMany({ where: { id: { in: userIds } } }).catch(() => {});
+      remaining.users = await prisma.user.count({ where: { id: { in: userIds } } });
+      remaining.userAuditLogs = await prisma.auditLog.count({ where: { userId: { in: userIds } } });
     }
     if (ctx.planId) {
-      await prisma.subscriptionPlan.deleteMany({ where: { id: ctx.planId } }).catch(() => {});
+      remaining.subscriptionPlans = await prisma.subscriptionPlan.count({ where: { id: ctx.planId } });
+      remaining.planSubscriptions = await prisma.tenantSubscription.count({ where: { planId: ctx.planId } });
+    }
+    const leftovers = Object.entries(remaining).filter(([, count]) => count > 0);
+    if (leftovers.length) {
+      throw new Error(`PostgreSQL integration fixture cleanup left rows behind: ${JSON.stringify(Object.fromEntries(leftovers))}`);
     }
   } finally {
-    await prisma.$disconnect().catch(() => {});
+    await prisma.$disconnect();
   }
 }
 
