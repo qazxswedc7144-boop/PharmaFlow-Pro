@@ -144,3 +144,5 @@ jobs:
 
       - name: Run real PostgreSQL HTTP integration tests
         run: npx vitest run server/tests/postgres-http.integration.test.ts --reporter=verbose
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
