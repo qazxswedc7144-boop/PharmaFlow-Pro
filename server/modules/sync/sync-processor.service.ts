@@ -13,7 +13,6 @@ import { SyncConflictService } from "./sync-conflict.service.js";
 import { SyncChangelogService } from "./sync-changelog.service.js";
 import { SyncAuditService } from "./sync-audit.service.js";
 import { AuthorizationService } from "../../services/rbac/authorization.service.js";
-import { AtomicPostSaleService } from "../accounting/services/atomicPostSale.service.js";
 
 const KNOWN_ENTITIES = new Set([
   "INVOICE", "SALE", "PRODUCT", "PAYMENT", "VOUCHER", "JOURNAL_ENTRY", 
@@ -288,6 +287,9 @@ export class SyncProcessorService {
     // 🚨 SECURITY FIX: Case-insensitive POST detection
     if ((upperEntity === "INVOICE" || upperEntity === "SALE") && operation === "POST") {
       try {
+        // Keep the accounting/FIFO posting graph out of ordinary Sync requests.
+        // Load it only when a real SALE POST mutation reaches this branch.
+        const { AtomicPostSaleService } = await import("../accounting/services/atomicPostSale.service.js");
         const postResult = await AtomicPostSaleService.executePostSaleCommand({
           payload: { ...data, tenantId }, tenantId, userId: params.userId, ipAddress: "127.0.0.1", tx
         });
