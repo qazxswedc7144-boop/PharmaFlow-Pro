@@ -17,6 +17,43 @@ import { SalesPricingService } from "../modules/accounting/services/salesPricing
 export const invoiceRouter = Router();
 
 /**
+ * GET /api/invoices/sales-policy
+ * Returns only the authenticated tenant's policy for online use and offline caching.
+ */
+invoiceRouter.get("/sales-policy", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId?.trim();
+    if (!tenantId) {
+      return res.status(403).json({ error: "TENANT_REQUIRED" });
+    }
+
+    const policy = await prisma.tenantSalesPolicy.findUnique({
+      where: { tenantId },
+      select: {
+        tenantId: true,
+        maxDiscountPercent: true,
+        taxRatePercent: true,
+        taxMode: true,
+        updatedAt: true
+      }
+    });
+
+    return res.json({
+      success: true,
+      policy: {
+        tenantId,
+        maxDiscountPercent: policy?.maxDiscountPercent.toString() ?? "0",
+        taxRatePercent: policy?.taxRatePercent.toString() ?? "0",
+        taxMode: policy?.taxMode ?? "NONE",
+        updatedAt: policy?.updatedAt.toISOString() ?? new Date(0).toISOString()
+      }
+    });
+  } catch {
+    return res.status(503).json({ error: "SALES_POLICY_UNAVAILABLE" });
+  }
+});
+
+/**
  * POST /api/invoices/create
  * Registers a new invoice. Saved as a DRAFT.
  */
