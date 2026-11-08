@@ -10,6 +10,8 @@ import { db } from '@/core/db';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { configurationService } from '@/services/config/configurationService';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import { TenantSalesPolicyService } from '@/features/sales/services/tenantSalesPolicy.service';
+import { LocalSalesPricingService } from '@/features/sales/services/localSalesPricing.service';
 
 export interface SalesWorkflowInput {
   customerId?: string;
@@ -27,6 +29,14 @@ export interface SalesWorkflowInput {
   isEdit?: boolean;
   warehouseId?: string;
   originalSaleId?: string;
+  discountPercent?: number;
+  subtotalAmount?: number;
+  discountAmount?: number;
+  taxRatePercent?: number;
+  taxAmount?: number;
+  taxMode?: 'NONE' | 'EXCLUSIVE' | 'INCLUSIVE';
+  revenueAmount?: number;
+  tax?: number;
 }
 
 export interface SalesWorkflowResult {
@@ -46,7 +56,7 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
     'medicineBatches', 'stock_movements', 'customers', 'journalEntries',
     'journalLines', 'accounts', 'financialTransactions', 'auditLogs',
     'idempotencyKeys', 'projectionEvents', 'projectionCheckpoints',
-    'accountingPeriods', 'sales', 'settings', 'systemSettings'
+    'accountingPeriods', 'sales', 'settings', 'systemSettings', 'tenantSalesPolicies'
   ];
 
   public async validateInput(input: SalesWorkflowInput): Promise<void> {
@@ -95,6 +105,48 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
           throw new Error(`CROSS_TENANT_PRODUCT_FORBIDDEN: الصنف [${productId}] تابع لمؤسسة أخرى.`);
         }
       }
+    }
+
+    // SALE pricing is derived from the authenticated tenant policy and the locally
+    // cached tenant-owned product catalog. Client-supplied totals and item prices
+    // are never authoritative. Returns retain their existing reversal path.
+    if (!input.isReturn) {
+      const policy = await TenantSalesPolicyService.getForTenant(ctx.tenantId);
+      input.items = await Promise.all(input.items.map(async (item) => {
+        const productId = item.productId || (item as any).product_id;
+        const product = productId ? await db.products.get(productId) : undefined;
+        const authoritativePrice = product?.price;
+        if (authoritativePrice === undefined || authoritativePrice === null) {
+          throw new Error('LOCAL_PRODUCT_PRICE_UNAVAILABLE');
+        }
+        return {
+          ...item,
+          price: Number(authoritativePrice),
+          unitPrice: Number(authoritativePrice),
+          qty: Number(item.quantity ?? (item as any).qty)
+        } as InvoiceItem;
+      }));
+
+      const pricing = LocalSalesPricingService.calculate(
+        input.items.map((item: any) => ({
+          price: String(item.price ?? item.unitPrice),
+          qty: Number(item.quantity ?? item.qty)
+        })),
+        policy,
+        input.discountPercent ?? 0
+      );
+
+      input.subtotalAmount = Number(pricing.subtotalAmount);
+      input.discountPercent = Number(pricing.discountPercent);
+      input.discountAmount = Number(pricing.discountAmount);
+      input.taxRatePercent = Number(pricing.taxRatePercent);
+      input.taxAmount = Number(pricing.taxAmount);
+      input.taxMode = pricing.taxMode;
+      input.revenueAmount = Number(pricing.revenueAmount);
+      input.total = Number(pricing.totalAmount);
+      // ValidationService models tax as an additive adjustment. Inclusive tax
+      // is already inside the invoice total, so only exclusive tax is supplied.
+      input.tax = pricing.taxMode === 'EXCLUSIVE' ? input.taxAmount : 0;
     }
 
     // 3. Cross-Tenant Existing Invoice Validation
@@ -155,7 +207,16 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
       effectiveDate,
       ctx.idempotencyKey,
       ctx.tenantId,
-      ctx.branchId
+      ctx.branchId,
+      !isReturn ? {
+        subtotalAmount: input.subtotalAmount,
+        discountPercent: input.discountPercent,
+        discountAmount: input.discountAmount,
+        taxRatePercent: input.taxRatePercent,
+        taxAmount: input.taxAmount,
+        taxMode: input.taxMode,
+        revenueAmount: input.revenueAmount
+      } : undefined
     );
 
     if ((globalThis as any).__FAIL_AT_STAGE__ === 'AFTER_SALES_DOC') {
