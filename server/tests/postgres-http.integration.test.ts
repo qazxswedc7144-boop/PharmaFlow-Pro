@@ -60,7 +60,7 @@ async function login(username: string): Promise<string> {
   return response.body.accessToken as string;
 }
 
-const integrationDescribe = enabled ? describe.sequential : describe.skip;
+const integrationDescribe = enabled ? describe : describe.skip;
 integrationDescribe("Real PostgreSQL + Express HTTP integration", () => {
   beforeAll(async () => {
     // A real connection is mandatory: fail rather than allowing Prisma's offline fallback.
