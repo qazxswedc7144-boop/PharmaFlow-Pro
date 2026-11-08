@@ -15,7 +15,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
 
   it("posts a persisted Draft through HTTP and verifies FIFO stock plus balanced PostgreSQL ledger rows", async () => {
     const ctx = getContext();
-    const { prisma } = await import("../../database/prisma.js");
+    const { prisma } = await import("../database/prisma.js");
     const created = await request(ctx, "/api/invoices/create", {
       method: "POST",
       token: ctx.tokenA,
