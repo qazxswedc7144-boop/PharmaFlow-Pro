@@ -143,6 +143,6 @@ jobs:
           NODE
 
       - name: Run real PostgreSQL HTTP integration tests
-        run: npx vitest run server/tests/postgres-http.integration.test.ts --reporter=verbose
+        run: npx vitest run server/tests/postgres-http.integration.test.ts --reporter=verbose --pool-options.forks.maxForks=1
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
