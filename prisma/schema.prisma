@@ -104,6 +104,27 @@ enum MovementType {
   RETURN
 }
 
+enum SalesReturnStatus {
+  DRAFT
+  VALIDATED
+  POSTED
+  CANCELLED
+}
+
+enum ReturnItemCondition {
+  SELLABLE
+  DAMAGED
+  QUARANTINED
+}
+
+enum SalesReturnRefundMethod {
+  CASH
+  CUSTOMER_CREDIT
+  WALLET
+  BANK_TRANSFER
+  MIXED
+}
+
 model User {
   id                  String                   @id @default(uuid())
   username            String                   @unique
@@ -327,6 +348,10 @@ model Product {
   inventoryMovements  InventoryMovement[]
   reservations        Reservation[]
   invoiceItems        InvoiceItem[]        @relation("ProductInvoiceItems")
+  salesReturnItems    SalesReturnItem[]     @relation("SalesReturnItemProduct")
+  fifoLayers          FifoLayer[]
+  fifoConsumptionLogs FifoConsumptionLog[]
+  salesReturnFifoAllocations SalesReturnFifoAllocation[]
   branchInventories   BranchInventory[]    @relation("ProductBranchInventories")
   tenantId            String
   tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -352,7 +377,9 @@ model Customer {
   updatedAt DateTime @updatedAt
   tenantId  String
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salesReturns SalesReturn[] @relation("CustomerSalesReturns")
 
+  @@unique([id, tenantId])
   @@index([tenantId])
   @@map("customers")
 }
@@ -398,6 +425,12 @@ model Invoice {
   branchId       String?
   tenantId       String
   tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch          Branch?        @relation("InvoiceBranch", fields: [branchId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  salesReturns    SalesReturn[]  @relation("OriginalSaleReturns")
+  fifoLayersCreated FifoLayer[]  @relation("FifoLayerSourceInvoice")
+  fifoConsumptionLogs FifoConsumptionLog[] @relation("FifoConsumptionInvoice")
+  invoicePaymentAllocations InvoicePaymentAllocation[]
+  currencyCode    String?
 
   @@unique([id, tenantId])
   @@unique([tenantId, invoiceNumber])
@@ -427,6 +460,9 @@ model InvoiceItem {
   createdAt  DateTime  @default(now())
 
   @@index([tenantId])
+  salesReturnItems SalesReturnItem[] @relation("OriginalInvoiceItemReturns")
+
+  @@unique([id, tenantId, invoiceId])
   @@index([invoiceId])
   @@index([productId])
   @@map("invoice_items")
@@ -446,6 +482,7 @@ model InventoryBatch {
   updatedAt          DateTime            @updatedAt
   inventoryMovements InventoryMovement[]
   reservations       Reservation[]
+  fifoLayers         FifoLayer[] @relation("FifoLayerBatch")
   tenantId           String
   tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -623,6 +660,10 @@ model Branch {
   userRoles           UserRole[]
   transfersSource     BranchTransfer[]     @relation("SourceBranch")
   transfersTarget     BranchTransfer[]     @relation("TargetBranch")
+  invoices            Invoice[]             @relation("InvoiceBranch")
+  salesReturns        SalesReturn[]          @relation("SalesReturnBranch")
+  fifoLayers          FifoLayer[]            @relation("FifoLayerBranch")
+  fifoConsumptionLogs FifoConsumptionLog[]   @relation("FifoConsumptionBranch")
   tenantId            String
   tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   deviceRegistrations DeviceRegistration[]
@@ -751,7 +792,9 @@ model Payment {
   tenantId      String
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   branchId      String?
+  invoicePaymentAllocations InvoicePaymentAllocation[]
 
+  @@unique([id, tenantId])
   @@index([tenantId])
   @@index([branchId])
   @@index([date])
@@ -813,8 +856,199 @@ model Tenant {
   branchTransferItems BranchTransferItem[]
   branchUsers         BranchUser[]
   salesPolicy         TenantSalesPolicy?
+  salesReturns        SalesReturn[]
+  salesReturnItems    SalesReturnItem[]
+  salesReturnRefunds  SalesReturnRefund[]
+  salesReturnFifoAllocations SalesReturnFifoAllocation[]
+  invoicePaymentAllocations InvoicePaymentAllocation[]
+  fifoLayers          FifoLayer[]
+  fifoConsumptionLogs FifoConsumptionLog[]
 
   @@map("tenants")
+}
+
+
+model SalesReturn {
+  id              String                  @id @default(uuid())
+  tenantId        String
+  branchId        String
+  returnNumber    String
+  originalSaleId  String
+  customerId      String?
+  status          SalesReturnStatus       @default(DRAFT)
+  refundMethod    SalesReturnRefundMethod
+  refundReference String?
+  currencyCode    String
+  subtotalAmount  Decimal                 @default(0.00) @db.Decimal(18, 4)
+  discountAmount  Decimal                 @default(0.00) @db.Decimal(18, 4)
+  taxAmount       Decimal                 @default(0.00) @db.Decimal(18, 4)
+  totalAmount     Decimal                 @default(0.00) @db.Decimal(18, 4)
+  idempotencyKey  String
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  postedAt        DateTime?
+  tenant          Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch          Branch                  @relation("SalesReturnBranch", fields: [branchId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  originalSale    Invoice                 @relation("OriginalSaleReturns", fields: [originalSaleId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  customer        Customer?               @relation("CustomerSalesReturns", fields: [customerId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  items           SalesReturnItem[]
+  refunds         SalesReturnRefund[]
+
+  @@unique([id, tenantId])
+  @@unique([id, tenantId, originalSaleId])
+  @@unique([tenantId, returnNumber])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, originalSaleId, status])
+  @@index([tenantId, branchId, createdAt])
+  @@index([tenantId, status, createdAt])
+  @@map("sales_returns")
+}
+
+model SalesReturnItem {
+  id                    String                    @id @default(uuid())
+  tenantId              String
+  returnId              String
+  originalSaleId        String
+  originalInvoiceItemId String
+  productId             String
+  quantity              Int
+  condition             ReturnItemCondition
+  unitPrice             Decimal                   @db.Decimal(18, 4)
+  subtotalAmount        Decimal                   @default(0.00) @db.Decimal(18, 4)
+  discountAmount        Decimal                   @default(0.00) @db.Decimal(18, 4)
+  taxRatePercent        Decimal                   @default(0.00) @db.Decimal(5, 2)
+  taxAmount             Decimal                   @default(0.00) @db.Decimal(18, 4)
+  totalAmount           Decimal                   @default(0.00) @db.Decimal(18, 4)
+  createdAt             DateTime                  @default(now())
+  tenant                Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salesReturn           SalesReturn               @relation(fields: [returnId, tenantId, originalSaleId], references: [id, tenantId, originalSaleId], onDelete: Cascade)
+  originalInvoiceItem   InvoiceItem               @relation("OriginalInvoiceItemReturns", fields: [originalInvoiceItemId, tenantId, originalSaleId], references: [id, tenantId, invoiceId], onDelete: Restrict)
+  product               Product                   @relation("SalesReturnItemProduct", fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  fifoAllocations       SalesReturnFifoAllocation[]
+
+  @@unique([id, tenantId])
+  @@index([tenantId, returnId])
+  @@index([tenantId, originalInvoiceItemId])
+  @@index([tenantId, productId])
+  @@index([tenantId, condition])
+  @@map("sales_return_items")
+}
+
+model FifoLayer {
+  id                String                 @id @default(uuid())
+  tenantId          String
+  branchId          String?
+  productId         String
+  inventoryBatchId  String?
+  sourceInvoiceId   String?
+  quantityInitial   Int
+  quantityRemaining Int
+  unitCost          Decimal                @db.Decimal(18, 4)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  tenant            Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch            Branch?                @relation("FifoLayerBranch", fields: [branchId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  product           Product                @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  inventoryBatch    InventoryBatch?        @relation("FifoLayerBatch", fields: [inventoryBatchId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  sourceInvoice     Invoice?               @relation("FifoLayerSourceInvoice", fields: [sourceInvoiceId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  consumptionLogs   FifoConsumptionLog[]
+  returnAllocations SalesReturnFifoAllocation[]
+
+  @@unique([id, tenantId])
+  @@unique([id, tenantId, productId])
+  @@index([tenantId, productId, createdAt])
+  @@index([tenantId, branchId, productId])
+  @@index([tenantId, inventoryBatchId])
+  @@map("fifo_layers")
+}
+
+model FifoConsumptionLog {
+  id                String                    @id @default(uuid())
+  tenantId          String
+  branchId          String?
+  invoiceId         String
+  productId         String
+  layerId           String
+  quantityConsumed  Int
+  unitCost          Decimal                   @db.Decimal(18, 4)
+  createdAt         DateTime                  @default(now())
+  tenant            Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branch            Branch?                   @relation("FifoConsumptionBranch", fields: [branchId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  invoice           Invoice                   @relation("FifoConsumptionInvoice", fields: [invoiceId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  product           Product                   @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  layer             FifoLayer                 @relation(fields: [layerId, tenantId, productId], references: [id, tenantId, productId], onDelete: Restrict)
+  returnAllocations SalesReturnFifoAllocation[]
+
+  @@unique([id, tenantId])
+  @@unique([id, tenantId, layerId, productId])
+  @@index([tenantId, invoiceId])
+  @@index([tenantId, layerId])
+  @@index([tenantId, branchId, productId])
+  @@map("fifo_consumption_logs")
+}
+
+model SalesReturnFifoAllocation {
+  id                    String             @id @default(uuid())
+  tenantId              String
+  returnItemId          String
+  originalConsumptionId String
+  layerId               String
+  productId             String
+  quantity              Int
+  unitCost              Decimal            @db.Decimal(18, 4)
+  totalCost             Decimal            @db.Decimal(18, 4)
+  createdAt             DateTime           @default(now())
+  tenant                Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  returnItem            SalesReturnItem    @relation(fields: [returnItemId, tenantId], references: [id, tenantId], onDelete: Cascade)
+  originalConsumption   FifoConsumptionLog @relation(fields: [originalConsumptionId, tenantId, layerId, productId], references: [id, tenantId, layerId, productId], onDelete: Restrict)
+  layer                 FifoLayer          @relation(fields: [layerId, tenantId, productId], references: [id, tenantId, productId], onDelete: Restrict)
+  product               Product            @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+
+  @@unique([id, tenantId])
+  @@unique([tenantId, returnItemId, originalConsumptionId])
+  @@index([tenantId, originalConsumptionId])
+  @@index([tenantId, layerId])
+  @@index([tenantId, returnItemId])
+  @@map("sales_return_fifo_allocations")
+}
+
+model InvoicePaymentAllocation {
+  id            String                @id @default(uuid())
+  tenantId      String
+  invoiceId     String
+  paymentId     String
+  amount        Decimal               @db.Decimal(18, 4)
+  createdAt     DateTime              @default(now())
+  tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice       Invoice               @relation(fields: [invoiceId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  payment       Payment               @relation(fields: [paymentId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  returnRefunds SalesReturnRefund[]
+
+  @@unique([id, tenantId, invoiceId])
+  @@unique([tenantId, invoiceId, paymentId])
+  @@index([tenantId, paymentId])
+  @@index([tenantId, invoiceId])
+  @@map("invoice_payment_allocations")
+}
+
+model SalesReturnRefund {
+  id                        String                    @id @default(uuid())
+  tenantId                  String
+  returnId                  String
+  originalSaleId            String
+  sourcePaymentAllocationId String?
+  method                    SalesReturnRefundMethod
+  amount                    Decimal                   @db.Decimal(18, 4)
+  reference                 String?
+  createdAt                 DateTime                  @default(now())
+  tenant                    Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  salesReturn               SalesReturn               @relation(fields: [returnId, tenantId, originalSaleId], references: [id, tenantId, originalSaleId], onDelete: Cascade)
+  sourcePaymentAllocation   InvoicePaymentAllocation? @relation(fields: [sourcePaymentAllocationId, tenantId, originalSaleId], references: [id, tenantId, invoiceId], onDelete: Restrict)
+
+  @@unique([id, tenantId])
+  @@index([tenantId, returnId])
+  @@index([tenantId, sourcePaymentAllocationId])
+  @@map("sales_return_refunds")
 }
 
 model TenantSalesPolicy {
