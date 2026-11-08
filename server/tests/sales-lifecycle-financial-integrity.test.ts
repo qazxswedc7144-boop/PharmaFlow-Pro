@@ -63,6 +63,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
     await db.journalEntries.clear();
     await db.journalLines.clear();
     await db.accounts.clear();
+    await db.tenantSalesPolicies.clear();
     await db.idempotencyRecords.clear();
     await db.idempotencyKeys.clear();
     await db.voucherInvoiceLinks.clear();
@@ -87,6 +88,15 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
       tenantId,
       isActive: true
     } as any);
+
+    await db.tenantSalesPolicies.put({
+      tenantId,
+      maxDiscountPercent: '0',
+      taxRatePercent: '0',
+      taxMode: 'NONE',
+      updatedAt: new Date().toISOString(),
+      cachedAt: new Date().toISOString()
+    });
 
     // Seed Customer with initial balance of 0
     await db.customers.put({
@@ -139,6 +149,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
       { id: 'ACC-103', code: '1030', name: 'العملاء - ذمم مدينة', type: 'Asset', tenantId, branchId, balance: 0 },
       { id: 'ACC-104', code: '1040', name: 'البنك', type: 'Asset', tenantId, branchId, balance: 200000 },
       { id: 'ACC-401', code: '4010', name: 'إيرادات المبيعات', type: 'Revenue', tenantId, branchId, balance: 0 },
+      { id: 'ACC-202', code: '2020', name: 'أمانات ضريبة القيمة المضافة', type: 'Liability', tenantId, branchId, balance: 0 },
       { id: 'ACC-501', code: '5010', name: 'تكلفة البضاعة المباعة', type: 'Expense', tenantId, branchId, balance: 0 }
     ] as any);
 
@@ -336,6 +347,40 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
   // 5. Accounting Correctness
   // =========================================================================
   describe('5. Accounting Correctness', () => {
+    it('posts exclusive sales tax to VAT payable and keeps revenue net of tax', async () => {
+      await db.tenantSalesPolicies.put({
+        tenantId,
+        maxDiscountPercent: '10',
+        taxRatePercent: '15',
+        taxMode: 'EXCLUSIVE',
+        updatedAt: new Date().toISOString(),
+        cachedAt: new Date().toISOString()
+      });
+
+      const res = await UnifiedBusinessWorkflowOrchestrator.processSale({
+        customerId,
+        items: [{ productId, quantity: 2, unitPrice: 999, price: 999 } as any],
+        total: 1
+      });
+
+      const invoice = await db.invoices.get(res.refId);
+      expect(invoice?.subtotalAmount).toBe(60);
+      expect(invoice?.taxAmount).toBe(9);
+      expect(invoice?.revenueAmount).toBe(60);
+      expect(invoice?.totalAmount).toBe(69);
+
+      const entry = (await db.journalEntries.where('sourceId').equals(res.refId).first())!;
+      const lines = await db.journalLines.where('entryId').equals(entry.id).toArray();
+      const debit = lines.reduce((sum, line) => sum + line.debit, 0);
+      const credit = lines.reduce((sum, line) => sum + line.credit, 0);
+
+      expect(debit).toBe(109); // AR 69 + FIFO COGS 40
+      expect(credit).toBe(109); // Revenue 60 + VAT 9 + Inventory 40
+      expect(lines.find(line => line.accountId === 'ACC-103')?.debit).toBe(69);
+      expect(lines.find(line => line.accountId === 'ACC-401')?.credit).toBe(60);
+      expect(lines.find(line => line.accountId === 'ACC-202')?.credit).toBe(9);
+    });
+
     it('creates exact single balanced journal entry (Debit AR/Cash = Credit Revenue) and single FinancialTransaction', async () => {
       const saleTotal = 900;
       const res = await UnifiedBusinessWorkflowOrchestrator.processSale({
