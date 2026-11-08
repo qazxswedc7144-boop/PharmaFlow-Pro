@@ -58,6 +58,7 @@ jobs:
           server/tests/sales-pricing.service.test.ts
           server/tests/sales-lifecycle-financial-integrity.test.ts
           src/features/accounting/services/AccountingEngine.sales-tax.test.ts
+          src/features/sales/services/localSalesPricing.service.test.ts
         env:
           NODE_ENV: test
 
