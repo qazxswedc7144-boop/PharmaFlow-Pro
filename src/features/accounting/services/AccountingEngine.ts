@@ -82,9 +82,9 @@ export class AccountingEngine {
         : totalAmount.minus(taxAmount).toString()
     ));
 
-    if (!totalAmount.isFinite() || totalAmount.isNegative() ||
-        !taxAmount.isFinite() || taxAmount.isNegative() ||
-        !revenueAmount.isFinite() || revenueAmount.isNegative() ||
+    if (!Number.isFinite(Number(totalAmount.toString())) || totalAmount.isNegative() ||
+        !Number.isFinite(Number(taxAmount.toString())) || taxAmount.isNegative() ||
+        !Number.isFinite(Number(revenueAmount.toString())) || revenueAmount.isNegative() ||
         !revenueAmount.plus(taxAmount).minus(totalAmount).abs().lessThanOrEqualTo('0.0001')) {
       throw new AccountingError({
         message: 'Invalid local sales financial breakdown.',
