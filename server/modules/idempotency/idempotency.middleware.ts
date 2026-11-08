@@ -30,6 +30,15 @@ export function shouldApplyIdempotency(req: Pick<Request, "method" | "path" | "o
   return true;
 }
 
+export function shouldApplyIdempotency(req: Pick<Request, "method" | "path" | "originalUrl">): boolean {
+  const method = req.method.toUpperCase();
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return false;
+
+  const requestPath = (req.path || req.originalUrl || "").split("?")[0].replace(/\/+$/, "") || "/";
+  // Sync pull is a read operation despite using POST for its transport contract.
+  return !/^\/api\/(?:v1\/)?sync\/pull$/i.test(requestPath);
+}
+
 export async function idempotencyMiddleware(req: Request, res: Response, next: NextFunction) {
   const keyHeader = req.headers["idempotency-key"];
   
@@ -165,11 +174,16 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
       });
     }
 
-    console.error(`[Idempotency] Middleware fatal error for key ${key}:`, error);
+    console.error(`[Idempotency] Middleware fatal error for key ${key}:`, {
+      message: error?.message || String(error),
+      stack: error?.stack,
+    });
+    const isProduction = process.env.NODE_ENV === "production";
     return res.status(500).json({
       error: "INTERNAL_SERVER_ERROR",
-      message: error.message || String(error),
-      stack: error.stack
+      message: isProduction
+        ? "An internal error occurred. Please try again later."
+        : error.message || String(error),
     });
   }
 }
