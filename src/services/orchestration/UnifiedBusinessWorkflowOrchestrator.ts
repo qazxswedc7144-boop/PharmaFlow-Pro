@@ -51,6 +51,7 @@ export interface WorkflowSalePayload {
   attachment?: string;
   transactionUuid?: string;
   isEdit?: boolean;
+  discountPercent?: number;
 }
 
 export interface WorkflowPurchasePayload {
@@ -339,7 +340,8 @@ export class UnifiedBusinessWorkflowOrchestrator {
         isReturn: options?.isReturn,
         invoiceStatus: options?.invoiceStatus,
         currency: options?.currency,
-        isEdit: Boolean(options?.isEdit ?? payload.isEdit ?? false)
+        isEdit: Boolean(options?.isEdit ?? payload.isEdit ?? false),
+        discountPercent: options?.discountPercent ?? payload.discountPercent
       },
       { idempotencyKey: transactionUuid }
     );

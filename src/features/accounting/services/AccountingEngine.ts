@@ -5,6 +5,7 @@ import { CurrencyService } from '@/services/localization/CurrencyService';
 import { AccountingError } from '@/core/errors';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { generateTransactionUuid } from '@/utils/uuid';
+import Decimal from 'decimal.js-light';
 
 export interface SaleAdjustment {
   Type: 'Discount' | 'Tax Adjustment' | string;
@@ -32,7 +33,7 @@ export class AccountingEngine {
     return (purchase.items || []).reduce((acc, item) => acc + ((item.qty ?? 0) * (item.price ?? 0)), 0);
   }
 
-  static async getCoreAccount(type: 'CASH' | 'BANK' | 'RECEIVABLE' | 'PAYABLE' | 'INVENTORY' | 'SALES_REVENUE' | 'COGS' | 'EXPENSE'): Promise<string> {
+  static async getCoreAccount(type: 'CASH' | 'BANK' | 'RECEIVABLE' | 'PAYABLE' | 'INVENTORY' | 'SALES_REVENUE' | 'TAX_PAYABLE' | 'COGS' | 'EXPENSE'): Promise<string> {
     try {
       const setting = configurationService.getSync<any>(`ACCOUNT_${type}`);
       if (setting) return typeof setting === 'string' ? setting : setting.value || setting;
@@ -48,6 +49,7 @@ export class AccountingEngine {
       PAYABLE: 'ACC-201',
       INVENTORY: 'ACC-102',
       SALES_REVENUE: 'ACC-401',
+      TAX_PAYABLE: 'ACC-202',
       COGS: 'ACC-501',
       EXPENSE: 'ACC-502'
     };
@@ -68,21 +70,66 @@ export class AccountingEngine {
     const lines: JournalLine[] = [];
     const entryId = generateTransactionUuid('JE');
 
-    // Multi-currency conversion
+    // Convert net revenue and tax separately. This preserves the liability split
+    // and guarantees that the receivable/cash debit equals the two credit lines.
     const currencyCode = (sale as any).currencyCode || CurrencyService.getCurrentCurrencyCode();
     const rawTotal = (sale as any).totalAmount ?? (sale as any).finalTotal ?? (sale as any).total ?? 0;
-    const { baseAmount } = await CurrencyService.convertToBase(rawTotal, currencyCode, sale.date || new Date().toISOString());
+    const totalAmount = new Decimal(String(rawTotal));
+    const taxAmount = new Decimal(String((sale as any).taxAmount ?? 0));
+    const revenueAmount = new Decimal(String(
+      (sale as any).revenueAmount !== undefined
+        ? (sale as any).revenueAmount
+        : totalAmount.minus(taxAmount).toString()
+    ));
+
+    if (!Number.isFinite(Number(totalAmount.toString())) || totalAmount.isNegative() ||
+        !Number.isFinite(Number(taxAmount.toString())) || taxAmount.isNegative() ||
+        !Number.isFinite(Number(revenueAmount.toString())) || revenueAmount.isNegative() ||
+        !revenueAmount.plus(taxAmount).minus(totalAmount).abs().lessThanOrEqualTo('0.0001')) {
+      throw new AccountingError({
+        message: 'Invalid local sales financial breakdown.',
+        arabicMessage: 'تفاصيل الإيراد والضريبة في فاتورة المبيعات غير صالحة.',
+        module: 'ACCOUNTING',
+        metadata: { totalAmount: totalAmount.toString(), revenueAmount: revenueAmount.toString(), taxAmount: taxAmount.toString() }
+      });
+    }
+
+    const conversionDate = sale.date || new Date().toISOString();
+    const { baseAmount: baseRevenueRaw } = await CurrencyService.convertToBase(revenueAmount.toNumber(), currencyCode, conversionDate);
+    const { baseAmount: baseTaxRaw } = await CurrencyService.convertToBase(taxAmount.toNumber(), currencyCode, conversionDate);
+    const baseRevenue = new Decimal(String(baseRevenueRaw)).toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
+    const baseTax = new Decimal(String(baseTaxRaw)).toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
+    const baseAmount = baseRevenue.plus(baseTax).toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
 
     const tenantId = (sale as any).tenantId;
     const branchId = (sale as any).branchId;
 
-    // 1. Revenue Impact
+    // Resolve tax payable strictly from the active tenant's own chart of accounts.
+    // Missing or ambiguous configuration fails closed; no global/default account is allowed.
+    const taxPayableAccount = taxAmount.greaterThan(0)
+      ? await this.resolveTenantTaxPayableAccount(tenantId)
+      : null;
+
+    // 1. Settlement and revenue/tax split.
     if (sale.paymentStatus === 'Cash') {
-      lines.push(await this.createLine(entryId, cashAcc, baseAmount, 0, tenantId, branchId));
+      lines.push(await this.createLine(entryId, cashAcc, baseAmount.toNumber(), 0, tenantId, branchId));
     } else {
-      lines.push(await this.createLine(entryId, arAcc, baseAmount, 0, tenantId, branchId));
+      lines.push(await this.createLine(entryId, arAcc, baseAmount.toNumber(), 0, tenantId, branchId));
     }
-    lines.push(await this.createLine(entryId, revenueAcc, 0, baseAmount, tenantId, branchId));
+    if (baseRevenue.greaterThan(0)) {
+      lines.push(await this.createLine(entryId, revenueAcc, 0, baseRevenue.toNumber(), tenantId, branchId));
+    }
+    if (baseTax.greaterThan(0)) {
+      if (!taxPayableAccount) {
+        throw new AccountingError({
+          message: 'Tenant tax payable account could not be resolved.',
+          arabicMessage: 'تعذر تحديد حساب الضريبة المستحقة للمؤسسة الحالية.',
+          module: 'ACCOUNTING',
+          metadata: { tenantId }
+        });
+      }
+      lines.push(await this.createLine(entryId, taxPayableAccount.id, 0, baseTax.toNumber(), tenantId, branchId));
+    }
 
     // 2. COGS Impact
     const totalCalculatedCost = await this.calculateTotalCOGS(items);
@@ -101,7 +148,7 @@ export class AccountingEngine {
       date: sale.date || new Date().toISOString(),
       referenceId: sale.SaleID || sale.id,
       description: `فاتورة مبيعات رقم ${sale.SaleID || sale.id}`,
-      TotalAmount: baseAmount,
+      TotalAmount: baseAmount.toNumber(),
       status: 'Posted',
       sourceId: sale.id,
       sourceType: 'SALE',
@@ -112,6 +159,46 @@ export class AccountingEngine {
       lastModified: new Date().toISOString(),
       timestamp: new Date().toISOString()
     };
+  }
+
+  private static async resolveTenantTaxPayableAccount(tenantId?: string): Promise<{ id: string }> {
+    if (!tenantId || !tenantId.trim()) {
+      throw new AccountingError({
+        message: 'Trusted tenant context is required to resolve the tax payable account.',
+        arabicMessage: 'يلزم سياق مؤسسة موثوق لتحديد حساب الضريبة المستحقة.',
+        module: 'ACCOUNTING'
+      });
+    }
+
+    const tenantAccounts = await db.accounts
+      .where('tenantId')
+      .equals(tenantId)
+      .toArray();
+
+    const candidates = tenantAccounts.filter((account: any) => {
+      const accountType = String(account.type ?? account.account_type ?? '').toUpperCase();
+      const accountName = String(account.name ?? account.account_name ?? '').toLowerCase();
+      const isTaxLiability = /tax|vat|ضريب|زكاة/.test(accountName);
+      return account.tenantId === tenantId &&
+        accountType === 'LIABILITY' &&
+        account.isActive !== false &&
+        isTaxLiability;
+    });
+
+    if (candidates.length !== 1 || !candidates[0]?.id) {
+      throw new AccountingError({
+        message: candidates.length === 0
+          ? 'No tenant-owned active tax payable liability account is configured.'
+          : 'Multiple tenant-owned tax payable accounts are configured; an explicit account mapping is required.',
+        arabicMessage: candidates.length === 0
+          ? 'لا يوجد حساب التزام ضريبي نشط ومملوك للمؤسسة في دليل الحسابات.'
+          : 'يوجد أكثر من حساب ضريبي للمؤسسة؛ يلزم تحديد الحساب المعتمد صراحةً.',
+        module: 'ACCOUNTING',
+        metadata: { tenantId, matchingAccountCount: candidates.length }
+      });
+    }
+
+    return { id: candidates[0].id };
   }
 
   static async generatePurchaseEntry(purchase: Purchase): Promise<AccountingEntry> {

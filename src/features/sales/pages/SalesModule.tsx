@@ -51,7 +51,10 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
     isConfirmSaveOpen, setIsConfirmSaveOpen,
     isAdjustmentsOpen, setIsAdjustmentsOpen,
     isViewerOpen, setIsViewerOpen,
-    adjData, setAdjData,
+    salesPolicy,
+    isSalesPolicyLoading,
+    pricingResult,
+    pricingError,
     itemNameInputRef,
     header, setHeader,
     isLocked,
@@ -367,7 +370,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
                       <p className="text-[11px] font-bold text-slate-400">{p.categoryName || 'عام'}</p>
                     </div>
                     <div className="text-left">
-                      <p className="text-[11px] font-black text-emerald-600">{p.UnitPrice} {currency}</p>
+                      <p className="text-[11px] font-black text-emerald-600">{(p as any).price ?? p.UnitPrice ?? 0} {currency}</p>
                     </div>
                   </button>
                 ))}
@@ -425,11 +428,11 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
         <div className="flex items-center justify-between flex-nowrap px-2">
           <div className="flex flex-col items-center">
             <span className="text-[10px] font-black text-slate-400 uppercase">الخصم</span>
-            <AnimatedNumber value={adjData.discountPercent * vTotalSum / 100} className="text-[10px] font-black text-red-500" />
+            <AnimatedNumber value={Number(pricingResult?.discountAmount || 0)} className="text-[10px] font-black text-red-500" />
           </div>
           <div className="flex flex-col items-center">
-            <span className="text-[10px] font-black text-slate-400 uppercase">رسوم أخرى</span>
-            <AnimatedNumber value={adjData.otherFees} className="text-[10px] font-black text-slate-600" />
+            <span className="text-[10px] font-black text-slate-400 uppercase">الضريبة</span>
+            <AnimatedNumber value={Number(pricingResult?.taxAmount || 0)} className="text-[10px] font-black text-slate-600" />
           </div>
           <div className="flex flex-col items-center">
             <span className="text-[10px] font-black text-slate-500 uppercase">الصافي</span>
@@ -450,12 +453,12 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
               <Percent size={15} />
               <Plus size={11} className="mb-0.5" />
             </div>
-            <span>التسويات</span>
+            <span>سياسة التسعير</span>
           </button>
           <button 
             type="button"
             onClick={() => setIsConfirmSaveOpen(true)} 
-            disabled={items.length === 0 || isLocked || isDuplicate || isSaving || isRecovery} 
+            disabled={items.length === 0 || isLocked || isDuplicate || isSaving || isRecovery || isSalesPolicyLoading || !salesPolicy || !!pricingError} 
             className={`flex-[2] h-11 rounded-xl font-black text-[11px] text-white shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${isLocked || isDuplicate || isRecovery ? 'bg-red-500 shadow-red-900/20' : 'bg-[#1E4D4D] shadow-emerald-900/20'} disabled:opacity-50`}
           >
             {isSaving ? (
@@ -594,62 +597,49 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
             moduleName="فاتورة مبيعات الكاشير"
             updatedAt={(recoveryDraftData as any).updatedAt || (recoveryDraftData as any).timestamp || new Date().toISOString()}
             itemCount={((recoveryDraftData as any).payload?.items || (recoveryDraftData as any).items)?.length || 0}
-            totalAmount={Number((recoveryDraftData as any).payload?.totals?.subtotal || (recoveryDraftData as any).totals?.subtotal || 0)}
             onRestore={restoreDraft}
             onDiscard={discardDraft}
           />
         )}
       </AnimatePresence>
 
-      {/* ADJUSTMENTS MODAL - MATCHING PURCHASES DESIGN */}
-      <Modal 
-        isOpen={isAdjustmentsOpen} 
+      {/* TENANT SALES POLICY — read-only */}
+      <Modal
+        isOpen={isAdjustmentsOpen}
         onClose={() => setIsAdjustmentsOpen(false)}
-        title="التسويات والرسوم الإضافية"
+        title="سياسة تسعير المبيعات"
         maxWidth="max-w-[340px] w-[92vw]"
         positionClass="items-center"
         noPadding={true}
       >
-        <div dir="rtl" className="space-y-4 p-4 bg-white rounded-b-3xl">
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest block text-right">نسبة الخصم (%)</label>
-            <div className="relative">
-              <Percent className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-300" size={14} />
-              <input 
-                type="number"
-                value={adjData.discountPercent ?? 0}
-                onChange={(e) => setAdjData({...adjData, discountPercent: Number(e.target.value)})}
-                className="w-full h-10 bg-slate-50 border border-slate-200 rounded-xl pr-9 pl-3 text-[12px] font-bold text-[#1E4D4D] focus:bg-white text-right outline-none transition-all"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest block text-right">رسوم أخرى</label>
-              <input 
-                type="number"
-                value={adjData.otherFees ?? 0}
-                onChange={(e) => setAdjData({...adjData, otherFees: Number(e.target.value)})}
-                className="w-full h-10 bg-slate-50 border border-slate-200 rounded-xl px-4 text-[12px] font-bold text-[#1E4D4D] focus:bg-white text-center outline-none transition-all"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-black text-slate-500 uppercase tracking-widest block text-right">الضريبة</label>
-              <input 
-                type="number"
-                value={adjData.tax ?? 0}
-                onChange={(e) => setAdjData({...adjData, tax: Number(e.target.value)})}
-                className="w-full h-10 bg-slate-50 border border-slate-200 rounded-xl px-4 text-[12px] font-bold text-[#1E4D4D] focus:bg-white text-center outline-none transition-all"
-              />
-            </div>
-          </div>
-
-          <Button 
-            onClick={() => setIsAdjustmentsOpen(false)}
-            className="w-full !h-11 bg-[#1E4D4D] text-white !rounded-xl font-black text-[13px] shadow-lg shadow-emerald-900/10 mt-2 flex items-center justify-center"
-          >
-            تطبيق التعديلات
+        <div dir="rtl" className="space-y-3 p-4 bg-white rounded-b-3xl">
+          {isSalesPolicyLoading ? (
+            <p className="text-center text-xs font-bold text-slate-400">جاري تحميل سياسة المؤسسة...</p>
+          ) : !salesPolicy ? (
+            <p className="text-center text-xs font-bold text-red-600">تعذر تحميل سياسة التسعير. لا يمكن حفظ الفاتورة دون سياسة موثوقة.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-slate-50 p-3 text-center">
+                  <span className="block text-[10px] font-bold text-slate-500">الحد الأقصى للخصم</span>
+                  <strong className="text-sm text-[#1E4D4D]">{salesPolicy.maxDiscountPercent}%</strong>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3 text-center">
+                  <span className="block text-[10px] font-bold text-slate-500">نسبة الضريبة</span>
+                  <strong className="text-sm text-[#1E4D4D]">{salesPolicy.taxMode === 'NONE' ? '0' : salesPolicy.taxRatePercent}%</strong>
+                </div>
+              </div>
+              <div className="rounded-xl border border-slate-100 p-3 space-y-2">
+                <div className="flex justify-between text-xs"><span className="text-slate-500">طريقة الضريبة</span><strong>{salesPolicy.taxMode === 'NONE' ? 'بدون ضريبة' : salesPolicy.taxMode === 'INCLUSIVE' ? 'شاملة' : 'إضافية'}</strong></div>
+                <div className="flex justify-between text-xs"><span className="text-slate-500">الخصم المطبق</span><strong>{pricingResult?.discountAmount || '0'} {currency}</strong></div>
+                <div className="flex justify-between text-xs"><span className="text-slate-500">الضريبة المحسوبة</span><strong>{pricingResult?.taxAmount || '0'} {currency}</strong></div>
+                <div className="flex justify-between text-xs"><span className="text-slate-500">إجمالي الفاتورة</span><strong className="text-[#1E4D4D]">{vTotalSum.toLocaleString()} {currency}</strong></div>
+              </div>
+              {pricingError && <p className="text-[11px] font-bold text-red-600">تعذر احتساب السعر: {pricingError}</p>}
+            </>
+          )}
+          <Button onClick={() => setIsAdjustmentsOpen(false)} className="w-full !h-11 bg-[#1E4D4D] text-white !rounded-xl font-black text-[13px] mt-1">
+            إغلاق
           </Button>
         </div>
       </Modal>

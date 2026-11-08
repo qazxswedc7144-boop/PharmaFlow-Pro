@@ -28,8 +28,17 @@ jobs:
         env:
           npm_config_cache: /tmp/.npm-cache
 
+      - name: Validate Prisma Schema
+        run: npx prisma validate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+
       - name: Generate Prisma Client
         run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
 
       - name: Run Atomicity, Tenant Isolation, and Sync Lifecycle Tests
         run: >-
@@ -46,6 +55,10 @@ jobs:
           server/tests/jwt-secrets.test.ts
           server/tests/login-attempt-guard.test.ts
           server/tests/sales-server-price-validation.test.ts
+          server/tests/sales-pricing.service.test.ts
+          src/features/accounting/services/AccountingEngine.sales-tax.test.ts
+          src/features/sales/services/localSalesPricing.service.test.ts
+          src/features/sales/workflows/SalesWorkflow.local-pricing.test.ts
         env:
           NODE_ENV: test
 
@@ -110,6 +123,9 @@ jobs:
         run: npm install --no-audit --no-fund --legacy-peer-deps
         env:
           npm_config_cache: /tmp/.npm-cache
+
+      - name: Validate Prisma Schema
+        run: npx prisma validate
 
       - name: Generate Prisma Client
         run: npx prisma generate

@@ -78,7 +78,8 @@
     "vite": "^6.2.0",
     "ws": "^8.21.0",
     "zod": "^4.4.3",
-    "zustand": "^5.0.11"
+    "zustand": "^5.0.11",
+    "decimal.js-light": "^2.5.1"
   },
   "overrides": {
     "deepmerge-ts": "^8.0.0",

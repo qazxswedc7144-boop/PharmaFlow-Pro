@@ -141,8 +141,16 @@ export class FinancialTransactionService {
       );
     }
 
-    const totalInvoiceAmount = Number(invoice.totalAmount);
+    const ZERO = new Prisma.Decimal(0);
+    const totalInvoiceAmount = new Prisma.Decimal(invoice.totalAmount.toString());
     const isCash = invoice.paymentStatus === "PAID" || invoice.paymentStatus === "CASH" as any;
+    const isSale = invoice.type === InvoiceType.SALE;
+    const saleTaxAmount = isSale ? new Prisma.Decimal(invoice.taxAmount.toString()) : new Prisma.Decimal(0);
+    const saleRevenueAmount = isSale
+      ? new Prisma.Decimal(invoice.subtotalAmount.toString())
+          .minus(new Prisma.Decimal(invoice.discountAmount.toString()))
+          .minus(invoice.taxMode === "INCLUSIVE" ? saleTaxAmount : new Prisma.Decimal(0))
+      : new Prisma.Decimal(0);
 
     // 2. Lock core accounts involved in the transaction to prevent concurrent race conditions
     // We will bootstrap core accounts: Cash ('101001'), A/R ('101002'), Inventory ('101003'), Rev ('401001'), COGS ('501001'), A/P ('201001')
@@ -152,15 +160,21 @@ export class FinancialTransactionService {
     const revAcc = await this.getOrCreateAccount(tx, "401001", "إيرادات المبيعات الدوائية", "REVENUE", tenantId);
     const cogsAcc = await this.getOrCreateAccount(tx, "501001", "تكلفة المبيعات (COGS)", "EXPENSE", tenantId);
     const apAcc = await this.getOrCreateAccount(tx, "201001", "ذمم دائنة موردين (أوراق الدفع)", "LIABILITY", tenantId);
+    const taxPayableAcc = isSale && saleTaxAmount.greaterThan(0)
+      ? await this.getOrCreateAccount(tx, "203001", "ضريبة مبيعات مستحقة", "LIABILITY", tenantId)
+      : null;
 
     // Lock current accounts for row-level balance security
-    const accountIdsToLock = [cashAcc.id, arAcc.id, invAcc.id, revAcc.id, cogsAcc.id, apAcc.id];
+    const accountIdsToLock = [
+      cashAcc.id, arAcc.id, invAcc.id, revAcc.id, cogsAcc.id, apAcc.id,
+      ...(taxPayableAcc ? [taxPayableAcc.id] : [])
+    ];
     await tx.$executeRaw(
       Prisma.sql`SELECT id FROM accounts WHERE id IN (${Prisma.join(accountIdsToLock)}) FOR UPDATE`
     );
 
-    let totalComputatedCogs = 0;
-    const ledgerLines: { accountId: string; debit: number; credit: number; description: string }[] = [];
+    let totalComputatedCogs = ZERO;
+    const ledgerLines: { accountId: string; debit: Prisma.Decimal; credit: Prisma.Decimal; description: string }[] = [];
 
     // Preserve snapshot state before mutation for auditing purposes
     const invoiceSnapshotBefore = JSON.stringify(invoice);
@@ -179,51 +193,62 @@ export class FinancialTransactionService {
           tenantId
         );
         
-        totalComputatedCogs += fifoResult.totalCost;
+        const fifoCost = new Prisma.Decimal(fifoResult.totalCost.toString());
+        totalComputatedCogs = totalComputatedCogs.plus(fifoCost);
 
-        // Update actual cost in line item
+        // Persist FIFO-derived unit cost using Decimal arithmetic.
         await tx.invoiceItem.update({
           where: { id: item.id },
-          data: { cost: fifoResult.totalCost / item.qty }
+          data: { cost: fifoCost.div(item.qty) }
         });
       }
 
-      // Ledger Entry: Debit Cash or Accounts Receivable, Credit Sales Revenue
+      // Debit the actual settlement account; credit net revenue and separately recognize tax payable.
       if (isCash) {
         ledgerLines.push({
           accountId: cashAcc.id,
           debit: totalInvoiceAmount,
-          credit: 0,
+          credit: ZERO,
           description: `نقدية مبيعات فاتورة #${invoice.invoiceNumber}`
         });
       } else {
         ledgerLines.push({
           accountId: arAcc.id,
           debit: totalInvoiceAmount,
-          credit: 0,
+          credit: ZERO,
           description: `آجل مبيعات فاتورة #${invoice.invoiceNumber}`
         });
       }
 
       ledgerLines.push({
         accountId: revAcc.id,
-        debit: 0,
-        credit: totalInvoiceAmount,
-        description: `مبيعات فاتورة #${invoice.invoiceNumber}`
+        debit: ZERO,
+        credit: saleRevenueAmount,
+        description: `صافي إيراد مبيعات فاتورة #${invoice.invoiceNumber}`
       });
 
+      if (saleTaxAmount.greaterThan(0) && taxPayableAcc) {
+        ledgerLines.push({
+          accountId: taxPayableAcc.id,
+          debit: ZERO,
+          credit: saleTaxAmount,
+          description: `ضريبة مبيعات مستحقة فاتورة #${invoice.invoiceNumber}`
+        });
+      }
+
       // Ledger Entry for COGS: Debit COGS, Credit Inventory
-      if (totalComputatedCogs > 0) {
+      if (totalComputatedCogs.greaterThan(0)) {
+        const cogsAmount = totalComputatedCogs;
         ledgerLines.push({
           accountId: cogsAcc.id,
-          debit: totalComputatedCogs,
-          credit: 0,
+          debit: cogsAmount,
+          credit: ZERO,
           description: `تكلفة مبيعات فاتورة #${invoice.invoiceNumber}`
         });
         ledgerLines.push({
           accountId: invAcc.id,
-          debit: 0,
-          credit: totalComputatedCogs,
+          debit: ZERO,
+          credit: cogsAmount,
           description: `انخفاض المخزون مبيعات فاتورة #${invoice.invoiceNumber}`
         });
       }
@@ -250,21 +275,21 @@ export class FinancialTransactionService {
       ledgerLines.push({
         accountId: invAcc.id,
         debit: totalInvoiceAmount,
-        credit: 0,
+        credit: ZERO,
         description: `زيادة مخزون مشتريات فاتورة #${invoice.invoiceNumber}`
       });
 
       if (isCash) {
         ledgerLines.push({
           accountId: cashAcc.id,
-          debit: 0,
+          debit: ZERO,
           credit: totalInvoiceAmount,
           description: `نقدية مشتريات فاتورة #${invoice.invoiceNumber}`
         });
       } else {
         ledgerLines.push({
           accountId: apAcc.id,
-          debit: 0,
+          debit: ZERO,
           credit: totalInvoiceAmount,
           description: `آجل مشتريات فاتورة #${invoice.invoiceNumber}`
         });
@@ -275,12 +300,12 @@ export class FinancialTransactionService {
     }
 
     // 4. Double-Entry Enforcement Rule: totalDebit === totalCredit
-    const sumDebits = ledgerLines.reduce((acc, l) => acc + l.debit, 0);
-    const sumCredits = ledgerLines.reduce((acc, l) => acc + l.credit, 0);
+    const sumDebits = ledgerLines.reduce((acc, line) => acc.plus(line.debit), ZERO);
+    const sumCredits = ledgerLines.reduce((acc, line) => acc.plus(line.credit), ZERO);
 
-    if (Math.abs(sumDebits - sumCredits) > 0.0001) {
+    if (!sumDebits.equals(sumCredits)) {
       throw new Error(
-        `UNBALANCED_ENTRY: Financial posting aborted. Total Debits [${sumDebits}] must strictly equal Total Credits [${sumCredits}]`
+        `UNBALANCED_ENTRY: Financial posting aborted. Total Debits [${sumDebits.toString()}] must strictly equal Total Credits [${sumCredits.toString()}]`
       );
     }
 
@@ -310,7 +335,7 @@ export class FinancialTransactionService {
 
     // 6. Persist core account balance mutations & Optimistic Locking version checks
     for (const line of ledgerLines) {
-      const adjustment = line.debit - line.credit;
+      const adjustment = line.debit.minus(line.credit);
       const currentAccount = await tx.account.findUnique({ where: { id: line.accountId } });
       if (!currentAccount) throw new Error(`ACCOUNT_NOT_FOUND: Ledger target ID ${line.accountId} lacks setup.`);
 
@@ -390,7 +415,7 @@ export class FinancialTransactionService {
       success: true,
       journalId: journalEntry.id,
       invoiceNumber: invoice.invoiceNumber,
-      cogs: totalComputatedCogs
+      cogs: totalComputatedCogs.toNumber()
     };
   }
 

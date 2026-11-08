@@ -13,6 +13,41 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(allowed.body.invoice.tenantId).toBe(ctx.tenantBId);
   });
 
+  it("returns only the authenticated tenant's sales policy", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+
+    await prisma.tenantSalesPolicy.upsert({
+      where: { tenantId: ctx.tenantAId },
+      create: { tenantId: ctx.tenantAId, maxDiscountPercent: 7, taxRatePercent: 15, taxMode: "EXCLUSIVE" },
+      update: { maxDiscountPercent: 7, taxRatePercent: 15, taxMode: "EXCLUSIVE" },
+    });
+    await prisma.tenantSalesPolicy.upsert({
+      where: { tenantId: ctx.tenantBId },
+      create: { tenantId: ctx.tenantBId, maxDiscountPercent: 2, taxRatePercent: 5, taxMode: "INCLUSIVE" },
+      update: { maxDiscountPercent: 2, taxRatePercent: 5, taxMode: "INCLUSIVE" },
+    });
+
+    try {
+      const policyA = await request(ctx, "/api/invoices/sales-policy", { token: ctx.tokenA });
+      const policyB = await request(ctx, "/api/invoices/sales-policy", { token: ctx.tokenB });
+
+      expect(policyA.status).toBe(200);
+      expect(policyA.body.policy.tenantId).toBe(ctx.tenantAId);
+      expect(policyA.body.policy.maxDiscountPercent).toBe("7");
+      expect(policyA.body.policy.taxMode).toBe("EXCLUSIVE");
+
+      expect(policyB.status).toBe(200);
+      expect(policyB.body.policy.tenantId).toBe(ctx.tenantBId);
+      expect(policyB.body.policy.maxDiscountPercent).toBe("2");
+      expect(policyB.body.policy.taxMode).toBe("INCLUSIVE");
+    } finally {
+      await prisma.tenantSalesPolicy.deleteMany({
+        where: { tenantId: { in: [ctx.tenantAId, ctx.tenantBId] } }
+      });
+    }
+  });
+
   it("posts a persisted Draft through HTTP and verifies FIFO stock plus balanced PostgreSQL ledger rows", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
@@ -92,6 +127,63 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     });
     expect(journalCount).toBe(1);
     expect(movementCount).toBe(1);
+  });
+
+
+  it("posts SALE tax separately to the tenant tax-payable account without changing FIFO behavior", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+
+    await prisma.tenantSalesPolicy.upsert({
+      where: { tenantId: ctx.tenantAId },
+      create: {
+        tenantId: ctx.tenantAId,
+        maxDiscountPercent: 10,
+        taxRatePercent: 15,
+        taxMode: "EXCLUSIVE",
+      },
+      update: {
+        maxDiscountPercent: 10,
+        taxRatePercent: 15,
+        taxMode: "EXCLUSIVE",
+      },
+    });
+
+    const created = await request(ctx, "/api/invoices/create", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        invoiceNumber: `TAX-SALE-${ctx.suffix}`,
+        type: "SALE",
+        totalAmount: 1,
+        paymentStatus: "UNPAID",
+        discountPercent: 10,
+        items: [{ productId: ctx.productAId, qty: 1, price: 1 }],
+      },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(Number(created.body.invoice.subtotalAmount)).toBe(10);
+    expect(Number(created.body.invoice.discountAmount)).toBe(1);
+    expect(Number(created.body.invoice.taxAmount)).toBe(1.35);
+    expect(Number(created.body.invoice.totalAmount)).toBe(10.35);
+
+    const posted = await request(ctx, "/api/invoices/post", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: { invoiceId: created.body.invoice.id },
+    });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(200);
+
+    const journal = await prisma.journalEntry.findFirst({
+      where: { tenantId: ctx.tenantAId, sourceId: created.body.invoice.id, sourceType: "INVOICE" },
+      include: { lines: { include: { account: true } } },
+    });
+    expect(journal).toBeTruthy();
+    // The journal includes the balanced FIFO COGS / inventory pair in addition to the sale settlement.
+    expect(Number(journal?.debitTotal)).toBe(13.35);
+    expect(Number(journal?.creditTotal)).toBe(13.35);
+    expect(journal?.lines.some((line) => line.account.code === "401001" && Number(line.credit) === 9)).toBe(true);
+    expect(journal?.lines.some((line) => line.account.code === "203001" && Number(line.credit) === 1.35)).toBe(true);
   });
 
   it("persists lock acquire, extend, and release audit events in PostgreSQL", async () => {

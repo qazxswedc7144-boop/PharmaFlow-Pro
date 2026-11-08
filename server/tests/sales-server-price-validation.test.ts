@@ -4,6 +4,7 @@ const { mockPrisma, mockSaas } = vi.hoisted(() => {
   const prisma: any = {
     $transaction: vi.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prisma)),
     product: { findMany: vi.fn() },
+    tenantSalesPolicy: { findUnique: vi.fn() },
     invoice: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     auditLog: { create: vi.fn() },
   };
@@ -79,6 +80,7 @@ describe("Server-side sales price and discount validation", () => {
     mockSaas.incrementUsage.mockResolvedValue(undefined);
     mockPrisma.invoice.findUnique.mockResolvedValue(null);
     mockPrisma.invoice.findFirst.mockResolvedValue(null);
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue(null);
     mockPrisma.product.findMany.mockResolvedValue([
       { id: productId, tenantId, price: 30, isActive: true, deletedAt: null },
     ]);
@@ -120,13 +122,24 @@ describe("Server-side sales price and discount validation", () => {
     expect(invoiceData.items.create[0].total.toString()).toBe("300");
   });
 
-  it("rejects client-supplied discount, tax, promotion, and tier-price overrides", () => {
+  it("accepts a requested discount percentage but never accepts client-supplied tax or computed amounts", () => {
+    const result = InvoiceSchema.safeParse({
+      invoiceNumber: "SALE-DISCOUNT-001",
+      type: "SALE",
+      totalAmount: 100,
+      paymentStatus: "UNPAID",
+      discountPercent: 5,
+      items: [{ productId, qty: 1, price: 100 }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects client-supplied discount amount, tax, promotion, and tier-price overrides", () => {
     const result = InvoiceSchema.safeParse({
       invoiceNumber: "SALE-OVERRIDE-001",
       type: "SALE",
       totalAmount: 100,
       paymentStatus: "UNPAID",
-      discountPercent: 25,
       discountAmount: 25,
       tax: 15,
       promotionId: "client-promo",
