@@ -61,7 +61,7 @@ async function login(username: string): Promise<string> {
 }
 
 const integrationDescribe = enabled ? describe : describe.skip;
-integrationDescribe("Real PostgreSQL + Express HTTP integration", () => {
+integrationDescribe("Real PostgreSQL + Express HTTP integration", { concurrent: false }, () => {
   beforeAll(async () => {
     // A real connection is mandatory: fail rather than allowing Prisma's offline fallback.
     await prisma.$connect();
