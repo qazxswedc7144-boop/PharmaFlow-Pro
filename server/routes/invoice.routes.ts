@@ -137,7 +137,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
         data: {
           tenantId,
           userId: req.user?.userId || null,
-          action: "CREATE_INVOICE",
+          action: "CREATE",
           entity: "Invoice",
           entityId: createdInvoice.id,
           before: null,
