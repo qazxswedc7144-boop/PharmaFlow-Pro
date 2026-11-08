@@ -174,24 +174,35 @@ integrationDescribe("Real PostgreSQL + Express HTTP integration", () => {
   }, 60000);
 
   afterAll(async () => {
-    if (server) {
-      await new Promise<void>((resolve) => server!.close(() => resolve()));
-      server = undefined;
-    }
+    try {
+      if (server) {
+        const activeServer = server;
+        await new Promise<void>((resolve, reject) => {
+          activeServer.close((error) => error ? reject(error) : resolve());
+          // Close idle keep-alive sockets and any remaining test sockets after all
+          // awaited HTTP requests have completed, so the runner can exit cleanly.
+          activeServer.closeIdleConnections?.();
+          activeServer.closeAllConnections?.();
+        });
+        server = undefined;
+      }
 
-    if (tenantAId || tenantBId) {
-      const tenantIds = [tenantAId, tenantBId].filter(Boolean);
-      await prisma.auditLog.deleteMany({ where: { tenantId: { in: tenantIds } } }).catch(() => {});
-      await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } }).catch(() => {});
+      if (tenantAId || tenantBId) {
+        const tenantIds = [tenantAId, tenantBId].filter(Boolean);
+        await prisma.auditLog.deleteMany({ where: { tenantId: { in: tenantIds } } }).catch(() => {});
+        await prisma.tenant.deleteMany({ where: { id: { in: tenantIds } } }).catch(() => {});
+      }
+      const userIds = [userAId, userBId].filter(Boolean);
+      if (userIds.length) {
+        await prisma.user.deleteMany({ where: { id: { in: userIds } } }).catch(() => {});
+      }
+      if (planId) {
+        await prisma.subscriptionPlan.deleteMany({ where: { id: planId } }).catch(() => {});
+      }
+    } finally {
+      // Always release the shared Prisma singleton, even if server cleanup fails.
+      await prisma.$disconnect().catch(() => {});
     }
-    const userIds = [userAId, userBId].filter(Boolean);
-    if (userIds.length) {
-      await prisma.user.deleteMany({ where: { id: { in: userIds } } }).catch(() => {});
-    }
-    if (planId) {
-      await prisma.subscriptionPlan.deleteMany({ where: { id: planId } }).catch(() => {});
-    }
-    await prisma.$disconnect().catch(() => {});
   }, 30000);
 
   it("authenticates both isolated tenant users through the real login HTTP route", async () => {
