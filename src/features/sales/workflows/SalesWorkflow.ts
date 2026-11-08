@@ -52,7 +52,7 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
   public tables = [
     'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
     'inventory_layers', 'fifo_consumption_log', 'warehouseStock',
-    'branchInventory',
+    'branches', 'branchInventory',
     'medicineBatches', 'stock_movements', 'customers', 'journalEntries',
     'journalLines', 'accounts', 'financialTransactions', 'auditLogs',
     'idempotencyKeys', 'projectionEvents', 'projectionCheckpoints',
