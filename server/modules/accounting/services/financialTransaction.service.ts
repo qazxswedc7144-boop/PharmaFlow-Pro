@@ -148,7 +148,7 @@ export class FinancialTransactionService {
     const saleRevenueAmount = isSale
       ? new Prisma.Decimal(invoice.subtotalAmount.toString())
           .minus(new Prisma.Decimal(invoice.discountAmount.toString()))
-          .minus(saleTaxAmount)
+          .minus(invoice.taxMode === "INCLUSIVE" ? saleTaxAmount : new Prisma.Decimal(0))
       : new Prisma.Decimal(0);
 
     // 2. Lock core accounts involved in the transaction to prevent concurrent race conditions
