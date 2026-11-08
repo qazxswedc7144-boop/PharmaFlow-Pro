@@ -363,7 +363,7 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
           branchId: ctx.branchId,
           paymentStatus: input.isCash ? 'Cash' : 'Credit',
           currencyCode: input.currency || CurrencyService.getCurrentCurrencyCode()
-        },
+        } as any,
         costResult,
         tx
       );
