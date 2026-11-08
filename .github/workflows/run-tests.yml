@@ -145,10 +145,10 @@ jobs:
       - name: Run PostgreSQL HTTP Authentication + Sync integration tests
         run: npx vitest run server/tests/auth-sync.integration.test.ts --reporter=verbose --maxWorkers=1
         env:
-          NODE_OPTIONS: "--max-old-space-size=4096"
+          NODE_OPTIONS: "--max-old-space-size=5120"
 
       - name: Run PostgreSQL HTTP Tenant Isolation + Invoice integration tests
         if: always()
         run: npx vitest run server/tests/invoice-isolation.integration.test.ts --reporter=verbose --maxWorkers=1
         env:
-          NODE_OPTIONS: "--max-old-space-size=4096"
+          NODE_OPTIONS: "--max-old-space-size=5120"
