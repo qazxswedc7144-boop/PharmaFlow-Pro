@@ -4,8 +4,6 @@ import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import { authV1Router } from "../../../apps/api/src/modules/auth/auth.routes.js";
-import { syncV1Router } from "../../../apps/api/src/modules/sync/sync.routes.js";
 import { requestContextPlugin } from "../../../apps/api/src/plugins/request-context.js";
 import { authenticateToken } from "../../middleware/auth.middleware.js";
 import { tenantContextMiddleware } from "../../middleware/tenant.middleware.js";
@@ -92,7 +90,7 @@ async function login(ctx: PostgresHttpContext, username: string): Promise<string
 
 async function initialize(
   ctx: PostgresHttpContext,
-  options: { includeInvoiceRoutes?: boolean } = {}
+  options: { includeInvoiceRoutes?: boolean; includeSyncRoutes?: boolean } = {}
 ): Promise<void> {
   // A real connection is mandatory: fail rather than allowing Prisma's offline fallback.
   await prisma.$connect();
@@ -201,14 +199,21 @@ async function initialize(
     if (!shouldApplyIdempotency(req)) return next();
     return idempotencyMiddleware(req, res, next);
   });
+  // Import only the production route trees required by this suite. Each
+  // Vitest invocation runs in its own Node process, so this also bounds the
+  // module graph and memory retained by the worker.
+  const { authV1Router } = await import("../../../apps/api/src/modules/auth/auth.routes.js");
   app.use("/api/v1/auth", authV1Router);
   app.use("/api", authenticateToken);
   app.use("/api", tenantContextMiddleware);
   app.use("/api", subscriptionGuard);
-  app.use("/api/v1/sync", syncV1Router);
 
-  // Load the heavier invoice route tree only for the invoice suite. This keeps
-  // the auth/sync worker isolated from accounting and inventory dependencies.
+  if (options.includeSyncRoutes) {
+    const { syncV1Router } = await import("../../../apps/api/src/modules/sync/sync.routes.js");
+    app.use("/api/v1/sync", syncV1Router);
+  }
+
+  // Load the heavier invoice route tree only for the invoice suite.
   if (options.includeInvoiceRoutes) {
     const { invoiceRouter } = await import("../../routes/invoice.routes.js");
     app.use("/api/invoices", invoiceRouter);
@@ -258,7 +263,7 @@ async function cleanup(ctx: PostgresHttpContext): Promise<void> {
 export function definePostgresHttpSuite(
   name: string,
   registerTests: (getContext: () => PostgresHttpContext) => void,
-  options: { includeInvoiceRoutes?: boolean } = {}
+  options: { includeInvoiceRoutes?: boolean; includeSyncRoutes?: boolean } = {}
 ): void {
   const suite = enabled ? describe : describe.skip;
   suite(name, { concurrent: false }, () => {
