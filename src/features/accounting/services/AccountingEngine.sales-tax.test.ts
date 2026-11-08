@@ -103,7 +103,22 @@ describe('AccountingEngine local SALE tax split', () => {
   it('fails closed when the tenant has no tax payable account, even if another tenant has one', async () => {
     const accounts: Record<string, string> = { CASH: 'ACC-101', RECEIVABLE: 'ACC-103', SALES_REVENUE: 'ACC-401', COGS: 'ACC-501', INVENTORY: 'ACC-102' };
     vi.spyOn(AccountingEngine, 'getCoreAccount').mockImplementation(async (type: any) => accounts[type] || 'ACC-GENERIC');
+    // Create the foreign account while authenticated as its actual owner.
+    // The Dexie creating hook correctly stamps the active tenant and must not
+    // be bypassed by supplying a different tenantId in the payload.
+    TokenProvider.setSession(
+      { id: 'USER-OTHER-001', tenantId: 'TENANT-OTHER', role: 'admin' } as any,
+      'other-tenant-test-token',
+      { tenantId: 'TENANT-OTHER', branchId: 'BRANCH-OTHER-001', roles: ['admin'] }
+    );
     await db.accounts.put({ id: 'ACC-TAX-OTHER-TENANT', code: '2201', name: 'VAT Payable', type: 'LIABILITY', isActive: true, tenantId: 'TENANT-OTHER' } as any);
+
+    // Restore the sale tenant before invoking AccountingEngine.
+    TokenProvider.setSession(
+      { id: 'USER-UNIT-001', tenantId: 'TENANT-UNIT-001', role: 'admin' } as any,
+      'unit-test-access-token',
+      { tenantId: 'TENANT-UNIT-001', branchId: 'BRANCH-UNIT-001', roles: ['admin'] }
+    );
     vi.spyOn(CurrencyService, 'convertToBase').mockImplementation(async (amount: number) => ({ baseAmount: amount, rate: 1 }));
     await expect(AccountingEngine.generateSalesEntry({ id: 'SALE-TAX-CROSS-TENANT-001', SaleID: 'SALE-TAX-CROSS-TENANT-001', date: '2026-11-08T12:00:00.000Z', paymentStatus: 'Credit', currencyCode: 'USD', totalAmount: 115, revenueAmount: 100, taxAmount: 15, tenantId: 'TENANT-UNIT-001', branchId: 'BRANCH-UNIT-001', items: [] } as any, [])).rejects.toThrow('No tenant-owned active tax payable liability account is configured.');
   });
