@@ -15,7 +15,16 @@ function fakeDb(data: Record<string, any[]>) {
   let writeAttempted = false;
   const database: any = {
     verno: 39, isOpen: () => true, tables: Object.keys(data).map(name => ({ name })),
-    table: (name: string) => ({ toArray: async () => data[name] }),
+    table: (name: string) => ({
+      toArray: async () => data[name],
+      add: async () => { writeAttempted = true; throw new Error('Unexpected Dexie write'); },
+      put: async () => { writeAttempted = true; throw new Error('Unexpected Dexie write'); },
+      bulkAdd: async () => { writeAttempted = true; throw new Error('Unexpected Dexie write'); },
+      bulkPut: async () => { writeAttempted = true; throw new Error('Unexpected Dexie write'); },
+      update: async () => { writeAttempted = true; throw new Error('Unexpected Dexie write'); },
+      delete: async () => { writeAttempted = true; throw new Error('Unexpected Dexie write'); },
+      clear: async () => { writeAttempted = true; throw new Error('Unexpected Dexie write'); }
+    }),
     transaction: async (mode: string, ...args: any[]) => {
       expect(mode).toBe('r');
       const callback = args[args.length - 1];
