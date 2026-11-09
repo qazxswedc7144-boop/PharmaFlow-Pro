@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { db, getCurrentUserSession } from '@/core/db';
 
 type AnyRecord = Record<string, any>;
@@ -238,7 +238,6 @@ async function buildFifoAudit(): Promise<AuditSummary> {
   const tenantLayers = (snapshot.allLayers as AnyRecord[]).filter(layer =>
     tenantOf(layer) === activeTenantId
   );
-  const tenantLayerIds = new Set(tenantLayers.map(layer => asText(layer?.id)).filter(Boolean));
 
   const layerCandidates = new Map<string, AnyRecord[]>();
   for (const layer of snapshot.allLayers as AnyRecord[]) {
@@ -300,7 +299,7 @@ async function buildFifoAudit(): Promise<AuditSummary> {
 
   const duplicateLogIds = new Set<string>();
   const seenLogIds = new Set<string>();
-  includedLogs.forEach((log, index) => {
+  includedLogs.forEach(log => {
     const id = asText(log?.id);
     if (!id) return;
     if (seenLogIds.has(id)) duplicateLogIds.add(id);
@@ -321,7 +320,6 @@ async function buildFifoAudit(): Promise<AuditSummary> {
   let invalidLogQuantities = 0;
   let invalidLogCosts = 0;
   let missingLayerReferences = 0;
-  let tenantlessLinkedLayersCount = 0;
   let layerCostMismatches = 0;
   let layerInvalidQuantities = 0;
 
