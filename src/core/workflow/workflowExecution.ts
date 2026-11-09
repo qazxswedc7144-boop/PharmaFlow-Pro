@@ -141,13 +141,20 @@ export class WorkflowExecutionPipeline {
                 import('@/features/sync/sync.engine'),
                 import('@/features/sync/saleSyncDto')
               ]);
-              saleSyncEnqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
+              const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
                 workflow.operationType,
                 toSaleSyncDTO(res),
                 'SALE',
                 ctx.idempotencyKey,
                 { tenantId: ctx.tenantId, branchId: ctx.branchId }
               );
+              if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
+                throw new WorkflowExecutionError(
+                  'SYNC_ENQUEUE_FAILED: Durable sale queue/outbox acknowledgement is incomplete.',
+                  'SYNC_ENQUEUE_FAILED'
+                );
+              }
+              saleSyncEnqueueResult = enqueueResult;
             }
             return res;
           });
@@ -184,12 +191,6 @@ export class WorkflowExecutionPipeline {
       });
 
       if (workflow.id.toUpperCase() === 'SALE') {
-        if (!saleSyncEnqueueResult) {
-          throw new WorkflowExecutionError(
-            'SYNC_ENQUEUE_FAILED: Sale transaction committed without a durable queue/outbox acknowledgement.',
-            'SYNC_ENQUEUE_FAILED'
-          );
-        }
         const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
         DistributedSyncEngine.getInstance().requestSync().catch(() => {});
       } else {
