@@ -122,7 +122,6 @@ export class WorkflowExecutionPipeline {
       }
 
       // Step 9 & 10: ExecutionGuard + TransactionBoundary Execution
-      let saleSyncEnqueueResult: { mutationId: string; idempotencyKey: string; queueItemId?: number } | null = null;
       const domainResult = await ExecutionGuard.executeWithGuard<TResult>(
         {
           tenantId: ctx.tenantId,
@@ -154,7 +153,6 @@ export class WorkflowExecutionPipeline {
                   'SYNC_ENQUEUE_FAILED'
                 );
               }
-              saleSyncEnqueueResult = enqueueResult;
             }
             return res;
           });
