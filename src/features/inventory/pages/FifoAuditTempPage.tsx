@@ -288,7 +288,6 @@ async function buildFifoAudit(): Promise<AuditSummary> {
   }
 
   const logsByInvoice = new Map<string, AnyRecord[]>();
-  const includedLogs: AnyRecord[] = [];
   const orphanOrAmbiguousLogs = new Set<string>();
   const tenantlessLinkedLogs = new Set<string>();
   const logsWithReferenceMismatch = new WeakSet<AnyRecord>();
@@ -317,8 +316,6 @@ async function buildFifoAudit(): Promise<AuditSummary> {
     }
 
     const invoiceId = [...matchedInvoiceIds][0];
-    includedLogs.push(log);
-
     if (!logTenant) {
       tenantlessLinkedLogs.add(asText(log?.id) || `row-${index}`);
     }
