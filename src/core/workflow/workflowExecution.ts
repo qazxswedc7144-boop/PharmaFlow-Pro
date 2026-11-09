@@ -68,6 +68,35 @@ export class WorkflowExecutionPipeline {
           if (existing.status === 'COMMITTED') {
             const replayData = (existing.responseData || existing.result) as TResult;
             if (replayData) {
+              if (workflow.id.toUpperCase() === 'SALE') {
+                try {
+                  const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = await Promise.all([
+                    import('@/features/sync/sync.engine'),
+                    import('@/features/sync/saleSyncDto')
+                  ]);
+                  await DistributedSyncEngine.getInstance().enqueue(
+                    workflow.operationType,
+                    toSaleSyncDTO(replayData),
+                    'SALE',
+                    ctx.idempotencyKey,
+                    { tenantId: ctx.tenantId, branchId: ctx.branchId }
+                  );
+                  DistributedSyncEngine.getInstance().requestSync().catch(() => {});
+                } catch (syncErr: any) {
+                  return WorkflowResultBuilder.failure(
+                    new WorkflowExecutionError(
+                      `SYNC_ENQUEUE_FAILED: committed sale replay has no safely reusable durable queue/outbox pair: ${syncErr?.message || String(syncErr)}`,
+                      'SYNC_ENQUEUE_FAILED'
+                    ),
+                    'SYNC_ENQUEUE_FAILED',
+                    ctx
+                  );
+                }
+                return WorkflowResultBuilder.success(replayData, ctx, {
+                  warnings: ['تم استرجاع النتيجة بعد التحقق من وجود حدث مزامنة دائم أو إعادة إنشائه بأمان.'],
+                  syncStatus: 'ENQUEUED'
+                });
+              }
               return WorkflowResultBuilder.success(replayData, ctx, {
                 warnings: ['تم استرجاع النتيجة من السجل المصادق عليه سابقاً (Idempotent replay)']
               });
@@ -93,6 +122,7 @@ export class WorkflowExecutionPipeline {
       }
 
       // Step 9 & 10: ExecutionGuard + TransactionBoundary Execution
+      let saleSyncEnqueueResult: { mutationId: string; idempotencyKey: string; queueItemId?: number } | null = null;
       const domainResult = await ExecutionGuard.executeWithGuard<TResult>(
         {
           tenantId: ctx.tenantId,
@@ -104,6 +134,21 @@ export class WorkflowExecutionPipeline {
           return await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
             // Step 11: Execute Domain Steps
             const res = await workflow.executeDomainSteps(input, ctx, tx);
+
+            // SALE persistence and both durable sync records share the same Dexie transaction.
+            if (workflow.id.toUpperCase() === 'SALE') {
+              const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = await Promise.all([
+                import('@/features/sync/sync.engine'),
+                import('@/features/sync/saleSyncDto')
+              ]);
+              saleSyncEnqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
+                workflow.operationType,
+                toSaleSyncDTO(res),
+                'SALE',
+                ctx.idempotencyKey,
+                { tenantId: ctx.tenantId, branchId: ctx.branchId }
+              );
+            }
             return res;
           });
         }
@@ -138,22 +183,33 @@ export class WorkflowExecutionPipeline {
         result: domainResult
       });
 
-      try {
+      if (workflow.id.toUpperCase() === 'SALE') {
+        if (!saleSyncEnqueueResult) {
+          throw new WorkflowExecutionError(
+            'SYNC_ENQUEUE_FAILED: Sale transaction committed without a durable queue/outbox acknowledgement.',
+            'SYNC_ENQUEUE_FAILED'
+          );
+        }
         const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
-        await DistributedSyncEngine.getInstance().enqueue(
-          workflow.operationType,
-          {
-            id: (domainResult as any)?.refId || ctx.workflowId,
-            ...(typeof domainResult === 'object' && domainResult !== null ? domainResult : {}),
-            workflowId: ctx.workflowId,
-            operationType: workflow.operationType
-          },
-          workflow.id.toUpperCase(),
-          ctx.idempotencyKey,
-          { tenantId: ctx.tenantId, branchId: ctx.branchId }
-        );
-      } catch (syncErr) {
-        console.warn('[WorkflowExecutionPipeline] Sync enqueue non-blocking notification:', syncErr);
+        DistributedSyncEngine.getInstance().requestSync().catch(() => {});
+      } else {
+        try {
+          const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
+          await DistributedSyncEngine.getInstance().enqueue(
+            workflow.operationType,
+            {
+              id: (domainResult as any)?.refId || ctx.workflowId,
+              ...(typeof domainResult === 'object' && domainResult !== null ? domainResult : {}),
+              workflowId: ctx.workflowId,
+              operationType: workflow.operationType
+            },
+            workflow.id.toUpperCase(),
+            ctx.idempotencyKey,
+            { tenantId: ctx.tenantId, branchId: ctx.branchId }
+          );
+        } catch (syncErr) {
+          console.warn('[WorkflowExecutionPipeline] Sync enqueue non-blocking notification:', syncErr);
+        }
       }
 
       // Step 15: After Execute & After Commit Hooks
