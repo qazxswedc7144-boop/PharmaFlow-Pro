@@ -104,15 +104,36 @@ const errorCategories = (r: Row): string[] => {
   return categories;
 };
 const mutationId = (r: Row) => text(first(r,['mutationId','mutation_id']));
+const safeCategory = (value: unknown, allowed: ReadonlySet<string>): string => {
+  const normalized = text(value).toUpperCase();
+  return allowed.has(normalized) ? normalized : 'UNKNOWN';
+};
+const SAFE_ENTITY_TYPES = new Set([
+  'INVOICE','SALE','SALES_INVOICE','PURCHASE','PURCHASE_INVOICE',
+  'RETURN','SALES_RETURN','PURCHASE_RETURN'
+]);
+const SAFE_OPERATION_TYPES = new Set([
+  'CREATE','UPDATE','DELETE','UPSERT','POST','SYNC','RETRY','VOID','CANCEL','RESTORE'
+]);
+const SAFE_OPERATIONS = new Set([
+  'CREATE','UPDATE','DELETE','UPSERT','POST','SYNC','RETRY','VOID','CANCEL','RESTORE'
+]);
+const SAFE_RECORD_TYPES = new Set([
+  'SALE','PURCHASE','SALE_RETURN','PURCHASE_RETURN','RETURN','INVOICE'
+]);
+const SAFE_SYNC_STATUSES = new Set([
+  'PENDING','PROCESSING','FAILED','COMPLETED','SUCCESS','ENQUEUED',
+  'SYNCED','RETRYING','BLOCKED','CANCELLED','DEAD_LETTER'
+]);
 const normalizedRecord = (store: string, r: Row, invoice: Row, session: ForensicSession) => {
   const p=payloadOf(r), shape=classifyPayloadShape(p);
   return {
     store,
-    entityType:text(first(r,['entityType','entity_type'])).toUpperCase() || 'UNKNOWN',
-    operationType:text(first(r,['operationType','operation_type'])).toUpperCase() || 'UNKNOWN',
-    type:text(r.type).toUpperCase() || 'UNKNOWN',
-    operation:text(r.operation).toUpperCase() || 'UNKNOWN',
-    status:text(first(r,['syncStatus','status','state'])).toUpperCase() || 'UNKNOWN',
+    entityType:safeCategory(first(r,['entityType','entity_type']), SAFE_ENTITY_TYPES),
+    operationType:safeCategory(first(r,['operationType','operation_type']), SAFE_OPERATION_TYPES),
+    type:safeCategory(r.type, SAFE_RECORD_TYPES),
+    operation:safeCategory(r.operation, SAFE_OPERATIONS),
+    status:safeCategory(first(r,['syncStatus','status','state']), SAFE_SYNC_STATUSES),
     mutationIdPresent:Boolean(mutationId(r)),
     idempotencyKeyPresent:Boolean(first(r,['idempotencyKey','idempotency_key'])),
     payloadShape:shape.shape,
