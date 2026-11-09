@@ -126,7 +126,9 @@ async function buildAudit(): Promise<Summary> {
   };
 
   const movementStores = ['inventoryTransactions', 'stock_movements', 'inventory_logs', 'inventory'];
-  if (stores.invoiceItems) linkStore('invoiceItems', stores.invoiceItems);\n  if (stores.medicineBatches) linkStore('medicineBatches', stores.medicineBatches);\n  movementStores.forEach(name => { if (stores[name]) linkStore(name, stores[name]); });
+  if (stores.invoiceItems) linkStore('invoiceItems', stores.invoiceItems);
+  if (stores.medicineBatches) linkStore('medicineBatches', stores.medicineBatches);
+  movementStores.forEach(name => { if (stores[name]) linkStore(name, stores[name]); });
   ['journalEntries', 'financialTransactions', 'syncQueue', 'sync_queue', 'outbox', 'eventStore',
     'purchases', 'inventory_layers', 'fifo_consumption_log'].forEach(name => {
       if (stores[name]) linkStore(name, stores[name]);
