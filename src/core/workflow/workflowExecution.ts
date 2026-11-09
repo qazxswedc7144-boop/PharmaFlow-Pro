@@ -79,7 +79,7 @@ export class WorkflowExecutionPipeline {
                     toSaleSyncDTO(replayData),
                     'SALE',
                     ctx.idempotencyKey,
-                    { tenantId: ctx.tenantId, branchId: ctx.branchId }
+                    { tenantId: ctx.tenantId, branchId: ctx.branchId, requireOutbox: true }
                   );
                   DistributedSyncEngine.getInstance().requestSync().catch(() => {});
                 } catch (syncErr: any) {
