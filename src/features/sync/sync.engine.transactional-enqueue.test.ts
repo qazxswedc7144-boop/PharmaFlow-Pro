@@ -41,6 +41,8 @@ describe('DistributedSyncEngine transactional sale enqueue', () => {
     localDb = new Dexie(`sale-sync-atomicity-${Math.random()}`);
     localDb.version(1).stores({
       invoices: '&id',
+      inventoryTransactions: '&id',
+      journalEntries: '&id',
       syncQueue: '++id, &idempotencyKey, mutationId, tenantId, userId',
       outbox: '++id, &mutationId, &idempotencyKey, status, type, operation, tenantId, userId',
     });
@@ -54,10 +56,14 @@ describe('DistributedSyncEngine transactional sale enqueue', () => {
 
     await expect(localDb.transaction('rw', [
       localDb.table('invoices'),
+      localDb.table('inventoryTransactions'),
+      localDb.table('journalEntries'),
       localDb.table('syncQueue'),
       localDb.table('outbox'),
     ], async () => {
       await localDb.table('invoices').add({ id: 'invoice-atomic-1' });
+      await localDb.table('inventoryTransactions').add({ id: 'inventory-atomic-1', invoiceId: 'invoice-atomic-1' });
+      await localDb.table('journalEntries').add({ id: 'journal-atomic-1', sourceId: 'invoice-atomic-1' });
       await engine.enqueueWithinTransaction(
         'POST',
         {
@@ -73,6 +79,8 @@ describe('DistributedSyncEngine transactional sale enqueue', () => {
     })).rejects.toThrow(`${failingStore.toUpperCase()}_WRITE_FAILED`);
 
     expect(await localDb.table('invoices').count()).toBe(0);
+    expect(await localDb.table('inventoryTransactions').count()).toBe(0);
+    expect(await localDb.table('journalEntries').count()).toBe(0);
     expect(await localDb.table('syncQueue').count()).toBe(0);
     expect(await localDb.table('outbox').count()).toBe(0);
     addSpy.mockRestore();
