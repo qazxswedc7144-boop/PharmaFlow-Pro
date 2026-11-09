@@ -183,7 +183,7 @@ async function buildAudit(): Promise<Summary> {
     const journals = rowsByStoreInvoice.get('journalEntries')?.get(invoice) || [];
     const sync = ['syncQueue', 'sync_queue', 'outbox', 'eventStore'].flatMap(name => rowsByStoreInvoice.get(name)?.get(invoice) || []);
     const hasTenantless = canonical.some(row => !tenantOf(row)) || legacy.some(row => !tenantOf(row)) || journals.some(row => !tenantOf(row));
-    let qtyMatches = false, hasMismatch = false, costRows = 0;
+    let qtyMatches = false, hasMismatch = false, hasProductQtyMismatch = false, costRows = 0;
     if (canonicalTrusted.length && expectedLines.size) {
       const actual = new Map<string, number>();
       for (const row of canonicalTrusted) {
@@ -191,7 +191,7 @@ async function buildAudit(): Promise<Summary> {
         const invoiceBranch = branchOf(invoice);
         if (invoiceBranch && branchOf(row) !== invoiceBranch) { hasMismatch = true; quality.movementBranchMismatches += 1; }
         const rawQty = number(pick(row, ['quantity_delta', 'quantityDelta', 'QuantityChange', 'quantityChange', 'quantity', 'qty', 'Quantity']));
-        if (!product || !Number.isFinite(rawQty) || rawQty === 0) { hasMismatch = true; continue; }
+        if (!product || !Number.isFinite(rawQty) || rawQty === 0) { hasMismatch = true; hasProductQtyMismatch = true; continue; }
         actual.set(product, (actual.get(product) || 0) + Math.abs(rawQty));
         const unitCost = number(pick(row, ['unit_cost', 'unitCost', 'cost_per_unit', 'costPerUnit']));
         const totalCost = number(pick(row, ['total_cost', 'totalCost', 'cost_amount', 'costAmount']));
@@ -199,7 +199,7 @@ async function buildAudit(): Promise<Summary> {
       }
       qtyMatches = [...expectedLines].every(([product, qty]) => Math.abs((actual.get(product) || 0) - qty) <= 0.000001) &&
         [...actual.keys()].every(product => expectedLines.has(product));
-      if (!qtyMatches) { hasMismatch = true; quality.movementQuantityMismatches += 1; }
+      if (!qtyMatches) { hasMismatch = true; hasProductQtyMismatch = true; quality.movementQuantityMismatches += 1; }
       if (canonicalTrusted.length) quality.canonicalInventoryMovementsLinked += canonicalTrusted.length;
       quality.canonicalMovementsWithCost += costRows;
       quality.canonicalMovementsWithoutCost += canonicalTrusted.length - costRows;
@@ -207,7 +207,7 @@ async function buildAudit(): Promise<Summary> {
     if (journals.length) quality.journalEntriesLinked += journals.filter(row => tenantOf(row) === activeTenant).length;
     quality.syncRecordsLinked += sync.length;
     quality.legacyMovementRecordsLinked += legacy.length;
-    if (hasMismatch) quality.movementProductMismatches += 1;
+    if (hasProductQtyMismatch) quality.movementProductMismatches += 1;
 
     // Only canonical, tenant-owned inventory movements with exact invoice/product/qty
     // linkage and explicit movement cost qualify as verified transaction-cost evidence.
