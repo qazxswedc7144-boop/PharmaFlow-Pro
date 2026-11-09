@@ -2,6 +2,8 @@ export type ForensicSession = { tenantId: string; userId?: string; branchId?: st
 type Row = Record<string, any>;
 type OwnerResult = 'VERIFIED' | 'PARTIAL' | 'UNVERIFIABLE' | 'TENANT_MISMATCH' | 'USER_MISMATCH' | 'BRANCH_MISMATCH';
 type MutationMatch = 'EXACT_MATCH' | 'PARTIAL_MATCH' | 'MISMATCH' | 'UNKNOWN';
+type EvidenceStore = 'syncQueue' | 'sync_queue' | 'outbox' | 'eventStore' | 'failedMutations';
+type LinkedRow = { row: Row; invoiceId: string };
 
 export type InvoiceSyncFinding = {
   source: 'invoices' | 'sales';
@@ -150,7 +152,7 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
   let unknownTypeCount=0;
   for (const source of ['invoices','sales'] as const) {
     for (const row of snapshots[source] || []) {
-      if (owner(row,'tenantId') !== session.tenantId || isReturn(row) || !['POSTED','LOCKED'].includes(status(row))) continue;
+      if (owner(row,'tenantId') !== session.tenantId || saleTypeOf(row)==='RETURN' || !['POSTED','LOCKED'].includes(status(row))) continue;
       const saleType=saleTypeOf(row);
       if (saleType==='UNKNOWN') { unknownTypeCount++; continue; }
       if (saleType!=='SALE') continue;
@@ -163,11 +165,10 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
     if (!aliasOwners.has(alias)) aliasOwners.set(alias,new Set());
     aliasOwners.get(alias)!.add(id);
   }
-  const sourceRows = ['syncQueue','sync_queue','outbox','eventStore','failedMutations'];
-  const all: Record<string,Array<{row:Row;invoiceId:string}>> = {};
+  const sourceRows: EvidenceStore[] = ['syncQueue','sync_queue','outbox','eventStore','failedMutations'];
+  const all: Record<EvidenceStore,LinkedRow[]> = { syncQueue:[], sync_queue:[], outbox:[], eventStore:[], failedMutations:[] };
   const rejectedTenantCounts = new Map<string,number>();
   for (const store of sourceRows) {
-    all[store]=[];
     for (const row of snapshots[store] || []) {
       const refs=documentRefs(row), matches=new Set<string>();
       for (const ref of refs) {
@@ -175,7 +176,8 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
         if (ids?.size===1) ids.forEach(id=>matches.add(id));
       }
       if (matches.size!==1) continue;
-      const id=[...matches][0], inv=activeInvoices.get(id)?.row;
+      const id=matches.values().next().value as string;
+      const inv=activeInvoices.get(id)?.row;
       if (!inv) continue;
       if (classifyOwner(row,inv,session)==='TENANT_MISMATCH') {
         rejectedTenantCounts.set(id,(rejectedTenantCounts.get(id)||0)+1);
@@ -191,8 +193,8 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
     const o=all.outbox.filter(x=>x.invoiceId===id).map(x=>x.row);
     const ev=all.eventStore.filter(x=>x.invoiceId===id).map(x=>x.row);
     const failed=all.failedMutations.filter(x=>x.invoiceId===id).map(x=>x.row);
-    const normalized=[];
-    for (const [store,rows] of [['syncQueue',q],['sync_queue',legacy],['outbox',o],['eventStore',ev],['failedMutations',failed]] as Array<[string,Row[]]>) {
+    const normalized: InvoiceSyncFinding['records'] = [];
+    for (const [store,rows] of [['syncQueue',q],['sync_queue',legacy],['outbox',o],['eventStore',ev],['failedMutations',failed]] as Array<[EvidenceStore,Row[]]>) {
       for (const row of rows) normalized.push(normalizedRecord(store,row,item.row,session));
     }
     const queueOutboxMutationMatch=compareMutationSets([...q,...legacy],o);
@@ -211,7 +213,7 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
       ownerStates.some(v=>v==='PARTIAL'||v==='USER_MISMATCH'||v==='BRANCH_MISMATCH')?'PARTIAL':'UNVERIFIABLE';
     findings.push({source:item.source,status:status(item.row),syncQueueCount,legacySyncQueueCount,outboxCount,eventStoreCount,failedMutationCount,classification,ownership,rejectedTenantMismatchCount,queueOutboxMutationMatch,records:normalized});
   }
-  const summary: Record<string,number>={postedLockedSales:findings.length,unknownTypePostedLocked:unknownTypeCount,withSyncQueue:0,withLegacySyncQueue:0,withOutbox:0,withEventStore:0,withFailedMutation:0,exactMutationMatch:0,partialMutationMatch:0,mutationMismatch:0,tenantMismatchRecordsExcluded:0};
+  const summary={postedLockedSales:findings.length,unknownTypePostedLocked:unknownTypeCount,withSyncQueue:0,withLegacySyncQueue:0,withOutbox:0,withEventStore:0,withFailedMutation:0,exactMutationMatch:0,partialMutationMatch:0,mutationMismatch:0,tenantMismatchRecordsExcluded:0};
   for (const f of findings) {
     if (f.syncQueueCount) summary.withSyncQueue++;
     if (f.legacySyncQueueCount) summary.withLegacySyncQueue++;
