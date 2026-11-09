@@ -56,7 +56,8 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
     'medicineBatches', 'stock_movements', 'customers', 'journalEntries',
     'journalLines', 'accounts', 'financialTransactions', 'auditLogs',
     'idempotencyKeys', 'projectionEvents', 'projectionCheckpoints',
-    'accountingPeriods', 'sales', 'settings', 'systemSettings', 'tenantSalesPolicies'
+    'accountingPeriods', 'sales', 'settings', 'systemSettings', 'tenantSalesPolicies',
+    'syncQueue', 'outbox'
   ];
 
   public async validateInput(input: SalesWorkflowInput): Promise<void> {

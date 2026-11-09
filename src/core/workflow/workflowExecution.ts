@@ -68,6 +68,35 @@ export class WorkflowExecutionPipeline {
           if (existing.status === 'COMMITTED') {
             const replayData = (existing.responseData || existing.result) as TResult;
             if (replayData) {
+              if (workflow.id.toUpperCase() === 'SALE' && (replayData as any)?.sale?.isReturn !== true) {
+                try {
+                  const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = await Promise.all([
+                    import('@/features/sync/sync.engine'),
+                    import('@/features/sync/saleSyncDto')
+                  ]);
+                  await DistributedSyncEngine.getInstance().enqueue(
+                    workflow.operationType,
+                    toSaleSyncDTO(replayData),
+                    'SALE',
+                    ctx.idempotencyKey,
+                    { tenantId: ctx.tenantId, branchId: ctx.branchId, requireOutbox: true }
+                  );
+                  DistributedSyncEngine.getInstance().requestSync().catch(() => {});
+                } catch (syncErr: any) {
+                  return WorkflowResultBuilder.failure(
+                    new WorkflowExecutionError(
+                      `SYNC_ENQUEUE_FAILED: committed sale replay has no safely reusable durable queue/outbox pair: ${syncErr?.message || String(syncErr)}`,
+                      'SYNC_ENQUEUE_FAILED'
+                    ),
+                    'SYNC_ENQUEUE_FAILED',
+                    ctx
+                  );
+                }
+                return WorkflowResultBuilder.success(replayData, ctx, {
+                  warnings: ['تم استرجاع النتيجة بعد التحقق من وجود حدث مزامنة دائم أو إعادة إنشائه بأمان.'],
+                  syncStatus: 'ENQUEUED'
+                });
+              }
               return WorkflowResultBuilder.success(replayData, ctx, {
                 warnings: ['تم استرجاع النتيجة من السجل المصادق عليه سابقاً (Idempotent replay)']
               });
@@ -92,6 +121,16 @@ export class WorkflowExecutionPipeline {
         }
       }
 
+      // Resolve sync dependencies before opening the IndexedDB transaction.
+      // Dynamic imports / non-IDB awaits inside an active Dexie transaction can
+      // let IndexedDB auto-commit before the Queue/Outbox writes are reached.
+      const saleSyncDependencies = workflow.id.toUpperCase() === 'SALE'
+        ? await Promise.all([
+            import('@/features/sync/sync.engine'),
+            import('@/features/sync/saleSyncDto')
+          ])
+        : null;
+
       // Step 9 & 10: ExecutionGuard + TransactionBoundary Execution
       const domainResult = await ExecutionGuard.executeWithGuard<TResult>(
         {
@@ -104,6 +143,30 @@ export class WorkflowExecutionPipeline {
           return await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
             // Step 11: Execute Domain Steps
             const res = await workflow.executeDomainSteps(input, ctx, tx);
+
+            // SALE persistence and both durable sync records share the same Dexie transaction.
+            if (workflow.id.toUpperCase() === 'SALE' && (res as any)?.sale?.isReturn !== true) {
+              if (!saleSyncDependencies) {
+                throw new WorkflowExecutionError(
+                  'SYNC_ENQUEUE_FAILED: Sale sync dependencies were not initialized before transaction start.',
+                  'SYNC_ENQUEUE_FAILED'
+                );
+              }
+              const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = saleSyncDependencies;
+              const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
+                workflow.operationType,
+                toSaleSyncDTO(res),
+                'SALE',
+                ctx.idempotencyKey,
+                { tenantId: ctx.tenantId, branchId: ctx.branchId }
+              );
+              if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
+                throw new WorkflowExecutionError(
+                  'SYNC_ENQUEUE_FAILED: Durable sale queue/outbox acknowledgement is incomplete.',
+                  'SYNC_ENQUEUE_FAILED'
+                );
+              }
+            }
             return res;
           });
         }
@@ -138,22 +201,27 @@ export class WorkflowExecutionPipeline {
         result: domainResult
       });
 
-      try {
+      if (workflow.id.toUpperCase() === 'SALE' && (domainResult as any)?.sale?.isReturn !== true) {
         const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
-        await DistributedSyncEngine.getInstance().enqueue(
-          workflow.operationType,
-          {
-            id: (domainResult as any)?.refId || ctx.workflowId,
-            ...(typeof domainResult === 'object' && domainResult !== null ? domainResult : {}),
-            workflowId: ctx.workflowId,
-            operationType: workflow.operationType
-          },
-          workflow.id.toUpperCase(),
-          ctx.idempotencyKey,
-          { tenantId: ctx.tenantId, branchId: ctx.branchId }
-        );
-      } catch (syncErr) {
-        console.warn('[WorkflowExecutionPipeline] Sync enqueue non-blocking notification:', syncErr);
+        DistributedSyncEngine.getInstance().requestSync().catch(() => {});
+      } else {
+        try {
+          const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
+          await DistributedSyncEngine.getInstance().enqueue(
+            workflow.operationType,
+            {
+              id: (domainResult as any)?.refId || ctx.workflowId,
+              ...(typeof domainResult === 'object' && domainResult !== null ? domainResult : {}),
+              workflowId: ctx.workflowId,
+              operationType: workflow.operationType
+            },
+            workflow.id.toUpperCase(),
+            ctx.idempotencyKey,
+            { tenantId: ctx.tenantId, branchId: ctx.branchId }
+          );
+        } catch (syncErr) {
+          console.warn('[WorkflowExecutionPipeline] Sync enqueue non-blocking notification:', syncErr);
+        }
       }
 
       // Step 15: After Execute & After Commit Hooks

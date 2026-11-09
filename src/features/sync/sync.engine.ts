@@ -63,6 +63,13 @@ function acceptRefreshedSyncToken(snapshot: SyncSessionSnapshot): void {
   snapshot.token = current.token;
 }
 
+function createMutationId(): string {
+  if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+    throw new Error('SYNC_CRYPTO_UNAVAILABLE: Secure mutation ID generation is required.');
+  }
+  return crypto.randomUUID();
+}
+
 export class DistributedSyncEngine {
   private static instance: DistributedSyncEngine | null = null;
 
@@ -308,9 +315,9 @@ export class DistributedSyncEngine {
     payload: Record<string, unknown>, 
     entityType: string = 'generic', 
     customIdempotencyKey?: string,
-    options?: { tenantId?: string; branchId?: string }
+    options?: { tenantId?: string; branchId?: string; requireOutbox?: boolean }
   ): Promise<{ mutationId: string; idempotencyKey: string; queueItemId?: number }> {
-    const mutationId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+    const mutationId = createMutationId();
     const timestamp = new Date().toISOString();
     const session = readSyncSessionSnapshot();
     if (!session) {
@@ -364,6 +371,7 @@ export class DistributedSyncEngine {
       branchId,
       deviceId: DeviceManager.getDeviceIdentity().deviceId,
       type,
+      operation: type,
       payload: sanitizedPayload,
       status: 'PENDING',
       retries: 0,
@@ -375,6 +383,9 @@ export class DistributedSyncEngine {
 
     const outboxTable = (this.db as any).outbox;
     const hasOutbox = Boolean(outboxTable && outboxTable.schema);
+    if (options?.requireOutbox && !hasOutbox) {
+      throw new Error('SYNC_OUTBOX_REQUIRED: This operation requires a durable outbox table.');
+    }
     const txTables = [this.db.syncQueue];
     if (hasOutbox) txTables.push(outboxTable);
 
@@ -448,7 +459,7 @@ export class DistributedSyncEngine {
     customIdempotencyKey?: string,
     options?: { tenantId?: string; branchId?: string }
   ): Promise<{ mutationId: string; idempotencyKey: string; queueItemId?: number }> {
-    const mutationId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+    const mutationId = createMutationId();
     const timestamp = new Date().toISOString();
     const session = readSyncSessionSnapshot();
     if (!session) {
@@ -502,6 +513,7 @@ export class DistributedSyncEngine {
       branchId,
       deviceId: DeviceManager.getDeviceIdentity().deviceId,
       type,
+      operation: type,
       payload: sanitizedPayload,
       status: 'PENDING',
       retries: 0,
@@ -513,35 +525,47 @@ export class DistributedSyncEngine {
 
     const currentTx = (Dexie as any).currentTransaction;
     const outboxTable = (this.db as any).outbox;
-    const canWriteOutbox = Boolean(
-      outboxTable &&
-      outboxTable.schema &&
-      (!currentTx || (
-        currentTx.tables &&
-        (currentTx.tables['outbox'] ||
-          (Array.isArray(currentTx.tables) && currentTx.tables.some((table: any) => table.name === 'outbox')))
-      ))
+    const transactionHasTable = (tableName: string): boolean => Boolean(
+      currentTx?.tables?.[tableName] ||
+      (currentTx?.tables instanceof Map && currentTx.tables.has(tableName)) ||
+      (Array.isArray(currentTx?.tables) && currentTx.tables.some((table: any) => table === tableName || table?.name === tableName)) ||
+      (Array.isArray(currentTx?.storeNames) && currentTx.storeNames.includes(tableName))
     );
+    if (
+      !currentTx ||
+      !transactionHasTable('syncQueue') ||
+      !transactionHasTable('outbox') ||
+      !outboxTable?.schema
+    ) {
+      const diagnostic = {
+        hasTransaction: Boolean(currentTx),
+        tablesType: typeof currentTx?.tables,
+        tablesIsArray: Array.isArray(currentTx?.tables),
+        tableKeys: currentTx?.tables ? Object.keys(currentTx.tables) : [],
+        tableNames: Array.isArray(currentTx?.tables) ? currentTx.tables.map((table: any) => table?.name ?? table) : [],
+        storeNames: currentTx?.storeNames || []
+      };
+      console.warn('[DistributedSyncEngine] Transaction scope diagnostic:', diagnostic);
+      throw new Error(`SYNC_TRANSACTION_SCOPE_MISSING: enqueueWithinTransaction requires an active Dexie transaction containing syncQueue and outbox. ${JSON.stringify(diagnostic)}`);
+    }
 
     const existingQueue = await this.db.syncQueue
       .where('idempotencyKey')
       .equals(idempotencyKey)
       .first();
-    const existingOutbox = canWriteOutbox
-      ? await outboxTable.where('idempotencyKey').equals(idempotencyKey).first()
-      : undefined;
+    const existingOutbox = await outboxTable.where('idempotencyKey').equals(idempotencyKey).first();
     const existingResult = this.resolveExistingIdempotency(
       existingQueue,
       existingOutbox,
       tenantId,
       session.userId!,
       idempotencyKey,
-      canWriteOutbox
+      true
     );
     if (existingResult) return existingResult;
 
     const addedId = await this.db.syncQueue.add(queueItem);
-    if (canWriteOutbox) await outboxTable.add(outboxEvent);
+    await outboxTable.add(outboxEvent);
 
     return { mutationId, idempotencyKey, queueItemId: addedId };
   }
@@ -900,7 +924,7 @@ export class DistributedSyncEngine {
             mutations: [{
               id: event.mutationId || String(event.id),
               entity: event.entityType || event.type || 'MUTATION',
-              operation: event.operation || 'CREATE',
+              operation: event.operation || event.type || 'CREATE',
               payload: event.payload || {},
               idempotencyKey: event.idempotencyKey || event.mutationId || String(event.id),
               timestamp: event.createdAt || Date.now()
