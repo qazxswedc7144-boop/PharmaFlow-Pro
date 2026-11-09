@@ -287,9 +287,9 @@ async function buildAudit(): Promise<Summary> {
     bumpQuality('legacyMovementRecordsLinked', legacy.length);
     if (hasProductQtyMismatch) bumpQuality('movementProductMismatches', 1);
 
-    // Only canonical, tenant-owned inventory movements with exact invoice/product/qty
-    // linkage and explicit movement cost qualify as verified transaction-cost evidence.
-    // This does not by itself prove layer-by-layer FIFO allocation.
+    // Canonical inventory movement costs are corroborating evidence only.
+    // They do not prove FIFO provenance because the mutation engine can fall back
+    // to the product's stored cost when FIFO consumption returns no positive cost.
     let classification: Class = 'NO_EVIDENCE';
     const canonicalTypeVerified = canonicalTrusted.length > 0 && canonicalTrusted.every(row =>
       text(pick(row, ['SourceDocumentType', 'sourceDocType', 'source_doc_type'])).toUpperCase() === 'SALE' &&
@@ -336,7 +336,7 @@ async function buildAudit(): Promise<Summary> {
       'السجلات ذات tenantId مختلف مستبعدة تماماً.',
       'السجل بلا tenantId لا يُنسب إلى المستأجر؛ يُعرض فقط كقرينة مرتبطة بمرجع فاتورة دقيق ويظل UNVERIFIABLE.',
       'productId وحده لا يكفي للربط أو إثبات الملكية؛ يلزم مرجع فاتورة/مستند دقيق.',
-      'قيد COGS ليس دليلاً مستقلاً على FIFO؛ قد يكون مصدر التكلفة fallback من CostPrice أو تكلفة دفعة غير مثبتة المصدر.',
+      'قيد COGS أو تكلفة inventoryTransactions وحدهما لا يثبتان FIFO؛ قد يُستخدم fallback من CostPrice. medicineBatches يخدم تتبع التشغيلات/FEFO وليس بديلاً عن inventory_layers.',
       'VERIFIED يتطلب ربط FIFO consumption log بالفاتورة والطبقة الأصلية، مع تطابق المستأجر والمنتج والكمية والتكلفة. لا يثبت وحده أن سجل الطبقات التاريخي كامل أو أن ترتيب FIFO الزمني لم يتعرض لفجوات.',
       'لا تُعرض معرفات الفواتير أو المنتجات أو الدفعات أو القيم المالية.'
     ],
