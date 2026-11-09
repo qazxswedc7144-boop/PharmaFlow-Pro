@@ -182,7 +182,8 @@ async function buildAudit(): Promise<Summary> {
   quality.fifoLayerReferencesVerified = 0;
   quality.fifoLayerReferencesMissingOrAmbiguous = 0;
   quality.fifoTenantlessLogOrLayerLinks = 0;
-  quality.fifoLayerCostMismatches = 0;\n  quality.fifoLayerQuantityAnomalies = 0;
+  quality.fifoLayerCostMismatches = 0;
+  quality.fifoLayerQuantityAnomalies = 0;
 
   const classes: Class[] = [];
   for (const invoice of invoices) {
