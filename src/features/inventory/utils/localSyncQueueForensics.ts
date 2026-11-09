@@ -1,6 +1,6 @@
 export type ForensicSession = { tenantId: string; userId?: string; branchId?: string };
 type Row = Record<string, any>;
-type OwnerResult = 'VERIFIED' | 'PARTIAL' | 'UNVERIFIABLE' | 'TENANT_MISMATCH';
+type OwnerResult = 'VERIFIED' | 'PARTIAL' | 'UNVERIFIABLE' | 'TENANT_MISMATCH' | 'USER_MISMATCH' | 'BRANCH_MISMATCH';
 type MutationMatch = 'EXACT_MATCH' | 'PARTIAL_MATCH' | 'MISMATCH' | 'UNKNOWN';
 
 export type InvoiceSyncFinding = {
@@ -84,7 +84,7 @@ export function classifyOwner(record: Row, invoice: Row, session: ForensicSessio
     const recordValue=owner(record,key), invoiceValue=owner(invoice,key);
     if (recordValue && invoiceValue) {
       comparable++;
-      if (recordValue !== invoiceValue) return 'PARTIAL';
+      if (recordValue !== invoiceValue) return key === 'userId' ? 'USER_MISMATCH' : 'BRANCH_MISMATCH';
     }
   }
   return comparable === 2 ? 'VERIFIED' : 'PARTIAL';
@@ -208,7 +208,7 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
     const ownerStates=normalized.map(r=>r.ownerCheck);
     const ownership: InvoiceSyncFinding['ownership']=rejectedTenantMismatchCount?'TENANT_MISMATCH_RECORDS_EXCLUDED':
       ownerStates.length&&ownerStates.every(v=>v==='VERIFIED')?'VERIFIED':
-      ownerStates.some(v=>v==='PARTIAL')?'PARTIAL':'UNVERIFIABLE';
+      ownerStates.some(v=>v==='PARTIAL'||v==='USER_MISMATCH'||v==='BRANCH_MISMATCH')?'PARTIAL':'UNVERIFIABLE';
     findings.push({source:item.source,status:status(item.row),syncQueueCount,legacySyncQueueCount,outboxCount,eventStoreCount,failedMutationCount,classification,ownership,rejectedTenantMismatchCount,queueOutboxMutationMatch,records:normalized});
   }
   const summary: Record<string,number>={postedLockedSales:findings.length,unknownTypePostedLocked:unknownTypeCount,withSyncQueue:0,withLegacySyncQueue:0,withOutbox:0,withEventStore:0,withFailedMutation:0,exactMutationMatch:0,partialMutationMatch:0,mutationMismatch:0,tenantMismatchRecordsExcluded:0};
