@@ -31,6 +31,7 @@ const number = (v: any): number => {
 };
 const tenantOf = (r: Row): string => text(pick(r, ['tenantId', 'tenant_id']));
 const productOf = (r: Row): string => text(pick(r, ['productId', 'product_id', 'itemId', 'item_id']));
+const branchOf = (r: Row): string => text(pick(r, ['branchId', 'branch_id']));
 const aliasesOf = (r: Row): string[] => [...new Set([
   pick(r, ['id']), pick(r, ['invoiceId', 'invoice_id']), pick(r, ['SaleID', 'saleId']),
   pick(r, ['invoiceNumber', 'invoice_number'])
@@ -156,7 +157,7 @@ async function buildAudit(): Promise<Summary> {
   const quality: Record<string, number> = {
     canonicalInventoryMovementsLinked: 0, canonicalMovementsWithCost: 0,
     canonicalMovementsWithoutCost: 0, movementQuantityMismatches: 0,
-    movementProductMismatches: 0, journalEntriesLinked: 0,
+    movementProductMismatches: 0, movementBranchMismatches: 0, journalEntriesLinked: 0,
     journalLinesLinkedToTrustedEntries: 0, journalLinesWithTenantMismatch: 0,
     batchReferencesLinked: 0, batchTenantlessLinked: 0, syncRecordsLinked: 0,
     legacyMovementRecordsLinked: 0, ambiguousInvoiceReferences
@@ -187,6 +188,8 @@ async function buildAudit(): Promise<Summary> {
       const actual = new Map<string, number>();
       for (const row of canonicalTrusted) {
         const product = productOf(row);
+        const invoiceBranch = branchOf(invoice);
+        if (invoiceBranch && branchOf(row) !== invoiceBranch) { hasMismatch = true; quality.movementBranchMismatches += 1; }
         const rawQty = number(pick(row, ['quantity_delta', 'quantityDelta', 'QuantityChange', 'quantityChange', 'quantity', 'qty', 'Quantity']));
         if (!product || !Number.isFinite(rawQty) || rawQty === 0) { hasMismatch = true; continue; }
         actual.set(product, (actual.get(product) || 0) + Math.abs(rawQty));
