@@ -143,6 +143,7 @@ const PrivacyPolicy = lazyWithRetry(() => import('@features/legal/pages/PrivacyP
 const TermsOfService = lazyWithRetry(() => import('@features/legal/pages/TermsOfService'));
 const SecurityAuditDashboard = lazyWithRetry(() => import('@features/settings/components/SecurityAuditDashboard'));
 const BackupManagement = lazyWithRetry(() => import('@features/settings/components/BackupManagement'));
+const FifoAuditTempPage = lazyWithRetry(() => import('@features/inventory/pages/FifoAuditTempPage'));
 
 import { useAuth } from '@features/auth/hooks/useAuth';
 import LoginPage from '@features/auth/pages/LoginPage';
@@ -297,8 +298,7 @@ function MainLayout() {
           const BYPASS_USER: User = {
             id: "local-admin",
             user_id: "local-admin",
-            Role: "Admin" as UserRole,
-            User_Name: "Administrator",
+            Role: "Admin" as UserRole,            User_Name: "Administrator",
             User_Email: "admin@admin.com",
             tenant_id: "local-tenant-01",
             Is_Active: true
@@ -534,7 +534,7 @@ function MainLayout() {
       'reconciliation', 'cashboxes', 'system-health', 'invoices-archive', 'invoice-history',
       'adjustments-archive', 'supplier-payment', 'customer-receipt', 'vouchers',
       'aging-report', 'partners', 'privacy', 'terms', 'reports', 'advanced-reports',
-      'login', '403', 'backup', 'saas-portal', 'security-audit',
+      'login', '403', 'backup', 'saas-portal', 'security-audit', 'fifo-audit-temp',
       'branches', 'branch-transfers', 'branch-reports', 'consolidation',
       'reports/remaining-stock', 'reports/item-profits', 'reports/customer-profit', 
       'reports/supplier-profit', 'reports/account-movement', 'reports/purchases-by-item',
@@ -548,7 +548,7 @@ function MainLayout() {
       if (v === 'purchases') return 'PURCHASE_ACCESS';
       if (v === 'accounting' || v === 'cashboxes' || v === 'reconciliation' || v === 'adjustments-registry' || v === 'consolidation') return 'FINANCIAL_ACCESS';
       if (v === 'reports' || v === 'financial-dashboard' || v === 'advanced-reports' || v.startsWith('reports/')) return 'VIEW_REPORTS';
-      if (v === 'settings' || v === 'backup' || v === 'system-health' || v === 'audit-history' || v === 'invoice-history') return 'MANAGE_SYSTEM';
+      if (v === 'settings' || v === 'backup' || v === 'system-health' || v === 'audit-history' || v === 'invoice-history' || v === 'fifo-audit-temp') return 'MANAGE_SYSTEM';
       if (v === 'partners') return 'MANAGE_PARTNERS';
       if (v === 'branches') return 'BRANCH_VIEW';
       if (v === 'branch-transfers') return 'BRANCH_TRANSFER';
@@ -597,8 +597,7 @@ function MainLayout() {
         setViewParams({ id });
       } else {
         setEditingInvoiceId(null);
-        setViewParams(null);
-      }
+        setViewParams(null);      }
     });
   }, [setEditingInvoiceId, user, accessToken, profile?.role, loading]);
 
@@ -774,6 +773,7 @@ function MainLayout() {
     if (currentView === 'branch-transfers') return 'التحويل الدوائي البيني';
     if (currentView === 'branch-reports') return 'تقرير تحليلات الفروع الذكي';
     if (currentView === 'settings') return 'مركز الإدارة والإعدادات';
+    if (currentView === 'fifo-audit-temp') return 'تدقيق FIFO مؤقت';
     return 'العملية';
   };
 
@@ -897,8 +897,7 @@ function MainLayout() {
                     onClick={() => handleNav('consolidation')}
                     className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl text-[11px] font-black transition-all group ${currentView === 'consolidation' ? 'bg-[#1E4D4D] text-white shadow-lg shadow-emerald-950/10' : 'text-slate-500 hover:bg-slate-50 hover:text-[#1E4D4D]'}`}
                   >
-                    <div className="flex items-center gap-3">
-                      <span className={`${currentView === 'consolidation' ? 'text-emerald-400' : 'text-slate-400 group-hover:text-[#1E4D4D]'}`}><Landmark size={15} /></span>
+                    <div className="flex items-center gap-3">                      <span className={`${currentView === 'consolidation' ? 'text-emerald-400' : 'text-slate-400 group-hover:text-[#1E4D4D]'}`}><Landmark size={15} /></span>
                       <span>المركز المالي الموحد</span>
                     </div>
                     {currentView === 'consolidation' && <motion.div layoutId="active-nav-fi1" className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />}
@@ -1082,6 +1081,7 @@ function MainLayout() {
                   case 'branch-reports': return <RoleGuard permission="BRANCH_REPORT"><BranchReports onNavigate={handleNav} /></RoleGuard>;
                   case 'consolidation': return <RoleGuard permission="FINANCIAL_ACCESS"><ConsolidationDashboard onNavigate={handleNav} /></RoleGuard>;
                   case 'security-audit': return <RoleGuard permission="MANAGE_SYSTEM"><SecurityAuditDashboard onNavigate={handleNav} initialTab={viewParams?.tab} from={viewParams?.from} /></RoleGuard>;
+                  case 'fifo-audit-temp': return <RoleGuard permission="MANAGE_SYSTEM"><FifoAuditTempPage /></RoleGuard>;
                   
                   case 'reports/remaining-stock': return <RoleGuard permission="VIEW_REPORTS"><RemainingStockReport onNavigate={handleNav} /></RoleGuard>;
                   case 'reports/item-profits': return <RoleGuard permission="VIEW_REPORTS"><ItemProfitsReport onNavigate={handleNav} /></RoleGuard>;
