@@ -37,7 +37,7 @@ const aliasesOf = (r: Row): string[] => [...new Set([
 const refsOf = (r: Row): string[] => [...new Set([
   pick(r, ['source_doc_id', 'sourceDocId', 'source_document_id', 'sourceDocumentId']),
   pick(r, ['invoice_id', 'invoiceId', 'sale_id', 'saleId']),
-  pick(r, ['reference_id', 'referenceId', 'source_id', 'sourceId']),
+  pick(r, ['reference_id', 'referenceId', 'Reference_ID', 'referenceID', 'source_id', 'sourceId']),
   pick(r, ['document_id', 'documentId', 'parent_id', 'parentId'])
 ].map(text).filter(Boolean))];
 const rowId = (r: Row): string => text(pick(r, ['id', 'entryId', 'entry_id', 'batchId', 'batch_id']));
@@ -70,8 +70,19 @@ async function buildAudit(): Promise<Summary> {
   const activeTenant = text(getCurrentUserSession().tenantId);
   if (!activeTenant) throw new Error('توقف آمن: لا توجد جلسة مستأجر نشطة.');
   const { version, stores } = await readSnapshot();
-  const invoices = [...(stores.invoices || []), ...(stores.sales || [])].filter(r =>
-    tenantOf(r) === activeTenant && !isReturn(r) && (!typeOf(r) || typeOf(r) === 'SALE') &&
+  // Deduplicate the canonical invoices and legacy sales mirror by stable invoice ID.
+  // Prefer invoices; only use sales as a fallback when the canonical row is absent.
+  const invoiceById = new Map<string, Row>();
+  for (const row of stores.invoices || []) {
+    const id = text(pick(row, ['id', 'invoiceId', 'invoice_id', 'SaleID', 'saleId']));
+    if (id && tenantOf(row) === activeTenant) invoiceById.set(id, row);
+  }
+  for (const row of stores.sales || []) {
+    const id = text(pick(row, ['id', 'invoiceId', 'invoice_id', 'SaleID', 'saleId']));
+    if (id && tenantOf(row) === activeTenant && !invoiceById.has(id)) invoiceById.set(id, row);
+  }
+  const invoices = [...invoiceById.values()].filter(r =>
+    !isReturn(r) && (!typeOf(r) || typeOf(r) === 'SALE') &&
     ['POSTED', 'LOCKED'].includes(statusOf(r))
   );
   const invoiceAliases = new Map<Row, Set<string>>();
