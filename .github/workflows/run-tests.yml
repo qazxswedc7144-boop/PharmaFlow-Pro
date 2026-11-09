@@ -61,6 +61,7 @@ jobs:
           src/features/sales/workflows/SalesWorkflow.local-pricing.test.ts
           src/features/inventory/utils/localSyncQueueForensics.test.ts
           src/features/sync/saleSyncDto.test.ts
+          src/features/sync/sync.engine.transactional-enqueue.test.ts
         env:
           NODE_ENV: test
 
