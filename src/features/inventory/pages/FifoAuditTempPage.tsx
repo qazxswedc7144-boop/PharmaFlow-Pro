@@ -147,7 +147,8 @@ async function buildAudit(): Promise<Summary> {
     const linkedItems = (stores.invoiceItems || []).filter(item =>
       refsOf(item).some(ref => aliases.has(ref)) && (!tenantOf(item) || tenantOf(item) === activeTenant)
     );
-    for (const item of [...embedded, ...linkedItems]) {
+    const effectiveItems = embedded.length ? embedded : linkedItems;
+    for (const item of effectiveItems) {
       const product = productOf(item);
       const qty = number(pick(item, ['qty', 'quantity', 'Quantity']));
       if (product && Number.isFinite(qty) && qty > 0) addExpected(invoice, product, qty);
@@ -181,7 +182,7 @@ async function buildAudit(): Promise<Summary> {
   quality.fifoLayerReferencesVerified = 0;
   quality.fifoLayerReferencesMissingOrAmbiguous = 0;
   quality.fifoTenantlessLogOrLayerLinks = 0;
-  quality.fifoLayerCostMismatches = 0;
+  quality.fifoLayerCostMismatches = 0;\n  quality.fifoLayerQuantityAnomalies = 0;
 
   const classes: Class[] = [];
   for (const invoice of invoices) {
@@ -245,6 +246,13 @@ async function buildAudit(): Promise<Summary> {
       const logProduct = productOf(log);
       const layerProduct = productOf(layer);
       if (!logProduct || !layerProduct || logProduct !== layerProduct) layerValid = false;
+      const initialQty = number(pick(layer, ['quantity_initial', 'quantityInitial']));
+      const remainingQty = number(pick(layer, ['quantity_remaining', 'quantityRemaining']));
+      if (!Number.isFinite(initialQty) || initialQty <= 0 || !Number.isFinite(remainingQty) ||
+          remainingQty < 0 || remainingQty - initialQty > 0.000001) {
+        layerValid = false;
+        quality.fifoLayerQuantityAnomalies += 1;
+      }
       const consumed = number(pick(log, ['quantity_consumed', 'quantityConsumed', 'qty', 'quantity']));
       if (!Number.isFinite(consumed) || consumed <= 0 || !logProduct) fifoChainVerified = false;
       else fifoQtyByProduct.set(logProduct, (fifoQtyByProduct.get(logProduct) || 0) + consumed);
@@ -325,12 +333,12 @@ async function buildAudit(): Promise<Summary> {
       'السجل بلا tenantId لا يُنسب إلى المستأجر؛ يُعرض فقط كقرينة مرتبطة بمرجع فاتورة دقيق ويظل UNVERIFIABLE.',
       'productId وحده لا يكفي للربط أو إثبات الملكية؛ يلزم مرجع فاتورة/مستند دقيق.',
       'قيد COGS ليس دليلاً مستقلاً على FIFO؛ قد يكون مصدر التكلفة fallback من CostPrice أو تكلفة دفعة غير مثبتة المصدر.',
-      'VERIFIED هنا يعني إثبات حركة وتكلفة على مستوى سجل المخزون، وليس إثبات تخصيص FIFO لكل طبقة.',
+      'VERIFIED يتطلب ربط FIFO consumption log بالفاتورة والطبقة الأصلية، مع تطابق المستأجر والمنتج والكمية والتكلفة. لا يثبت وحده أن سجل الطبقات التاريخي كامل أو أن ترتيب FIFO الزمني لم يتعرض لفجوات.',
       'لا تُعرض معرفات الفواتير أو المنتجات أو الدفعات أو القيم المالية.'
     ],
     notes: [
-      'VERIFIED: inventoryTransactions مرتبط بالفاتورة بدقة، tenant مطابق، المنتج والكمية متطابقان، والتكلفة مسجلة.',
-      'RECONSTRUCTABLE لا يُمنح لمجرد تطابق الكمية؛ يلزم دليل مستقل يسمح بإعادة بناء تكلفة FIFO تاريخياً، وهذا الإصدار لا يفترض وجوده.',
+      'VERIFIED: سجل استهلاك FIFO مرتبط بالفاتورة والطبقة الأصلية الفريدة، وملكية المستأجر والمنتج والكمية والتكلفة قابلة للتحقق.',
+      'RECONSTRUCTABLE لا يُمنح لمجرد وجود inventoryTransactions أو قيد COGS؛ يلزم دليل تاريخي مستقل يسمح بإعادة بناء تسلسل الطبقات والتكلفة، وهذا الإصدار لا يفترض وجوده.',
       'UNVERIFIABLE: توجد قرائن مع نقص في الملكية أو الربط أو مطابقة الكميات أو مصدر التكلفة.',
       'NO_EVIDENCE: لا توجد سجلات محلية مرتبطة ضمن المخازن الموجودة فعلياً.',
       'قراءة IndexedDB أصلية بوضع readonly؛ لا كتابة أو ترقية Schema أو اتصال شبكة.'
