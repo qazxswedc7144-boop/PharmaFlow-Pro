@@ -59,6 +59,7 @@ jobs:
           src/features/accounting/services/AccountingEngine.sales-tax.test.ts
           src/features/sales/services/localSalesPricing.service.test.ts
           src/features/sales/workflows/SalesWorkflow.local-pricing.test.ts
+          src/features/inventory/utils/localSyncQueueForensics.test.ts
         env:
           NODE_ENV: test
 
