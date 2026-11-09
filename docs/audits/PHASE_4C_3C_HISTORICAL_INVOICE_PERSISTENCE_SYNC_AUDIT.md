@@ -128,6 +128,24 @@
 
 **النتيجة:** إذا وصلت الحمولة الحالية إلى فرع SALE/POST، فستفشل عند `InvoiceSchema.parse()` قبل إنشاء الفاتورة على الخادم. هذه نتيجة استدلال مباشر من شكل الحمولة ومن الـSchema، وليست نتيجة طلب HTTP حي.
 
+### F-04B — Outbox path changes POST into CREATE
+
+**Severity: P1 — Incorrect persistence path / data integrity**  
+**Confidence: Confirmed from source composition**
+
+There are two independent senders in `DistributedSyncEngine.drainQueue()`:
+
+- `processMutationWithRetry()` sends the Queue item's `operationType`; the current sale Queue item carries `POST`.
+- `processOutboxEvent()` sends `operation: event.operation || 'CREATE'`.
+
+However, `enqueue()` constructs the Outbox record with a `type` property, not an `operation` property. Therefore, the Outbox sender does not read the stored `type: 'POST'` and defaults to `CREATE`.
+
+For `entityType: 'SALE'`, the server's `SALE/CREATE` path bypasses the atomic sale-posting branch and falls through to generic `buildEntityCreateData()`. The current nested payload lacks the expected top-level invoice fields; the generic builder then applies defaults (including a generated invoice number, empty partner ID, PAID status and zero total) and does not create invoice items. Depending on database constraints, this may fail or create an incomplete invoice record; neither outcome represents a valid posted sale.
+
+Because the drain loop processes Queue and Outbox independently, a failed Queue POST does not itself prevent the Outbox event from being attempted afterward.
+
+**Impact:** Queue and Outbox do not currently preserve identical operation semantics. A fix must make both records carry one canonical operation field and ensure duplicate delivery is idempotent across both senders. Prefer a single authoritative dispatch path unless dual delivery is proven necessary.
+
 ### F-05 — server POST handler is a financial posting command, not a passive historical import
 
 **Severity: P0 for unsafe replay / financial duplication risk**  
@@ -259,7 +277,7 @@
 - اختبار QuotaExceededError / AbortError / ConstraintError / session switch / missing tenant / missing branch.
 - اختبار أن Idempotent replay لا يعيد البيع ولا يترك العملية بلا Queue.
 - اختبار أن DTO الحقيقي من SalesWorkflow يمر عبر `/api/v1/sync/push` ويصل إلى النتيجة المتوقعة.
-- اختبار أن الحمولة الحالية القديمة تُرفض برسالة واضحة ولا تُسجل كنجاح.
+- اختبار أن الحمولة الحالية القديمة تُرفض برسالة واضحة ولا تُسجل كنجاح.\n- اختبار أن Queue وOutbox لا يرسلان عمليتين مختلفتين لنفس Mutation، وبخاصة منع تحويل POST إلى CREATE.
 - اختبارات مالية للخصومات والضرائب والأسعار وCOGS وتوازن القيود وFIFO.
 - اختبار duplicate delivery وlost response باستخدام نفس idempotency key، مع منع إنشاء فاتورة أو حركة مخزون أو قيد مكرر.
 
@@ -279,7 +297,7 @@
 
 ## 8. Final conclusion
 
-السبب الجذري في التصميم الحالي واضح: **الفصل بين اعتماد البيع المحلي وإدخال Queue، مع ابتلاع خطأ enqueue، ثم وجود عقد حمولة غير متوافق مع معالج POST على الخادم.**
+السبب الجذري في التصميم الحالي واضح: **الفصل بين اعتماد البيع المحلي وإدخال Queue، مع ابتلاع خطأ enqueue، ثم وجود عقد حمولة غير متوافق مع معالج POST، واختلاف دلالة العملية بين Queue وOutbox.**
 
 لكن سبب غياب Queue evidence عن الفاتورتين تحديداً ما زال غير مثبت تاريخياً. كما أن `UNVERIFIABLE` في التقرير لا يعني أن TenantId الفاتورتين غير صحيح؛ بل نتج عن عدم وجود سجلات مزامنة مرتبطة لتقييم ملكيتها.
 
