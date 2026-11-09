@@ -605,14 +605,14 @@ async function buildFifoAudit(): Promise<AuditSummary> {
 
 type Row = Record<string, any>;
 type Class = 'VERIFIED' | 'RECONSTRUCTABLE' | 'UNVERIFIABLE' | 'NO_EVIDENCE';
-type StoreCounts = { linkedToTenantInvoices: extNumber; tenantMatched: extNumber; tenantlessLinked: extNumber; rejectedTenantMismatch: extNumber };
+type StoreCounts = { linkedToTenantInvoices: number; tenantMatched: number; tenantlessLinked: number; rejectedTenantMismatch: number };
 type Summary = {
-  generatedAt: string; scope: string; database: { name: string; version: extNumber; readOnly: true };
+  generatedAt: string; scope: string; database: { name: string; version: number; readOnly: true };
   tenantScope: 'active-tenant-only';
   storesDetected: string[]; storesNotPresent: string[];
-  invoices: { postedSales: extNumber; VERIFIED: extNumber; RECONSTRUCTABLE: extNumber; UNVERIFIABLE: extNumber; NO_EVIDENCE: extNumber };
+  invoices: { postedSales: number; VERIFIED: number; RECONSTRUCTABLE: number; UNVERIFIABLE: number; NO_EVIDENCE: number };
   evidenceByStore: Record<string, StoreCounts>;
-  evidenceQuality: Record<string, extNumber>;
+  evidenceQuality: Record<string, number>;
   limitations: string[]; notes: string[];
 };
 
@@ -627,7 +627,7 @@ const extPick = (r: Row, keys: string[]): any => {
   return undefined;
 };
 const extText = (v: any): string => v === undefined || v === null ? '' : String(v).trim();
-const extNumber = (v: any): extNumber => {
+const extNumber = (v: any): number => {
   if (v === undefined || v === null || v === '') return Number.NaN;
   const n = Number(v); return Number.isFinite(n) ? n : Number.NaN;
 };
@@ -652,7 +652,7 @@ const extReq = <T,>(r: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
   r.onsuccess = () => resolve(r.result);
   r.onerror = () => reject(r.error || new Error('IndexedDB read failed'));
 });
-const extRate = (n: extNumber, total: extNumber) => total ? Number((n / total * 100).toFixed(2)) : 0;
+const extRate = (n: number, total: number) => total ? Number((n / total * 100).toFixed(2)) : 0;
 
 async function readSnapshot() {
   const proxy = db as any;
@@ -739,8 +739,8 @@ async function buildAudit(): Promise<Summary> {
       if (stores[name]) linkStore(name, stores[name]);
     });
 
-  const expected = new Map<Row, Map<string, extNumber>>();
-  const addExpected = (invoice: Row, product: string, qty: extNumber) => {
+  const expected = new Map<Row, Map<string, number>>();
+  const addExpected = (invoice: Row, product: string, qty: number) => {
     if (!expected.has(invoice)) expected.set(invoice, new Map());
     const map = expected.get(invoice)!; map.set(product, (map.get(product) || 0) + qty);
   };
@@ -758,7 +758,7 @@ async function buildAudit(): Promise<Summary> {
     }
   }
 
-  const quality: Record<string, extNumber> = {
+  const quality: Record<string, number> = {
     canonicalInventoryMovementsLinked: 0, canonicalMovementsWithCost: 0,
     canonicalMovementsWithoutCost: 0, movementQuantityMismatches: 0,
     movementProductMismatches: 0, movementBranchMismatches: 0, journalEntriesLinked: 0,
@@ -791,7 +791,7 @@ async function buildAudit(): Promise<Summary> {
 
   const classes: Class[] = [];
   for (const invoice of invoices) {
-    const expectedLines = expected.get(invoice) || new Map<string, extNumber>();
+    const expectedLines = expected.get(invoice) || new Map<string, number>();
     const canonical = (rowsByStoreInvoice.get('inventoryTransactions')?.get(invoice) || []).filter(row => {
       const docType = extText(extPick(row, ['SourceDocumentType', 'sourceDocType', 'source_doc_type'])).toUpperCase();
       const movementType = extText(extPick(row, ['TransactionType', 'transactionType', 'transaction_type'])).toUpperCase();
@@ -805,7 +805,7 @@ async function buildAudit(): Promise<Summary> {
     const hasTenantless = canonical.some(row => !extTenantOf(row)) || legacy.some(row => !extTenantOf(row)) || journals.some(row => !extTenantOf(row)) || fifoLogs.some(row => !extTenantOf(row));
     let qtyMatches = false, hasMismatch = false, hasProductQtyMismatch = false, costRows = 0;
     if (canonicalTrusted.length && expectedLines.size) {
-      const actual = new Map<string, extNumber>();
+      const actual = new Map<string, number>();
       for (const row of canonicalTrusted) {
         const product = extProductOf(row);
         const invoiceBranch = extBranchOf(invoice);
@@ -831,7 +831,7 @@ async function buildAudit(): Promise<Summary> {
     // Verify the original FIFO chain: invoice -> consumption log -> unique layer.
     // Tenantless or ambiguous links remain unverified, even when IDs happen to match.
     let fifoChainVerified = fifoLogs.length > 0 && expectedLines.size > 0;
-    const fifoQtyByProduct = new Map<string, extNumber>();
+    const fifoQtyByProduct = new Map<string, number>();
     let linkedLayerCount = 0, linkedLayerTenantMatched = 0, linkedLayerTenantless = 0, linkedLayerTenantMismatch = 0;
     for (const log of fifoLogs) {
       if (extTenantOf(log) !== activeTenant) { fifoChainVerified = false; bumpQuality('fifoTenantlessLogOrLayerLinks', 1); }
