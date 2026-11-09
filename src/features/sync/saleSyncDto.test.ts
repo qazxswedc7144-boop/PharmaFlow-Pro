@@ -88,6 +88,19 @@ describe('toSaleSyncDTO', () => {
     })).toThrow();
   });
 
+  it('rejects return documents instead of syncing them as stock-depleting sales', () => {
+    expect(() => toSaleSyncDTO({
+      refId: 'local-return-001',
+      sale: {
+        invoiceNumber: 'RET-1001',
+        type: 'RETURN_SALE',
+        isReturn: true,
+        totalAmount: 50,
+        items: [{ productId: PRODUCT_ID, qty: 1, price: 50 }],
+      },
+    })).toThrow('SALE_SYNC_DTO_UNSUPPORTED_RETURN');
+  });
+
   it('documents that the previous nested workflow envelope is not an InvoiceSchema payload', () => {
     const legacyEnvelope = {
       id: 'local-sale-004',
