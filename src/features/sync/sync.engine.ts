@@ -459,7 +459,7 @@ export class DistributedSyncEngine {
     customIdempotencyKey?: string,
     options?: { tenantId?: string; branchId?: string }
   ): Promise<{ mutationId: string; idempotencyKey: string; queueItemId?: number }> {
-    const mutationId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+    const mutationId = createMutationId();
     const timestamp = new Date().toISOString();
     const session = readSyncSessionSnapshot();
     if (!session) {
