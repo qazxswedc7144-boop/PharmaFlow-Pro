@@ -297,8 +297,8 @@ function MainLayout() {
           // 2. IF FALSE: Bypass all network checks, initialize local administrator mocks, and resolve <MainApplication />
           const BYPASS_USER: User = {
             id: "local-admin",
-            user_id: "local-admin",
-            Role: "Admin" as UserRole,            User_Name: "Administrator",
+            user_id: "local-admin",            Role: "Admin" as UserRole,
+            User_Name: "Administrator",
             User_Email: "admin@admin.com",
             tenant_id: "local-tenant-01",
             Is_Active: true
@@ -597,8 +597,8 @@ function MainLayout() {
         setViewParams({ id });
       } else {
         setEditingInvoiceId(null);
-        setViewParams(null);      }
-    });
+        setViewParams(null);
+      }    });
   }, [setEditingInvoiceId, user, accessToken, profile?.role, loading]);
 
   useEffect(() => {
@@ -897,8 +897,8 @@ function MainLayout() {
                     onClick={() => handleNav('consolidation')}
                     className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-2xl text-[11px] font-black transition-all group ${currentView === 'consolidation' ? 'bg-[#1E4D4D] text-white shadow-lg shadow-emerald-950/10' : 'text-slate-500 hover:bg-slate-50 hover:text-[#1E4D4D]'}`}
                   >
-                    <div className="flex items-center gap-3">                      <span className={`${currentView === 'consolidation' ? 'text-emerald-400' : 'text-slate-400 group-hover:text-[#1E4D4D]'}`}><Landmark size={15} /></span>
-                      <span>المركز المالي الموحد</span>
+                    <div className="flex items-center gap-3">
+                      <span className={`${currentView === 'consolidation' ? 'text-emerald-400' : 'text-slate-400 group-hover:text-[#1E4D4D]'}`}><Landmark size={15} /></span>                      <span>المركز المالي الموحد</span>
                     </div>
                     {currentView === 'consolidation' && <motion.div layoutId="active-nav-fi1" className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />}
                   </button>
