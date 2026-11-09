@@ -68,7 +68,7 @@ export class WorkflowExecutionPipeline {
           if (existing.status === 'COMMITTED') {
             const replayData = (existing.responseData || existing.result) as TResult;
             if (replayData) {
-              if (workflow.id.toUpperCase() === 'SALE') {
+              if (workflow.id.toUpperCase() === 'SALE' && (replayData as any)?.sale?.isReturn !== true) {
                 try {
                   const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = await Promise.all([
                     import('@/features/sync/sync.engine'),
@@ -135,7 +135,7 @@ export class WorkflowExecutionPipeline {
             const res = await workflow.executeDomainSteps(input, ctx, tx);
 
             // SALE persistence and both durable sync records share the same Dexie transaction.
-            if (workflow.id.toUpperCase() === 'SALE') {
+            if (workflow.id.toUpperCase() === 'SALE' && (res as any)?.sale?.isReturn !== true) {
               const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = await Promise.all([
                 import('@/features/sync/sync.engine'),
                 import('@/features/sync/saleSyncDto')
@@ -188,7 +188,7 @@ export class WorkflowExecutionPipeline {
         result: domainResult
       });
 
-      if (workflow.id.toUpperCase() === 'SALE') {
+      if (workflow.id.toUpperCase() === 'SALE' && (domainResult as any)?.sale?.isReturn !== true) {
         const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
         DistributedSyncEngine.getInstance().requestSync().catch(() => {});
       } else {
