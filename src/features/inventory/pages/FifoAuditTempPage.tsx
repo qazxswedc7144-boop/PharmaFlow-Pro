@@ -170,6 +170,19 @@ async function buildAudit(): Promise<Summary> {
     else quality.journalLinesLinkedToTrustedEntries += 1;
   }
 
+  const layerCandidates = new Map<string, Row[]>();
+  for (const layer of stores.inventory_layers || []) {
+    const layerId = rowId(layer);
+    if (!layerId) continue;
+    if (!layerCandidates.has(layerId)) layerCandidates.set(layerId, []);
+    layerCandidates.get(layerId)!.push(layer);
+  }
+  quality.fifoConsumptionLogsLinked = 0;
+  quality.fifoLayerReferencesVerified = 0;
+  quality.fifoLayerReferencesMissingOrAmbiguous = 0;
+  quality.fifoTenantlessLogOrLayerLinks = 0;
+  quality.fifoLayerCostMismatches = 0;
+
   const classes: Class[] = [];
   for (const invoice of invoices) {
     const expectedLines = expected.get(invoice) || new Map<string, number>();
@@ -182,7 +195,8 @@ async function buildAudit(): Promise<Summary> {
     const legacy = ['stock_movements', 'inventory_logs', 'inventory'].flatMap(name => rowsByStoreInvoice.get(name)?.get(invoice) || []);
     const journals = rowsByStoreInvoice.get('journalEntries')?.get(invoice) || [];
     const sync = ['syncQueue', 'sync_queue', 'outbox', 'eventStore'].flatMap(name => rowsByStoreInvoice.get(name)?.get(invoice) || []);
-    const hasTenantless = canonical.some(row => !tenantOf(row)) || legacy.some(row => !tenantOf(row)) || journals.some(row => !tenantOf(row));
+    const fifoLogs = rowsByStoreInvoice.get('fifo_consumption_log')?.get(invoice) || [];
+    const hasTenantless = canonical.some(row => !tenantOf(row)) || legacy.some(row => !tenantOf(row)) || journals.some(row => !tenantOf(row)) || fifoLogs.some(row => !tenantOf(row));
     let qtyMatches = false, hasMismatch = false, hasProductQtyMismatch = false, costRows = 0;
     if (canonicalTrusted.length && expectedLines.size) {
       const actual = new Map<string, number>();
@@ -206,6 +220,52 @@ async function buildAudit(): Promise<Summary> {
     }
     if (journals.length) quality.journalEntriesLinked += journals.filter(row => tenantOf(row) === activeTenant).length;
     quality.syncRecordsLinked += sync.length;
+    quality.fifoConsumptionLogsLinked += fifoLogs.length;
+
+    // Verify the original FIFO chain: invoice -> consumption log -> unique layer.
+    // Tenantless or ambiguous links remain unverified, even when IDs happen to match.
+    let fifoChainVerified = fifoLogs.length > 0 && expectedLines.size > 0;
+    const fifoQtyByProduct = new Map<string, number>();
+    let linkedLayerCount = 0;
+    for (const log of fifoLogs) {
+      if (tenantOf(log) !== activeTenant) { fifoChainVerified = false; quality.fifoTenantlessLogOrLayerLinks += 1; }
+      const layerId = text(pick(log, ['layer_id', 'layerId']));
+      const candidates = layerId ? layerCandidates.get(layerId) || [] : [];
+      if (candidates.length !== 1) {
+        fifoChainVerified = false;
+        quality.fifoLayerReferencesMissingOrAmbiguous += 1;
+        continue;
+      }
+      const layer = candidates[0];
+      if (tenantOf(layer) !== activeTenant) { fifoChainVerified = false; quality.fifoTenantlessLogOrLayerLinks += 1; }
+      const logProduct = productOf(log);
+      const layerProduct = productOf(layer);
+      if (!logProduct || !layerProduct || logProduct !== layerProduct) fifoChainVerified = false;
+      const consumed = number(pick(log, ['quantity_consumed', 'quantityConsumed', 'qty', 'quantity']));
+      if (!Number.isFinite(consumed) || consumed <= 0 || !logProduct) fifoChainVerified = false;
+      else fifoQtyByProduct.set(logProduct, (fifoQtyByProduct.get(logProduct) || 0) + consumed);
+      const logCost = number(pick(log, ['unit_cost', 'unitCost']));
+      const layerCost = number(pick(layer, ['unit_cost', 'unitCost']));
+      if (!Number.isFinite(logCost) || logCost < 0 || !Number.isFinite(layerCost) || layerCost < 0) fifoChainVerified = false;
+      else if (Math.abs(logCost - layerCost) > 0.000001) {
+        fifoChainVerified = false;
+        quality.fifoLayerCostMismatches += 1;
+      }
+      linkedLayerCount += 1;
+      quality.fifoLayerReferencesVerified += 1;
+    }
+    if (fifoChainVerified) {
+      const quantitiesMatch = [...expectedLines].every(([product, qty]) => Math.abs((fifoQtyByProduct.get(product) || 0) - qty) <= 0.000001) &&
+        [...fifoQtyByProduct.keys()].every(product => expectedLines.has(product));
+      fifoChainVerified = quantitiesMatch;
+    }
+    if (linkedLayerCount > 0 && stores.inventory_layers) {
+      const layerCounts = evidenceByStore.inventory_layers || { linkedToTenantInvoices: 0, tenantMatched: 0, tenantlessLinked: 0, rejectedTenantMismatch: 0 };
+      layerCounts.linkedToTenantInvoices += linkedLayerCount;
+      layerCounts.tenantMatched += (fifoLogs.filter(log => tenantOf(log) === activeTenant).length);
+      layerCounts.tenantlessLinked += quality.fifoTenantlessLogOrLayerLinks;
+      evidenceByStore.inventory_layers = layerCounts;
+    }
     quality.legacyMovementRecordsLinked += legacy.length;
     if (hasProductQtyMismatch) quality.movementProductMismatches += 1;
 
@@ -217,8 +277,9 @@ async function buildAudit(): Promise<Summary> {
       text(pick(row, ['SourceDocumentType', 'sourceDocType', 'source_doc_type'])).toUpperCase() === 'SALE' &&
       text(pick(row, ['TransactionType', 'transactionType', 'transaction_type'])).toUpperCase() === 'SALE'
     );
-    if (canonicalTypeVerified && qtyMatches && costRows > 0 && !hasMismatch) classification = 'VERIFIED';
-    else if (canonical.length || legacy.length || journals.length || sync.length || hasTenantless) classification = 'UNVERIFIABLE';
+    if (fifoChainVerified) classification = 'VERIFIED';
+    else if (canonical.length || legacy.length || journals.length || sync.length || fifoLogs.length || hasTenantless ||
+      (canonicalTypeVerified && qtyMatches && costRows > 0 && !hasMismatch)) classification = 'UNVERIFIABLE';
     classes.push(classification);
   }
 
