@@ -79,11 +79,14 @@ describe('Local Sync Queue Forensics — hardened read-only', () => {
   it('does not treat active-user or active-branch differences as ownership corruption', () => {
     const invoice = postedInvoice();
     expect(classifyOwner({
+      tenantId: 'tenant-A', userId: 'invoice-creator', branchId: 'invoice-branch'
+    }, invoice, session)).toBe('VERIFIED');
+    expect(classifyOwner({
       tenantId: 'tenant-A', userId: 'another-user', branchId: 'invoice-branch'
-    }, invoice, session)).toBe('PARTIAL');
+    }, invoice, session)).toBe('USER_MISMATCH');
     expect(classifyOwner({
       tenantId: 'tenant-A', userId: 'invoice-creator', branchId: 'another-branch'
-    }, invoice, session)).toBe('PARTIAL');
+    }, invoice, session)).toBe('BRANCH_MISMATCH');
   });
 
   it('excludes real tenant mismatches and counts them without exposing the row', async () => {
