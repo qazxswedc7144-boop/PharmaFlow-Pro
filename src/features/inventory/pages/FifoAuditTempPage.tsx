@@ -2,12 +2,38 @@ import { useCallback, useRef, useState } from 'react';
 import { db, getCurrentUserSession } from '@/core/db';
 
 type AnyRecord = Record<string, any>;
+type AuditCounts = {
+  inventory_layers: number;
+  fifo_consumption_log: number;
+  tenantlessLogsLinkedToTenantInvoices: number;
+  tenantlessLayersLinkedToTenantLogs: number;
+  saleInvoicesFound: number;
+  postedOrLockedSales: number;
+  categoryA_verifiedComplete: number;
+  categoryB_partialOrUnverifiable: number;
+  categoryC_noFifoEvidence: number;
+  excludedNonPosted: number;
+  excludedUnknownStatus: number;
+  excludedNonSales: number;
+  excludedReturns: number;
+  excludedUnknownType: number;
+  orphanOrAmbiguousTenantLogs: number;
+};
+
+type AuditRates = {
+  A_verifiedComplete: number;
+  B_partialOrUnverifiable: number;
+  C_noFifoEvidence: number;
+  B_plus_C_incompleteOrNoEvidence: number;
+  B_only_partialOrUnverifiable: number;
+};
+
 type AuditSummary = {
   generatedAt: string;
   scope: string;
   database: { name: string; version: number; readOnly: true };
-  counts: Record<string, number>;
-  ratesPercent: Record<string, number>;
+  counts: AuditCounts;
+  ratesPercent: AuditRates;
   dataQuality: Record<string, number | Record<string, number>>;
   statusCounts: Record<string, number>;
   notes: string[];
@@ -269,6 +295,7 @@ async function buildFifoAudit(): Promise<AuditSummary> {
 
     if (matchedIds.size !== 1) continue;
     const invoiceId = [...matchedIds][0];
+    if (!invoiceId) continue;
     if (!invoiceItemsByInvoice.has(invoiceId)) invoiceItemsByInvoice.set(invoiceId, []);
     invoiceItemsByInvoice.get(invoiceId)!.push(item);
   }
@@ -316,6 +343,7 @@ async function buildFifoAudit(): Promise<AuditSummary> {
     }
 
     const invoiceId = [...matchedInvoiceIds][0];
+    if (!invoiceId) return;
     if (!logTenant) {
       tenantlessLinkedLogs.add(asText(log?.id) || `row-${index}`);
     }
@@ -443,6 +471,11 @@ async function buildFifoAudit(): Promise<AuditSummary> {
       }
 
       const layer = candidates[0];
+      if (!layer) {
+        missingLayerReferences += 1;
+        reasons.add('missing_layer_reference');
+        continue;
+      }
       const layerTenant = tenantOf(layer);
       if (!layerTenant) {
         reasons.add('layer_tenant_missing');
