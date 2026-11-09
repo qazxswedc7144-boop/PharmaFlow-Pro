@@ -40,7 +40,9 @@ describe('toSaleSyncDTO', () => {
       partnerId: CUSTOMER_ID,
       partnerType: 'CUSTOMER',
       totalAmount: 200,
+      status: 'DRAFT',
       paymentStatus: 'PAID',
+      documentStatus: 'ACTIVE',
       items: [
         {
           productId: PRODUCT_ID,
