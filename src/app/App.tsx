@@ -143,6 +143,7 @@ const PrivacyPolicy = lazyWithRetry(() => import('@features/legal/pages/PrivacyP
 const TermsOfService = lazyWithRetry(() => import('@features/legal/pages/TermsOfService'));
 const SecurityAuditDashboard = lazyWithRetry(() => import('@features/settings/components/SecurityAuditDashboard'));
 const BackupManagement = lazyWithRetry(() => import('@features/settings/components/BackupManagement'));
+const FifoAuditTempPage = lazyWithRetry(() => import('@features/inventory/pages/FifoAuditTempPage'));
 
 import { useAuth } from '@features/auth/hooks/useAuth';
 import LoginPage from '@features/auth/pages/LoginPage';
@@ -534,7 +535,7 @@ function MainLayout() {
       'reconciliation', 'cashboxes', 'system-health', 'invoices-archive', 'invoice-history',
       'adjustments-archive', 'supplier-payment', 'customer-receipt', 'vouchers',
       'aging-report', 'partners', 'privacy', 'terms', 'reports', 'advanced-reports',
-      'login', '403', 'backup', 'saas-portal', 'security-audit',
+      'login', '403', 'backup', 'saas-portal', 'security-audit', 'fifo-audit-temp',
       'branches', 'branch-transfers', 'branch-reports', 'consolidation',
       'reports/remaining-stock', 'reports/item-profits', 'reports/customer-profit', 
       'reports/supplier-profit', 'reports/account-movement', 'reports/purchases-by-item',
@@ -548,7 +549,7 @@ function MainLayout() {
       if (v === 'purchases') return 'PURCHASE_ACCESS';
       if (v === 'accounting' || v === 'cashboxes' || v === 'reconciliation' || v === 'adjustments-registry' || v === 'consolidation') return 'FINANCIAL_ACCESS';
       if (v === 'reports' || v === 'financial-dashboard' || v === 'advanced-reports' || v.startsWith('reports/')) return 'VIEW_REPORTS';
-      if (v === 'settings' || v === 'backup' || v === 'system-health' || v === 'audit-history' || v === 'invoice-history') return 'MANAGE_SYSTEM';
+      if (v === 'settings' || v === 'backup' || v === 'system-health' || v === 'audit-history' || v === 'invoice-history' || v === 'fifo-audit-temp') return 'MANAGE_SYSTEM';
       if (v === 'partners') return 'MANAGE_PARTNERS';
       if (v === 'branches') return 'BRANCH_VIEW';
       if (v === 'branch-transfers') return 'BRANCH_TRANSFER';
@@ -774,6 +775,7 @@ function MainLayout() {
     if (currentView === 'branch-transfers') return 'التحويل الدوائي البيني';
     if (currentView === 'branch-reports') return 'تقرير تحليلات الفروع الذكي';
     if (currentView === 'settings') return 'مركز الإدارة والإعدادات';
+    if (currentView === 'fifo-audit-temp') return 'تدقيق FIFO مؤقت';
     return 'العملية';
   };
 
@@ -1082,6 +1084,7 @@ function MainLayout() {
                   case 'branch-reports': return <RoleGuard permission="BRANCH_REPORT"><BranchReports onNavigate={handleNav} /></RoleGuard>;
                   case 'consolidation': return <RoleGuard permission="FINANCIAL_ACCESS"><ConsolidationDashboard onNavigate={handleNav} /></RoleGuard>;
                   case 'security-audit': return <RoleGuard permission="MANAGE_SYSTEM"><SecurityAuditDashboard onNavigate={handleNav} initialTab={viewParams?.tab} from={viewParams?.from} /></RoleGuard>;
+                  case 'fifo-audit-temp': return <RoleGuard permission="MANAGE_SYSTEM"><FifoAuditTempPage /></RoleGuard>;
                   
                   case 'reports/remaining-stock': return <RoleGuard permission="VIEW_REPORTS"><RemainingStockReport onNavigate={handleNav} /></RoleGuard>;
                   case 'reports/item-profits': return <RoleGuard permission="VIEW_REPORTS"><ItemProfitsReport onNavigate={handleNav} /></RoleGuard>;
