@@ -60,6 +60,26 @@ describe('toSaleSyncDTO', () => {
     expect(dto).not.toHaveProperty('refId');
   });
 
+  it('maps the canonical SalesInvoice fields returned by the local repository', () => {
+    const dto = toSaleSyncDTO({
+      refId: 'local-sale-canonical',
+      sale: {
+        id: 'local-sale-canonical',
+        SaleID: 'INV-1005',
+        customerId: CUSTOMER_ID,
+        grandTotal: 125,
+        financialStatus: 'Partially Paid',
+        items: [{ productId: PRODUCT_ID, qty: 1, price: 125 }],
+      },
+    });
+
+    expect(dto.invoiceNumber).toBe('INV-1005');
+    expect(dto.partnerId).toBe(CUSTOMER_ID);
+    expect(dto.totalAmount).toBe(125);
+    expect(dto.paymentStatus).toBe('PARTIALLY_PAID');
+    expect(InvoiceSchema.parse(dto)).toEqual(dto);
+  });
+
   it('maps cash placeholder partners to null instead of sending a non-UUID local sentinel', () => {
     const dto = toSaleSyncDTO({
       refId: 'local-sale-002',
