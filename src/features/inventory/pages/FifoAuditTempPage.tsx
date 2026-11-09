@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { db, getCurrentUserSession } from '@/core/db';
+import { buildLocalSyncForensics, type LocalSyncForensics } from '../utils/localSyncQueueForensics';
 
 type AnyRecord = Record<string, any>;
 type AuditCounts = {
@@ -1105,6 +1106,7 @@ export default function FifoAuditTempPage() {
         </>
       )}
       <ExtendedFifoEvidencePanel />
+      <LocalSyncQueueForensicsPanel />
     </section>
   );
 }
@@ -1169,5 +1171,111 @@ function ExtendedFifoEvidencePanel() {
         </div>
       </>}
     </div>
+  );
+}
+
+function LocalSyncQueueForensicsPanel() {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<LocalSyncForensics | null>(null);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState('');
+  const outputRef = useRef<HTMLTextAreaElement | null>(null);
+  const output = result ? JSON.stringify(result, null, 2) : '';
+  const run = useCallback(async () => {
+    setLoading(true); setError(''); setResult(null); setCopied('');
+    try {
+      const session = getCurrentUserSession();
+      if (!session.tenantId || !session.userId) throw new Error('جلسة المستأجر والمستخدم غير مكتملة؛ أُوقف الفحص.');
+      setResult(await buildLocalSyncForensics(db, {
+        tenantId: String(session.tenantId), userId: String(session.userId),
+        branchId: session.branchId ? String(session.branchId) : undefined
+      }));
+    } catch (cause: any) {
+      setError(cause?.message || 'تعذر فحص طوابير المزامنة المحلية.');
+    } finally { setLoading(false); }
+  }, []);
+  const copy = useCallback(async () => {
+    if (!output) return;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(output);
+      else if (outputRef.current) {
+        outputRef.current.focus(); outputRef.current.select();
+        if (!document.execCommand('copy')) throw new Error('Clipboard unavailable');
+      } else throw new Error('Clipboard unavailable');
+      setCopied('تم نسخ التقرير المنقح.');
+    } catch { setCopied('تعذر النسخ التلقائي؛ اضغط مطولاً داخل مربع التقرير ثم اختر نسخ.'); }
+  }, [output]);
+  return (
+    <section className="mt-6 space-y-5 rounded-2xl border-2 border-sky-200 bg-sky-50/40 p-3 sm:p-5" dir="rtl">
+      <div className="rounded-xl border border-sky-200 bg-white p-4">
+        <h2 className="text-lg font-black text-slate-900">Local Sync Queue Forensics</h2>
+        <p className="mt-2 text-sm leading-7 text-slate-600">
+          فحص محلي مؤقت للقراءة فقط. لا يشغّل المزامنة ولا يرسل طلبات ولا يغيّر أي سجل.
+          تُربط الفواتير بمعرّفات المستند الدقيقة، وتُخفى القيم الخام للمعرّفات ومفاتيح منع التكرار.
+        </p>
+      </div>
+      <button type="button" onClick={run} disabled={loading}
+        className="min-h-11 rounded-xl bg-slate-900 px-5 py-3 text-sm font-black text-white disabled:opacity-50">
+        {loading ? 'جارٍ فحص المخازن المحلية...' : 'تشغيل فحص Local Sync Queue'}
+      </button>
+      {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-800">{error}</div>}
+      {result && <>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {Object.entries(result.summary).map(([key,value]) => (
+            <div key={key} className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="break-words text-xs text-slate-500">{key}</div>
+              <div className="mt-1 text-xl font-black tabular-nums text-slate-900">{value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <h3 className="font-black text-slate-800">المخازن المكتشفة</h3>
+          <p className="mt-2 break-words text-xs leading-6 text-slate-600">موجودة: {result.detectedStores.join('، ') || 'لا يوجد'}</p>
+          <p className="mt-1 break-words text-xs leading-6 text-slate-600">غير موجودة: {result.missingStores.join('، ') || 'لا يوجد'}</p>
+          <p className="mt-1 text-xs text-slate-500">Dexie v{result.databaseVersion} — {result.invoiceCount} فاتورة POSTED/LOCKED — {result.generatedAt}</p>
+        </div>
+        <div className="space-y-3">
+          <h3 className="font-black text-slate-800">تفاصيل الأدلة لكل فاتورة (بدون بيانات تعريفية أو مالية)</h3>
+          {result.findings.map((finding,index) => (
+            <article key={index} className="rounded-xl border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-black">فاتورة بيع #{index+1}</span>
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{finding.status} · {finding.classification}</span>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                <div>syncQueue: <b>{finding.syncQueueCount}</b></div>
+                <div>sync_queue: <b>{finding.legacySyncQueueCount}</b></div>
+                <div>Outbox: <b>{finding.outboxCount}</b></div>
+                <div>EventStore: <b>{finding.eventStoreCount}</b></div>
+                <div>Failed Mutation: <b>{finding.failedMutationCount}</b></div>
+                <div>تطابق Mutation: <b>{finding.queueOutboxMutationMatch}</b></div>
+                <div>الملكية: <b>{finding.ownership}</b></div>
+                <div>سجلات Tenant المستبعدة: <b>{finding.rejectedTenantMismatchCount}</b></div>
+              </div>
+              {finding.records.map((record,i) => (
+                <div key={i} className="mt-3 rounded-lg bg-slate-50 p-3 text-xs leading-6">
+                  <div className="font-black">{record.store} · {record.status}</div>
+                  <div>entityType: {record.entityType} | operationType: {record.operationType} | type: {record.type} | operation: {record.operation}</div>
+                  <div>Payload: {record.payloadShape} | الحقول المطلوبة: invoiceNumber {record.requiredFields.invoiceNumber?'✓':'✗'} · type {record.requiredFields.type?'✓':'✗'} · totalAmount {record.requiredFields.totalAmount?'✓':'✗'} · items {record.requiredFields.items?'✓':'✗'}</div>
+                  <div>Mutation ID: {record.mutationIdPresent ? 'موجود' : 'غير متوفر'} | Idempotency Key: {record.idempotencyKeyPresent ? 'موجود' : 'غير متوفر'} | Owner: {record.ownerCheck}</div>
+                  <div>تصنيفات الخطأ: {record.errorCategories.join('، ') || 'لا يوجد خطأ محفوظ قابل للتصنيف'}</div>
+                </div>
+              ))}
+            </article>
+          ))}
+        </div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-950">
+          {result.limitations.map((note,i)=><p key={i}>• {note}</p>)}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-black text-slate-800">Forensic JSON — redacted</h3>
+          <button type="button" onClick={copy} className="rounded-lg border border-slate-400 bg-white px-4 py-2 text-xs font-black">نسخ التقرير المنقح</button>
+        </div>
+        <textarea ref={outputRef} readOnly value={output} rows={22} spellCheck={false}
+          aria-label="تقرير فحص المزامنة المحلي المنقح"
+          className="w-full rounded-xl border border-slate-300 bg-slate-950 p-3 font-mono text-xs leading-6 text-emerald-100" />
+        {copied && <p role="status" className="text-xs text-slate-600">{copied}</p>}
+      </>}
+    </section>
   );
 }
