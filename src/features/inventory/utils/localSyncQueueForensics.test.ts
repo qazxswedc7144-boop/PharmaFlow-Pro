@@ -27,10 +27,10 @@ function fakeDb(data: Record<string, any[]>) {
 
 describe('Local Sync Queue Forensics — hardened read-only', () => {
   it('TypeScript parses both the analyzer and JSX page without diagnostics', () => {
-    for (const [file, kind] of [
-      ['src/features/inventory/utils/localSyncQueueForensics.ts', ts.ScriptKind.TS],
-      ['src/features/inventory/pages/FifoAuditTempPage.tsx', ts.ScriptKind.TSX]
-    ] as const) {
+    for (const file of [
+      'src/features/inventory/utils/localSyncQueueForensics.ts',
+      'src/features/inventory/pages/FifoAuditTempPage.tsx'
+    ]) {
       const source = readFileSync(resolve(process.cwd(), file), 'utf8');
       const result = ts.transpileModule(source, {
         fileName: file,
