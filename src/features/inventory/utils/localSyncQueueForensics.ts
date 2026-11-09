@@ -127,9 +127,10 @@ export function compareMutationSets(queueRows: Row[], outboxRows: Row[]): Mutati
   q.forEach(v=>qCounts.set(v,(qCounts.get(v)||0)+1));
   o.forEach(v=>oCounts.set(v,(oCounts.get(v)||0)+1));
   const keys=new Set([...qCounts.keys(),...oCounts.keys()]);
+  const hasDuplicates=[...qCounts.values(),...oCounts.values()].some(count=>count>1);
   const same=[...keys].every(k=>qCounts.get(k)===oCounts.get(k));
-  if (same && q.length===o.length) return 'EXACT_MATCH';
   const overlap=[...keys].some(k=>qCounts.has(k)&&oCounts.has(k));
+  if (same && q.length===o.length && !hasDuplicates) return 'EXACT_MATCH';
   if (overlap) return 'PARTIAL_MATCH';
   return 'MISMATCH';
 }
