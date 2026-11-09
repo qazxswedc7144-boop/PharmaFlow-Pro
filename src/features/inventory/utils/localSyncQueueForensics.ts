@@ -1,26 +1,59 @@
 export type ForensicSession = { tenantId: string; userId?: string; branchId?: string };
 type Row = Record<string, any>;
+type OwnerResult = 'VERIFIED' | 'PARTIAL' | 'UNVERIFIABLE' | 'TENANT_MISMATCH';
+type MutationMatch = 'EXACT_MATCH' | 'PARTIAL_MATCH' | 'MISMATCH' | 'UNKNOWN';
+
 export type InvoiceSyncFinding = {
-  source: 'invoices' | 'sales'; status: string; queueCount: number; outboxCount: number; failedCount: number;
-  classification: string; ownership: string; rejectedOwnerCount: number; queueOutboxSameMutation: 'YES' | 'NO' | 'UNKNOWN';
-  records: Array<{ store: string; entityType: string; operationType: string; type: string; operation: string;
-    status: string; mutationFingerprint: string; idempotencyFingerprint: string; payloadShape: string;
+  source: 'invoices' | 'sales';
+  status: string;
+  syncQueueCount: number;
+  legacySyncQueueCount: number;
+  outboxCount: number;
+  eventStoreCount: number;
+  failedMutationCount: number;
+  classification: string;
+  ownership: OwnerResult | 'TENANT_MISMATCH_RECORDS_EXCLUDED';
+  rejectedTenantMismatchCount: number;
+  queueOutboxMutationMatch: MutationMatch;
+  records: Array<{
+    store: string; entityType: string; operationType: string; type: string; operation: string;
+    status: string; mutationIdPresent: boolean; idempotencyKeyPresent: boolean;
+    payloadShape: string;
     requiredFields: { invoiceNumber: boolean; type: boolean; totalAmount: boolean; items: boolean };
-    errorCategories: string[]; ownerCheck: string }>;
+    errorCategories: string[]; ownerCheck: OwnerResult;
+  }>;
 };
+
 export type LocalSyncForensics = {
-  generatedAt: string; readOnly: true; databaseVersion: number; detectedStores: string[]; missingStores: string[];
-  invoiceCount: number; findings: InvoiceSyncFinding[]; summary: Record<string, number>; limitations: string[];
+  generatedAt: string; readOnly: true; databaseVersion: number;
+  detectedStores: string[]; missingStores: string[];
+  invoiceCount: number; unknownTypeCount: number;
+  findings: InvoiceSyncFinding[];
+  summary: Record<string, number>;
+  limitations: string[];
 };
+
 const STORES = ['invoices','sales','syncQueue','outbox','sync_queue','failedMutations','eventStore'] as const;
 const text = (v: unknown) => v == null ? '' : String(v).trim();
-const first = (r: Row, keys: string[]) => { for (const k of keys) if (r?.[k] != null && r[k] !== '') return r[k]; return undefined; };
-const owner = (r: Row, key: string) => text(first(r, key === 'tenantId' ? ['tenantId','tenant_id'] : key === 'userId' ? ['userId','user_id','actorId'] : ['branchId','branch_id']));
+const first = (r: Row, keys: string[]) => {
+  for (const k of keys) if (r?.[k] != null && r[k] !== '') return r[k];
+  return undefined;
+};
+const owner = (r: Row, key: 'tenantId'|'userId'|'branchId') => text(first(r,
+  key === 'tenantId' ? ['tenantId','tenant_id'] :
+  key === 'userId' ? ['userId','user_id','createdBy','created_by','creatorId','creator_id'] :
+  ['branchId','branch_id']));
 const invoiceId = (r: Row) => text(first(r,['id','invoiceId','invoice_id','saleId','SaleID']));
 const aliases = (r: Row) => [...new Set([invoiceId(r), text(first(r,['invoiceId','invoice_id','saleId','SaleID']))].filter(Boolean))];
 const status = (r: Row) => text(first(r,['documentStatus','document_status','invoiceStatus','InvoiceStatus','status'])).toUpperCase();
-const isSale = (r: Row) => { const t=text(first(r,['type','invoiceType','invoice_type'])).toUpperCase(); return !t || t === 'SALE'; };
-const isReturn = (r: Row) => r?.isReturn === true || r?.is_return === true || text(first(r,['type','invoiceType','invoice_type'])).toUpperCase().includes('RETURN');
+export function saleTypeOf(r: Row): 'SALE'|'RETURN'|'UNKNOWN'|'OTHER' {
+  const raw=text(first(r,['type','invoiceType','invoice_type'])).toUpperCase();
+  if (r?.isReturn === true || r?.is_return === true || raw.includes('RETURN')) return 'RETURN';
+  if (raw === 'SALE') return 'SALE';
+  if (!raw) return 'UNKNOWN';
+  return 'OTHER';
+}
+export const isSale = (r: Row) => saleTypeOf(r) === 'SALE';
 const payloadOf = (r: Row): Row => (r?.payload && typeof r.payload === 'object' ? r.payload : r);
 const documentRefs = (r: Row): string[] => {
   const p=payloadOf(r), nested=p?.sale && typeof p.sale === 'object' ? p.sale : undefined;
@@ -29,33 +62,32 @@ const documentRefs = (r: Row): string[] => {
     first(nested || {},['id','refId','invoiceId','invoice_id','saleId','sale_id'])
   ].map(text).filter(Boolean))];
 };
-const sha = async (value: unknown) => {
-  const raw=text(value); if (!raw) return 'غير متوفر';
-  try {
-    const bytes = new TextEncoder().encode(raw);
-    const digest = await globalThis.crypto.subtle.digest('SHA-256',bytes);
-    return Array.from(new Uint8Array(digest)).slice(0,6).map(x=>x.toString(16).padStart(2,'0')).join('');
-  } catch { return 'متاح-بصمة-غير-متوفرة'; }
-};
 export function classifyPayloadShape(payload: Row) {
   const p=payloadOf({payload});
   const nested=Boolean(p?.sale && typeof p.sale === 'object');
-  const fields={invoiceNumber:Boolean(first(p,['invoiceNumber','invoice_number'])),
+  const fields={
+    invoiceNumber:Boolean(first(p,['invoiceNumber','invoice_number'])),
     type:Boolean(first(p,['type','invoiceType','invoice_type'])),
     totalAmount:p?.totalAmount != null || p?.total_amount != null,
-    items:Array.isArray(p?.items)};
+    items:Array.isArray(p?.items)
+  };
   return {shape:nested ? 'SALE_NESTED' : 'FLAT_OR_UNKNOWN',fields};
 }
-export function classifyOwner(record: Row, invoice: Row, session: ForensicSession) {
-  const checks: string[]=[];
-  for (const key of ['tenantId','userId','branchId'] as const) {
-    const a=owner(record,key), b=key==='tenantId'?text(session.tenantId):key==='userId'?text(session.userId):text(session.branchId);
-    const invoiceValue=owner(invoice,key);
-    if (a && b && a!==b) return 'MISMATCH';
-    if (a && invoiceValue && a!==invoiceValue) return 'MISMATCH';
-    if (!a) checks.push(key+':MISSING');
+export function classifyOwner(record: Row, invoice: Row, session: ForensicSession): OwnerResult {
+  const recordTenant=owner(record,'tenantId');
+  const invoiceTenant=owner(invoice,'tenantId');
+  if (recordTenant && invoiceTenant && recordTenant !== invoiceTenant) return 'TENANT_MISMATCH';
+  if (recordTenant && session.tenantId && recordTenant !== session.tenantId) return 'TENANT_MISMATCH';
+  if (!recordTenant || !invoiceTenant) return 'PARTIAL';
+  let comparable=0;
+  for (const key of ['userId','branchId'] as const) {
+    const recordValue=owner(record,key), invoiceValue=owner(invoice,key);
+    if (recordValue && invoiceValue) {
+      comparable++;
+      if (recordValue !== invoiceValue) return 'PARTIAL';
+    }
   }
-  return checks.length ? 'PARTIAL' : 'VERIFIED';
+  return comparable === 2 ? 'VERIFIED' : 'PARTIAL';
 }
 const errorCategories = (r: Row): string[] => {
   const raw=text(first(r,['lastError','error','reason','message','errorMessage','failureReason'])).toLowerCase();
@@ -69,23 +101,41 @@ const errorCategories = (r: Row): string[] => {
   if (!categories.length) categories.push('OTHER_REDACTED');
   return categories;
 };
-const recordId = (r: Row) => text(first(r,['mutationId','mutation_id']));
-const keyId = (r: Row) => text(first(r,['idempotencyKey','idempotency_key']));
-const normalizedRecord = async (store: string, r: Row, invoice: Row, session: ForensicSession) => {
+const mutationId = (r: Row) => text(first(r,['mutationId','mutation_id']));
+const normalizedRecord = (store: string, r: Row, invoice: Row, session: ForensicSession) => {
   const p=payloadOf(r), shape=classifyPayloadShape(p);
   return {
-    store, entityType:text(first(r,['entityType','entity_type'])).toUpperCase() || 'UNKNOWN',
+    store,
+    entityType:text(first(r,['entityType','entity_type'])).toUpperCase() || 'UNKNOWN',
     operationType:text(first(r,['operationType','operation_type'])).toUpperCase() || 'UNKNOWN',
-    type:text(r.type).toUpperCase() || 'UNKNOWN', operation:text(r.operation).toUpperCase() || 'UNKNOWN',
+    type:text(r.type).toUpperCase() || 'UNKNOWN',
+    operation:text(r.operation).toUpperCase() || 'UNKNOWN',
     status:text(first(r,['syncStatus','status','state'])).toUpperCase() || 'UNKNOWN',
-    mutationFingerprint:await sha(recordId(r)), idempotencyFingerprint:await sha(keyId(r)),
-    payloadShape:shape.shape, requiredFields:shape.fields, errorCategories:errorCategories(r),
+    mutationIdPresent:Boolean(mutationId(r)),
+    idempotencyKeyPresent:Boolean(first(r,['idempotencyKey','idempotency_key'])),
+    payloadShape:shape.shape,
+    requiredFields:shape.fields,
+    errorCategories:errorCategories(r),
     ownerCheck:classifyOwner(r,invoice,session)
   };
 };
+export function compareMutationSets(queueRows: Row[], outboxRows: Row[]): MutationMatch {
+  if (!queueRows.length || !outboxRows.length) return 'UNKNOWN';
+  const q=queueRows.map(mutationId), o=outboxRows.map(mutationId);
+  if (q.some(v=>!v) || o.some(v=>!v)) return 'UNKNOWN';
+  const qCounts=new Map<string,number>(), oCounts=new Map<string,number>();
+  q.forEach(v=>qCounts.set(v,(qCounts.get(v)||0)+1));
+  o.forEach(v=>oCounts.set(v,(oCounts.get(v)||0)+1));
+  const keys=new Set([...qCounts.keys(),...oCounts.keys()]);
+  const same=[...keys].every(k=>qCounts.get(k)===oCounts.get(k));
+  if (same && q.length===o.length) return 'EXACT_MATCH';
+  const overlap=[...keys].some(k=>qCounts.has(k)&&oCounts.has(k));
+  if (overlap) return 'PARTIAL_MATCH';
+  return 'MISMATCH';
+}
 export async function buildLocalSyncForensics(database: any, session: ForensicSession): Promise<LocalSyncForensics> {
   if (!database?.isOpen?.()) throw new Error('Dexie غير مفتوحة؛ أوقف الفحص دون محاولة فتحها.');
-  if (!session?.tenantId || !session?.userId) throw new Error('هوية المستأجر والمستخدم النشطة مطلوبة للفحص الآمن.');
+  if (!session?.tenantId) throw new Error('هوية المستأجر النشطة مطلوبة للفحص الآمن.');
   const available = new Set<string>((database.tables || []).map((t: any)=>t.name));
   const detectedStores = STORES.filter(name=>available.has(name));
   const missingStores = STORES.filter(name=>!available.has(name));
@@ -96,27 +146,41 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
     await Promise.all(detectedStores.map(async name => { snapshots[name]=await database.table(name).toArray(); }));
   });
   const activeInvoices = new Map<string,{row:Row;source:'invoices'|'sales'}>();
+  let unknownTypeCount=0;
   for (const source of ['invoices','sales'] as const) {
     for (const row of snapshots[source] || []) {
-      if (owner(row,'tenantId') !== session.tenantId || !isSale(row) || isReturn(row) || !['POSTED','LOCKED'].includes(status(row))) continue;
-      const id=invoiceId(row); if (id && !activeInvoices.has(id)) activeInvoices.set(id,{row,source});
+      if (owner(row,'tenantId') !== session.tenantId || isReturn(row) || !['POSTED','LOCKED'].includes(status(row))) continue;
+      const saleType=saleTypeOf(row);
+      if (saleType==='UNKNOWN') { unknownTypeCount++; continue; }
+      if (saleType!=='SALE') continue;
+      const id=invoiceId(row);
+      if (id && !activeInvoices.has(id)) activeInvoices.set(id,{row,source});
     }
   }
   const aliasOwners = new Map<string,Set<string>>();
   for (const [id,item] of activeInvoices) for (const alias of aliases(item.row)) {
-    if (!aliasOwners.has(alias)) aliasOwners.set(alias,new Set()); aliasOwners.get(alias)!.add(id);
+    if (!aliasOwners.has(alias)) aliasOwners.set(alias,new Set());
+    aliasOwners.get(alias)!.add(id);
   }
   const sourceRows = ['syncQueue','sync_queue','outbox','eventStore','failedMutations'];
-  const all: Record<string,Array<{row:Row;store:string;invoiceId:string}>> = {};\n  const rejectedOwnerCounts = new Map<string,number>();
+  const all: Record<string,Array<{row:Row;invoiceId:string}>> = {};
+  const rejectedTenantCounts = new Map<string,number>();
   for (const store of sourceRows) {
     all[store]=[];
     for (const row of snapshots[store] || []) {
       const refs=documentRefs(row), matches=new Set<string>();
-      for (const ref of refs) { const ids=aliasOwners.get(ref); if (ids?.size===1) ids.forEach(id=>matches.add(id)); }
+      for (const ref of refs) {
+        const ids=aliasOwners.get(ref);
+        if (ids?.size===1) ids.forEach(id=>matches.add(id));
+      }
       if (matches.size!==1) continue;
-      const id=[...matches][0], inv=activeInvoices.get(id)?.row; if (!inv) continue;
-      if (classifyOwner(row,inv,session)==='MISMATCH') { rejectedOwnerCounts.set(id,(rejectedOwnerCounts.get(id)||0)+1); continue; }
-      all[store].push({row,store,invoiceId:id});
+      const id=[...matches][0], inv=activeInvoices.get(id)?.row;
+      if (!inv) continue;
+      if (classifyOwner(row,inv,session)==='TENANT_MISMATCH') {
+        rejectedTenantCounts.set(id,(rejectedTenantCounts.get(id)||0)+1);
+        continue;
+      }
+      all[store].push({row,invoiceId:id});
     }
   }
   const findings: InvoiceSyncFinding[]=[];
@@ -126,31 +190,49 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
     const o=all.outbox.filter(x=>x.invoiceId===id).map(x=>x.row);
     const ev=all.eventStore.filter(x=>x.invoiceId===id).map(x=>x.row);
     const failed=all.failedMutations.filter(x=>x.invoiceId===id).map(x=>x.row);
-    const queue=[...q,...legacy,...ev], normalized=[];
+    const normalized=[];
     for (const [store,rows] of [['syncQueue',q],['sync_queue',legacy],['outbox',o],['eventStore',ev],['failedMutations',failed]] as Array<[string,Row[]]>) {
-      for (const row of rows) normalized.push(await normalizedRecord(store,row,item.row,session));
+      for (const row of rows) normalized.push(normalizedRecord(store,row,item.row,session));
     }
-    const qMutations=new Set(queue.map(recordId).filter(Boolean)), oMutations=new Set(o.map(recordId).filter(Boolean));
-    const queueOutboxSameMutation = qMutations.size && oMutations.size
-      ? ([...qMutations].some(m=>oMutations.has(m))?'YES':'NO') : 'UNKNOWN';
-    const hasQueue=q.length+legacy.length+ev.length>0, hasOutbox=o.length>0;
-    const classification = hasQueue && hasOutbox ? 'QUEUE_AND_OUTBOX' : hasQueue ? 'QUEUE_ONLY' : hasOutbox ? 'OUTBOX_ONLY' : failed.length ? 'FAILED_MUTATION_ONLY' : 'NO_LINKED_SYNC_EVIDENCE';
-    const rejectedOwnerCount=rejectedOwnerCounts.get(id)||0;\n    const ownership=rejectedOwnerCount>0?'MISMATCH_RECORDS_EXCLUDED':normalized.length>0&&normalized.every(r=>r.ownerCheck==='VERIFIED')?'VERIFIED':'PARTIAL_OR_MISSING';
-    findings.push({source:item.source,status:status(item.row),queueCount:q.length+legacy.length+ev.length,outboxCount:o.length,failedCount:failed.length,classification,ownership,rejectedOwnerCount,queueOutboxSameMutation,records:normalized});
+    const queueOutboxMutationMatch=compareMutationSets([...q,...legacy],o);
+    const syncQueueCount=q.length;
+    const legacySyncQueueCount=legacy.length;
+    const outboxCount=o.length;
+    const eventStoreCount=ev.length;
+    const failedMutationCount=failed.length;
+    const hasQueue=syncQueueCount+legacySyncQueueCount>0;
+    const hasOutbox=outboxCount>0;
+    const classification=hasQueue&&hasOutbox?'QUEUE_AND_OUTBOX':hasQueue?'QUEUE_ONLY':hasOutbox?'OUTBOX_ONLY':failedMutationCount?'FAILED_MUTATION_ONLY':eventStoreCount?'EVENTSTORE_ONLY':'NO_LINKED_SYNC_EVIDENCE';
+    const rejectedTenantMismatchCount=rejectedTenantCounts.get(id)||0;
+    const ownerStates=normalized.map(r=>r.ownerCheck);
+    const ownership: InvoiceSyncFinding['ownership']=rejectedTenantMismatchCount?'TENANT_MISMATCH_RECORDS_EXCLUDED':
+      ownerStates.length&&ownerStates.every(v=>v==='VERIFIED')?'VERIFIED':
+      ownerStates.some(v=>v==='PARTIAL')?'PARTIAL':'UNVERIFIABLE';
+    findings.push({source:item.source,status:status(item.row),syncQueueCount,legacySyncQueueCount,outboxCount,eventStoreCount,failedMutationCount,classification,ownership,rejectedTenantMismatchCount,queueOutboxMutationMatch,records:normalized});
   }
-  const summary: Record<string,number>={postedLockedInvoices:findings.length,withQueue:0,withOutbox:0,withFailedMutation:0,noLinkedSyncEvidence:0,mutationMismatch:0,payloadNestedSale:0,flatPayload:0,missingRequiredFields:0,mismatchedOwnershipRecords:0};
+  const summary: Record<string,number>={postedLockedSales:findings.length,unknownTypePostedLocked:unknownTypeCount,withSyncQueue:0,withLegacySyncQueue:0,withOutbox:0,withEventStore:0,withFailedMutation:0,exactMutationMatch:0,partialMutationMatch:0,mutationMismatch:0,tenantMismatchRecordsExcluded:0};
   for (const f of findings) {
-    if (f.queueCount) summary.withQueue++;
+    if (f.syncQueueCount) summary.withSyncQueue++;
+    if (f.legacySyncQueueCount) summary.withLegacySyncQueue++;
     if (f.outboxCount) summary.withOutbox++;
-    if (f.failedCount) summary.withFailedMutation++;
-    if (f.classification==='NO_LINKED_SYNC_EVIDENCE') summary.noLinkedSyncEvidence++;\n    summary.mismatchedOwnershipRecords+=f.rejectedOwnerCount;
-    if (f.queueOutboxSameMutation==='NO') summary.mutationMismatch++;
-    for (const r of f.records) {
-      if (r.payloadShape==='SALE_NESTED') summary.payloadNestedSale++;
-      else summary.flatPayload++;
-      if (!Object.values(r.requiredFields).every(Boolean)) summary.missingRequiredFields++;
-    }
+    if (f.eventStoreCount) summary.withEventStore++;
+    if (f.failedMutationCount) summary.withFailedMutation++;
+    if (f.queueOutboxMutationMatch==='EXACT_MATCH') summary.exactMutationMatch++;
+    if (f.queueOutboxMutationMatch==='PARTIAL_MATCH') summary.partialMutationMatch++;
+    if (f.queueOutboxMutationMatch==='MISMATCH') summary.mutationMismatch++;
+    summary.tenantMismatchRecordsExcluded+=f.rejectedTenantMismatchCount;
   }
-  return {generatedAt:new Date().toISOString(),readOnly:true,databaseVersion:database.verno,detectedStores,missingStores,invoiceCount:findings.length,findings,summary,
-    limitations:['الربط يعتمد فقط على معرّفات المستند الدقيقة في payload؛ لا يُستخدم رقم الفاتورة أو اسم العميل أو المنتج.','المخازن التي لا تحمل tenantId/userId/branchId تُصنّف ملكيتها جزئية ولا تُعتبر دليلاً مؤكداً.','eventStore قد لا يحمل بيانات ملكية أو مرجع مستند؛ عدم الربط لا يثبت غياب الحدث.','لا تُقرأ البيانات من الخادم ولا تُرسل أي طلبات.','لا تُعرض قيم mutationId أو idempotencyKey الخام؛ البصمات SHA-256 مختصرة.','NO_LINKED_SYNC_EVIDENCE يعني عدم العثور على ارتباط دقيق في المخازن الموجودة فقط، ولا يثبت فشل المزامنة.']};
+  return {
+    generatedAt:new Date().toISOString(),readOnly:true,databaseVersion:database.verno,
+    detectedStores,missingStores,invoiceCount:findings.length,unknownTypeCount,findings,summary,
+    limitations:[
+      'الربط يعتمد على مراجع المستند الدقيقة فقط؛ لا يُستخدم رقم الفاتورة أو اسم العميل أو المنتج.',
+      'tenantId هو حاجز العزل الأساسي؛ اختلاف المستخدم أو الفرع عن الجلسة النشطة لا يؤدي وحده إلى الاستبعاد.',
+      'اختلاف userId أو branchId بين سجل المزامنة والفاتورة يصنف PARTIAL ولا يثبت فساد الملكية.',
+      'السجلات الناقصة بيانات الملكية تصنف PARTIAL أو UNVERIFIABLE ولا تعتبر VERIFIED.',
+      'eventStore دليل مستقل ولا يدخل ضمن Queue counts أو مقارنة Mutation.',
+      'لا تُخرج المخرجات أي سجل خام أو معرف Mutation أو Idempotency أو قيمة مالية.',
+      'NO_LINKED_SYNC_EVIDENCE يعني عدم العثور على ارتباط دقيق في المخازن الموجودة فقط، ولا يثبت فشل المزامنة.'
+    ]
+  };
 }
