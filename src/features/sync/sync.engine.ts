@@ -525,15 +525,14 @@ export class DistributedSyncEngine {
 
     const currentTx = (Dexie as any).currentTransaction;
     const outboxTable = (this.db as any).outbox;
-    const transactionTableNames = currentTx?.tables
-      ? (Array.isArray(currentTx.tables)
-          ? currentTx.tables.map((table: any) => table.name)
-          : Object.keys(currentTx.tables))
-      : [];
+    const transactionHasTable = (tableName: string): boolean => Boolean(
+      currentTx?.tables?.[tableName] ||
+      (Array.isArray(currentTx?.tables) && currentTx.tables.some((table: any) => table?.name === tableName))
+    );
     if (
       !currentTx ||
-      !transactionTableNames.includes('syncQueue') ||
-      !transactionTableNames.includes('outbox') ||
+      !transactionHasTable('syncQueue') ||
+      !transactionHasTable('outbox') ||
       !outboxTable?.schema
     ) {
       throw new Error('SYNC_TRANSACTION_SCOPE_MISSING: enqueueWithinTransaction requires an active Dexie transaction containing syncQueue and outbox.');
