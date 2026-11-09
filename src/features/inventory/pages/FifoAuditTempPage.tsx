@@ -7,6 +7,7 @@ type StoreCounts = { linkedToTenantInvoices: number; tenantMatched: number; tena
 type Summary = {
   generatedAt: string; scope: string; database: { name: string; version: number; readOnly: true };
   tenantScope: 'active-tenant-only';
+  storesDetected: string[]; storesNotPresent: string[];
   invoices: { postedSales: number; VERIFIED: number; RECONSTRUCTABLE: number; UNVERIFIABLE: number; NO_EVIDENCE: number };
   evidenceByStore: Record<string, StoreCounts>;
   evidenceQuality: Record<string, number>;
@@ -63,13 +64,13 @@ async function readSnapshot() {
   const pairs = await Promise.all(names.map(async name => [name, await req(tx.objectStore(name).getAll())] as const));
   const stores: Record<string, Row[]> = {};
   pairs.forEach(([name, rows]) => { stores[name] = rows as Row[]; });
-  return { version: native.version, stores };
+  return { version: native.version, stores, storesDetected: [...names], storesNotPresent: CANDIDATE_STORES.filter(name => !names.includes(name)) };
 }
 
 async function buildAudit(): Promise<Summary> {
   const activeTenant = text(getCurrentUserSession().tenantId);
   if (!activeTenant) throw new Error('توقف آمن: لا توجد جلسة مستأجر نشطة.');
-  const { version, stores } = await readSnapshot();
+  const { version, stores, storesDetected, storesNotPresent } = await readSnapshot();
   // Deduplicate the canonical invoices and legacy sales mirror by stable invoice ID.
   // Prefer invoices; only use sales as a fallback when the canonical row is absent.
   const invoiceById = new Map<string, Row>();
@@ -245,6 +246,7 @@ async function buildAudit(): Promise<Summary> {
     scope: 'Dexie المحلية في هذا المتصفح والجهاز فقط؛ فواتير المستأجر النشط؛ لا تشمل Supabase أو أجهزة أخرى.',
     database: { name: 'PharmaFlowPRO', version, readOnly: true },
     tenantScope: 'active-tenant-only',
+    storesDetected, storesNotPresent,
     invoices: { postedSales: invoices.length, ...counts },
     evidenceByStore, evidenceQuality: quality,
     limitations: [
