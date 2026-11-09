@@ -327,9 +327,7 @@ async function buildFifoAudit(): Promise<AuditSummary> {
   const linkedTenantlessLayerIds = new Set<string>();
   const duplicateLayerIds = new Set<string>();
   for (const [layerId, candidates] of layerCandidates) {
-    if (candidates.length > 1 && candidates.some(layer => tenantOf(layer) === activeTenantId)) {
-      duplicateLayerIds.add(layerId);
-    }
+    if (candidates.length > 1) duplicateLayerIds.add(layerId);
   }
 
   const duplicateLogIds = new Set<string>();
