@@ -1243,9 +1243,9 @@ function LocalSyncQueueForensicsPanel() {
                 <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{finding.status} · {finding.classification}</span>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                <div>Queue: <b>{finding.queue.length ? 'موجود' : 'غير موجود'}</b></div>
-                <div>Outbox: <b>{finding.outbox.length ? 'موجود' : 'غير موجود'}</b></div>
-                <div>Failed Mutation: <b>{finding.failed.length ? 'موجود' : 'غير موجود'}</b></div>
+                <div>Queue: <b>{finding.queueCount ? 'موجود' : 'غير موجود'}</b></div>
+                <div>Outbox: <b>{finding.outboxCount ? 'موجود' : 'غير موجود'}</b></div>
+                <div>Failed Mutation: <b>{finding.failedCount ? 'موجود' : 'غير موجود'}</b></div>
                 <div>تطابق Mutation: <b>{finding.queueOutboxSameMutation}</b></div>
                 <div>الملكية: <b>{finding.ownership}</b></div>
               </div>
