@@ -430,7 +430,6 @@ model Invoice {
   fifoLayersCreated FifoLayer[]  @relation("FifoLayerSourceInvoice")
   fifoConsumptionLogs FifoConsumptionLog[] @relation("FifoConsumptionInvoice")
   invoicePaymentAllocations InvoicePaymentAllocation[]
-  currencyCode    String?
 
   @@unique([id, tenantId])
   @@unique([tenantId, invoiceNumber])
