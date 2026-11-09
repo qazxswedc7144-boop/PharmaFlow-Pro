@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import ts from 'typescript';
+import * as ts from 'typescript';
 import {
   buildLocalSyncForensics, classifyOwner, classifyPayloadShape, compareMutationSets, isSale
 } from './localSyncQueueForensics';
@@ -39,8 +39,7 @@ describe('Local Sync Queue Forensics — hardened read-only', () => {
       });
       const parseErrors = (result.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error);
       expect(parseErrors.map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n')), file).toEqual([]);
-      expect(kind).toBe(kind);
-      expect(source).not.toMatch(/\\\\n/);
+      expect(source).not.toMatch(/\\n/);
     }
   });
 
@@ -58,6 +57,7 @@ describe('Local Sync Queue Forensics — hardened read-only', () => {
     expect(compareMutationSets([row('m1'), row('m2')], [row('m1')])).toBe('PARTIAL_MATCH');
     expect(compareMutationSets([row('m1'), row('m1')], [row('m1')])).toBe('PARTIAL_MATCH');
     expect(compareMutationSets([row('m1'), row('m1')], [row('m1'), row('m2')])).toBe('PARTIAL_MATCH');
+    expect(compareMutationSets([row('m1'), row('m1')], [row('m1'), row('m1')])).toBe('PARTIAL_MATCH');
     expect(compareMutationSets([row('m1')], [row('m2')])).toBe('MISMATCH');
     expect(compareMutationSets([{}], [row('m1')])).toBe('UNKNOWN');
     expect(compareMutationSets([], [row('m1')])).toBe('UNKNOWN');
