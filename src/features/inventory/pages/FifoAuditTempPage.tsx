@@ -120,8 +120,12 @@ async function buildFifoAudit(): Promise<AuditSummary> {
         transaction.table('invoices').toArray(),
         transaction.table('sales').toArray(),
         transaction.table('invoiceItems').toArray(),
-        transaction.table('inventory_layers').toArray(),
-        transaction.table('fifo_consumption_log').toArray()
+        transaction.table('inventory_layers')
+          .filter((row: AnyRecord) => !tenantOf(row) || tenantOf(row) === activeTenantId)
+          .toArray(),
+        transaction.table('fifo_consumption_log')
+          .filter((row: AnyRecord) => !tenantOf(row) || tenantOf(row) === activeTenantId)
+          .toArray()
       ]);
 
       return { invoices, sales, invoiceItems, allLayers, allLogs };
@@ -250,6 +254,7 @@ async function buildFifoAudit(): Promise<AuditSummary> {
   const includedLogs: AnyRecord[] = [];
   const orphanOrAmbiguousLogs = new Set<string>();
   const tenantlessLinkedLogs = new Set<string>();
+  const logsWithReferenceMismatch = new WeakSet<AnyRecord>();
 
   (snapshot.allLogs as AnyRecord[]).forEach((log, index) => {
     const logTenant = tenantOf(log);
@@ -261,6 +266,10 @@ async function buildFifoAudit(): Promise<AuditSummary> {
     for (const reference of references) {
       const matches = aliasesToInvoices.get(reference);
       if (matches) matches.forEach(id => matchedInvoiceIds.add(id));
+    }
+
+    if (references.some(reference => !aliasesToInvoices.has(reference))) {
+      logsWithReferenceMismatch.add(log);
     }
 
     if (matchedInvoiceIds.size !== 1) {
@@ -368,6 +377,9 @@ async function buildFifoAudit(): Promise<AuditSummary> {
     const actual = new Map<string, number>();
 
     for (const log of invoiceLogs) {
+      if (logsWithReferenceMismatch.has(log)) {
+        reasons.add('log_invoice_reference_mismatch');
+      }
       const logTenant = tenantOf(log);
       if (!logTenant) reasons.add('log_tenant_missing');
       else if (logTenant !== activeTenantId) reasons.add('log_tenant_mismatch');
