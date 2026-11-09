@@ -503,6 +503,7 @@ export class DistributedSyncEngine {
       branchId,
       deviceId: DeviceManager.getDeviceIdentity().deviceId,
       type,
+      operation: type,
       payload: sanitizedPayload,
       status: 'PENDING',
       retries: 0,
