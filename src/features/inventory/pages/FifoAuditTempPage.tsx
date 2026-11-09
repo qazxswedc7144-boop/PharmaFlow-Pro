@@ -241,6 +241,7 @@ async function buildAudit(): Promise<Summary> {
         continue;
       }
       const layer = candidates[0];
+      if (!layer) { fifoChainVerified = false; continue; }
       let layerValid = true;
       const layerTenant = tenantOf(layer);
       if (layerTenant === activeTenant) linkedLayerTenantMatched += 1;
