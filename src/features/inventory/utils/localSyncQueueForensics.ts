@@ -1,7 +1,7 @@
 export type ForensicSession = { tenantId: string; userId?: string; branchId?: string };
 type Row = Record<string, any>;
 export type InvoiceSyncFinding = {
-  source: 'invoices' | 'sales'; status: string; queue: Row[]; outbox: Row[]; failed: Row[];
+  source: 'invoices' | 'sales'; status: string; queueCount: number; outboxCount: number; failedCount: number;
   classification: string; ownership: string; queueOutboxSameMutation: 'YES' | 'NO' | 'UNKNOWN';
   records: Array<{ store: string; entityType: string; operationType: string; type: string; operation: string;
     status: string; mutationFingerprint: string; idempotencyFingerprint: string; payloadShape: string;
@@ -136,13 +136,13 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
     const hasQueue=q.length+legacy.length+ev.length>0, hasOutbox=o.length>0;
     const classification = hasQueue && hasOutbox ? 'QUEUE_AND_OUTBOX' : hasQueue ? 'QUEUE_ONLY' : hasOutbox ? 'OUTBOX_ONLY' : failed.length ? 'FAILED_MUTATION_ONLY' : 'NO_LINKED_SYNC_EVIDENCE';
     const ownership=normalized.every(r=>r.ownerCheck==='VERIFIED')?'VERIFIED':normalized.some(r=>r.ownerCheck==='MISMATCH')?'MISMATCH':'PARTIAL_OR_MISSING';
-    findings.push({source:item.source,status:status(item.row),queue:[...q,...legacy,...ev],outbox:o,failed,classification,ownership,queueOutboxSameMutation,records:normalized});
+    findings.push({source:item.source,status:status(item.row),queueCount:q.length+legacy.length+ev.length,outboxCount:o.length,failedCount:failed.length,classification,ownership,queueOutboxSameMutation,records:normalized});
   }
   const summary: Record<string,number>={postedLockedInvoices:findings.length,withQueue:0,withOutbox:0,withFailedMutation:0,noLinkedSyncEvidence:0,mutationMismatch:0,payloadNestedSale:0,flatPayload:0,missingRequiredFields:0};
   for (const f of findings) {
-    if (f.queue.length) summary.withQueue++;
-    if (f.outbox.length) summary.withOutbox++;
-    if (f.failed.length) summary.withFailedMutation++;
+    if (f.queueCount) summary.withQueue++;
+    if (f.outboxCount) summary.withOutbox++;
+    if (f.failedCount) summary.withFailedMutation++;
     if (f.classification==='NO_LINKED_SYNC_EVIDENCE') summary.noLinkedSyncEvidence++;
     if (f.queueOutboxSameMutation==='NO') summary.mutationMismatch++;
     for (const r of f.records) {
