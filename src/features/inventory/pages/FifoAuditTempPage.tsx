@@ -113,6 +113,7 @@ async function buildAudit(): Promise<Summary> {
       }
       if (matches.size !== 1) continue;
       const invoice = [...matches][0];
+      if (!invoice) continue;
       const owner = tenantOf(row);
       if (owner && owner !== activeTenant) { rejectedTenantMismatch += 1; continue; }
       if (owner) tenantMatched += 1; else tenantlessLinked += 1;
@@ -163,12 +164,13 @@ async function buildAudit(): Promise<Summary> {
     batchReferencesLinked: 0, batchTenantlessLinked: 0, syncRecordsLinked: 0,
     legacyMovementRecordsLinked: 0, ambiguousInvoiceReferences
   };
+  const bumpQuality = (key: string, amount = 1) => { quality[key] = (quality[key] ?? 0) + amount; };
   for (const line of stores.journalLines || []) {
     const parentId = text(pick(line, ['entry_id', 'entryId', 'journalEntryId', 'journal_entry_id']));
     if (!parentId || !trustedJournalIds.has(parentId)) continue;
     const lineTenant = tenantOf(line);
-    if (lineTenant && lineTenant !== activeTenant) quality.journalLinesWithTenantMismatch += 1;
-    else quality.journalLinesLinkedToTrustedEntries += 1;
+    if (lineTenant && lineTenant !== activeTenant) bumpQuality('journalLinesWithTenantMismatch', 1);
+    else bumpQuality('journalLinesLinkedToTrustedEntries', 1);
   }
 
   const layerCandidates = new Map<string, Row[]>();
@@ -205,7 +207,7 @@ async function buildAudit(): Promise<Summary> {
       for (const row of canonicalTrusted) {
         const product = productOf(row);
         const invoiceBranch = branchOf(invoice);
-        if (invoiceBranch && branchOf(row) !== invoiceBranch) { hasMismatch = true; quality.movementBranchMismatches += 1; }
+        if (invoiceBranch && branchOf(row) !== invoiceBranch) { hasMismatch = true; bumpQuality('movementBranchMismatches', 1); }
         const rawQty = number(pick(row, ['quantity_delta', 'quantityDelta', 'QuantityChange', 'quantityChange', 'quantity', 'qty', 'Quantity']));
         if (!product || !Number.isFinite(rawQty) || rawQty === 0) { hasMismatch = true; hasProductQtyMismatch = true; continue; }
         actual.set(product, (actual.get(product) || 0) + Math.abs(rawQty));
@@ -215,14 +217,14 @@ async function buildAudit(): Promise<Summary> {
       }
       qtyMatches = [...expectedLines].every(([product, qty]) => Math.abs((actual.get(product) || 0) - qty) <= 0.000001) &&
         [...actual.keys()].every(product => expectedLines.has(product));
-      if (!qtyMatches) { hasMismatch = true; hasProductQtyMismatch = true; quality.movementQuantityMismatches += 1; }
-      if (canonicalTrusted.length) quality.canonicalInventoryMovementsLinked += canonicalTrusted.length;
-      quality.canonicalMovementsWithCost += costRows;
-      quality.canonicalMovementsWithoutCost += canonicalTrusted.length - costRows;
+      if (!qtyMatches) { hasMismatch = true; hasProductQtyMismatch = true; bumpQuality('movementQuantityMismatches', 1); }
+      if (canonicalTrusted.length) bumpQuality('canonicalInventoryMovementsLinked', canonicalTrusted.length);
+      bumpQuality('canonicalMovementsWithCost', costRows);
+      bumpQuality('canonicalMovementsWithoutCost', canonicalTrusted.length - costRows);
     }
-    if (journals.length) quality.journalEntriesLinked += journals.filter(row => tenantOf(row) === activeTenant).length;
-    quality.syncRecordsLinked += sync.length;
-    quality.fifoConsumptionLogsLinked += fifoLogs.length;
+    if (journals.length) bumpQuality('journalEntriesLinked', journals.filter(row => tenantOf(row) === activeTenant).length);
+    bumpQuality('syncRecordsLinked', sync.length);
+    bumpQuality('fifoConsumptionLogsLinked', fifoLogs.length);
 
     // Verify the original FIFO chain: invoice -> consumption log -> unique layer.
     // Tenantless or ambiguous links remain unverified, even when IDs happen to match.
@@ -230,19 +232,19 @@ async function buildAudit(): Promise<Summary> {
     const fifoQtyByProduct = new Map<string, number>();
     let linkedLayerCount = 0, linkedLayerTenantMatched = 0, linkedLayerTenantless = 0, linkedLayerTenantMismatch = 0;
     for (const log of fifoLogs) {
-      if (tenantOf(log) !== activeTenant) { fifoChainVerified = false; quality.fifoTenantlessLogOrLayerLinks += 1; }
+      if (tenantOf(log) !== activeTenant) { fifoChainVerified = false; bumpQuality('fifoTenantlessLogOrLayerLinks', 1); }
       const layerId = text(pick(log, ['layer_id', 'layerId']));
       const candidates = layerId ? layerCandidates.get(layerId) || [] : [];
       if (candidates.length !== 1) {
         fifoChainVerified = false;
-        quality.fifoLayerReferencesMissingOrAmbiguous += 1;
+        bumpQuality('fifoLayerReferencesMissingOrAmbiguous', 1);
         continue;
       }
       const layer = candidates[0];
       let layerValid = true;
       const layerTenant = tenantOf(layer);
       if (layerTenant === activeTenant) linkedLayerTenantMatched += 1;
-      else if (!layerTenant) { linkedLayerTenantless += 1; quality.fifoTenantlessLogOrLayerLinks += 1; layerValid = false; }
+      else if (!layerTenant) { linkedLayerTenantless += 1; bumpQuality('fifoTenantlessLogOrLayerLinks', 1); layerValid = false; }
       else { linkedLayerTenantMismatch += 1; layerValid = false; }
       const logProduct = productOf(log);
       const layerProduct = productOf(layer);
@@ -252,7 +254,7 @@ async function buildAudit(): Promise<Summary> {
       if (!Number.isFinite(initialQty) || initialQty <= 0 || !Number.isFinite(remainingQty) ||
           remainingQty < 0 || remainingQty - initialQty > 0.000001) {
         layerValid = false;
-        quality.fifoLayerQuantityAnomalies += 1;
+        bumpQuality('fifoLayerQuantityAnomalies', 1);
       }
       const consumed = number(pick(log, ['quantity_consumed', 'quantityConsumed', 'qty', 'quantity']));
       if (!Number.isFinite(consumed) || consumed <= 0 || !logProduct) fifoChainVerified = false;
@@ -262,11 +264,11 @@ async function buildAudit(): Promise<Summary> {
       if (!Number.isFinite(logCost) || logCost < 0 || !Number.isFinite(layerCost) || layerCost < 0) layerValid = false;
       else if (Math.abs(logCost - layerCost) > 0.000001) {
         layerValid = false;
-        quality.fifoLayerCostMismatches += 1;
+        bumpQuality('fifoLayerCostMismatches', 1);
       }
       if (!layerValid) fifoChainVerified = false;
       linkedLayerCount += 1;
-      if (layerValid) quality.fifoLayerReferencesVerified += 1;
+      if (layerValid) bumpQuality('fifoLayerReferencesVerified', 1);
     }
     if (fifoChainVerified) {
       const quantitiesMatch = [...expectedLines].every(([product, qty]) => Math.abs((fifoQtyByProduct.get(product) || 0) - qty) <= 0.000001) &&
@@ -281,8 +283,8 @@ async function buildAudit(): Promise<Summary> {
       layerCounts.rejectedTenantMismatch += linkedLayerTenantMismatch;
       evidenceByStore.inventory_layers = layerCounts;
     }
-    quality.legacyMovementRecordsLinked += legacy.length;
-    if (hasProductQtyMismatch) quality.movementProductMismatches += 1;
+    bumpQuality('legacyMovementRecordsLinked', legacy.length);
+    if (hasProductQtyMismatch) bumpQuality('movementProductMismatches', 1);
 
     // Only canonical, tenant-owned inventory movements with exact invoice/product/qty
     // linkage and explicit movement cost qualify as verified transaction-cost evidence.
@@ -300,7 +302,7 @@ async function buildAudit(): Promise<Summary> {
 
   // Batch references are counted only when an invoice-linked movement names a batch.
   const referencedBatchIds = new Set<string>();
-  for (const [invoice, rows] of (rowsByStoreInvoice.get('inventoryTransactions') || new Map()).entries()) {
+  for (const rows of (rowsByStoreInvoice.get('inventoryTransactions') || new Map()).values()) {
     for (const row of rows) {
       const batch = text(pick(row, ['batchId', 'batch_id', 'medicineBatchId', 'medicine_batch_id']));
       if (batch) referencedBatchIds.add(batch);
@@ -310,8 +312,8 @@ async function buildAudit(): Promise<Summary> {
     if (!referencedBatchIds.has(rowId(batch))) continue;
     const owner = tenantOf(batch);
     if (owner && owner !== activeTenant) continue;
-    quality.batchReferencesLinked += 1;
-    if (!owner) quality.batchTenantlessLinked += 1;
+    bumpQuality('batchReferencesLinked', 1);
+    if (!owner) bumpQuality('batchTenantlessLinked', 1);
   }
 
   const counts = {
