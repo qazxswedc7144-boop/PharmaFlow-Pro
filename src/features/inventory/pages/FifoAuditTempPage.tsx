@@ -226,7 +226,7 @@ async function buildAudit(): Promise<Summary> {
     // Tenantless or ambiguous links remain unverified, even when IDs happen to match.
     let fifoChainVerified = fifoLogs.length > 0 && expectedLines.size > 0;
     const fifoQtyByProduct = new Map<string, number>();
-    let linkedLayerCount = 0;
+    let linkedLayerCount = 0, linkedLayerTenantMatched = 0, linkedLayerTenantless = 0, linkedLayerTenantMismatch = 0;
     for (const log of fifoLogs) {
       if (tenantOf(log) !== activeTenant) { fifoChainVerified = false; quality.fifoTenantlessLogOrLayerLinks += 1; }
       const layerId = text(pick(log, ['layer_id', 'layerId']));
@@ -237,22 +237,27 @@ async function buildAudit(): Promise<Summary> {
         continue;
       }
       const layer = candidates[0];
-      if (tenantOf(layer) !== activeTenant) { fifoChainVerified = false; quality.fifoTenantlessLogOrLayerLinks += 1; }
+      let layerValid = true;
+      const layerTenant = tenantOf(layer);
+      if (layerTenant === activeTenant) linkedLayerTenantMatched += 1;
+      else if (!layerTenant) { linkedLayerTenantless += 1; quality.fifoTenantlessLogOrLayerLinks += 1; layerValid = false; }
+      else { linkedLayerTenantMismatch += 1; layerValid = false; }
       const logProduct = productOf(log);
       const layerProduct = productOf(layer);
-      if (!logProduct || !layerProduct || logProduct !== layerProduct) fifoChainVerified = false;
+      if (!logProduct || !layerProduct || logProduct !== layerProduct) layerValid = false;
       const consumed = number(pick(log, ['quantity_consumed', 'quantityConsumed', 'qty', 'quantity']));
       if (!Number.isFinite(consumed) || consumed <= 0 || !logProduct) fifoChainVerified = false;
       else fifoQtyByProduct.set(logProduct, (fifoQtyByProduct.get(logProduct) || 0) + consumed);
       const logCost = number(pick(log, ['unit_cost', 'unitCost']));
       const layerCost = number(pick(layer, ['unit_cost', 'unitCost']));
-      if (!Number.isFinite(logCost) || logCost < 0 || !Number.isFinite(layerCost) || layerCost < 0) fifoChainVerified = false;
+      if (!Number.isFinite(logCost) || logCost < 0 || !Number.isFinite(layerCost) || layerCost < 0) layerValid = false;
       else if (Math.abs(logCost - layerCost) > 0.000001) {
-        fifoChainVerified = false;
+        layerValid = false;
         quality.fifoLayerCostMismatches += 1;
       }
+      if (!layerValid) fifoChainVerified = false;
       linkedLayerCount += 1;
-      quality.fifoLayerReferencesVerified += 1;
+      if (layerValid) quality.fifoLayerReferencesVerified += 1;
     }
     if (fifoChainVerified) {
       const quantitiesMatch = [...expectedLines].every(([product, qty]) => Math.abs((fifoQtyByProduct.get(product) || 0) - qty) <= 0.000001) &&
@@ -262,8 +267,9 @@ async function buildAudit(): Promise<Summary> {
     if (linkedLayerCount > 0 && stores.inventory_layers) {
       const layerCounts = evidenceByStore.inventory_layers || { linkedToTenantInvoices: 0, tenantMatched: 0, tenantlessLinked: 0, rejectedTenantMismatch: 0 };
       layerCounts.linkedToTenantInvoices += linkedLayerCount;
-      layerCounts.tenantMatched += (fifoLogs.filter(log => tenantOf(log) === activeTenant).length);
-      layerCounts.tenantlessLinked += quality.fifoTenantlessLogOrLayerLinks;
+      layerCounts.tenantMatched += linkedLayerTenantMatched;
+      layerCounts.tenantlessLinked += linkedLayerTenantless;
+      layerCounts.rejectedTenantMismatch += linkedLayerTenantMismatch;
       evidenceByStore.inventory_layers = layerCounts;
     }
     quality.legacyMovementRecordsLinked += legacy.length;
