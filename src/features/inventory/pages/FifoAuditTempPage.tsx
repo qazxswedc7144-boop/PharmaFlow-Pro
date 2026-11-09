@@ -1247,7 +1247,7 @@ function LocalSyncQueueForensicsPanel() {
                 <div>Outbox: <b>{finding.outboxCount ? 'موجود' : 'غير موجود'}</b></div>
                 <div>Failed Mutation: <b>{finding.failedCount ? 'موجود' : 'غير موجود'}</b></div>
                 <div>تطابق Mutation: <b>{finding.queueOutboxSameMutation}</b></div>
-                <div>الملكية: <b>{finding.ownership}</b></div>
+                <div>الملكية: <b>{finding.ownership}</b></div>\n                <div>سجلات مستبعدة لعدم تطابق الملكية: <b>{finding.rejectedOwnerCount}</b></div>
               </div>
               {finding.records.map((record,i) => (
                 <div key={i} className="mt-3 rounded-lg bg-slate-50 p-3 text-xs leading-6">
