@@ -15,6 +15,9 @@ export function toSaleSyncDTO(result: unknown): InvoiceDTO {
   if (!sale || typeof sale !== 'object') {
     throw new Error('SALE_SYNC_DTO_MISSING_SALE');
   }
+  if (sale.isReturn === true || String(sale.type || '').toUpperCase() === 'RETURN_SALE') {
+    throw new Error('SALE_SYNC_DTO_UNSUPPORTED_RETURN: Return documents must use the dedicated return sync command.');
+  }
 
   const invoiceNumber = sale.invoiceNumber ?? sale.invoice_number ?? sale.invoiceId;
   const rawItems = Array.isArray(sale.items) ? sale.items : [];
