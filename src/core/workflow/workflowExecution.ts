@@ -121,6 +121,16 @@ export class WorkflowExecutionPipeline {
         }
       }
 
+      // Resolve sync dependencies before opening the IndexedDB transaction.
+      // Dynamic imports / non-IDB awaits inside an active Dexie transaction can
+      // let IndexedDB auto-commit before the Queue/Outbox writes are reached.
+      const saleSyncDependencies = workflow.id.toUpperCase() === 'SALE'
+        ? await Promise.all([
+            import('@/features/sync/sync.engine'),
+            import('@/features/sync/saleSyncDto')
+          ])
+        : null;
+
       // Step 9 & 10: ExecutionGuard + TransactionBoundary Execution
       const domainResult = await ExecutionGuard.executeWithGuard<TResult>(
         {
@@ -136,10 +146,13 @@ export class WorkflowExecutionPipeline {
 
             // SALE persistence and both durable sync records share the same Dexie transaction.
             if (workflow.id.toUpperCase() === 'SALE' && (res as any)?.sale?.isReturn !== true) {
-              const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = await Promise.all([
-                import('@/features/sync/sync.engine'),
-                import('@/features/sync/saleSyncDto')
-              ]);
+              if (!saleSyncDependencies) {
+                throw new WorkflowExecutionError(
+                  'SYNC_ENQUEUE_FAILED: Sale sync dependencies were not initialized before transaction start.',
+                  'SYNC_ENQUEUE_FAILED'
+                );
+              }
+              const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = saleSyncDependencies;
               const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
                 workflow.operationType,
                 toSaleSyncDTO(res),
