@@ -35,7 +35,7 @@ const aliasesOf = (r: Row): string[] => [...new Set([
   pick(r, ['invoiceNumber', 'invoice_number'])
 ].map(text).filter(Boolean))];
 const refsOf = (r: Row): string[] => [...new Set([
-  pick(r, ['source_doc_id', 'sourceDocId', 'source_document_id', 'sourceDocumentId']),
+  pick(r, ['source_doc_id', 'sourceDocId', 'SourceDocumentID', 'source_document_id', 'sourceDocumentId']),
   pick(r, ['invoice_id', 'invoiceId', 'sale_id', 'saleId']),
   pick(r, ['reference_id', 'referenceId', 'Reference_ID', 'referenceID', 'source_id', 'sourceId']),
   pick(r, ['document_id', 'documentId', 'parent_id', 'parentId'])
@@ -169,7 +169,11 @@ async function buildAudit(): Promise<Summary> {
   const classes: Class[] = [];
   for (const invoice of invoices) {
     const expectedLines = expected.get(invoice) || new Map<string, number>();
-    const canonical = rowsByStoreInvoice.get('inventoryTransactions')?.get(invoice) || [];
+    const canonical = (rowsByStoreInvoice.get('inventoryTransactions')?.get(invoice) || []).filter(row => {
+      const docType = text(pick(row, ['SourceDocumentType', 'sourceDocType', 'source_doc_type'])).toUpperCase();
+      const movementType = text(pick(row, ['TransactionType', 'transactionType', 'transaction_type'])).toUpperCase();
+      return (!docType || docType === 'SALE') && (!movementType || movementType === 'SALE');
+    });
     const canonicalTrusted = canonical.filter(row => tenantOf(row) === activeTenant);
     const legacy = ['stock_movements', 'inventory_logs', 'inventory'].flatMap(name => rowsByStoreInvoice.get(name)?.get(invoice) || []);
     const journals = rowsByStoreInvoice.get('journalEntries')?.get(invoice) || [];
@@ -180,7 +184,7 @@ async function buildAudit(): Promise<Summary> {
       const actual = new Map<string, number>();
       for (const row of canonicalTrusted) {
         const product = productOf(row);
-        const rawQty = number(pick(row, ['quantity_delta', 'quantityDelta', 'quantity', 'qty', 'Quantity']));
+        const rawQty = number(pick(row, ['quantity_delta', 'quantityDelta', 'QuantityChange', 'quantityChange', 'quantity', 'qty', 'Quantity']));
         if (!product || !Number.isFinite(rawQty) || rawQty === 0) { hasMismatch = true; continue; }
         actual.set(product, (actual.get(product) || 0) + Math.abs(rawQty));
         const unitCost = number(pick(row, ['unit_cost', 'unitCost', 'cost_per_unit', 'costPerUnit']));
@@ -203,8 +207,11 @@ async function buildAudit(): Promise<Summary> {
     // linkage and explicit movement cost qualify as verified transaction-cost evidence.
     // This does not by itself prove layer-by-layer FIFO allocation.
     let classification: Class = 'NO_EVIDENCE';
-    if (canonicalTrusted.length && qtyMatches && costRows > 0 && !hasMismatch) classification = 'VERIFIED';
-    else if (canonicalTrusted.length && qtyMatches && !hasMismatch) classification = 'RECONSTRUCTABLE';
+    const canonicalTypeVerified = canonicalTrusted.length > 0 && canonicalTrusted.every(row =>
+      text(pick(row, ['SourceDocumentType', 'sourceDocType', 'source_doc_type'])).toUpperCase() === 'SALE' &&
+      text(pick(row, ['TransactionType', 'transactionType', 'transaction_type'])).toUpperCase() === 'SALE'
+    );
+    if (canonicalTypeVerified && qtyMatches && costRows > 0 && !hasMismatch) classification = 'VERIFIED';
     else if (canonical.length || legacy.length || journals.length || sync.length || hasTenantless) classification = 'UNVERIFIABLE';
     classes.push(classification);
   }
@@ -249,7 +256,7 @@ async function buildAudit(): Promise<Summary> {
     ],
     notes: [
       'VERIFIED: inventoryTransactions مرتبط بالفاتورة بدقة، tenant مطابق، المنتج والكمية متطابقان، والتكلفة مسجلة.',
-      'RECONSTRUCTABLE: حركة canonical موثوقة الملكية ومطابقة للمنتج والكمية لكن التكلفة المباشرة غير موجودة.',
+      'RECONSTRUCTABLE لا يُمنح لمجرد تطابق الكمية؛ يلزم دليل مستقل يسمح بإعادة بناء تكلفة FIFO تاريخياً، وهذا الإصدار لا يفترض وجوده.',
       'UNVERIFIABLE: توجد قرائن مع نقص في الملكية أو الربط أو مطابقة الكميات أو مصدر التكلفة.',
       'NO_EVIDENCE: لا توجد سجلات محلية مرتبطة ضمن المخازن الموجودة فعلياً.',
       'قراءة IndexedDB أصلية بوضع readonly؛ لا كتابة أو ترقية Schema أو اتصال شبكة.'
