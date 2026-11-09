@@ -1243,18 +1243,21 @@ function LocalSyncQueueForensicsPanel() {
                 <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold">{finding.status} · {finding.classification}</span>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                <div>Queue: <b>{finding.queueCount ? 'موجود' : 'غير موجود'}</b></div>
-                <div>Outbox: <b>{finding.outboxCount ? 'موجود' : 'غير موجود'}</b></div>
-                <div>Failed Mutation: <b>{finding.failedCount ? 'موجود' : 'غير موجود'}</b></div>
-                <div>تطابق Mutation: <b>{finding.queueOutboxSameMutation}</b></div>
-                <div>الملكية: <b>{finding.ownership}</b></div>\n                <div>سجلات مستبعدة لعدم تطابق الملكية: <b>{finding.rejectedOwnerCount}</b></div>
+                <div>syncQueue: <b>{finding.syncQueueCount}</b></div>
+                <div>sync_queue: <b>{finding.legacySyncQueueCount}</b></div>
+                <div>Outbox: <b>{finding.outboxCount}</b></div>
+                <div>EventStore: <b>{finding.eventStoreCount}</b></div>
+                <div>Failed Mutation: <b>{finding.failedMutationCount}</b></div>
+                <div>تطابق Mutation: <b>{finding.queueOutboxMutationMatch}</b></div>
+                <div>الملكية: <b>{finding.ownership}</b></div>
+                <div>سجلات Tenant المستبعدة: <b>{finding.rejectedTenantMismatchCount}</b></div>
               </div>
               {finding.records.map((record,i) => (
                 <div key={i} className="mt-3 rounded-lg bg-slate-50 p-3 text-xs leading-6">
                   <div className="font-black">{record.store} · {record.status}</div>
                   <div>entityType: {record.entityType} | operationType: {record.operationType} | type: {record.type} | operation: {record.operation}</div>
                   <div>Payload: {record.payloadShape} | الحقول المطلوبة: invoiceNumber {record.requiredFields.invoiceNumber?'✓':'✗'} · type {record.requiredFields.type?'✓':'✗'} · totalAmount {record.requiredFields.totalAmount?'✓':'✗'} · items {record.requiredFields.items?'✓':'✗'}</div>
-                  <div>Mutation fingerprint: {record.mutationFingerprint} | Idempotency fingerprint: {record.idempotencyFingerprint} | Owner: {record.ownerCheck}</div>
+                  <div>Mutation ID: {record.mutationIdPresent ? 'موجود' : 'غير متوفر'} | Idempotency Key: {record.idempotencyKeyPresent ? 'موجود' : 'غير متوفر'} | Owner: {record.ownerCheck}</div>
                   <div>تصنيفات الخطأ: {record.errorCategories.join('، ') || 'لا يوجد خطأ محفوظ قابل للتصنيف'}</div>
                 </div>
               ))}
