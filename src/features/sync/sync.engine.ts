@@ -364,6 +364,7 @@ export class DistributedSyncEngine {
       branchId,
       deviceId: DeviceManager.getDeviceIdentity().deviceId,
       type,
+      operation: type,
       payload: sanitizedPayload,
       status: 'PENDING',
       retries: 0,
@@ -513,35 +514,37 @@ export class DistributedSyncEngine {
 
     const currentTx = (Dexie as any).currentTransaction;
     const outboxTable = (this.db as any).outbox;
-    const canWriteOutbox = Boolean(
-      outboxTable &&
-      outboxTable.schema &&
-      (!currentTx || (
-        currentTx.tables &&
-        (currentTx.tables['outbox'] ||
-          (Array.isArray(currentTx.tables) && currentTx.tables.some((table: any) => table.name === 'outbox')))
-      ))
-    );
+    const transactionTableNames = currentTx?.tables
+      ? (Array.isArray(currentTx.tables)
+          ? currentTx.tables.map((table: any) => table.name)
+          : Object.keys(currentTx.tables))
+      : [];
+    if (
+      !currentTx ||
+      !transactionTableNames.includes('syncQueue') ||
+      !transactionTableNames.includes('outbox') ||
+      !outboxTable?.schema
+    ) {
+      throw new Error('SYNC_TRANSACTION_SCOPE_MISSING: enqueueWithinTransaction requires an active Dexie transaction containing syncQueue and outbox.');
+    }
 
     const existingQueue = await this.db.syncQueue
       .where('idempotencyKey')
       .equals(idempotencyKey)
       .first();
-    const existingOutbox = canWriteOutbox
-      ? await outboxTable.where('idempotencyKey').equals(idempotencyKey).first()
-      : undefined;
+    const existingOutbox = await outboxTable.where('idempotencyKey').equals(idempotencyKey).first();
     const existingResult = this.resolveExistingIdempotency(
       existingQueue,
       existingOutbox,
       tenantId,
       session.userId!,
       idempotencyKey,
-      canWriteOutbox
+      true
     );
     if (existingResult) return existingResult;
 
     const addedId = await this.db.syncQueue.add(queueItem);
-    if (canWriteOutbox) await outboxTable.add(outboxEvent);
+    await outboxTable.add(outboxEvent);
 
     return { mutationId, idempotencyKey, queueItemId: addedId };
   }
@@ -900,7 +903,7 @@ export class DistributedSyncEngine {
             mutations: [{
               id: event.mutationId || String(event.id),
               entity: event.entityType || event.type || 'MUTATION',
-              operation: event.operation || 'CREATE',
+              operation: event.operation || event.type || 'CREATE',
               payload: event.payload || {},
               idempotencyKey: event.idempotencyKey || event.mutationId || String(event.id),
               timestamp: event.createdAt || Date.now()
