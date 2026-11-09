@@ -63,6 +63,13 @@ function acceptRefreshedSyncToken(snapshot: SyncSessionSnapshot): void {
   snapshot.token = current.token;
 }
 
+function createMutationId(): string {
+  if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+    throw new Error('SYNC_CRYPTO_UNAVAILABLE: Secure mutation ID generation is required.');
+  }
+  return crypto.randomUUID();
+}
+
 export class DistributedSyncEngine {
   private static instance: DistributedSyncEngine | null = null;
 
@@ -308,9 +315,9 @@ export class DistributedSyncEngine {
     payload: Record<string, unknown>, 
     entityType: string = 'generic', 
     customIdempotencyKey?: string,
-    options?: { tenantId?: string; branchId?: string }
+    options?: { tenantId?: string; branchId?: string; requireOutbox?: boolean }
   ): Promise<{ mutationId: string; idempotencyKey: string; queueItemId?: number }> {
-    const mutationId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+    const mutationId = createMutationId();
     const timestamp = new Date().toISOString();
     const session = readSyncSessionSnapshot();
     if (!session) {
@@ -376,6 +383,9 @@ export class DistributedSyncEngine {
 
     const outboxTable = (this.db as any).outbox;
     const hasOutbox = Boolean(outboxTable && outboxTable.schema);
+    if (options?.requireOutbox && !hasOutbox) {
+      throw new Error('SYNC_OUTBOX_REQUIRED: This operation requires a durable outbox table.');
+    }
     const txTables = [this.db.syncQueue];
     if (hasOutbox) txTables.push(outboxTable);
 
