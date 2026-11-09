@@ -527,7 +527,9 @@ export class DistributedSyncEngine {
     const outboxTable = (this.db as any).outbox;
     const transactionHasTable = (tableName: string): boolean => Boolean(
       currentTx?.tables?.[tableName] ||
-      (Array.isArray(currentTx?.tables) && currentTx.tables.some((table: any) => table?.name === tableName))
+      (currentTx?.tables instanceof Map && currentTx.tables.has(tableName)) ||
+      (Array.isArray(currentTx?.tables) && currentTx.tables.some((table: any) => table === tableName || table?.name === tableName)) ||
+      (Array.isArray(currentTx?.storeNames) && currentTx.storeNames.includes(tableName))
     );
     if (
       !currentTx ||
@@ -535,7 +537,16 @@ export class DistributedSyncEngine {
       !transactionHasTable('outbox') ||
       !outboxTable?.schema
     ) {
-      throw new Error('SYNC_TRANSACTION_SCOPE_MISSING: enqueueWithinTransaction requires an active Dexie transaction containing syncQueue and outbox.');
+      const diagnostic = {
+        hasTransaction: Boolean(currentTx),
+        tablesType: typeof currentTx?.tables,
+        tablesIsArray: Array.isArray(currentTx?.tables),
+        tableKeys: currentTx?.tables ? Object.keys(currentTx.tables) : [],
+        tableNames: Array.isArray(currentTx?.tables) ? currentTx.tables.map((table: any) => table?.name ?? table) : [],
+        storeNames: currentTx?.storeNames || []
+      };
+      console.warn('[DistributedSyncEngine] Transaction scope diagnostic:', diagnostic);
+      throw new Error(`SYNC_TRANSACTION_SCOPE_MISSING: enqueueWithinTransaction requires an active Dexie transaction containing syncQueue and outbox. ${JSON.stringify(diagnostic)}`);
     }
 
     const existingQueue = await this.db.syncQueue
