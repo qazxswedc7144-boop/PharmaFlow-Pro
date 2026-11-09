@@ -38,7 +38,7 @@ const refsOf = (r: Row): string[] => [...new Set([
   pick(r, ['source_doc_id', 'sourceDocId', 'SourceDocumentID', 'source_document_id', 'sourceDocumentId']),
   pick(r, ['invoice_id', 'invoiceId', 'sale_id', 'saleId']),
   pick(r, ['reference_id', 'referenceId', 'Reference_ID', 'referenceID', 'source_id', 'sourceId']),
-  pick(r, ['document_id', 'documentId', 'parent_id', 'parentId'])
+  pick(r, ['document_id', 'documentId', 'parent_id', 'parentId', 'sourceInvoiceId', 'source_invoice_id'])
 ].map(text).filter(Boolean))];
 const rowId = (r: Row): string => text(pick(r, ['id', 'entryId', 'entry_id', 'batchId', 'batch_id']));
 const statusOf = (r: Row): string => text(pick(r, ['document_status', 'documentStatus', 'InvoiceStatus', 'invoiceStatus', 'status'])).toUpperCase();
@@ -126,7 +126,7 @@ async function buildAudit(): Promise<Summary> {
   };
 
   const movementStores = ['inventoryTransactions', 'stock_movements', 'inventory_logs', 'inventory'];
-  movementStores.forEach(name => { if (stores[name]) linkStore(name, stores[name]); });
+  if (stores.invoiceItems) linkStore('invoiceItems', stores.invoiceItems);\n  if (stores.medicineBatches) linkStore('medicineBatches', stores.medicineBatches);\n  movementStores.forEach(name => { if (stores[name]) linkStore(name, stores[name]); });
   ['journalEntries', 'financialTransactions', 'syncQueue', 'sync_queue', 'outbox', 'eventStore',
     'purchases', 'inventory_layers', 'fifo_consumption_log'].forEach(name => {
       if (stores[name]) linkStore(name, stores[name]);
