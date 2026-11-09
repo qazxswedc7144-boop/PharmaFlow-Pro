@@ -19,7 +19,7 @@ export function toSaleSyncDTO(result: unknown): InvoiceDTO {
     throw new Error('SALE_SYNC_DTO_UNSUPPORTED_RETURN: Return documents must use the dedicated return sync command.');
   }
 
-  const invoiceNumber = sale.invoiceNumber ?? sale.invoice_number ?? sale.invoiceId;
+  const invoiceNumber = sale.invoiceNumber ?? sale.SaleID ?? sale.invoice_number ?? sale.invoiceId;
   const rawItems = Array.isArray(sale.items) ? sale.items : [];
   const items = rawItems.map((item: Record<string, any>) => {
     const productId = item.productId ?? item.product_id;
@@ -34,12 +34,12 @@ export function toSaleSyncDTO(result: unknown): InvoiceDTO {
     };
   });
 
-  const rawPartnerId = sale.partnerId ?? sale.partner_id;
+  const rawPartnerId = sale.partnerId ?? sale.partner_id ?? sale.customerId ?? sale.customer_id;
   const partnerId = !rawPartnerId || rawPartnerId === 'CUST-GEN' || rawPartnerId === 'عميل نقدي'
     ? null
     : rawPartnerId;
 
-  const rawPaymentStatus = String(sale.paymentStatus ?? sale.payment_status ?? '').toUpperCase();
+  const rawPaymentStatus = String(sale.paymentStatus ?? sale.payment_status ?? sale.financialStatus ?? '').toUpperCase();
   const paymentStatus =
     ['CASH', 'PAID'].includes(rawPaymentStatus) ? 'PAID' :
     ['CREDIT', 'UNPAID'].includes(rawPaymentStatus) ? 'UNPAID' :
@@ -53,7 +53,7 @@ export function toSaleSyncDTO(result: unknown): InvoiceDTO {
       ? { partnerId }
       : {}),
     partnerType: 'CUSTOMER' as const,
-    totalAmount: Number(sale.totalAmount ?? sale.finalTotal ?? sale.total),
+    totalAmount: Number(sale.totalAmount ?? sale.grandTotal ?? sale.finalTotal ?? sale.total),
     paymentStatus,
     items,
   };
