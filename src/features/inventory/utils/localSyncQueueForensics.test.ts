@@ -69,7 +69,7 @@ describe('Local Sync Queue Forensics — hardened read-only', () => {
       eventStore: [{ tenantId: 'tenant-A', userId: 'invoice-creator', branchId: 'invoice-branch', payload: { id: 'private-invoice-id' }, mutationId: 'private-mutation' }]
     });
     const result = await buildLocalSyncForensics(database, session);
-    const finding = result.findings[0];
+    const finding = result.findings[0]!;
     expect(finding.syncQueueCount).toBe(0);
     expect(finding.legacySyncQueueCount).toBe(0);
     expect(finding.eventStoreCount).toBe(1);
@@ -96,8 +96,8 @@ describe('Local Sync Queue Forensics — hardened read-only', () => {
       sync_queue: [], outbox: [], eventStore: [], failedMutations: []
     });
     const result = await buildLocalSyncForensics(database, session);
-    expect(result.findings[0].syncQueueCount).toBe(0);
-    expect(result.findings[0].rejectedTenantMismatchCount).toBe(1);
+    expect(result.findings[0]!.syncQueueCount).toBe(0);
+    expect(result.findings[0]!.rejectedTenantMismatchCount).toBe(1);
     expect(result.summary.tenantMismatchRecordsExcluded).toBe(1);
   });
 
