@@ -116,17 +116,55 @@ async function buildFifoAudit(): Promise<AuditSummary> {
     'r',
     ...requiredStores,
     async (transaction: any) => {
-      const [invoices, sales, invoiceItems, allLayers, allLogs] = await Promise.all([
+      const [invoices, sales] = await Promise.all([
         transaction.table('invoices').toArray(),
-        transaction.table('sales').toArray(),
-        transaction.table('invoiceItems').toArray(),
-        transaction.table('inventory_layers')
-          .filter((row: AnyRecord) => !tenantOf(row) || tenantOf(row) === activeTenantId)
-          .toArray(),
-        transaction.table('fifo_consumption_log')
-          .filter((row: AnyRecord) => !tenantOf(row) || tenantOf(row) === activeTenantId)
-          .toArray()
+        transaction.table('sales').toArray()
       ]);
+
+      // Build only the current tenant's sale-invoice reference set before
+      // touching stores that do not have tenant indexes.
+      const activeInvoiceReferences = new Set<string>();
+      for (const [row, source] of [
+        ...invoices.map((value: AnyRecord) => [value, 'invoices'] as const),
+        ...sales.map((value: AnyRecord) => [value, 'sales'] as const)
+      ]) {
+        if (isReturnRecord(row)) continue;
+        const type = typeOf(row);
+        if (type && type !== 'SALE') continue;
+        if (!type && source === 'invoices') continue;
+        const invoiceId = invoiceIdOf(row);
+        if (!invoiceId) continue;
+        invoiceAliasesOf(row, invoiceId).forEach(alias => activeInvoiceReferences.add(alias));
+      }
+
+      const invoiceItems = await transaction.table('invoiceItems')
+        .filter((item: AnyRecord) => [
+          asText(item?.parent_id),
+          asText(item?.parentId),
+          asText(item?.invoice_id),
+          asText(item?.invoiceId)
+        ].some(reference => reference && activeInvoiceReferences.has(reference)))
+        .toArray();
+
+      const allLogs = await transaction.table('fifo_consumption_log')
+        .filter((log: AnyRecord) => {
+          const logTenant = tenantOf(log);
+          if (logTenant) return logTenant === activeTenantId;
+          return logReferencesOf(log).some(reference => activeInvoiceReferences.has(reference));
+        })
+        .toArray();
+
+      const referencedLayerIds = new Set<string>(
+        allLogs.map((log: AnyRecord) => asText(pick(log, ['layer_id', 'layerId']))).filter(Boolean)
+      );
+
+      const allLayers = await transaction.table('inventory_layers')
+        .filter((layer: AnyRecord) => {
+          const layerTenant = tenantOf(layer);
+          if (layerTenant) return layerTenant === activeTenantId;
+          return referencedLayerIds.has(asText(layer?.id));
+        })
+        .toArray();
 
       return { invoices, sales, invoiceItems, allLayers, allLogs };
     }
@@ -299,7 +337,7 @@ async function buildFifoAudit(): Promise<AuditSummary> {
 
   const duplicateLogIds = new Set<string>();
   const seenLogIds = new Set<string>();
-  includedLogs.forEach(log => {
+  (snapshot.allLogs as AnyRecord[]).forEach(log => {
     const id = asText(log?.id);
     if (!id) return;
     if (seenLogIds.has(id)) duplicateLogIds.add(id);
@@ -419,7 +457,8 @@ async function buildFifoAudit(): Promise<AuditSummary> {
       }
 
       const layerProduct = productOf(layer);
-      if (productId && layerProduct && productId !== layerProduct) {
+      if (!layerProduct) reasons.add('layer_product_missing');
+      else if (productId && productId !== layerProduct) {
         reasons.add('log_layer_product_mismatch');
       }
 
@@ -490,7 +529,7 @@ async function buildFifoAudit(): Promise<AuditSummary> {
     },
     counts: {
       inventory_layers: tenantLayers.length,
-      fifo_consumption_log: includedLogs.filter(log => tenantOf(log) === activeTenantId).length,
+      fifo_consumption_log: (snapshot.allLogs as AnyRecord[]).filter(log => tenantOf(log) === activeTenantId).length,
       tenantlessLogsLinkedToTenantInvoices: tenantlessLinkedLogs.size,
       tenantlessLayersLinkedToTenantLogs: linkedTenantlessLayerIds.size,
       saleInvoicesFound: invoices.length,
