@@ -122,6 +122,9 @@ describe('Local Sync Queue Forensics — hardened read-only', () => {
       syncQueue: [{
         tenantId: 'tenant-A', userId: 'invoice-creator', branchId: 'invoice-branch',
         mutationId: 'RAW-MUTATION-987654', idempotencyKey: 'RAW-IDEMPOTENCY-123456',
+        entityType: 'PRIVATE ENTITY 123', operationType: 'PRIVATE OPERATION TYPE',
+        type: 'PRIVATE RECORD TYPE 456', operation: 'PRIVATE OPERATION 789',
+        status: 'PRIVATE STATUS 987',
         payload: { id: 'private-invoice-id', sale: { customerName: 'PRIVATE CUSTOMER', totalAmount: 918273 } },
         lastError: 'InvoiceSchema invalid totalAmount'
       }],
@@ -129,9 +132,18 @@ describe('Local Sync Queue Forensics — hardened read-only', () => {
     });
     const result = await buildLocalSyncForensics(database, session);
     const json = JSON.stringify(result);
-    for (const forbidden of ['RAW-MUTATION-987654','RAW-IDEMPOTENCY-123456','private-invoice-id','PRIVATE CUSTOMER','918273']) {
+    for (const forbidden of [
+      'RAW-MUTATION-987654','RAW-IDEMPOTENCY-123456','private-invoice-id',
+      'PRIVATE CUSTOMER','918273','PRIVATE ENTITY 123','PRIVATE OPERATION TYPE',
+      'PRIVATE RECORD TYPE 456','PRIVATE OPERATION 789','PRIVATE STATUS 987'
+    ]) {
       expect(json).not.toContain(forbidden);
     }
+    expect(json).toContain('"entityType":"UNKNOWN"');
+    expect(json).toContain('"operationType":"UNKNOWN"');
+    expect(json).toContain('"type":"UNKNOWN"');
+    expect(json).toContain('"operation":"UNKNOWN"');
+    expect(json).toContain('"status":"UNKNOWN"');
     expect(json).toContain('PAYLOAD_VALIDATION');
   });
 
