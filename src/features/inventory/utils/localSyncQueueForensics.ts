@@ -2,7 +2,7 @@ export type ForensicSession = { tenantId: string; userId?: string; branchId?: st
 type Row = Record<string, any>;
 export type InvoiceSyncFinding = {
   source: 'invoices' | 'sales'; status: string; queueCount: number; outboxCount: number; failedCount: number;
-  classification: string; ownership: string; queueOutboxSameMutation: 'YES' | 'NO' | 'UNKNOWN';
+  classification: string; ownership: string; rejectedOwnerCount: number; queueOutboxSameMutation: 'YES' | 'NO' | 'UNKNOWN';
   records: Array<{ store: string; entityType: string; operationType: string; type: string; operation: string;
     status: string; mutationFingerprint: string; idempotencyFingerprint: string; payloadShape: string;
     requiredFields: { invoiceNumber: boolean; type: boolean; totalAmount: boolean; items: boolean };
@@ -107,7 +107,7 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
     if (!aliasOwners.has(alias)) aliasOwners.set(alias,new Set()); aliasOwners.get(alias)!.add(id);
   }
   const sourceRows = ['syncQueue','sync_queue','outbox','eventStore','failedMutations'];
-  const all: Record<string,Array<{row:Row;store:string;invoiceId:string}>> = {};
+  const all: Record<string,Array<{row:Row;store:string;invoiceId:string}>> = {};\n  const rejectedOwnerCounts = new Map<string,number>();
   for (const store of sourceRows) {
     all[store]=[];
     for (const row of snapshots[store] || []) {
@@ -115,7 +115,7 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
       for (const ref of refs) { const ids=aliasOwners.get(ref); if (ids?.size===1) ids.forEach(id=>matches.add(id)); }
       if (matches.size!==1) continue;
       const id=[...matches][0], inv=activeInvoices.get(id)?.row; if (!inv) continue;
-      if (classifyOwner(row,inv,session)==='MISMATCH') continue;
+      if (classifyOwner(row,inv,session)==='MISMATCH') { rejectedOwnerCounts.set(id,(rejectedOwnerCounts.get(id)||0)+1); continue; }
       all[store].push({row,store,invoiceId:id});
     }
   }
@@ -135,15 +135,15 @@ export async function buildLocalSyncForensics(database: any, session: ForensicSe
       ? ([...qMutations].some(m=>oMutations.has(m))?'YES':'NO') : 'UNKNOWN';
     const hasQueue=q.length+legacy.length+ev.length>0, hasOutbox=o.length>0;
     const classification = hasQueue && hasOutbox ? 'QUEUE_AND_OUTBOX' : hasQueue ? 'QUEUE_ONLY' : hasOutbox ? 'OUTBOX_ONLY' : failed.length ? 'FAILED_MUTATION_ONLY' : 'NO_LINKED_SYNC_EVIDENCE';
-    const ownership=normalized.every(r=>r.ownerCheck==='VERIFIED')?'VERIFIED':normalized.some(r=>r.ownerCheck==='MISMATCH')?'MISMATCH':'PARTIAL_OR_MISSING';
-    findings.push({source:item.source,status:status(item.row),queueCount:q.length+legacy.length+ev.length,outboxCount:o.length,failedCount:failed.length,classification,ownership,queueOutboxSameMutation,records:normalized});
+    const rejectedOwnerCount=rejectedOwnerCounts.get(id)||0;\n    const ownership=rejectedOwnerCount>0?'MISMATCH_RECORDS_EXCLUDED':normalized.length>0&&normalized.every(r=>r.ownerCheck==='VERIFIED')?'VERIFIED':'PARTIAL_OR_MISSING';
+    findings.push({source:item.source,status:status(item.row),queueCount:q.length+legacy.length+ev.length,outboxCount:o.length,failedCount:failed.length,classification,ownership,rejectedOwnerCount,queueOutboxSameMutation,records:normalized});
   }
-  const summary: Record<string,number>={postedLockedInvoices:findings.length,withQueue:0,withOutbox:0,withFailedMutation:0,noLinkedSyncEvidence:0,mutationMismatch:0,payloadNestedSale:0,flatPayload:0,missingRequiredFields:0};
+  const summary: Record<string,number>={postedLockedInvoices:findings.length,withQueue:0,withOutbox:0,withFailedMutation:0,noLinkedSyncEvidence:0,mutationMismatch:0,payloadNestedSale:0,flatPayload:0,missingRequiredFields:0,mismatchedOwnershipRecords:0};
   for (const f of findings) {
     if (f.queueCount) summary.withQueue++;
     if (f.outboxCount) summary.withOutbox++;
     if (f.failedCount) summary.withFailedMutation++;
-    if (f.classification==='NO_LINKED_SYNC_EVIDENCE') summary.noLinkedSyncEvidence++;
+    if (f.classification==='NO_LINKED_SYNC_EVIDENCE') summary.noLinkedSyncEvidence++;\n    summary.mismatchedOwnershipRecords+=f.rejectedOwnerCount;
     if (f.queueOutboxSameMutation==='NO') summary.mutationMismatch++;
     for (const r of f.records) {
       if (r.payloadShape==='SALE_NESTED') summary.payloadNestedSale++;
