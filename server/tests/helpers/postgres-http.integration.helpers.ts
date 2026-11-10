@@ -67,13 +67,14 @@ function createContext(): PostgresHttpContext {
 export async function request(
   ctx: PostgresHttpContext,
   path: string,
-  options: { method?: string; token?: string; body?: unknown } = {}
+  options: { method?: string; token?: string; body?: unknown; branchId?: string } = {}
 ): Promise<{ status: number; body: any }> {
   const response = await fetch(`${ctx.baseUrl}${path}`, {
     method: options.method || "GET",
     headers: {
       ...(options.body === undefined ? {} : { "content-type": "application/json" }),
       ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
+      ...(options.branchId ? { 'x-branch-id': options.branchId } : {}),
     },
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   });
@@ -213,7 +214,9 @@ async function initialize(
   // Vitest invocation runs in its own Node process, so this also bounds the
   // module graph and memory retained by the worker.
   const { authV1Router } = await import("../../../apps/api/src/modules/auth/auth.routes.js");
+  const { authRouter } = await import("../../routes/auth.routes.js");
   app.use("/api/v1/auth", authV1Router);
+  app.use("/api/auth", authRouter);
   app.use("/api", authenticateToken);
   app.use("/api", tenantContextMiddleware);
   app.use("/api", subscriptionGuard);
