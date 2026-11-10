@@ -188,7 +188,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
     const user = authService.getCurrentUser?.() || useAuthStore.getState().user;
     const authState = useAuthStore.getState();
     const tenantId = tenantIdParam || (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
-    const branchId = branchIdParam || (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
+    const branchId = branchIdParam || authState.branchId || (user as any)?.branchId || (user as any)?.branch_id || null;
 
     if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'main') {
       throw new Error("FAIL_CLOSED: لا يمكن حجز مفتاح Idempotency بدون سياق مؤسسة موثوق (Trusted Tenant Context Required).");
