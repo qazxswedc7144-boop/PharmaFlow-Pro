@@ -519,7 +519,7 @@ if (mode === 'sale') {
     setIsConfirmedNewProduct(true);
     setIsSubmitting(true);
     try {
-      const newProdId = await createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+      const newProdId = await createAndSaveNewProduct(manualItemName, tempPrice, categoryName);
       onAdd({ 
         id: initialData?.id || Date.now().toString(), 
         productId: newProdId, 
