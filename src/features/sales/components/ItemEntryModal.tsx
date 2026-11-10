@@ -92,6 +92,30 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const requestIdRef = useRef<number>(0); // منع تسابق طلبات بيانات الصنف
   const manualPriceEditedRef = useRef<boolean>(false); // حماية السعر الذي أدخله المستخدم من التحميلات المتأخرة
 
+  // Mobile IMEs do not always expose Enter consistently through event.key alone.
+  // Defer focus until React has committed dropdown/state updates.
+  const focusNextField = (
+    event: React.KeyboardEvent<HTMLInputElement>,
+    getNextField: () => HTMLElement | null,
+    onEnter?: () => void
+  ) => {
+    const nativeEvent = event.nativeEvent;
+    const isEnter = event.key === 'Enter' || nativeEvent.keyCode === 13 || nativeEvent.which === 13;
+
+    if (!isEnter || nativeEvent.isComposing || nativeEvent.keyCode === 229) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    onEnter?.();
+
+    requestAnimationFrame(() => {
+      const nextField = getNextField();
+      if (!nextField || !nextField.isConnected) return;
+      nextField.focus({ preventScroll: true });
+      nextField.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  };
+
   const createAndSaveNewProduct = useCallback((name: string, price: string | number, qty: string | number, cat: string): string => {
     const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
     const newProd = {
@@ -498,13 +522,11 @@ if (mode === 'sale') {
                 className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-[14px] font-semibold text-[#1E4D4D] outline-none focus:bg-white text-right"
                 placeholder="ابحث عن صنف أو اكتب اسماً..." 
                 enterKeyHint="next"
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    setShowSearchDropdown(false);
-                    qtyInputRef.current?.focus();
-                  }
-                }}
+                onKeyDown={e => focusNextField(
+                  e,
+                  () => qtyInputRef.current,
+                  () => setShowSearchDropdown(false)
+                )}
               />
               <AnimatePresence>
                 {showSearchDropdown && filteredProducts.length > 0 && (
@@ -569,12 +591,7 @@ if (mode === 'sale') {
                   type="number" 
                   value={tempQty} 
                   onChange={e => setTempQty(e.target.value)} 
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      priceInputRef.current?.focus();
-                    }
-                  }}
+                  onKeyDown={e => focusNextField(e, () => priceInputRef.current)}
                   inputMode="decimal"
                   enterKeyHint="next"
                   className={`w-full box-border h-10 bg-slate-50 border rounded-xl px-2 text-center text-[14px] font-semibold text-[#1E4D4D] outline-none ${
@@ -630,12 +647,7 @@ if (mode === 'sale') {
                     manualPriceEditedRef.current = true;
                     setTempPrice(e.target.value);
                   }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      noteInputRef.current?.focus();
-                    }
-                  }}
+                  onKeyDown={e => focusNextField(e, () => noteInputRef.current)}
                   inputMode="decimal"
                   enterKeyHint="next"
                   className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-2 text-center text-[14px] font-semibold text-[#1E4D4D] outline-none focus:bg-white"
@@ -680,12 +692,10 @@ if (mode === 'sale') {
                 ref={noteInputRef} 
                 value={tempNote} 
                 onChange={e => setTempNote(e.target.value)} 
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    void handleFinalize();
-                  }
-                }}
+                onKeyDown={e => focusNextField(
+                  e,
+                  () => document.getElementById('item-entry-modal-save') as HTMLButtonElement | null
+                )}
                 enterKeyHint="done"
                 className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-[13px] font-semibold text-[#1E4D4D] outline-none focus:bg-white text-right" 
                 placeholder="أضف ملاحظة هنا (اختياري)..." 
@@ -695,7 +705,7 @@ if (mode === 'sale') {
 
           {/* الأزرار الأساسية */}
           <div className="flex gap-2 px-3.5 pt-2 pb-3 border-t border-slate-100 flex-nowrap w-full box-border bg-white flex-shrink-0 m-0">
-            <Button className="flex-[2] !h-10 !rounded-xl !text-[14px] font-bold" variant="primary" disabled={isSubmitting} onClick={handleFinalize}>
+            <Button id="item-entry-modal-save" type="button" className="flex-[2] !h-10 !rounded-xl !text-[14px] font-bold" variant="primary" disabled={isSubmitting} onClick={handleFinalize}>
               {isSubmitting ? (
                 <div className="flex items-center justify-center gap-2">
                   <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
