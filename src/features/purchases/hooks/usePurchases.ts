@@ -353,30 +353,45 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         return;
       }
 
-      let failedInvoiceIsolated = false;
+      let failedInvoiceQuarantined = false;
+      let activeDraftCleanupComplete = false;
 
-      // Keep a recoverable forensic snapshot separate from the active draft.
-      // Reset the form only after both quarantine and active-draft cleanup succeed.
+      // Persist and verify the forensic copy first. Cleanup is a separate stage:
+      // a cleanup failure must not be misreported as a quarantine-write failure.
+      const failedDraft = buildFailedPurchaseDraft({
+        operationId: failureOperationId,
+        header: currentHeader as any,
+        items: currentItems,
+        adjData: currentAdjData,
+        errorCode
+      });
+      (failedDraft as any).pendingProducts = JSON.parse(JSON.stringify(pendingProductsRef.current));
+      (failedDraft as any).tenantId = authService.getCurrentUser()?.tenantId || (authService.getCurrentUser() as any)?.tenant_id;
+      (failedDraft as any).branchId = authService.getCurrentUser()?.branchId || (authService.getCurrentUser() as any)?.branch_id;
+
       try {
-        const failedDraft = buildFailedPurchaseDraft({
-          operationId: failureOperationId,
-          header: currentHeader as any,
-          items: currentItems,
-          adjData: currentAdjData,
-          errorCode
-        });
-        (failedDraft as any).pendingProducts = JSON.parse(JSON.stringify(pendingProductsRef.current));
-        (failedDraft as any).tenantId = authService.getCurrentUser()?.tenantId || (authService.getCurrentUser() as any)?.tenant_id;
-        (failedDraft as any).branchId = authService.getCurrentUser()?.branchId || (authService.getCurrentUser() as any)?.branch_id;
-
         await DraftService.quarantineInvoiceDraft(failedDraft);
-        await db.draft_invoices.delete('purchases_draft_current');
-        await db.drafts.delete('purchases');
-        await configurationService.set(DRAFT_KEY, null);
-        failedInvoiceIsolated = true;
+        const verifiedQuarantine = await DraftService.getInvoiceDraft(failedDraft.draftId);
+        if (!verifiedQuarantine || verifiedQuarantine.status !== 'FAILED_QUARANTINED') {
+          throw new Error('FAILED_PURCHASE_QUARANTINE_VERIFY_FAILED');
+        }
+        failedInvoiceQuarantined = true;
       } catch (quarantineError) {
-        console.error('[usePurchases] Failed to isolate failed invoice; keeping the current form intact for safe retry:', quarantineError);
+        console.error('[usePurchases] Failed purchase quarantine write/verification failed:', quarantineError);
       }
+
+      if (failedInvoiceQuarantined) {
+        try {
+          await db.draft_invoices.delete('purchases_draft_current');
+          await db.drafts.delete('purchases');
+          await configurationService.set(DRAFT_KEY, null);
+          activeDraftCleanupComplete = true;
+        } catch (cleanupError) {
+          console.error('[usePurchases] Quarantine was saved, but active draft cleanup failed:', cleanupError);
+        }
+      }
+
+      const failedInvoiceIsolated = failedInvoiceQuarantined && activeDraftCleanupComplete;
 
       if (failedInvoiceIsolated) {
         currentOperationRef.current = null;
@@ -394,7 +409,9 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       showNotification(
         failedInvoiceIsolated
           ? '❌ تعذر حفظ فاتورة المشتريات. تم عزل بيانات المحاولة الفاشلة.'
-          : '❌ تعذر حفظ الفاتورة ولم يكتمل عزل مسودتها؛ بقيت البيانات الحالية محفوظة للمحاولة الآمنة.',
+          : failedInvoiceQuarantined
+            ? 'تعذر حفظ الفاتورة. تم حفظ نسخة العزل، لكن تعذر تنظيف المسودة النشطة؛ بقيت البيانات الحالية محفوظة للمراجعة الآمنة.'
+            : 'تعذر حفظ الفاتورة وفشل حفظ نسخة العزل؛ بقيت البيانات الحالية محفوظة للمحاولة الآمنة.',
         'error'
       );
       addToast(normalized.arabicMessage, 'error');

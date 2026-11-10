@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
+import { useAuthStore } from '@/store/authStore';
 import { unifiedTransport } from '@/shared/network/transport/unifiedTransport';
 import { ensureActiveBranchRegistered, validateActiveBranchRecord } from './activeBranchRegistry';
 
@@ -73,6 +74,30 @@ describe('active branch registration', () => {
     expect(branch).toMatchObject({ id: 'branch-a', tenantId: 'tenant-a', isActive: true });
     expect(await db.branches.get('branch-a')).toMatchObject({ tenantId: 'tenant-a' });
     expect(unifiedTransport.get).toHaveBeenCalledWith('/api/auth/branch-context');
+  });
+
+  it('updates auth context and refreshes the token when the server safely corrects a stale branch', async () => {
+    const refreshSpy = vi.spyOn(TokenProvider, 'refreshAccessToken').mockResolvedValue('refreshed-access-token');
+    vi.spyOn(unifiedTransport, 'get').mockResolvedValue({
+      success: true,
+      data: {
+        id: 'branch-a',
+        code: 'BR-A',
+        name: 'Branch A',
+        tenantId: 'tenant-a',
+        isActive: true
+      },
+      contextCorrected: true
+    } as any);
+
+    const branch = await ensureActiveBranchRegistered({
+      tenantId: 'tenant-a',
+      branchId: 'deleted-stale-branch'
+    });
+
+    expect(branch).toMatchObject({ id: 'branch-a', tenantId: 'tenant-a' });
+    expect(useAuthStore.getState().branchId).toBe('branch-a');
+    expect(refreshSpy).toHaveBeenCalledOnce();
   });
 
   it('does not persist a server branch belonging to another tenant', async () => {
