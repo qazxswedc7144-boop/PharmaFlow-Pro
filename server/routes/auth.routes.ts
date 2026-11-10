@@ -591,17 +591,25 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
           where: { userId: user.id, tenantId, branchId: requestedBranchId }
         })
       : null;
-    const fallbackMembership = requestedMembership || await prisma.branchUser.findFirst({
-      where: { userId: user.id, tenantId, isDefault: true }
-    }) || await prisma.branchUser.findFirst({
-      where: { userId: user.id, tenantId }
-    });
-    const activeBranch = fallbackMembership
+    const requestedActiveBranch = requestedMembership
+      ? await prisma.branch.findFirst({
+          where: { id: requestedMembership.branchId, tenantId, isActive: true },
+          select: { id: true }
+        })
+      : null;
+    const fallbackMembership = requestedActiveBranch
+      ? requestedMembership
+      : await prisma.branchUser.findFirst({
+          where: { userId: user.id, tenantId, isDefault: true }
+        }) || await prisma.branchUser.findFirst({
+          where: { userId: user.id, tenantId }
+        });
+    const activeBranch = requestedActiveBranch || (fallbackMembership
       ? await prisma.branch.findFirst({
           where: { id: fallbackMembership.branchId, tenantId, isActive: true },
           select: { id: true }
         })
-      : null;
+      : null);
     const branchId = activeBranch?.id || null;
 
     if (!tenantId || !branchId) {
