@@ -88,6 +88,18 @@ export const DraftService = {
     }
   },
 
+  quarantineInvoiceDraft: async (draft: any): Promise<void> => {
+    try {
+      if (!draft?.id || draft.status !== 'FAILED_QUARANTINED' || draft.invoiceType !== 'PURCHASE') {
+        throw new Error('INVALID_FAILED_PURCHASE_DRAFT');
+      }
+      await db.draft_invoices.put(draft);
+    } catch (e) {
+      console.error('[DraftService] Failed to quarantine failed purchase invoice:', e);
+      throw e;
+    }
+  },
+
   getInvoiceDraft: async (draftId: string): Promise<any | undefined> => {
     try {
       return await db.draft_invoices.get(draftId);
@@ -99,7 +111,7 @@ export const DraftService = {
 
   getUnfinishedInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<any | undefined> => {
     try {
-      const drafts = await db.draft_invoices.where('invoiceType').equals(invoiceType).toArray();
+      const drafts = await db.draft_invoices.where('invoiceType').equals(invoiceType).filter((draft: any) => draft.status !== 'FAILED_QUARANTINED').toArray();
       if (drafts && drafts.length > 0) {
         // Return most recently updated
         return drafts.sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
@@ -121,7 +133,7 @@ export const DraftService = {
 
   hasInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<boolean> => {
     try {
-      const count = await db.draft_invoices.where('invoiceType').equals(invoiceType).count();
+      const count = await db.draft_invoices.where('invoiceType').equals(invoiceType).filter((draft: any) => draft.status !== 'FAILED_QUARANTINED').count();
       return count > 0;
     } catch (e) {
       return false;
