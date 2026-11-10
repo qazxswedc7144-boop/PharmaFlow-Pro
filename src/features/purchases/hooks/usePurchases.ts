@@ -449,6 +449,12 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         adjData: currentAdjData,
         errorCode
       });
+      const failedSupplier = suppliers.find((supplier: any) =>
+        supplier.id === currentHeader.supplier_id || supplier.Supplier_ID === currentHeader.supplier_id
+      );
+      (failedDraft as any).partner = {
+        partnerName: failedSupplier?.Supplier_Name || failedSupplier?.name || ''
+      };
       (failedDraft as any).pendingProducts = JSON.parse(JSON.stringify(pendingProductsRef.current));
       (failedDraft as any).tenantId = authService.getCurrentUser()?.tenantId || (authService.getCurrentUser() as any)?.tenant_id;
       (failedDraft as any).branchId = authService.getCurrentUser()?.branchId || (authService.getCurrentUser() as any)?.branch_id;
