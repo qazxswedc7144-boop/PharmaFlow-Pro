@@ -9,6 +9,7 @@ import { useAppStore } from '@/hooks/useAppStore';
 import { normalizeToISODate, getExpiryStatus, formatDateDisplay } from '@/utils/expiryUtils';
 import { priceIntelligenceService } from '@/features/inventory/services/priceIntelligenceService';
 import { useToast } from '@/hooks/useToast';
+import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './itemEntryModalLifecycle';
 
 interface ProductItem {
   id: string;
@@ -91,6 +92,9 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const categoryInputRef = useRef<HTMLSelectElement>(null);
   const requestIdRef = useRef<number>(0); // منع تسابق طلبات بيانات الصنف
   const manualPriceEditedRef = useRef<boolean>(false); // حماية السعر الذي أدخله المستخدم من التحميلات المتأخرة
+  const modalWasOpenRef = useRef(false);
+  const initializedSessionKeyRef = useRef<string | null>(null);
+  const hasUserEditedNameRef = useRef(false);
 
   // Mobile IMEs do not always expose Enter consistently through event.key alone.
   // Defer focus until React has committed dropdown/state updates.
@@ -251,27 +255,54 @@ if (mode === 'sale') {
     };
   }, []);
 
+  const initialDataSessionKey = getItemEntryModalSessionKey(initialData);
+  const loadProductIntelligenceRef = useRef(loadProductIntelligence);
+  loadProductIntelligenceRef.current = loadProductIntelligence;
+
   useEffect(() => {
-    if (isOpen) {
-      if (initialData) {
-        setManualItemName(initialData.name || '');
-        setTempQty(initialData.qty || '');
-        setTempPrice(initialData.price ?? '');
-        manualPriceEditedRef.current = initialData.price !== undefined && initialData.price !== null && initialData.price !== '';
-        setTempExpiry(normalizeToISODate(initialData.expiryDate));
-        setTempNote(initialData.note || '');
-        setCategoryName(initialData.category || '');
-        const pId = initialData.productId || (initialData.product as any)?.id || null;
-        setSelectedProductId(pId);
-        if (pId) {
-          loadProductIntelligence(pId, initialData.product || undefined);
-        }
-      } else {
-        resetForm();
-      }
-      setTimeout(() => itemNameInputRef.current?.focus(), 120);
+    if (!isOpen) {
+      modalWasOpenRef.current = false;
+      hasUserEditedNameRef.current = false;
+      setShowSearchDropdown(false);
+      return;
     }
-  }, [isOpen, initialData, loadProductIntelligence]);
+
+    const shouldInitialize = shouldInitializeItemEntryModal(
+      isOpen,
+      modalWasOpenRef.current,
+      initializedSessionKeyRef.current,
+      initialDataSessionKey
+    );
+    modalWasOpenRef.current = true;
+
+    // Parent renders may create a fresh initialData object with identical values.
+    // Do not reset fields or steal focus unless the modal session/item actually changed.
+    if (!shouldInitialize) return;
+
+    initializedSessionKeyRef.current = initialDataSessionKey;
+    hasUserEditedNameRef.current = false;
+    setShowSearchDropdown(false);
+
+    if (initialData) {
+      setManualItemName(initialData.name || '');
+      setTempQty(initialData.qty || '');
+      setTempPrice(initialData.price ?? '');
+      manualPriceEditedRef.current = initialData.price !== undefined && initialData.price !== null && initialData.price !== '';
+      setTempExpiry(normalizeToISODate(initialData.expiryDate));
+      setTempNote(initialData.note || '');
+      setCategoryName(initialData.category || '');
+      const pId = initialData.productId || (initialData.product as any)?.id || null;
+      setSelectedProductId(pId);
+      if (pId) {
+        loadProductIntelligenceRef.current(pId, initialData.product || undefined);
+      }
+    } else {
+      resetForm();
+    }
+
+    const focusTimer = window.setTimeout(() => itemNameInputRef.current?.focus(), 120);
+    return () => window.clearTimeout(focusTimer);
+  }, [isOpen, initialDataSessionKey]);
 
   const resetForm = () => {
     manualPriceEditedRef.current = false;
@@ -514,11 +545,14 @@ if (mode === 'sale') {
                 ref={itemNameInputRef} 
                 value={manualItemName} 
                 onChange={e => { 
+  hasUserEditedNameRef.current = true;
   setManualItemName(e.target.value); 
   setSelectedProductId(null); 
   setShowSearchDropdown(true); 
 }}
-                onFocus={() => setShowSearchDropdown(true)}
+                onFocus={() => {
+                  if (hasUserEditedNameRef.current) setShowSearchDropdown(true);
+                }}
                 className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-[14px] font-semibold text-[#1E4D4D] outline-none focus:bg-white text-right"
                 placeholder="ابحث عن صنف أو اكتب اسماً..." 
                 enterKeyHint="next"
@@ -534,7 +568,7 @@ if (mode === 'sale') {
                     initial={{ opacity: 0, y: 3 }} 
                     animate={{ opacity: 1, y: 0 }} 
                     exit={{ opacity: 0, y: 3 }} 
-                    className="absolute top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-xl z-[100] mt-1 max-h-36 overflow-y-auto box-border"
+                    className="relative w-full bg-white border border-slate-200 rounded-xl shadow-xl mt-1 max-h-36 overflow-y-auto box-border"
                   >
                     {filteredProducts.map(p => (
                       <button 
@@ -591,6 +625,7 @@ if (mode === 'sale') {
                   type="number" 
                   value={tempQty} 
                   onChange={e => setTempQty(e.target.value)} 
+                  onFocus={() => setShowSearchDropdown(false)}
                   onKeyDown={e => focusNextField(e, () => priceInputRef.current)}
                   inputMode="decimal"
                   enterKeyHint="next"
@@ -620,6 +655,7 @@ if (mode === 'sale') {
     readOnly={mode === 'sale'} 
     value={tempExpiry} 
     onChange={e => setTempExpiry(e.target.value)} 
+    onFocus={() => setShowSearchDropdown(false)}
     onKeyDown={e => e.key === 'Enter' && priceInputRef.current?.focus()} 
     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 disabled:cursor-not-allowed" 
   />
@@ -647,6 +683,7 @@ if (mode === 'sale') {
                     manualPriceEditedRef.current = true;
                     setTempPrice(e.target.value);
                   }}
+                  onFocus={() => setShowSearchDropdown(false)}
                   onKeyDown={e => focusNextField(e, () => noteInputRef.current)}
                   inputMode="decimal"
                   enterKeyHint="next"
@@ -662,6 +699,7 @@ if (mode === 'sale') {
                   disabled={mode === 'sale'} 
                   value={categoryName} 
                   onChange={e => setCategoryName(e.target.value)} 
+                  onFocus={() => setShowSearchDropdown(false)}
                   onKeyDown={e => e.key === 'Enter' && noteInputRef.current?.focus()} 
                   className={`w-full box-border h-10 border border-slate-200 rounded-xl px-2 text-[13px] font-semibold text-[#1E4D4D] outline-none text-right appearance-none ${
                     mode === 'sale' ? 'bg-slate-100/80 cursor-not-allowed opacity-85' : 'bg-slate-50'
@@ -692,6 +730,7 @@ if (mode === 'sale') {
                 ref={noteInputRef} 
                 value={tempNote} 
                 onChange={e => setTempNote(e.target.value)} 
+                onFocus={() => setShowSearchDropdown(false)}
                 onKeyDown={e => focusNextField(
                   e,
                   () => document.getElementById('item-entry-modal-save') as HTMLButtonElement | null
