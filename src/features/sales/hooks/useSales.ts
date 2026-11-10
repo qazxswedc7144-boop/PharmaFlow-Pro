@@ -50,6 +50,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   const [salesPolicy, setSalesPolicy] = useState<CachedTenantSalesPolicy | null>(null);
   const [salesPolicyError, setSalesPolicyError] = useState<string | null>(null);
   const [isSalesPolicyLoading, setIsSalesPolicyLoading] = useState(true);
+  const [salesPolicyReloadToken, setSalesPolicyReloadToken] = useState(0);
+  const retrySalesPolicy = useCallback(() => setSalesPolicyReloadToken(value => value + 1), []);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [manualItemName, setManualItemName] = useState<string>('');
   const [tempQty, setTempQty] = useState<number | string>('');
@@ -415,7 +417,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     };
     void loadPolicy();
     return () => { active = false; };
-  }, []);
+  }, [salesPolicyReloadToken]);
 
   const pricingState = useMemo(() => {
     if (items.length === 0) return { result: null as LocalSalesPricingResult | null, error: null as string | null };
@@ -424,10 +426,16 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
       const pricedItems = items.map((item: any) => {
         const productId = item.product_id || item.productId;
         const product = productId ? products.find((p: any) => p.id === productId) : undefined;
-        if (!productId || !product || product.price === undefined || product.price === null) {
-          throw new Error('LOCAL_PRODUCT_PRICE_UNAVAILABLE');
+        const linePrice = Number(item.price ?? item.unitPrice);
+        if (!productId || !product) {
+          throw new Error('LOCAL_PRODUCT_REFERENCE_UNAVAILABLE');
         }
-        return { price: String(product.price), qty: Number(item.qty ?? item.quantity) };
+        if (!Number.isFinite(linePrice) || linePrice < 0) {
+          throw new Error('INVALID_SALE_LINE_PRICE');
+        }
+        // The invoice line price is the posted price. It may be manually
+        // overridden in ItemEntryModal and must not be replaced by catalog price.
+        return { price: String(linePrice), qty: Number(item.qty ?? item.quantity) };
       });
       return {
         result: LocalSalesPricingService.calculate(pricedItems, salesPolicy, 0),
@@ -804,6 +812,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     salesPolicy,
     salesPolicyError,
     isSalesPolicyLoading,
+    retrySalesPolicy,
     pricingResult: pricingState.result,
     pricingError: pricingState.error,
     selectedProduct, setSelectedProduct,
