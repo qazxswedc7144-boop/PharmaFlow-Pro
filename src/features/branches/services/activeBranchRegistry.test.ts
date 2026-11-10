@@ -114,11 +114,12 @@ describe('active branch registration', () => {
       tenantId: 'tenant-a',
       isActive: true
     } as any);
+    const getSpy = vi.spyOn(unifiedTransport, 'get');
     vi.stubGlobal('navigator', { onLine: false });
 
     const branch = await ensureActiveBranchRegistered(expected);
 
     expect(branch).toMatchObject({ id: 'branch-a', tenantId: 'tenant-a' });
-    expect(unifiedTransport.get).not.toHaveBeenCalled();
+    expect(getSpy).not.toHaveBeenCalled();
   });
 });
