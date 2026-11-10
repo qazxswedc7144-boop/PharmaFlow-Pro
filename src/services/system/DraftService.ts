@@ -116,6 +116,49 @@ export const DraftService = {
     }
   },
 
+  getRecoverablePurchaseDraft: async (): Promise<any | undefined> => {
+    try {
+      const drafts = await db.draft_invoices
+        .where('invoiceType')
+        .equals('PURCHASE')
+        .toArray();
+      const failed = drafts
+        .filter((draft: any) => draft.status === 'FAILED_QUARANTINED' && !draft.recoveredAt)
+        .sort((a: any, b: any) =>
+          new Date(b.updatedAt || b.createdAt || 0).getTime() -
+          new Date(a.updatedAt || a.createdAt || 0).getTime()
+        );
+
+      // A failed-save quarantine is the authoritative point-in-time snapshot;
+      // a debounced active draft may be older and omit the last entered item.
+      if (failed.length > 0) return failed[0];
+
+      return drafts
+        .filter((draft: any) => draft.status !== 'FAILED_QUARANTINED')
+        .sort((a: any, b: any) =>
+          new Date(b.updatedAt || b.createdAt || 0).getTime() -
+          new Date(a.updatedAt || a.createdAt || 0).getTime()
+        )[0];
+    } catch (e) {
+      console.error('[DraftService] Failed to load recoverable purchase draft:', e);
+      return undefined;
+    }
+  },
+
+  markInvoiceDraftRecovered: async (draftId: string): Promise<void> => {
+    if (!draftId) return;
+    try {
+      const draft = await db.draft_invoices.get(draftId);
+      if (!draft || draft.status !== 'FAILED_QUARANTINED') return;
+      await db.draft_invoices.update(draftId, {
+        recoveredAt: new Date().toISOString()
+      });
+    } catch (e) {
+      console.error(`[DraftService] Failed to mark purchase draft ${draftId} as recovered:`, e);
+      throw e;
+    }
+  },
+
   getUnfinishedInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<any | undefined> => {
     try {
       const drafts = await db.draft_invoices.where('invoiceType').equals(invoiceType).filter((draft: any) => draft.status !== 'FAILED_QUARANTINED').toArray();
