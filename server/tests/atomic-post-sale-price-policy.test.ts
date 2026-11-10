@@ -13,6 +13,7 @@ vi.mock("../modules/accounting/services/financialTransaction.service.js", () => 
 }));
 
 import { AtomicPostSaleService } from "../modules/accounting/services/atomicPostSale.service.js";
+import { SYSTEM_ROLE_PERMISSIONS } from "../services/rbac/permission.service.js";
 
 const tenantId = "tenant-atomic-sale";
 const userId = "user-atomic-sale";
@@ -50,6 +51,12 @@ function payload(price: number, totalAmount: number, discountPercent = 0) {
 }
 
 describe("AtomicPostSaleService manual price policy", () => {
+  it("exposes the override permission only to privileged built-in tenant roles", () => {
+    expect(SYSTEM_ROLE_PERMISSIONS.TENANT_ADMIN).toContain("sales.price.override");
+    expect(SYSTEM_ROLE_PERMISSIONS.ADMIN).toContain("sales.price.override");
+    expect(SYSTEM_ROLE_PERMISSIONS.CASHIER || []).not.toContain("sales.price.override");
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockAuthorization.can.mockResolvedValue(false);
