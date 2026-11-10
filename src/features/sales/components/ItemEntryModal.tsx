@@ -11,6 +11,7 @@ import { priceIntelligenceService } from '@/features/inventory/services/priceInt
 import { useToast } from '@/hooks/useToast';
 import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './itemEntryModalLifecycle';
 import { getProjectedAutocompleteStock } from '@features/inventory/utils/projectedAutocompleteStock';
+import { createNewPurchaseProductRecord } from '@features/purchases/utils/newPurchaseProduct';
 
 interface ProductItem {
   id: string;
@@ -125,31 +126,37 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     });
   };
 
-  const createAndSaveNewProduct = useCallback((name: string, price: string | number, qty: string | number, cat: string): string => {
+  const createAndSaveNewProduct = useCallback(async (
+    name: string,
+    price: string | number,
+    _qty: string | number,
+    cat: string
+  ): Promise<string> => {
     const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
-    const newProd = {
+    const newProd = createNewPurchaseProductRecord({
       id: newProdId,
-      ProductID: newProdId,
-      Name: name,
-      name: name,
-      categoryName: cat || 'عام',
-      UnitPrice: parseFloat(price as string) || 0,
-      price: parseFloat(price as string) || 0,
-      // A purchase line is only a draft until the purchase workflow posts it.
-      // Initializing master stock here would count the same receipt twice.
-      StockQuantity: 0,
-      stock: 0,
-      Is_Active: 1,
-      created_at: new Date().toISOString()
-    };
-    WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
-      .then(() => db.products.put(newProd as any))
-      .catch(err => {
-        console.error("Background save failed:", err);
-        error("فشل حفظ الصنف في قاعدة البيانات، يرجى المحاولة مرة أخرى");
-      });
+      name,
+      price: Number(price) || 0,
+      category: cat
+    });
+
+    const result = await WorkflowOrchestrator.execute(
+      productApplicationWorkflow,
+      { product: newProd as any, isNew: true }
+    );
+    if (!result.success) {
+      throw new Error(result.error?.message || 'PRODUCT_REGISTRATION_FAILED');
+    }
+
+    // InventoryService.saveProduct is the authoritative writer; do not overwrite
+    // its tenant/branch-bound row with the raw form object after the workflow.
+    const persistedProduct = await db.products.get(newProdId);
+    if (!persistedProduct) {
+      throw new Error('PRODUCT_REGISTRATION_NOT_CONFIRMED');
+    }
+
     return newProdId;
-  }, [error]);
+  }, []);
 
   // Load live stock, expiry, and price intelligence for the selected product
   const loadProductIntelligence = useCallback(async (prodId: string, currentProd?: ProductItem) => {
@@ -475,7 +482,7 @@ if (mode === 'sale') {
     setIsSubmitting(true);
     try {
       if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
-        finalProductId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+        finalProductId = await createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
       }
 
       // ✅ إرسال الصنف للجدول فوراً (سيظهر مباشرة)
@@ -508,7 +515,7 @@ if (mode === 'sale') {
     setIsConfirmedNewProduct(true);
     setIsSubmitting(true);
     try {
-      const newProdId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+      const newProdId = await createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
       onAdd({ 
         id: initialData?.id || Date.now().toString(), 
         productId: newProdId, 
