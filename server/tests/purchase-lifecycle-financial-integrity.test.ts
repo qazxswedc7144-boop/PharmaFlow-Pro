@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
+import Dexie from 'dexie';
 import { db } from '@/core/db';
 import { UnifiedBusinessWorkflowOrchestrator } from '../../src/services/orchestration/UnifiedBusinessWorkflowOrchestrator';
 import { PurchaseRepository } from '../../src/database/repositories/PurchaseRepository';
@@ -424,6 +425,31 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
       }
     });
   });
+
+
+    it('Stage 6: a purchases table write failure rolls back invoice, inventory, supplier balance and accounting', async () => {
+      const originalPut = Dexie.Table.prototype.put;
+      const putSpy = vi.spyOn(Dexie.Table.prototype, 'put').mockImplementation(function(this: any, item: any, key?: any) {
+        if (this.name === 'purchases') {
+          throw new Error('SIMULATED_PURCHASES_INDEX_WRITE_FAILURE');
+        }
+        return originalPut.call(this, item, key);
+      });
+
+      try {
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processPurchase({
+            supplierId,
+            items: [{ productId, quantity: 20, unitCost: 10, unitPrice: 10 } as any],
+            total: 200
+          })
+        ).rejects.toThrow(/SIMULATED_PURCHASES_INDEX_WRITE_FAILURE/i);
+
+        await assertFullRollback(10, 0);
+      } finally {
+        putSpy.mockRestore();
+      }
+    });
 
   // =========================================================================
   // 7. Idempotency
