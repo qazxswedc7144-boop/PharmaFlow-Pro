@@ -21,7 +21,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
   it("resolves only the selected branch assigned to the authenticated tenant user", async () => {
     const ctx = getContext();
 
-    const ownBranch = await request(ctx, "/api/auth/branch-context", { token: ctx.tokenA });
+    const ownBranch = await request(ctx, "/api/auth/branch-context", { token: ctx.tokenA, branchId: ctx.branchAId });
     expect(ownBranch.status).toBe(200);
     expect(ownBranch.body.data.id).toBe(ctx.branchAId);
     expect(ownBranch.body.data.tenantId).toBe(ctx.tenantAId);
