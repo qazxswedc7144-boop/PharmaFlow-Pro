@@ -3,6 +3,7 @@ import { Prisma, SalesTaxMode } from "@prisma/client";
 export interface SalesPricingItem {
   price: Prisma.Decimal | string | number;
   qty: number;
+  catalogPrice?: Prisma.Decimal | string | number;
 }
 
 export interface SalesPricingPolicy {
@@ -53,14 +54,32 @@ export class SalesPricingService {
       throw new Error("DISCOUNT_LIMIT_EXCEEDED");
     }
 
-    const subtotalRaw = items.reduce((sum, item) => {
+    const totals = items.reduce((result, item) => {
       if (!Number.isSafeInteger(item.qty) || item.qty <= 0) throw new Error("INVALID_SALE_QUANTITY");
       const price = new Prisma.Decimal(item.price);
-      if (!price.isFinite() || price.isNegative()) throw new Error("INVALID_SERVER_PRODUCT_PRICE");
-      return sum.plus(price.mul(item.qty));
-    }, ZERO);
+      const catalogPrice = new Prisma.Decimal(item.catalogPrice ?? item.price);
+      if (!price.isFinite() || price.isNegative() || !catalogPrice.isFinite() || catalogPrice.isNegative()) {
+        throw new Error("INVALID_SERVER_PRODUCT_PRICE");
+      }
+      if (catalogPrice.greaterThan(ZERO) && price.lessThan(catalogPrice)) {
+        const lineDiscountPercent = catalogPrice.minus(price).mul(HUNDRED).div(catalogPrice);
+        if (lineDiscountPercent.greaterThan(maxDiscount)) throw new Error("DISCOUNT_LIMIT_EXCEEDED");
+      }
+      return {
+        subtotal: result.subtotal.plus(price.mul(item.qty)),
+        catalogSubtotal: result.catalogSubtotal.plus(catalogPrice.mul(item.qty))
+      };
+    }, { subtotal: ZERO, catalogSubtotal: ZERO });
 
+    const subtotalRaw = totals.subtotal;
     const subtotalAmount = this.money(subtotalRaw);
+    const effectiveNetAmount = subtotalRaw.minus(subtotalRaw.mul(discountPercent).div(HUNDRED));
+    const effectiveDiscountAmount = totals.catalogSubtotal.minus(effectiveNetAmount);
+    const maxAllowedDiscountAmount = totals.catalogSubtotal.mul(maxDiscount).div(HUNDRED);
+    if (effectiveDiscountAmount.greaterThan(maxAllowedDiscountAmount)) {
+      throw new Error("DISCOUNT_LIMIT_EXCEEDED");
+    }
+
     const discountAmount = this.money(subtotalAmount.mul(discountPercent).div(HUNDRED));
     const taxableAmount = this.money(subtotalAmount.minus(discountAmount));
     const taxRatePercent = policy.taxMode === SalesTaxMode.NONE ? ZERO : configuredTaxRate;

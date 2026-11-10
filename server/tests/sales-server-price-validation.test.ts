@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockPrisma, mockSaas } = vi.hoisted(() => {
+const { mockPrisma, mockSaas, mockAuthorization } = vi.hoisted(() => {
   const prisma: any = {
     $transaction: vi.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prisma)),
     product: { findMany: vi.fn() },
@@ -14,6 +14,7 @@ const { mockPrisma, mockSaas } = vi.hoisted(() => {
       checkSubscriptionLimit: vi.fn(),
       incrementUsage: vi.fn(),
     },
+    mockAuthorization: { can: vi.fn() },
   };
 });
 
@@ -31,6 +32,7 @@ vi.mock("../middleware/auth.middleware.js", () => ({
 vi.mock("../modules/locking/locking.service.js", () => ({ LockingService: {} }));
 vi.mock("../modules/replication/replication.publisher.js", () => ({ ReplicationPublisher: {} }));
 vi.mock("../modules/saas/saas.service.js", () => ({ SaasService: mockSaas }));
+vi.mock("../services/rbac/authorization.service.js", () => ({ AuthorizationService: mockAuthorization }));
 
 import { invoiceRouter } from "../routes/invoice.routes.js";
 import { InvoiceSchema } from "../../src/shared/validation/invoice.schema.js";
@@ -61,7 +63,7 @@ async function invokeCreate(payload: Record<string, unknown>) {
 
   const req: any = {
     body: payload,
-    user: { tenantId, userId: "user-sales-a" },
+    user: { tenantId, userId: "user-sales-a", role: "ADMIN" },
     ip: "127.0.0.1",
   };
   const res = makeResponse();
@@ -78,9 +80,10 @@ describe("Server-side sales price and discount validation", () => {
     vi.clearAllMocks();
     mockSaas.checkSubscriptionLimit.mockResolvedValue({ allowed: true });
     mockSaas.incrementUsage.mockResolvedValue(undefined);
+    mockAuthorization.can.mockResolvedValue(false);
     mockPrisma.invoice.findUnique.mockResolvedValue(null);
     mockPrisma.invoice.findFirst.mockResolvedValue(null);
-    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue(null);
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({ maxDiscountPercent: 10, taxRatePercent: 0, taxMode: "NONE" });
     mockPrisma.product.findMany.mockResolvedValue([
       { id: productId, tenantId, price: 30, isActive: true, deletedAt: null },
     ]);
@@ -92,13 +95,13 @@ describe("Server-side sales price and discount validation", () => {
     mockPrisma.auditLog.create.mockResolvedValue({});
   });
 
-  it("must use the tenant product's database price, not a manipulated client price", async () => {
+  it("uses the tenant catalog price when no manual override is requested", async () => {
     const response = await invokeCreate({
       invoiceNumber: "SALE-PRICE-001",
       type: "SALE",
       totalAmount: 10,
       paymentStatus: "UNPAID",
-      items: [{ productId, qty: 10, price: 1 }],
+      items: [{ productId, qty: 10, price: 30 }],
     });
 
     expect(response.statusCode).toBe(201);
@@ -148,6 +151,65 @@ describe("Server-side sales price and discount validation", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+
+
+  it("rejects a manual price override when the actor lacks sales.price.override", async () => {
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-OVERRIDE-DENIED",
+      type: "SALE",
+      totalAmount: 27,
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 1, price: 27 }],
+    });
+    expect(response.statusCode).toBe(403);
+    expect(response.body).toEqual(expect.objectContaining({ error: "PRICE_OVERRIDE_FORBIDDEN" }));
+    expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
+  });
+
+  it("persists an authorized manual price and recalculates totals from tenant policy", async () => {
+    mockAuthorization.can.mockResolvedValue(true);
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({ maxDiscountPercent: 10, taxRatePercent: 15, taxMode: "EXCLUSIVE" });
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-OVERRIDE-ALLOWED",
+      type: "SALE",
+      totalAmount: 31.05,
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 1, price: 27 }],
+    });
+    expect(response.statusCode).toBe(201);
+    const invoiceData = mockPrisma.invoice.create.mock.calls[0][0].data;
+    expect(invoiceData.items.create[0].price.toString()).toBe("27");
+    expect(invoiceData.totalAmount.toString()).toBe("31.05");
+  });
+
+  it("rejects a manual unit price below the tenant maximum discount floor", async () => {
+    mockAuthorization.can.mockResolvedValue(true);
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-OVERRIDE-OVER-LIMIT",
+      type: "SALE",
+      totalAmount: 26,
+      paymentStatus: "UNPAID",
+      items: [{ productId, qty: 1, price: 26 }],
+    });
+    expect(response.statusCode).toBe(422);
+    expect(response.body).toEqual(expect.objectContaining({ error: "DISCOUNT_LIMIT_EXCEEDED" }));
+    expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
+  });
+
+  it("enforces maxDiscountPercent against combined manual-price and invoice discounts", async () => {
+    mockAuthorization.can.mockResolvedValue(true);
+    const response = await invokeCreate({
+      invoiceNumber: "SALE-OVERRIDE-COMBINED-LIMIT",
+      type: "SALE",
+      totalAmount: 1,
+      paymentStatus: "UNPAID",
+      discountPercent: 6,
+      items: [{ productId, qty: 1, price: 28.5 }],
+    });
+    expect(response.statusCode).toBe(422);
+    expect(response.body).toEqual(expect.objectContaining({ error: "DISCOUNT_LIMIT_EXCEEDED" }));
+    expect(mockPrisma.invoice.create).not.toHaveBeenCalled();
   });
 
 });

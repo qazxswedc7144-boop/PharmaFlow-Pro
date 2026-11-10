@@ -1702,7 +1702,7 @@ export class PharmaFlowDB extends Dexie {
     const purchasesTable = adjustments?.tx?.table ? adjustments.tx.table('purchases') : this.purchases;
 
     await invoicesTable.put(purchase);
-    try { await purchasesTable.put(purchase); } catch {}
+    await purchasesTable.put(purchase);
     return purchase;
   }
 

@@ -59,7 +59,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
         type: "SALE",
         totalAmount: 9999,
         paymentStatus: "PAID",
-        items: [{ productId: ctx.productAId, qty: 2, price: 9999 }],
+        items: [{ productId: ctx.productAId, qty: 2, price: 10 }],
       },
     });
     expect(created.status, JSON.stringify(created.body)).toBe(201);
@@ -158,7 +158,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
         totalAmount: 1,
         paymentStatus: "UNPAID",
         discountPercent: 10,
-        items: [{ productId: ctx.productAId, qty: 1, price: 1 }],
+        items: [{ productId: ctx.productAId, qty: 1, price: 10 }],
       },
     });
     expect(created.status, JSON.stringify(created.body)).toBe(201);

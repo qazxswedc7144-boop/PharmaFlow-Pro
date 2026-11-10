@@ -191,7 +191,7 @@ export class SyncProcessorService {
       try {
         const fullResult = await prisma.$transaction(async (tx) => {
           const mutationResult = await this.executeEntityMutation({
-            mutation, tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId, version: version || 1, tx
+            mutation, tenantId, branchId: targetBranchId, userId: authenticatedUserId, userRole: authenticatedUserRole, deviceId: envelope.deviceId, version: version || 1, tx
           });
 
           const result: PerMutationResult = { ...mutationResult, id: mutationId, mutationId };
@@ -218,6 +218,7 @@ export class SyncProcessorService {
         results.push(fullResult);
         if (fullResult.status === "SUCCESS") { summary.successful.push(mutationId); summary.applied.push(mutationId); }
         else if (fullResult.status === "CONFLICT") { summary.conflicts.push(mutationId); }
+        else if (fullResult.status === "UNAUTHORIZED") { summary.unauthorized.push(mutationId); }
         else { summary.rejected.push(mutationId); }
       } catch (err: any) {
         console.error(`[SyncProcessor] Mutation ${mutationId} fatal error:`, err);
@@ -267,9 +268,9 @@ export class SyncProcessorService {
   }
 
   private static async executeEntityMutation(params: {
-    mutation: SyncMutation; tenantId: string; branchId: string | null; userId: string; deviceId: string; version: number; tx: any;
+    mutation: SyncMutation; tenantId: string; branchId: string | null; userId: string; userRole?: string; deviceId: string; version: number; tx: any;
   }): Promise<PerMutationResult> {
-    const { mutation, tenantId, branchId, version, tx } = params;
+    const { mutation, tenantId, branchId, version, tx, userRole } = params;
     const { id: mutationId, entity, payload } = mutation;
     const data = payload || {};
     const entityId = mutation.entityId || data.id || mutationId;
@@ -291,11 +292,19 @@ export class SyncProcessorService {
         // Load it only when a real SALE POST mutation reaches this branch.
         const { AtomicPostSaleService } = await import("../accounting/services/atomicPostSale.service.js");
         const postResult = await AtomicPostSaleService.executePostSaleCommand({
-          payload: { ...data, tenantId }, tenantId, userId: params.userId, ipAddress: "127.0.0.1", tx
+          payload: { ...data, tenantId }, tenantId, userId: params.userId, userRole, ipAddress: "127.0.0.1", tx
         });
         return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
       } catch (err: any) {
-        return { id: mutationId, mutationId, status: "FAILED", success: false, errorCode: "BUSINESS_COMMAND_FAILED", message: err.message };
+        const errorCode = err.code || err.message || "BUSINESS_COMMAND_FAILED";
+        return {
+          id: mutationId,
+          mutationId,
+          status: errorCode === "PRICE_OVERRIDE_FORBIDDEN" ? "UNAUTHORIZED" : "FAILED",
+          success: false,
+          errorCode,
+          message: err.message || "Business command failed"
+        };
       }
     }
 

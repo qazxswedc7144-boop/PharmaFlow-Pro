@@ -117,7 +117,7 @@ vi.mock('@features/auth/services/authService', () => ({
 }));
 
 vi.mock('@/store/authStore', () => ({
-  useAuthStore: { getState: () => ({ user: null, tenantId: TENANT_ID, branchId: BRANCH_ID }) },
+  useAuthStore: { getState: () => ({ user: null, tenantId: TENANT_ID, branchId: BRANCH_ID, hasPermission: () => false }) },
 }));
 
 vi.mock('@/features/sync/device.manager', () => ({
