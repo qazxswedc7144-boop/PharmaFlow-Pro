@@ -20,6 +20,7 @@ import { SmartImportOrchestrator } from '../services/smartImport/smartImportOrch
 import { ImportAnalysisResult, ExtractedImportRow } from '../services/smartImport/types';
 import { normalizeToISODate } from '@/utils/expiryUtils';
 import { generateTransactionUuid } from '@/utils/uuid';
+import { collectPendingProductsForInvoice } from '../utils/pendingProducts';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -195,20 +196,13 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
       if (!currentOperationRef.current) { currentOperationRef.current = generateTransactionUuid('PURCHASE'); }
       const requestUuid = currentOperationRef.current;
-      let itemsForSave = currentItems;
-      if (pendingProductsRef.current.length === 0) {
-        const finalizedItems = [...currentItems];
-        for (let i = 0; i < finalizedItems.length; i++) {
-          const item = finalizedItems[i];
-          if (item?.product_id?.startsWith('manual-')) {
-            const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
-            pendingProductsRef.current.push({ id: newProdId, ProductID: newProdId, Name: item.name || 'صنف غير مسمى', name: item.name || 'صنف غير مسمى', categoryName: item.category || 'عام', UnitPrice: item.price || 0, price: item.price || 0, Is_Active: 1 });
-            finalizedItems[i] = { ...item, product_id: newProdId, productId: newProdId, id: item.id || newProdId };
-          }
-        }
-        itemsForSave = finalizedItems;
-        setItems(finalizedItems);
-      }
+      const preparedProducts = collectPendingProductsForInvoice(
+        currentItems,
+        pendingProductsRef.current
+      );
+      pendingProductsRef.current = preparedProducts.pendingProducts;
+      const itemsForSave = preparedProducts.items as InvoiceItem[];
+      setItems(itemsForSave);
 
       // تنفيذ الحفظ المحلي مباشرة (بدون Promise.race أو مهلة زمنية)
       const res = await addInvoice({

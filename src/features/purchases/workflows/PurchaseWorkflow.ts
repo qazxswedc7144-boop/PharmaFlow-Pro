@@ -124,13 +124,22 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       const productId = item.productId || (item as any).product_id;
 
       if (productId) {
-        const isPending = input.pendingProducts?.some(
-          p => p.id === productId
+        const normalizedProductId = String(productId).trim().toLocaleLowerCase('en-US');
+        const pendingProduct = input.pendingProducts?.find(
+          pending =>
+            String(pending?.id ?? '').trim().toLocaleLowerCase('en-US') ===
+            normalizedProductId
         );
 
-        if (isPending) continue;
+        if (pendingProduct) {
+          // Use the exact pending-product ID downstream: Dexie keys remain case-sensitive.
+          const canonicalPendingId = String(pendingProduct.id).trim();
+          item.productId = canonicalPendingId;
+          (item as any).product_id = canonicalPendingId;
+          continue;
+        }
 
-        const product = await db.products.get(productId);
+        const product = await db.products.get(String(productId).trim());
 
         if (!product) {
           throw new Error(

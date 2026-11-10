@@ -198,6 +198,34 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     expect(prod?.tenantId).toBe(tenantId);
   });
 
+  it('P0/P1: Matches pending manual product IDs after trimming and case normalization', async () => {
+    const canonicalProductId = 'Manual-Product-Case';
+    const result = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
+      supplierId: supplierAId,
+      items: [{
+        productId: '  manual-product-case  ',
+        quantity: 2,
+        unitCost: 30,
+        unitPrice: 30
+      } as any],
+      total: 60,
+      pendingProducts: [{
+        id: canonicalProductId,
+        ProductID: canonicalProductId,
+        name: 'Normalized Manual Product',
+        Name: 'Normalized Manual Product',
+        UnitPrice: 30,
+        price: 30,
+        Is_Active: 1
+      }]
+    });
+
+    expect(result.success).toBe(true);
+    const product = await db.products.get(canonicalProductId);
+    expect(product).toBeDefined();
+    expect(product?.name).toBe('Normalized Manual Product');
+  });
+
   it('P1: Stable idempotency prevents duplicate mutations on retry', async () => {
     const fixedUuid = 'STABLE-TX-001';
     const payload = {
