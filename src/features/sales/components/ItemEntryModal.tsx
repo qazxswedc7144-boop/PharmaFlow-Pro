@@ -304,8 +304,15 @@ if (mode === 'sale') {
       resetFormRef.current();
     }
 
-    const focusTimer = window.setTimeout(() => itemNameInputRef.current?.focus(), 120);
-    return () => window.clearTimeout(focusTimer);
+    // Keep the initial focus resilient to React StrictMode's setup/cleanup replay.
+    window.setTimeout(() => {
+      if (
+        modalWasOpenRef.current &&
+        initializedSessionKeyRef.current === initialDataSessionKey
+      ) {
+        itemNameInputRef.current?.focus();
+      }
+    }, 120);
   }, [isOpen, initialDataSessionKey]);
 
   const resetForm = () => {
