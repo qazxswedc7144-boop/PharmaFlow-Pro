@@ -1,5 +1,7 @@
 import { db } from '@/core/db';
 import { unifiedTransport } from '@/shared/network/transport/unifiedTransport';
+import { TokenProvider } from '@/services/auth/tokenProvider';
+import { useAuthStore } from '@/store/authStore';
 
 export interface ActiveBranchContext {
   tenantId: string;
@@ -68,11 +70,31 @@ export async function ensureActiveBranchRegistered(
   }
 
   const response = await unifiedTransport.get<any>('/api/auth/branch-context');
-  const serverBranch = response?.data?.branch || response?.data;
-  const trustedBranch = validateActiveBranchRecord(serverBranch, expected);
+  const responseBody = response?.data ?? response;
+  const serverBranch = responseBody?.branch || responseBody?.data || responseBody;
+  const contextCorrected = response?.contextCorrected === true || responseBody?.contextCorrected === true;
+  const resolvedBranchId = String(serverBranch?.id || '').trim();
 
+  let resolvedContext = expected;
+  if (resolvedBranchId && resolvedBranchId !== expected.branchId) {
+    if (!contextCorrected) {
+      validateActiveBranchRecord(serverBranch, expected);
+    }
+
+    // The server may correct a stale client branch only after proving that the
+    // user has exactly one active membership. Persist that authoritative choice
+    // in auth state and rotate the JWT before the purchase workflow continues.
+    useAuthStore.getState().setTenantContext({
+      tenantId: expected.tenantId,
+      branchId: resolvedBranchId
+    });
+    await TokenProvider.refreshAccessToken();
+    resolvedContext = { tenantId: expected.tenantId, branchId: resolvedBranchId };
+  }
+
+  const trustedBranch = validateActiveBranchRecord(serverBranch, resolvedContext);
   await db.branches.put(trustedBranch);
 
-  const persistedBranch = await db.branches.get(expected.branchId);
-  return validateActiveBranchRecord(persistedBranch, expected);
+  const persistedBranch = await db.branches.get(resolvedContext.branchId);
+  return validateActiveBranchRecord(persistedBranch, resolvedContext);
 }
