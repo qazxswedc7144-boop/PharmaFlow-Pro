@@ -2,7 +2,9 @@
 import { prisma } from "../../../database/prisma.js";
 import { runInTransaction } from "../../../core/database/transactionGuard.js";
 import { FinancialTransactionService } from "./financialTransaction.service.js";
-import { InvoiceStatus, DocumentStatus } from "@prisma/client";
+import { InvoiceStatus, DocumentStatus, Prisma } from "@prisma/client";
+import { SalesPricingService } from "./salesPricing.service.js";
+import { AuthorizationService } from "../../../services/rbac/authorization.service.js";
 import { InvoiceSchema } from "../../../../src/shared/validation/invoice.schema.js";
 import { SyncEffect } from "../../sync/sync.types.js";
 
@@ -21,10 +23,11 @@ export class AtomicPostSaleService {
     payload: any;
     tenantId: string;
     userId: string;
+    userRole?: string;
     ipAddress: string;
     tx?: any;
   }) {
-    const { payload, tenantId, userId, ipAddress, tx: providedTx } = params;
+    const { payload, tenantId, userId, userRole, ipAddress, tx: providedTx } = params;
 
     // 0. Sanitize input (Handle 'عميل نقدي' case)
     const sanitizedPayload = { ...payload };
@@ -39,48 +42,75 @@ export class AtomicPostSaleService {
       throw new Error("Invalid command: POST_SALE only supports SALE type.");
     }
 
-    // 2. Price Verification & Total Recalculation
-    // Fetch authoritative product prices to detect client-side tampering
+    // 2. Resolve tenant catalog prices, authorize manual overrides, and recalculate on the server.
     const productIds = validated.items.map(i => i.productId);
     const client = providedTx || prisma;
     const products = await client.product.findMany({
       where: { id: { in: productIds }, tenantId },
-      select: { id: true, price: true, basePrice: true }
+      select: { id: true, price: true }
     });
-    const productMap = new Map(products.map((p: any) => [p.id, Number(p.basePrice || p.price || 0)]));
+    const productMap = new Map(products.map((product: any) => [product.id, product]));
 
-    let calculatedTotal = 0;
-    const itemsData = validated.items.map(item => {
-      const serverPriceRaw = productMap.get(item.productId);
-      if (serverPriceRaw === undefined) {
+    const pricingItems = validated.items.map(item => {
+      const product = productMap.get(item.productId) as any;
+      if (!product) {
         throw new Error(`PRODUCT_NOT_FOUND: Product ${item.productId} does not exist in tenant catalog.`);
       }
-      
-      const serverPrice = Number(serverPriceRaw);
-      const clientPrice = Number(item.price);
-
-      // Strict price verification
-      if (Math.abs(serverPrice - clientPrice) > 0.01) {
-        throw new Error(`PRICE_TAMPERING: Client price [${item.price}] for product [${item.productId}] does not match server price [${serverPrice}].`);
+      const catalogPrice = new Prisma.Decimal(product.price);
+      const price = new Prisma.Decimal(item.price ?? product.price);
+      if (!catalogPrice.isFinite() || catalogPrice.isNegative() || !price.isFinite() || price.isNegative()) {
+        const error: any = new Error("INVALID_SERVER_PRODUCT_PRICE");
+        error.code = "INVALID_SERVER_PRODUCT_PRICE";
+        throw error;
       }
+      return { price, catalogPrice, qty: item.qty };
+    });
 
-      const lineTotal = Number(item.qty) * serverPrice;
-      calculatedTotal += lineTotal;
+    const manualPriceOverrideRequested = pricingItems.some(item => !item.price.equals(item.catalogPrice));
+    if (manualPriceOverrideRequested) {
+      const canOverridePrice = await AuthorizationService.can(
+        { userId, role: userRole, tenantId },
+        "sales.price.override",
+        { tenantId }
+      );
+      if (!canOverridePrice) {
+        const error: any = new Error("PRICE_OVERRIDE_FORBIDDEN");
+        error.code = "PRICE_OVERRIDE_FORBIDDEN";
+        throw error;
+      }
+    }
+
+    const policy = await client.tenantSalesPolicy.findUnique({ where: { tenantId } });
+    const salesPricing = SalesPricingService.calculate(
+      pricingItems,
+      {
+        maxDiscountPercent: policy?.maxDiscountPercent ?? 0,
+        taxRatePercent: policy?.taxRatePercent ?? 0,
+        taxMode: policy?.taxMode ?? "NONE"
+      },
+      validated.discountPercent ?? 0
+    );
+
+    const calculatedTotal = salesPricing.totalAmount;
+    const clientTotal = new Prisma.Decimal(validated.totalAmount);
+    const totalDifference = calculatedTotal.minus(clientTotal).abs();
+    if (totalDifference.greaterThan(new Prisma.Decimal("0.01"))) {
+      const error: any = new Error("SALES_PRICE_POLICY_MISMATCH");
+      error.code = "SALES_PRICE_POLICY_MISMATCH";
+      throw error;
+    }
+
+    const itemsData = validated.items.map((item, index) => {
+      const price = pricingItems[index].price;
       return {
         productId: item.productId,
         qty: item.qty,
-        price: serverPrice,
-        total: lineTotal,
-        cost: 0, // Will be updated by FIFO logic
+        price,
+        total: price.mul(item.qty),
+        cost: new Prisma.Decimal(0), // Updated by the existing ledger/FIFO posting flow.
         note: item.note
       };
     });
-
-    // Precision-safe comparison (2 decimal places)
-    const diff = Math.abs(calculatedTotal - Number(validated.totalAmount));
-    if (diff > 0.01) {
-      throw new Error(`TOTAL_MISMATCH: Client total [${validated.totalAmount}] does not match server recalculated total [${calculatedTotal.toFixed(2)}]. Difference: ${diff.toFixed(4)}`);
-    }
 
     // 3. Atomic Execution within Transaction
     const executeLogic = async (tx: any) => {
@@ -104,6 +134,12 @@ export class AtomicPostSaleService {
           partnerId: validated.partnerId,
           partnerType: validated.partnerType,
           totalAmount: calculatedTotal,
+          subtotalAmount: salesPricing.subtotalAmount,
+          discountPercent: salesPricing.discountPercent,
+          discountAmount: salesPricing.discountAmount,
+          taxRatePercent: salesPricing.taxRatePercent,
+          taxAmount: salesPricing.taxAmount,
+          taxMode: salesPricing.taxMode,
           status: InvoiceStatus.DRAFT,
           paymentStatus: validated.paymentStatus,
           documentStatus: DocumentStatus.ACTIVE,

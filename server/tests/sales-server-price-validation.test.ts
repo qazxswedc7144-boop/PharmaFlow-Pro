@@ -63,7 +63,7 @@ async function invokeCreate(payload: Record<string, unknown>) {
 
   const req: any = {
     body: payload,
-    user: { tenantId, userId: "user-sales-a" },
+    user: { tenantId, userId: "user-sales-a", role: "ADMIN" },
     ip: "127.0.0.1",
   };
   const res = makeResponse();
@@ -83,7 +83,7 @@ describe("Server-side sales price and discount validation", () => {
     mockAuthorization.can.mockResolvedValue(false);
     mockPrisma.invoice.findUnique.mockResolvedValue(null);
     mockPrisma.invoice.findFirst.mockResolvedValue(null);
-    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({ maxDiscountPercent: 10, taxRatePercent: 15, taxMode: "EXCLUSIVE" });
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({ maxDiscountPercent: 10, taxRatePercent: 0, taxMode: "NONE" });
     mockPrisma.product.findMany.mockResolvedValue([
       { id: productId, tenantId, price: 30, isActive: true, deletedAt: null },
     ]);
@@ -169,6 +169,7 @@ describe("Server-side sales price and discount validation", () => {
 
   it("persists an authorized manual price and recalculates totals from tenant policy", async () => {
     mockAuthorization.can.mockResolvedValue(true);
+    mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({ maxDiscountPercent: 10, taxRatePercent: 15, taxMode: "EXCLUSIVE" });
     const response = await invokeCreate({
       invoiceNumber: "SALE-OVERRIDE-ALLOWED",
       type: "SALE",

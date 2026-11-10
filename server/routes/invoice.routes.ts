@@ -13,6 +13,7 @@ import { validateRequestBody } from "../middleware/validate.js";
 import { UUIDSchema } from "../../src/shared/validation/common.schema.js";
 import { SaasService } from "../modules/saas/saas.service.js";
 import { SalesPricingService } from "../modules/accounting/services/salesPricing.service.js";
+import { AuthorizationService } from "../services/rbac/authorization.service.js";
 
 export const invoiceRouter = Router();
 
@@ -130,13 +131,14 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           throw error;
         }
 
-        // Sales use the tenant-owned catalog price. Purchase invoices retain
-        // their supplier purchase price, since Product.price is a retail price.
+        // SALE may use a user-entered price only when the authenticated user is authorized.
+        // PURCHASE continues to use its submitted supplier unit cost.
         const price = data.type === "SALE"
-          ? new Prisma.Decimal(product.price.toString())
+          ? new Prisma.Decimal(item.price ?? product.price)
           : new Prisma.Decimal(item.price);
+        const catalogPrice = new Prisma.Decimal(product.price);
 
-        if (!price.isFinite() || price.isNegative()) {
+        if (!price.isFinite() || price.isNegative() || !catalogPrice.isFinite() || catalogPrice.isNegative()) {
           const error: any = new Error("INVALID_SERVER_PRODUCT_PRICE");
           error.code = "INVALID_SERVER_PRODUCT_PRICE";
           throw error;
@@ -144,16 +146,8 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
 
         const lineTotal = price.mul(item.qty);
         calculatedTotal = calculatedTotal.plus(lineTotal);
-
         return {
-          // The parent Invoice relation supplies tenantId to InvoiceItem.
-          // Connect Product through its composite key so Prisma enforces the
-          // same tenant boundary for the item/product relation.
-          product: {
-            connect: {
-              id_tenantId: { id: item.productId, tenantId }
-            }
-          },
+          product: { connect: { id_tenantId: { id: item.productId, tenantId } } },
           qty: item.qty,
           price,
           cost: new Prisma.Decimal(0),
@@ -164,9 +158,33 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       });
 
       if (data.type === "SALE") {
+        const manualPriceOverrideRequested = data.items.some((item: any, index: number) =>
+          !itemData[index].price.equals(new Prisma.Decimal(productsById.get(item.productId).price))
+        );
+        if (manualPriceOverrideRequested) {
+          const canOverridePrice = await AuthorizationService.can(
+            {
+              userId: req.user?.userId || "",
+              role: req.user?.role,
+              tenantId
+            },
+            "sales.price.override",
+            { tenantId }
+          );
+          if (!canOverridePrice) {
+            const error: any = new Error("PRICE_OVERRIDE_FORBIDDEN");
+            error.code = "PRICE_OVERRIDE_FORBIDDEN";
+            throw error;
+          }
+        }
+
         const policy = await tx.tenantSalesPolicy.findUnique({ where: { tenantId } });
         salesPricing = SalesPricingService.calculate(
-          itemData.map((item: any) => ({ price: item.price, qty: item.qty })),
+          data.items.map((item: any, index: number) => ({
+            price: itemData[index].price,
+            catalogPrice: productsById.get(item.productId).price,
+            qty: item.qty
+          })),
           {
             maxDiscountPercent: policy?.maxDiscountPercent ?? 0,
             taxRatePercent: policy?.taxRatePercent ?? 0,
@@ -229,6 +247,9 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       invoice
     });
   } catch (err: any) {
+    if (err.code === "PRICE_OVERRIDE_FORBIDDEN") {
+      return res.status(403).json({ error: "PRICE_OVERRIDE_FORBIDDEN", message: "لا تملك صلاحية تعديل سعر البيع." });
+    }
     if (err.code === "INVOICE_EXISTS") {
       return res.status(409).json({ error: "INVOICE_EXISTS", message: "رقم الفاتورة مستخدم مسبقاً داخل المؤسسة." });
     }

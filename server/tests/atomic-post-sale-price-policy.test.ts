@@ -54,6 +54,7 @@ describe("AtomicPostSaleService manual price policy", () => {
   it("exposes the override permission only to privileged built-in tenant roles", () => {
     expect(SYSTEM_ROLE_PERMISSIONS.TENANT_ADMIN).toContain("sales.price.override");
     expect(SYSTEM_ROLE_PERMISSIONS.ADMIN).toContain("sales.price.override");
+    expect(SYSTEM_ROLE_PERMISSIONS.PLATFORM_OWNER).toContain("*");
     expect(SYSTEM_ROLE_PERMISSIONS.CASHIER || []).not.toContain("sales.price.override");
   });
 

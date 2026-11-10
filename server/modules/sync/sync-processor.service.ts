@@ -218,6 +218,7 @@ export class SyncProcessorService {
         results.push(fullResult);
         if (fullResult.status === "SUCCESS") { summary.successful.push(mutationId); summary.applied.push(mutationId); }
         else if (fullResult.status === "CONFLICT") { summary.conflicts.push(mutationId); }
+        else if (fullResult.status === "UNAUTHORIZED") { summary.unauthorized.push(mutationId); }
         else { summary.rejected.push(mutationId); }
       } catch (err: any) {
         console.error(`[SyncProcessor] Mutation ${mutationId} fatal error:`, err);
