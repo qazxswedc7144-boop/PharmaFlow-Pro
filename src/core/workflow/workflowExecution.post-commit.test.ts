@@ -6,12 +6,14 @@ const {
   mockUpdateStatus,
   mockDelete,
   mockExecuteDomainSteps,
+  mockExecuteWithGuard,
 } = vi.hoisted(() => ({
   mockEmit: vi.fn(),
   mockInvalidate: vi.fn(),
   mockUpdateStatus: vi.fn(),
   mockDelete: vi.fn(),
   mockExecuteDomainSteps: vi.fn(),
+  mockExecuteWithGuard: vi.fn(),
 }));
 
 vi.mock('@/core/workflow/workflowAuthorization', () => ({
@@ -36,7 +38,7 @@ vi.mock('@/core/workflow/workflowRecovery', () => ({
 
 vi.mock('@/core/integrity/executionGuard', () => ({
   ExecutionGuard: {
-    executeWithGuard: vi.fn(async (_options: unknown, operation: () => Promise<unknown>) => operation()),
+    executeWithGuard: mockExecuteWithGuard,
   },
 }));
 
@@ -98,6 +100,7 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     mockUpdateStatus.mockResolvedValue(undefined);
     mockDelete.mockResolvedValue(undefined);
     mockExecuteDomainSteps.mockResolvedValue({ refId: 'invoice-post-commit-test' });
+    mockExecuteWithGuard.mockImplementation(async (_options: unknown, operation: () => Promise<unknown>) => operation());
   });
 
   it('keeps a committed workflow successful when the completion event fails', async () => {
@@ -139,4 +142,25 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     );
     expect(mockDelete).not.toHaveBeenCalled();
   });
+  it('does not delete or leave idempotency processing when the guard throws after the transaction commits', async () => {
+    mockExecuteWithGuard.mockImplementationOnce(async (_options: unknown, operation: () => Promise<unknown>) => {
+      await operation();
+      throw new Error('EXECUTION_GUARD_POST_COMMIT_FAILED');
+    });
+
+    const result = await WorkflowExecutionPipeline.run(workflow as any, {}, context as any);
+
+    expect(mockExecuteDomainSteps).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ refId: 'invoice-post-commit-test' });
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      context.idempotencyKey,
+      'COMMITTED',
+      { refId: 'invoice-post-commit-test' },
+      undefined,
+      context.tenantId,
+    );
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
 });
+
