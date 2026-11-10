@@ -183,6 +183,35 @@ authRouter.post("/bootstrap", async (req: Request, res: Response) => {
         }
       });
 
+      // Bootstrap the tenant's first active branch and bind the initial admin
+      // in the same transaction. A bootstrapped admin must never start branchless.
+      const branch = await tx.branch.create({
+        data: {
+          code: `BRH-${tenant.id.slice(0, 4).toUpperCase()}-101`,
+          name: "الفرع الرئيسي",
+          isActive: true,
+          tenantId: tenant.id
+        }
+      });
+      await tx.branchSettings.create({
+        data: {
+          branchId: branch.id,
+          enableAutoMatching: true,
+          strictFifo: true,
+          ledgerSyncEnabled: true,
+          dualAuthLimit: 10000.00,
+          allowedIpRanges: "*"
+        }
+      });
+      await tx.branchUser.create({
+        data: {
+          tenantId: tenant.id,
+          branchId: branch.id,
+          userId: adminUser.id,
+          isDefault: true
+        }
+      });
+
       // Log action in auditLog
       await tx.auditLog.create({
         data: {
