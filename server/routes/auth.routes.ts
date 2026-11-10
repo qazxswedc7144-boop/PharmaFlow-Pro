@@ -54,13 +54,16 @@ authRouter.get("/branch-context", authenticateToken, async (req: AuthenticatedRe
           select: { id: true, tenantId: true }
         });
 
-        if (requestedBranch) {
+        if (requestedBranch && requestedBranch.tenantId !== tenantId) {
           return res.status(403).json({
             success: false,
             error: "BRANCH_MEMBERSHIP_REQUIRED",
-            message: "The selected branch exists but is not assigned to this user in the authenticated tenant."
+            message: "The selected branch belongs to another tenant."
           });
         }
+        // A branch that exists in this tenant but is not assigned to this user
+        // may be a stale client selection. Continue only to the unique-membership
+        // recovery below; users with multiple memberships must select explicitly.
       }
 
       const memberships = await prisma.branchUser.findMany({
