@@ -162,7 +162,10 @@ export class FIFOEngine {
   /**
    * APPLY FIFO COSTING
    */
-  static async apply(invoice: Sale | Purchase | UnifiedInvoice | { type?: string; customerId?: string; isReturn?: boolean; invoiceType?: string; items?: Array<{ product_id: string; qty: number; cost?: number; price: number }>; invoiceId?: string; id?: string }): Promise<{ totalCost: number, itemCosts: Record<string, number> }> {
+  static async apply(invoice: Sale | Purchase | UnifiedInvoice | { type?: string; customerId?: string; isReturn?: boolean; invoiceType?: string; items?: Array<{ product_id: string; qty: number; cost?: number; price: number }>; invoiceId?: string; id?: string }, tx?: any): Promise<{ totalCost: number, itemCosts: Record<string, number> }> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_FIFO_TRANSACTION');
+    const inventoryLayers = tx ? tx.table('inventory_layers') : db.inventory_layers;
+    const consumptionLogTable = tx ? tx.table('fifo_consumption_log') : db.fifo_consumption_log;
     const invAny = invoice as Record<string, unknown>;
     const type = (invAny.type as string) || (invAny.customerId ? 'SALE' : 'PURCHASE');
     const isReturn = Boolean(invAny.isReturn) || invAny.invoiceType === 'مرتجع';
@@ -173,14 +176,14 @@ export class FIFOEngine {
       const productIds = items.map(itm => itm.product_id || itm.productId || itm.id).filter(Boolean);
       
       const layers = productIds.length > 0
-        ? await db.inventory_layers.where('item_id').anyOf(productIds).toArray()
+        ? await inventoryLayers.where('item_id').anyOf(productIds).toArray()
         : [];
 
       const result = await WorkerClient.runFIFO(invoice, layers);
 
       if (result.updatedLayers.length > 0) {
         for (const layer of result.updatedLayers) {
-          await db.inventory_layers.update(layer.id, { 
+          await inventoryLayers.update(layer.id, { 
             quantity_remaining: layer.quantity_remaining, 
             lastModified: new Date().toISOString() 
           });
@@ -188,7 +191,7 @@ export class FIFOEngine {
       }
       
       if (result.consumptionLogs.length > 0) {
-        await db.fifo_consumption_log.bulkAdd(result.consumptionLogs);
+        await consumptionLogTable.bulkAdd(result.consumptionLogs);
       }
 
       return {
@@ -203,7 +206,7 @@ export class FIFOEngine {
 
       for (const item of items) {
         const returnCost = type === 'SALE' ? (item.cost || item.price) : item.price;
-        await this.addPurchaseLayer(item.product_id, item.qty, returnCost, invoiceId);
+        await this.addPurchaseLayer(item.product_id, item.qty, returnCost, invoiceId, undefined, tx);
         itemCosts[item.product_id] = item.qty * returnCost;
         totalCost += itemCosts[item.product_id] ?? 0;
       }
