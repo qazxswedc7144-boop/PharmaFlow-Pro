@@ -21,7 +21,7 @@ export class WorkflowContextFactory {
     const correlationId = options?.correlationId || `CORR-${Date.now()}-${randomSuffix}`;
 
     const rawTenantId = options?.tenantId || (user as any)?.tenantId || (user as any)?.tenant_id || authState.tenantId || null;
-    const rawBranchId = options?.branchId || (user as any)?.branchId || (user as any)?.branch_id || authState.branchId || null;
+    const rawBranchId = options?.branchId || authState.branchId || (user as any)?.branchId || (user as any)?.branch_id || null;
 
     if (!rawTenantId || rawTenantId === 'default' || rawTenantId === 'default-tenant' || rawTenantId === 'main') {
       throw new WorkflowExecutionError(

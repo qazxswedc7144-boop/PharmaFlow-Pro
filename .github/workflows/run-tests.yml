@@ -60,6 +60,12 @@ jobs:
           src/features/sales/services/localSalesPricing.service.test.ts
           src/features/sales/workflows/SalesWorkflow.local-pricing.test.ts
           src/features/purchases/utils/pendingProducts.test.ts
+          src/features/branches/services/activeBranchRegistry.test.ts
+          src/core/workflow/workflowContext.branch.test.ts
+          src/features/inventory/utils/projectedAutocompleteStock.test.ts
+          src/features/purchases/utils/failedPurchaseDraft.test.ts
+          src/features/purchases/utils/purchaseFailureDisposition.test.ts
+          src/features/inventory/utils/newPurchaseProduct.test.ts
           server/tests/purchase-integrity-phase2.test.ts
           server/tests/atomic-post-sale-price-policy.test.ts
           server/tests/financial-transaction-sales-price-policy.test.ts

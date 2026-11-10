@@ -17,6 +17,67 @@ import { loginAttemptGuard, releaseLoginAttempt, recordFailedLoginAttempt, Login
 
 export const authRouter = Router();
 
+/**
+ * GET /api/auth/branch-context
+ * Returns only the active branch embedded in the authenticated JWT,
+ * and verifies that it is still active and belongs to the JWT tenant.
+ */
+authRouter.get("/branch-context", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    // X-Branch-ID represents the currently selected branch in the client store.
+    // It is never trusted by itself: verify a user-to-branch membership and the
+    // branch's tenant ownership before returning a local registry record.
+    const requestedBranchId = String(req.headers["x-branch-id"] || req.user?.branchId || "").trim();
+
+    if (!tenantId || !requestedBranchId) {
+      return res.status(403).json({
+        success: false,
+        error: "TRUSTED_BRANCH_CONTEXT_REQUIRED",
+        message: "The authenticated session has no trusted branch context."
+      });
+    }
+
+    const membership = await prisma.branchUser.findFirst({
+      where: {
+        userId: req.user!.userId,
+        tenantId,
+        branchId: requestedBranchId
+      },
+      select: { branchId: true }
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        error: "BRANCH_MEMBERSHIP_REQUIRED",
+        message: "The authenticated user is not assigned to the selected branch in this tenant."
+      });
+    }
+
+    const branch = await prisma.branch.findFirst({
+      where: { id: membership.branchId, tenantId, isActive: true },
+      select: { id: true, code: true, name: true, isActive: true, tenantId: true }
+    });
+
+    if (!branch) {
+      return res.status(404).json({
+        success: false,
+        error: "BRANCH_NOT_FOUND_FOR_TENANT",
+        message: "The selected branch is not active or is not registered to this tenant."
+      });
+    }
+
+    return res.json({ success: true, data: branch });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: "BRANCH_CONTEXT_LOOKUP_FAILED",
+      message: err.message || "Failed to resolve authenticated branch context."
+    });
+  }
+});
+
 
 
 /**
@@ -535,17 +596,76 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
       where: { userId: user.id }
     });
     const tenantId = tUser?.tenantId || null;
+    if (!tenantId) {
+      return res.status(403).json({
+        error: "TRUSTED_TENANT_CONTEXT_REQUIRED",
+        message: "No active tenant membership is available for this authenticated user."
+      });
+    }
 
-    // Generate fresh access token
+    // Preserve the current branch only when the user still has an active
+    // membership in that tenant. Otherwise use an active default membership.
+    const requestedBranchId = String(req.headers["x-branch-id"] || decoded.branchId || "").trim() || null;
+    const requestedBranchHeader = String(req.headers["x-branch-id"] || "").trim();
+    const requestedMembership = requestedBranchId
+      ? await prisma.branchUser.findFirst({
+          where: { userId: user.id, tenantId, branchId: requestedBranchId }
+        })
+      : null;
+
+    if (requestedBranchHeader && !requestedMembership) {
+      return res.status(403).json({
+        error: "BRANCH_MEMBERSHIP_REQUIRED",
+        message: "The selected branch is not assigned to this user in the authenticated tenant."
+      });
+    }
+
+    const requestedActiveBranch = requestedMembership
+      ? await prisma.branch.findFirst({
+          where: { id: requestedMembership.branchId, tenantId, isActive: true },
+          select: { id: true }
+        })
+      : null;
+
+    if (requestedBranchHeader && !requestedActiveBranch) {
+      return res.status(403).json({
+        error: "BRANCH_INACTIVE",
+        message: "The selected branch is not active in the authenticated tenant."
+      });
+    }
+
+    const fallbackMembership = requestedActiveBranch
+      ? requestedMembership
+      : await prisma.branchUser.findFirst({
+          where: { userId: user.id, tenantId, isDefault: true }
+        }) || await prisma.branchUser.findFirst({
+          where: { userId: user.id, tenantId }
+        });
+    const activeBranch = requestedActiveBranch || (fallbackMembership
+      ? await prisma.branch.findFirst({
+          where: { id: fallbackMembership.branchId, tenantId, isActive: true },
+          select: { id: true }
+        })
+      : null);
+    const branchId = activeBranch?.id || null;
+
+    if (!tenantId || !branchId) {
+      return res.status(403).json({
+        error: "TRUSTED_BRANCH_CONTEXT_REQUIRED",
+        message: "No active branch membership is available for this authenticated tenant."
+      });
+    }
+
+    // Generate fresh access token with the same verified tenant + branch context.
     const accessToken = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role, tenantId },
+      { userId: user.id, username: user.username, role: user.role, tenantId, branchId },
       getJwtSecret(),
       { expiresIn: "4h" }
     );
 
-    // Rotate refresh token
+    // Rotate refresh token while preserving the verified branch context.
     const newRefreshToken = jwt.sign(
-      { userId: user.id, tenantId },
+      { userId: user.id, tenantId, branchId },
       getJwtRefreshSecret(),
       { expiresIn: "7d" }
     );
@@ -574,6 +694,7 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
         username: user.username,
         role: user.role,
         tenantId,
+        branchId,
         isActive: user.isActive,
         lastLoginAt: user.lastLoginAt
       }

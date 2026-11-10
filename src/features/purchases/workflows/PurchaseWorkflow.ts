@@ -10,6 +10,7 @@ import { db } from '@/core/db';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { configurationService } from '@/services/config/configurationService';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import { ensureActiveBranchRegistered } from '@features/branches/services/activeBranchRegistry';
 
 export interface PurchaseWorkflowInput {
   supplierId?: string;
@@ -80,6 +81,16 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       throw new Error(
         'FAIL_CLOSED: يتطلب تنفيذ فاتورة المشتريات وجود سياق مؤسسة موثوق (Trusted Tenant Context Required).'
       );
+    }
+
+    // Resolve the active branch from the authenticated server context before opening
+    // the Dexie transaction. Never synthesize a branch or trust an unbound local row.
+    const finalStatus = input.invoiceStatus || 'POSTED';
+    if (finalStatus === 'POSTED' || finalStatus === 'LOCKED') {
+      await ensureActiveBranchRegistered({
+        tenantId: ctx.tenantId,
+        branchId: ctx.branchId
+      });
     }
 
     if (!input.id) {

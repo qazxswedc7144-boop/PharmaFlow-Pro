@@ -753,6 +753,7 @@ const existingItemIndex = items.findIndex(i =>
         }}
         onAdd={(item: any) => handleAddItem(item)}
         mode="purchase"
+        invoiceItems={items}
         initialData={editingItem ? {
           id: editingItem.id,
           productId: editingItem.product_id,

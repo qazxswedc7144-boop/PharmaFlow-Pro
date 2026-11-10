@@ -10,6 +10,8 @@ import { normalizeToISODate, getExpiryStatus, formatDateDisplay } from '@/utils/
 import { priceIntelligenceService } from '@/features/inventory/services/priceIntelligenceService';
 import { useToast } from '@/hooks/useToast';
 import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './itemEntryModalLifecycle';
+import { getProjectedAutocompleteStock } from '@features/inventory/utils/projectedAutocompleteStock';
+import { createNewPurchaseProductRecord } from '@features/inventory/utils/newPurchaseProduct';
 
 interface ProductItem {
   id: string;
@@ -44,6 +46,7 @@ interface ItemEntryModalProps {
   mode: 'purchase' | 'sale';
   isReturnMode?: boolean;
   customerId?: string;
+  invoiceItems?: Array<{ productId?: string; product_id?: string; qty?: number | string; quantity?: number | string }>;
   initialData?: {
     id?: string;
     name?: string;
@@ -58,7 +61,7 @@ interface ItemEntryModalProps {
 }
 
 export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
-  isOpen, onClose, onAdd, mode, initialData, isReturnMode = false, customerId
+  isOpen, onClose, onAdd, mode, initialData, isReturnMode = false, customerId, invoiceItems = []
 }) => {
   const [manualItemName, setManualItemName] = useState<string>('');
   const [tempQty, setTempQty] = useState<string | number>('');
@@ -123,29 +126,36 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     });
   };
 
-  const createAndSaveNewProduct = useCallback((name: string, price: string | number, qty: string | number, cat: string): string => {
+  const createAndSaveNewProduct = useCallback(async (
+    name: string,
+    price: string | number,
+    cat: string
+  ): Promise<string> => {
     const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
-    const newProd = {
+    const newProd = createNewPurchaseProductRecord({
       id: newProdId,
-      ProductID: newProdId,
-      Name: name,
-      name: name,
-      categoryName: cat || 'عام',
-      UnitPrice: parseFloat(price as string) || 0,
-      price: parseFloat(price as string) || 0,
-      StockQuantity: parseFloat(qty as string) || 0,
-      stock: parseFloat(qty as string) || 0,
-      Is_Active: 1,
-      created_at: new Date().toISOString()
-    };
-    WorkflowOrchestrator.execute(productApplicationWorkflow, { product: newProd as any, isNew: true })
-      .then(() => db.products.put(newProd as any))
-      .catch(err => {
-        console.error("Background save failed:", err);
-        error("فشل حفظ الصنف في قاعدة البيانات، يرجى المحاولة مرة أخرى");
-      });
+      name,
+      price: Number(price) || 0,
+      category: cat
+    });
+
+    const result = await WorkflowOrchestrator.execute(
+      productApplicationWorkflow,
+      { product: newProd as any, isNew: true }
+    );
+    if (!result.success) {
+      throw new Error(result.error?.message || 'PRODUCT_REGISTRATION_FAILED');
+    }
+
+    // InventoryService.saveProduct is the authoritative writer; do not overwrite
+    // its tenant/branch-bound row with the raw form object after the workflow.
+    const persistedProduct = await db.products.get(newProdId);
+    if (!persistedProduct) {
+      throw new Error('PRODUCT_REGISTRATION_NOT_CONFIRMED');
+    }
+
     return newProdId;
-  }, [error]);
+  }, []);
 
   // Load live stock, expiry, and price intelligence for the selected product
   const loadProductIntelligence = useCallback(async (prodId: string, currentProd?: ProductItem) => {
@@ -471,7 +481,7 @@ if (mode === 'sale') {
     setIsSubmitting(true);
     try {
       if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
-        finalProductId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+        finalProductId = await createAndSaveNewProduct(manualItemName, tempPrice, categoryName);
       }
 
       // ✅ إرسال الصنف للجدول فوراً (سيظهر مباشرة)
@@ -494,6 +504,11 @@ if (mode === 'sale') {
         resetForm();
         setTimeout(() => itemNameInputRef.current?.focus(), 100);
       }
+    } catch (registrationError) {
+      console.error('[ItemEntryModal] Product registration failed:', registrationError);
+      setIsConfirmedNewProduct(false);
+      setIsConfirmNewProductOpen(true);
+      error('تعذر تسجيل الصنف. لم تتم إضافته إلى الفاتورة؛ يرجى إعادة المحاولة.');
     } finally {
       setIsSubmitting(false);
     }
@@ -504,7 +519,7 @@ if (mode === 'sale') {
     setIsConfirmedNewProduct(true);
     setIsSubmitting(true);
     try {
-      const newProdId = createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+      const newProdId = await createAndSaveNewProduct(manualItemName, tempPrice, categoryName);
       onAdd({ 
         id: initialData?.id || Date.now().toString(), 
         productId: newProdId, 
@@ -523,6 +538,11 @@ if (mode === 'sale') {
         resetForm();
         setTimeout(() => itemNameInputRef.current?.focus(), 100);
       }
+    } catch (registrationError) {
+      console.error('[ItemEntryModal] Product registration failed:', registrationError);
+      setIsConfirmedNewProduct(false);
+      setIsConfirmNewProductOpen(true);
+      error('تعذر تسجيل الصنف. لم تتم إضافته إلى الفاتورة؛ يرجى إعادة المحاولة.');
     } finally {
       setIsSubmitting(false);
     }
@@ -593,7 +613,7 @@ if (mode === 'sale') {
                       >
                         <span>{p.Name}</span>
                         <span className="text-[11px] font-bold text-slate-400">
-                          رصيد: {p.StockQuantity ?? p.stock ?? 0}
+                          رصيد: {getProjectedAutocompleteStock(p, mode, invoiceItems)}
                         </span>
                       </button>
                     ))}

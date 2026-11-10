@@ -503,6 +503,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
         }}
         onAdd={(item: any) => handleAddItem(item)}
         mode="sale"
+        invoiceItems={items}
         isReturnMode={header.isReturn}
         customerId={header.customer_id || undefined}
         initialData={editingItem ? {
