@@ -28,7 +28,7 @@ describe('failed purchase draft quarantine', () => {
       errorCode: 'SAVE_FAILED'
     });
 
-    failed.items[0].qty = 99;
+    failed.items[0]!.qty = 99;
     expect(items[0].qty).toBe(3);
   });
 });
