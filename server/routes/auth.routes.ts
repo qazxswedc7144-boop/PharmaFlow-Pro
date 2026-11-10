@@ -605,7 +605,7 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
 
     // Preserve the current branch only when the user still has an active
     // membership in that tenant. Otherwise use an active default membership.
-    const requestedBranchId = decoded.branchId || null;
+    const requestedBranchId = String(req.headers["x-branch-id"] || decoded.branchId || "").trim() || null;
     const requestedMembership = requestedBranchId
       ? await prisma.branchUser.findFirst({
           where: { userId: user.id, tenantId, branchId: requestedBranchId }
