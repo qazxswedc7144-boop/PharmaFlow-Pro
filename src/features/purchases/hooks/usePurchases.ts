@@ -24,6 +24,7 @@ import { collectPendingProductsForInvoice } from '../utils/pendingProducts';
 import { buildFailedPurchaseDraft } from '../utils/failedPurchaseDraft';
 import { getPurchaseFailureDisposition } from '../utils/purchaseFailureDisposition';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import { getPurchaseDraftSnapshot } from '../utils/recoverablePurchaseDraft';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -177,8 +178,91 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
   useEffect(() => { let timer: NodeJS.Timeout | null = null; if (isLocked && editingInvoiceId) { timer = setTimeout(() => { (async () => { try { await db.updatePurchaseNotes(editingInvoiceId, header.notes); await db.updatePurchaseAttachment(editingInvoiceId, header.attachment || ''); } catch (e) { console.error("Auto-update header failed:", e); } })().catch(e => console.error("[usePurchases] Auto-update header fatal:", e)); }, 1000); } return () => { if (timer) clearTimeout(timer); }; }, [header.notes, header.attachment, isLocked, editingInvoiceId]);
 
   const draftPromptCheckedRef = useRef(false);
-  useEffect(() => { if (editingInvoiceId) return; const checkDraft = async () => { if (draftPromptCheckedRef.current) return; draftPromptCheckedRef.current = true; try { const unfinished = await DraftService.getUnfinishedInvoiceDraft('PURCHASE'); if (unfinished) { setRecoveryDraftData(unfinished); setIsRecoveryModalOpen(true); } else { const hasSavedDraft = await DraftService.hasDraft('purchases'); if (hasSavedDraft) { const draft = await DraftService.getDraft('purchases'); if (draft && draft.items && draft.items.length > 0) { setRecoveryDraftData(draft as any); setIsRecoveryModalOpen(true); } } } } catch (err) { console.error('Failed to load purchases draft recovery status:', err); } }; checkDraft().catch(e => console.error("checkDraft error:", e)); }, [editingInvoiceId]);
-  const restoreDraft = useCallback(async () => { if (recoveryDraftData) { const draftObj: any = recoveryDraftData; const data = draftObj.totals?.header ? draftObj.totals : (draftObj.payload || draftObj); if (data) { if (data.header) setHeader(data.header); const rawItems = draftObj.items || data.items || []; if (rawItems && rawItems.length > 0) setItems(rawItems.map((i: any, idx: number) => ({ ...i, name: i.name || i.productName || i.Name || '', productName: i.productName || i.name || i.Name || '', qty: Number(i.qty ?? i.quantity ?? 0), quantity: Number(i.quantity ?? i.qty ?? 0), price: Number(i.price ?? i.unitPrice ?? 0), unitPrice: Number(i.unitPrice ?? i.price ?? 0), sum: Number(i.sum ?? ((i.qty ?? i.quantity ?? 0) * (i.price ?? i.unitPrice ?? 0))), row_order: i.row_order || idx + 1, expiryDate: normalizeToISODate(i.expiryDate || i.ExpiryDate || i.expiry_date || i.expirationDate || '') }))); if (data.adjData) setAdjData(data.adjData); else if (data.totals?.adjData) setAdjData(data.totals.adjData); else if (draftObj.totals?.adjData) setAdjData(draftObj.totals.adjData); if (draftObj.partner?.partnerName) setSupplierSearchTerm(draftObj.partner.partnerName); else if (data.partner?.partnerName) setSupplierSearchTerm(data.partner.partnerName); } addToast("تمت استعادة مسودة المشتريات بنجاح 💾", "success"); } setIsRecoveryModalOpen(false); setRecoveryDraftData(null); }, [recoveryDraftData, addToast]);
+  useEffect(() => {
+    if (editingInvoiceId) return;
+    const checkDraft = async () => {
+      if (draftPromptCheckedRef.current) return;
+      draftPromptCheckedRef.current = true;
+      try {
+        // Failed quarantine is preferred to a debounced autosave because it
+        // contains the exact invoice lines captured at the failed save boundary.
+        const recoverable = await DraftService.getRecoverablePurchaseDraft();
+        if (recoverable) {
+          setRecoveryDraftData(recoverable);
+          setIsRecoveryModalOpen(true);
+          return;
+        }
+
+        const hasSavedDraft = await DraftService.hasDraft('purchases');
+        if (hasSavedDraft) {
+          const draft = await DraftService.getDraft('purchases');
+          if (draft && draft.items && draft.items.length > 0) {
+            setRecoveryDraftData(draft as any);
+            setIsRecoveryModalOpen(true);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load purchases draft recovery status:', err);
+      }
+    };
+    checkDraft().catch(e => console.error('checkDraft error:', e));
+  }, [editingInvoiceId]);
+
+  const restoreDraft = useCallback(async () => {
+    if (!recoveryDraftData) {
+      setIsRecoveryModalOpen(false);
+      return;
+    }
+
+    const draftObj: any = recoveryDraftData;
+    const snapshot = getPurchaseDraftSnapshot(draftObj);
+    const rawItems = snapshot.items || [];
+
+    if (snapshot.header) setHeader(snapshot.header as any);
+    setItems(rawItems.map((item: any, idx: number) => ({
+      ...item,
+      name: item.name || item.productName || item.Name || '',
+      productName: item.productName || item.name || item.Name || '',
+      qty: Number(item.qty ?? item.quantity ?? 0),
+      quantity: Number(item.quantity ?? item.qty ?? 0),
+      price: Number(item.price ?? item.unitPrice ?? 0),
+      unitPrice: Number(item.unitPrice ?? item.price ?? 0),
+      sum: Number(item.sum ?? ((item.qty ?? item.quantity ?? 0) * (item.price ?? item.unitPrice ?? 0))),
+      row_order: item.row_order || idx + 1,
+      expiryDate: normalizeToISODate(item.expiryDate || item.ExpiryDate || item.expiry_date || item.expirationDate || '')
+    })));
+    setAdjData(snapshot.adjData as any);
+    pendingProductsRef.current = Array.isArray(snapshot.pendingProducts)
+      ? snapshot.pendingProducts
+      : [];
+
+    const supplierId = String((snapshot.header as any)?.supplier_id || '');
+    const supplierName = String(
+      snapshot.partner?.partnerName ||
+      suppliers.find((supplier: any) => supplier.id === supplierId || supplier.Supplier_ID === supplierId)?.Supplier_Name ||
+      ''
+    );
+    setSupplierSearchTerm(supplierName);
+
+    // Reset the item-entry search surface; the restored invoice rows remain intact.
+    setManualItemName('');
+    setFilteredProducts([]);
+    setSelectedProduct(null);
+    setSearchTerm('');
+    setShowSearchDropdown(false);
+
+    if (draftObj.status === 'FAILED_QUARANTINED' && draftObj.draftId) {
+      try {
+        await DraftService.markInvoiceDraftRecovered(draftObj.draftId);
+      } catch (recoveryMarkerError) {
+        console.warn('[usePurchases] Failed to mark quarantined draft as recovered:', recoveryMarkerError);
+      }
+    }
+
+    addToast('تمت استعادة مسودة المشتريات وأصنافها بنجاح 💾', 'success');
+    setIsRecoveryModalOpen(false);
+    setRecoveryDraftData(null);
+  }, [recoveryDraftData, addToast, suppliers]);
   const discardDraft = useCallback(async () => { try { if ((recoveryDraftData as any)?.draftId) await DraftService.clearInvoiceDraft((recoveryDraftData as any).draftId); await DraftService.clearDraft('purchases'); const unfinished = await DraftService.getUnfinishedInvoiceDraft('PURCHASE'); if (unfinished?.draftId) await DraftService.clearInvoiceDraft(unfinished.draftId); addToast("تم حذف مسودة المشتريات المتروكة وبدء قيد جديد", "info"); resetInvoiceState(); } catch (e) { console.error("discardDraft failed:", e); } finally { setIsRecoveryModalOpen(false); setRecoveryDraftData(null); } }, [addToast, resetInvoiceState, recoveryDraftData]);
 
   const handleSupplierSearch = useCallback((val: string) => { setSupplierSearchTerm(val); setShowSupplierDropdown(true); setSelectedSupplierIndex(-1); }, []);
