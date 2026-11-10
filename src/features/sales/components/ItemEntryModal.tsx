@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/useToast';
 import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './itemEntryModalLifecycle';
 import { getProjectedAutocompleteStock } from '@features/inventory/utils/projectedAutocompleteStock';
 import { createNewPurchaseProductRecord } from '@features/inventory/utils/newPurchaseProduct';
+import { formatProductRegistrationError } from './productRegistrationError';
 
 interface ProductItem {
   id: string;
@@ -144,17 +145,19 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       { product: newProd as any, isNew: true }
     );
     if (!result.success) {
-      throw new Error(result.error?.message || 'PRODUCT_REGISTRATION_FAILED');
+      const workflowCode = result.error?.code || 'PRODUCT_REGISTRATION_FAILED';
+      const workflowMessage = result.error?.message || 'لم يُرجع سير العمل سبباً محدداً.';
+      throw new Error(`${workflowCode}: ${workflowMessage}`);
     }
 
-    // InventoryService.saveProduct is the authoritative writer; do not overwrite
-    // its tenant/branch-bound row with the raw form object after the workflow.
-    const persistedProduct = await db.products.get(newProdId);
+    // The workflow may return a normalized ID; verify the exact persisted row.
+    const savedProductId = result.data?.productId || newProdId;
+    const persistedProduct = await db.products.get(savedProductId);
     if (!persistedProduct) {
-      throw new Error('PRODUCT_REGISTRATION_NOT_CONFIRMED');
+      throw new Error('PRODUCT_REGISTRATION_NOT_CONFIRMED: لم يتم العثور على سجل الصنف بعد اكتمال الحفظ المحلي.');
     }
 
-    return newProdId;
+    return savedProductId;
   }, []);
 
   // Load live stock, expiry, and price intelligence for the selected product
@@ -506,9 +509,10 @@ if (mode === 'sale') {
       }
     } catch (registrationError) {
       console.error('[ItemEntryModal] Product registration failed:', registrationError);
-      setIsConfirmedNewProduct(false);
-      setIsConfirmNewProductOpen(true);
-      error('تعذر تسجيل الصنف. لم تتم إضافته إلى الفاتورة؛ يرجى إعادة المحاولة.');
+      // Keep the explicit confirmation; retrying must not ask the same question again.
+      setIsConfirmedNewProduct(true);
+      setIsConfirmNewProductOpen(false);
+      error(formatProductRegistrationError(registrationError));
     } finally {
       setIsSubmitting(false);
     }
@@ -540,9 +544,10 @@ if (mode === 'sale') {
       }
     } catch (registrationError) {
       console.error('[ItemEntryModal] Product registration failed:', registrationError);
-      setIsConfirmedNewProduct(false);
-      setIsConfirmNewProductOpen(true);
-      error('تعذر تسجيل الصنف. لم تتم إضافته إلى الفاتورة؛ يرجى إعادة المحاولة.');
+      // Keep the explicit confirmation; retrying must not ask the same question again.
+      setIsConfirmedNewProduct(true);
+      setIsConfirmNewProductOpen(false);
+      error(formatProductRegistrationError(registrationError));
     } finally {
       setIsSubmitting(false);
     }
