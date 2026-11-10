@@ -52,7 +52,9 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
     isAdjustmentsOpen, setIsAdjustmentsOpen,
     isViewerOpen, setIsViewerOpen,
     salesPolicy,
+    salesPolicyError,
     isSalesPolicyLoading,
+    retrySalesPolicy,
     pricingResult,
     pricingError,
     itemNameInputRef,
@@ -425,6 +427,24 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
 
       {/* PERFECTLY ALIGNED STICKY FOOTER SECTION - FIXED AT BOTTOM */}
       <div className="shrink-0 sticky bottom-0 w-full z-40 bg-white border-t border-gray-200 p-3 shadow-lg space-y-2 pb-[calc(12px+env(safe-area-inset-bottom,0px))] px-4">
+        {items.length > 0 && !isSalesPolicyLoading && pricingError && (
+          <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-bold text-amber-800 flex items-center justify-between gap-2">
+            <span>
+              {salesPolicyError
+                ? 'تعذر تحميل سياسة تسعير المبيعات؛ الحفظ متوقف لحماية صحة الإجمالي.'
+                : pricingError === 'LOCAL_PRODUCT_REFERENCE_UNAVAILABLE'
+                  ? 'تعذر التحقق من مرجع أحد الأصناف في المخزون.'
+                  : pricingError === 'INVALID_SALE_LINE_PRICE'
+                    ? 'يوجد سعر بيع غير صالح في أحد البنود.'
+                    : 'تعذر احتساب إجمالي الفاتورة؛ راجع بيانات الأصناف والتسعير.'}
+            </span>
+            {salesPolicyError && (
+              <button type="button" onClick={retrySalesPolicy} className="shrink-0 underline underline-offset-2">
+                إعادة المحاولة
+              </button>
+            )}
+          </div>
+        )}
         <div className="flex items-center justify-between flex-nowrap px-2">
           <div className="flex flex-col items-center">
             <span className="text-[10px] font-black text-slate-400 uppercase">الخصم</span>
