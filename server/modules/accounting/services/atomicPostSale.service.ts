@@ -101,7 +101,7 @@ export class AtomicPostSaleService {
     }
 
     const itemsData = validated.items.map((item, index) => {
-      const price = pricingItems[index].price;
+      const price = pricingItems[index]!.price;
       return {
         productId: item.productId,
         qty: item.qty,
