@@ -29,6 +29,6 @@ describe('failed purchase draft quarantine', () => {
     });
 
     failed.items[0]!.qty = 99;
-    expect(items[0].qty).toBe(3);
+    expect(items[0]!.qty).toBe(3);
   });
 });
