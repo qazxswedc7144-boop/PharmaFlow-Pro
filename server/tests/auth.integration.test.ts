@@ -47,5 +47,4 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     expect(recovered.body.data.tenantId).toBe(ctx.tenantAId);
     expect(recovered.body.contextCorrected).toBe(true);
   });
-  });
 });
