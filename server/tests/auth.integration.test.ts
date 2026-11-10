@@ -17,4 +17,20 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     });
     expect(sessions).toBe(2);
   });
+
+  it("resolves only the selected branch assigned to the authenticated tenant user", async () => {
+    const ctx = getContext();
+
+    const ownBranch = await request(ctx, "/api/auth/branch-context", { token: ctx.tokenA });
+    expect(ownBranch.status).toBe(200);
+    expect(ownBranch.body.data.id).toBe(ctx.branchAId);
+    expect(ownBranch.body.data.tenantId).toBe(ctx.tenantAId);
+
+    const foreignBranch = await request(ctx, "/api/auth/branch-context", {
+      token: ctx.tokenA,
+      branchId: ctx.branchBId
+    });
+    expect(foreignBranch.status).toBe(403);
+    expect(foreignBranch.body.error).toBe("BRANCH_MEMBERSHIP_REQUIRED");
+  });
 });
