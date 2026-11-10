@@ -120,6 +120,5 @@ describe('active branch registration', () => {
 
     expect(branch).toMatchObject({ id: 'branch-a', tenantId: 'tenant-a' });
     expect(unifiedTransport.get).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
   });
 });
