@@ -44,7 +44,7 @@ export async function ensureActiveBranchRegistered(
     throw new Error('TRUSTED_BRANCH_CONTEXT_REQUIRED: Tenant and branch are required.');
   }
 
-  const localBranch = await db.branches.get(expected.branchId).catch(() => null);
+  const localBranch = await db.branches.get(expected.branchId);
   if (localBranch) {
     const localTenantId = (localBranch as any).tenantId || (localBranch as any).tenant_id;
     if (localTenantId && localTenantId !== expected.tenantId) {
