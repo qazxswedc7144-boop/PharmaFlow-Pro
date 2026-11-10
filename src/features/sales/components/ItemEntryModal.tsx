@@ -96,7 +96,8 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   // Defer focus until React has committed dropdown/state updates.
   const focusNextField = (
     event: React.KeyboardEvent<HTMLInputElement>,
-    getNextField: () => HTMLElement | null
+    getNextField: () => HTMLElement | null,
+    onEnter?: () => void
   ) => {
     const nativeEvent = event.nativeEvent;
     const isEnter = event.key === 'Enter' || nativeEvent.keyCode === 13 || nativeEvent.which === 13;
@@ -105,6 +106,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
 
     event.preventDefault();
     event.stopPropagation();
+    onEnter?.();
 
     requestAnimationFrame(() => {
       const nextField = getNextField();
@@ -520,10 +522,11 @@ if (mode === 'sale') {
                 className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-[14px] font-semibold text-[#1E4D4D] outline-none focus:bg-white text-right"
                 placeholder="ابحث عن صنف أو اكتب اسماً..." 
                 enterKeyHint="next"
-                onKeyDown={e => {
-                  setShowSearchDropdown(false);
-                  focusNextField(e, () => qtyInputRef.current);
-                }}
+                onKeyDown={e => focusNextField(
+                  e,
+                  () => qtyInputRef.current,
+                  () => setShowSearchDropdown(false)
+                )}
               />
               <AnimatePresence>
                 {showSearchDropdown && filteredProducts.length > 0 && (
