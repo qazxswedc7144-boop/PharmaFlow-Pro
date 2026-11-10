@@ -12,6 +12,7 @@ describe('purchase failure disposition', () => {
 
   it('quarantines only operations that are failed or have no idempotency record', () => {
     expect(getPurchaseFailureDisposition('FAILED')).toBe('QUARANTINE');
+    expect(getPurchaseFailureDisposition('EXPIRED')).toBe('QUARANTINE');
     expect(getPurchaseFailureDisposition(null)).toBe('QUARANTINE');
   });
 });
