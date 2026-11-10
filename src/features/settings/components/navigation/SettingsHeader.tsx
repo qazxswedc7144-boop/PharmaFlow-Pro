@@ -99,7 +99,7 @@ export const SettingsHeader: React.FC<SettingsHeaderProps> = ({
           className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-300/40 bg-red-500/10 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold text-white hover:bg-red-500/20 disabled:opacity-60 transition-colors"
         >
           {isSigningOut ? <LoaderCircle size={16} className="animate-spin" /> : <LogOut size={16} />}
-          <span className="hidden sm:inline">تسجيل الخروج</span>
+          <span className="inline text-[10px] sm:text-xs">تسجيل الخروج</span>
         </button>
       </div>
     </header>
