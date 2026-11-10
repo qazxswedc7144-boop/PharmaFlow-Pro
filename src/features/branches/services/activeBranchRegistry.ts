@@ -42,11 +42,12 @@ export function validateActiveBranchRecord(
 export async function ensureActiveBranchRegistered(
   expected: ActiveBranchContext
 ): Promise<any> {
-  if (!expected.tenantId || !expected.branchId) {
-    throw new Error('TRUSTED_BRANCH_CONTEXT_REQUIRED: Tenant and branch are required.');
+  if (!expected.tenantId) {
+    throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: Tenant is required.');
   }
 
-  const localBranch = await db.branches.get(expected.branchId);
+  const expectedBranchId = String(expected.branchId || '').trim();
+  const localBranch = expectedBranchId ? await db.branches.get(expectedBranchId) : null;
   let trustedLocalBranch: any = null;
 
   if (localBranch) {
