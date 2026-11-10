@@ -19,8 +19,8 @@ export function validateActiveBranchRecord(
     throw new Error('CROSS_TENANT_VIOLATION: Active branch is not bound to the authenticated tenant.');
   }
 
-  if (record.isActive === false || record.is_active === false) {
-    throw new Error('BRANCH_INACTIVE: The authenticated branch is inactive.');
+  if (record.isActive !== true && record.is_active !== true) {
+    throw new Error('BRANCH_INACTIVE: The authenticated branch is not confirmed active.');
   }
 
   return {
@@ -50,8 +50,11 @@ export async function ensureActiveBranchRegistered(
     if (localTenantId && localTenantId !== expected.tenantId) {
       throw new Error('CROSS_TENANT_VIOLATION: Local branch belongs to another tenant.');
     }
-    if (localTenantId === expected.tenantId && localBranch.isActive !== false) {
+    if (localTenantId === expected.tenantId && (localBranch.isActive === true || (localBranch as any).is_active === true)) {
       return validateActiveBranchRecord(localBranch, expected);
+    }
+    if (localBranch.isActive === false || (localBranch as any).is_active === false) {
+      throw new Error('BRANCH_INACTIVE: The local branch is inactive.');
     }
   }
 
