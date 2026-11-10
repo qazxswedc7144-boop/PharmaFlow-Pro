@@ -34,6 +34,28 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     expect(foreignBranch.body.error).toBe("BRANCH_MEMBERSHIP_REQUIRED");
   });
 
+  it("recovers from a stale same-tenant branch selection when the user has one active membership", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const staleBranch = await prisma.branch.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        code: `STALE-${ctx.suffix}`,
+        name: "Unassigned stale branch",
+        isActive: true
+      }
+    });
+
+    const recovered = await request(ctx, "/api/auth/branch-context", {
+      token: ctx.tokenA,
+      branchId: staleBranch.id
+    });
+
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.data.id).toBe(ctx.branchAId);
+    expect(recovered.body.contextCorrected).toBe(true);
+  });
+
   it("reconciles a missing stale branch ID only when exactly one active membership exists", async () => {
     const ctx = getContext();
 
