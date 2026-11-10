@@ -31,7 +31,7 @@ const money = (value: Decimal): Decimal =>
 
 export class LocalSalesPricingService {
   static calculate(
-    items: Array<{ price: string | number; qty: number }>,
+    items: Array<{ price: string | number; catalogPrice?: string | number; qty: number }>,
     policy: LocalSalesPolicy,
     requestedDiscountPercent: string | number = 0
   ): LocalSalesPricingResult {
@@ -57,16 +57,37 @@ export class LocalSalesPricingService {
       throw new Error('INVALID_SALES_POLICY');
     }
 
-    const subtotal = money(items.reduce((sum, item) => {
+    const totals = items.reduce((result, item) => {
       if (!Number.isSafeInteger(item.qty) || item.qty <= 0) {
         throw new Error('INVALID_SALE_QUANTITY');
       }
       const price = new Decimal(item.price);
-      if (!Number.isFinite(Number(price.toString())) || price.isNegative()) {
+      const catalogPrice = new Decimal(item.catalogPrice ?? item.price);
+      if (
+        !Number.isFinite(Number(price.toString())) || price.isNegative() ||
+        !Number.isFinite(Number(catalogPrice.toString())) || catalogPrice.isNegative()
+      ) {
         throw new Error('INVALID_SERVER_PRODUCT_PRICE');
       }
-      return sum.plus(price.mul(item.qty));
-    }, ZERO));
+      if (catalogPrice.greaterThan(0) && price.lessThan(catalogPrice)) {
+        const lineDiscountPercent = catalogPrice.minus(price).mul(HUNDRED).div(catalogPrice);
+        if (lineDiscountPercent.greaterThan(maxDiscount)) {
+          throw new Error('DISCOUNT_LIMIT_EXCEEDED');
+        }
+      }
+      return {
+        subtotal: result.subtotal.plus(price.mul(item.qty)),
+        catalogSubtotal: result.catalogSubtotal.plus(catalogPrice.mul(item.qty))
+      };
+    }, { subtotal: ZERO, catalogSubtotal: ZERO });
+
+    const subtotal = money(totals.subtotal);
+    const effectiveNetAmount = totals.subtotal.minus(totals.subtotal.mul(requestedDiscount).div(HUNDRED));
+    const effectiveDiscountAmount = totals.catalogSubtotal.minus(effectiveNetAmount);
+    const maxAllowedDiscountAmount = totals.catalogSubtotal.mul(maxDiscount).div(HUNDRED);
+    if (effectiveDiscountAmount.greaterThan(maxAllowedDiscountAmount)) {
+      throw new Error('DISCOUNT_LIMIT_EXCEEDED');
+    }
 
     const discountAmount = money(subtotal.mul(requestedDiscount).div(HUNDRED));
     const taxableAmount = money(subtotal.minus(discountAmount));

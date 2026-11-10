@@ -13,6 +13,7 @@ import { validateRequestBody } from "../middleware/validate.js";
 import { UUIDSchema } from "../../src/shared/validation/common.schema.js";
 import { SaasService } from "../modules/saas/saas.service.js";
 import { SalesPricingService } from "../modules/accounting/services/salesPricing.service.js";
+import { AuthorizationService } from "../services/rbac/authorization.service.js";
 
 export const invoiceRouter = Router();
 
@@ -122,6 +123,11 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
 
       let calculatedTotal = new Prisma.Decimal(0);
       let salesPricing: ReturnType<typeof SalesPricingService.calculate> | null = null;
+      const policy = data.type === "SALE"
+        ? await tx.tenantSalesPolicy.findUnique({ where: { tenantId } })
+        : null;
+      let manualPriceOverrideRequested = false;
+      const pricingItems: Array<{ price: Prisma.Decimal; catalogPrice: Prisma.Decimal; qty: number }> = [];
       const itemData = data.items.map((item: any) => {
         const product = productsById.get(item.productId);
         if (!product) {
@@ -130,16 +136,23 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           throw error;
         }
 
-        // Sales use the tenant-owned catalog price. Purchase invoices retain
-        // their supplier purchase price, since Product.price is a retail price.
+        // Purchase invoices retain supplier-entered cost. Sales retain a
+        // manually entered unit price only when the authenticated actor has
+        // the dedicated override permission.
+        const catalogPrice = new Prisma.Decimal(product.price.toString());
         const price = data.type === "SALE"
-          ? new Prisma.Decimal(product.price.toString())
+          ? new Prisma.Decimal(item.price ?? product.price.toString())
           : new Prisma.Decimal(item.price);
 
-        if (!price.isFinite() || price.isNegative()) {
+        if (!catalogPrice.isFinite() || catalogPrice.isNegative() || !price.isFinite() || price.isNegative()) {
           const error: any = new Error("INVALID_SERVER_PRODUCT_PRICE");
           error.code = "INVALID_SERVER_PRODUCT_PRICE";
           throw error;
+        }
+
+        if (data.type === "SALE") {
+          if (!price.equals(catalogPrice)) manualPriceOverrideRequested = true;
+          pricingItems.push({ price, catalogPrice, qty: item.qty });
         }
 
         const lineTotal = price.mul(item.qty);
@@ -164,9 +177,23 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       });
 
       if (data.type === "SALE") {
-        const policy = await tx.tenantSalesPolicy.findUnique({ where: { tenantId } });
+        if (manualPriceOverrideRequested) {
+          const canOverridePrice = await AuthorizationService.can({
+            userId: req.user?.userId || "",
+            username: req.user?.username,
+            role: req.user?.role,
+            tenantId
+          }, "sales.price.override", { tenantId });
+
+          if (!canOverridePrice) {
+            const error: any = new Error("PRICE_OVERRIDE_FORBIDDEN");
+            error.code = "PRICE_OVERRIDE_FORBIDDEN";
+            throw error;
+          }
+        }
+
         salesPricing = SalesPricingService.calculate(
-          itemData.map((item: any) => ({ price: item.price, qty: item.qty })),
+          pricingItems,
           {
             maxDiscountPercent: policy?.maxDiscountPercent ?? 0,
             taxRatePercent: policy?.taxRatePercent ?? 0,
@@ -237,6 +264,9 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
     }
     if (err.code === "P2002") {
       return res.status(409).json({ error: "INVOICE_EXISTS", message: "رقم الفاتورة مستخدم مسبقاً داخل المؤسسة." });
+    }
+    if (err.code === "PRICE_OVERRIDE_FORBIDDEN") {
+      return res.status(403).json({ error: "PRICE_OVERRIDE_FORBIDDEN", message: "لا تملك صلاحية تعديل سعر البيع." });
     }
     if (err.code === "INVALID_SERVER_PRODUCT_PRICE") {
       return res.status(422).json({ error: "INVALID_SERVER_PRODUCT_PRICE", message: "سعر المنتج المحفوظ غير صالح." });
