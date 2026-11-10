@@ -10,6 +10,7 @@ export interface AuthenticatedRequest extends Request {
     username: string;
     role: Role;
     tenantId?: string | null;
+    branchId?: string | null;
   };
   tenantContext?: {
     tenantId: string;
@@ -71,7 +72,8 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
       userId: decoded.userId,
       username: decoded.username || "user",
       role: decoded.role as Role,
-      tenantId: decoded.tenantId
+      tenantId: decoded.tenantId,
+      branchId: decoded.branchId || null
     };
     
     next();
