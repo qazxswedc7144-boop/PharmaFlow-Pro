@@ -25,34 +25,66 @@ export const authRouter = Router();
 authRouter.get("/branch-context", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tenantId = req.user?.tenantId;
-    // X-Branch-ID represents the currently selected branch in the client store.
-    // It is never trusted by itself: verify a user-to-branch membership and the
-    // branch's tenant ownership before returning a local registry record.
+    // The selected branch is untrusted until its membership is verified.
     const requestedBranchId = String(req.headers["x-branch-id"] || req.user?.branchId || "").trim();
 
-    if (!tenantId || !requestedBranchId) {
+    if (!tenantId) {
       return res.status(403).json({
         success: false,
-        error: "TRUSTED_BRANCH_CONTEXT_REQUIRED",
-        message: "The authenticated session has no trusted branch context."
+        error: "TRUSTED_TENANT_CONTEXT_REQUIRED",
+        message: "The authenticated session has no trusted tenant context."
       });
     }
 
-    const membership = await prisma.branchUser.findFirst({
-      where: {
-        userId: req.user!.userId,
-        tenantId,
-        branchId: requestedBranchId
-      },
-      select: { branchId: true }
-    });
+    let membership = requestedBranchId
+      ? await prisma.branchUser.findFirst({
+          where: { userId: req.user!.userId, tenantId, branchId: requestedBranchId },
+          select: { branchId: true }
+        })
+      : null;
+    let contextCorrected = false;
 
     if (!membership) {
-      return res.status(403).json({
-        success: false,
-        error: "BRANCH_MEMBERSHIP_REQUIRED",
-        message: "The authenticated user is not assigned to the selected branch in this tenant."
+      // Never silently switch from an existing branch (especially a foreign
+      // tenant branch). Reconciliation is allowed only when the client carries
+      // a missing/stale branch ID and the user has exactly one active branch.
+      if (requestedBranchId) {
+        const requestedBranch = await prisma.branch.findUnique({
+          where: { id: requestedBranchId },
+          select: { id: true, tenantId: true }
+        });
+
+        if (requestedBranch) {
+          return res.status(403).json({
+            success: false,
+            error: "BRANCH_MEMBERSHIP_REQUIRED",
+            message: "The selected branch exists but is not assigned to this user in the authenticated tenant."
+          });
+        }
+      }
+
+      const memberships = await prisma.branchUser.findMany({
+        where: { userId: req.user!.userId, tenantId },
+        include: {
+          branch: {
+            select: { id: true, code: true, name: true, isActive: true, tenantId: true }
+          }
+        }
       });
+      const activeMemberships = memberships.filter(
+        (candidate: any) => candidate.branch?.isActive === true && candidate.branch?.tenantId === tenantId
+      );
+
+      if (activeMemberships.length !== 1) {
+        return res.status(403).json({
+          success: false,
+          error: "BRANCH_MEMBERSHIP_REQUIRED",
+          message: "The selected branch is not assigned to this user. A unique active branch membership is required for safe context recovery."
+        });
+      }
+
+      membership = { branchId: activeMemberships[0].branchId };
+      contextCorrected = true;
     }
 
     const branch = await prisma.branch.findFirst({
@@ -68,7 +100,7 @@ authRouter.get("/branch-context", authenticateToken, async (req: AuthenticatedRe
       });
     }
 
-    return res.json({ success: true, data: branch });
+    return res.json({ success: true, data: branch, contextCorrected });
   } catch (err: any) {
     return res.status(500).json({
       success: false,
@@ -414,7 +446,7 @@ authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, a
     if (!bUser) {
       console.warn(`⚠️ User "${username}" lacks branch association. Securing default branch...`);
       let branch = await prisma.branch.findFirst({
-        where: { tenantId }
+        where: { tenantId, isActive: true }
       });
       if (!branch) {
         const branchCode = `BRH-${tenantId.slice(0, 4).toUpperCase()}-101`;
@@ -437,14 +469,26 @@ authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, a
           }
         }).catch(() => {});
       }
-      await prisma.branchUser.create({
-        data: {
-          tenantId,
-          branchId: branch.id,
-          userId: user.id,
-          isDefault: true,
-        }
-      }).catch((err) => console.error(`⚠️ Branch link create error: ${err.message}`));
+
+      // Keep the newly-created membership in bUser so the JWT is issued with
+      // the verified branchId. Previously the write was fire-and-forget while
+      // bUser remained null, producing a branch-less authenticated session.
+      try {
+        bUser = await prisma.branchUser.create({
+          data: {
+            tenantId,
+            branchId: branch.id,
+            userId: user.id,
+            isDefault: true,
+          }
+        });
+      } catch (createError) {
+        // Handle a concurrent login that created the same membership first.
+        bUser = await prisma.branchUser.findFirst({
+          where: { userId: user.id, tenantId, branchId: branch.id }
+        });
+        if (!bUser) throw createError;
+      }
     }
 
     const branchId = bUser?.branchId || null;
