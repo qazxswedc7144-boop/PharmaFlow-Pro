@@ -62,6 +62,7 @@ jobs:
           src/features/purchases/utils/pendingProducts.test.ts
           server/tests/purchase-integrity-phase2.test.ts
           server/tests/atomic-post-sale-price-policy.test.ts
+          server/tests/financial-transaction-sales-price-policy.test.ts
           src/features/inventory/utils/localSyncQueueForensics.test.ts
           src/features/sync/saleSyncDto.test.ts
           src/features/sync/sync.engine.transactional-enqueue.test.ts
