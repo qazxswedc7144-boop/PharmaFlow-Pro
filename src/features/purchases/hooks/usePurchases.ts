@@ -21,6 +21,7 @@ import { ImportAnalysisResult, ExtractedImportRow } from '../services/smartImpor
 import { normalizeToISODate } from '@/utils/expiryUtils';
 import { generateTransactionUuid } from '@/utils/uuid';
 import { collectPendingProductsForInvoice } from '../utils/pendingProducts';
+import { buildFailedPurchaseDraft } from '../utils/failedPurchaseDraft';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -132,7 +133,37 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 
   const resetInvoiceState = useCallback(() => {
     setHeader({ invoice_number: '', supplier_id: '', payment_method: 'Cash', status: 'DRAFT', payment_status: 'Unpaid', date: new Date().toISOString().split('T')[0], notes: '', isReturn: false, attachment: '' });
-    setItems([]); setAdjData({ discountPercent: 0, otherFees: 0, tax: 0 }); setSupplierSearchTerm(''); setEditingInvoiceId(null); setAIParsedData(null); setShowAIConfirmModal(false); setIsProcessingAI(false); setHasUnsavedAI(false); currentOperationRef.current = null; pendingProductsRef.current = [];
+    setItems([]);
+    setAdjData({ discountPercent: 0, otherFees: 0, tax: 0 });
+    setSupplierSearchTerm('');
+    setSearchTerm('');
+    setFilteredProducts([]);
+    setSelectedProduct(null);
+    setManualItemName('');
+    setTempQty('');
+    setTempPrice('');
+    setTempExpiry('');
+    setTempNote('');
+    setSelectedIndex(-1);
+    setShowSearchDropdown(false);
+    setManualCategoryName('');
+    setSelectedCategoryId('');
+    setShowCategoryDropdown(false);
+    setShowSupplierDropdown(false);
+    setSelectedSupplierIndex(-1);
+    setHasDependencies(false);
+    setEditingInvoiceId(null);
+    setAIParsedData(null);
+    setSmartAnalysisResult(null);
+    setShowAIConfirmModal(false);
+    setIsProcessingAI(false);
+    setHasUnsavedAI(false);
+    setIsRecoveryModalOpen(false);
+    setRecoveryDraftData(null);
+    setIsConfirmSaveOpen(false);
+    setSavePhase('idle');
+    currentOperationRef.current = null;
+    pendingProductsRef.current = [];
   }, [setEditingInvoiceId]);
 
   const [isDateLockedStatus, setIsDateLockedStatus] = useState(false);
@@ -281,10 +312,39 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         setTimeout(() => { try { onNavigate?.('dashboard'); } catch (error) { window.location.hash = '#/dashboard'; } }, 1000);
       }
     } catch (error: unknown) {
-      setSavePhase('failed');
+      const failureOperationId = currentOperationRef.current || generateTransactionUuid('PURCHASE_FAILED');
+      const rawErrorMessage = error instanceof Error ? error.message : String(error);
+      const errorCode = rawErrorMessage.match(/[A-Z][A-Z0-9_]{3,}/)?.[0] || 'PURCHASE_SAVE_FAILED';
+
+      // Preserve the failed invoice in a quarantined record, but never expose it
+      // as the active purchase draft for the next invoice.
+      try {
+        const failedDraft = buildFailedPurchaseDraft({
+          operationId: failureOperationId,
+          header: currentHeader as any,
+          items: currentItems,
+          adjData: currentAdjData,
+          errorCode
+        });
+        (failedDraft as any).pendingProducts = JSON.parse(JSON.stringify(pendingProductsRef.current));
+        await DraftService.quarantineInvoiceDraft(failedDraft);
+        await DraftService.clearInvoiceDraft('purchases_draft_current');
+        await DraftService.clearDraft('purchases');
+        await configurationService.set(DRAFT_KEY, null);
+      } catch (quarantineError) {
+        console.error('[usePurchases] Failed to quarantine failed invoice safely:', quarantineError);
+      }
+
       currentOperationRef.current = null;
+      pendingProductsRef.current = [];
+      resetInvoiceState();
+      setFilteredProducts([]);
+      setSelectedProduct(null);
+      setManualItemName('');
+      setShowSearchDropdown(false);
+
       const normalized = ErrorManager.handleError(error, { module: 'PURCHASES', action: 'SAVE_PURCHASE', showToast: false });
-      showNotification('❌ تعذر حفظ فاتورة المشتريات', 'error');
+      showNotification('❌ تعذر حفظ فاتورة المشتريات. تم عزل بيانات المحاولة الفاشلة.', 'error');
       addToast(normalized.arabicMessage, 'error');
     } finally { isSavingRef.current = false; setIsSaving(false); }
   }, [header, items, aiParsedData, suppliers, vTotalSum, editingInvoiceId, currency, addInvoice, addToast, refreshGlobal, onNavigate, showNotification, savePhase]);
