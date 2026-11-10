@@ -4,9 +4,27 @@ import { InventoryService } from '@features/inventory/services/InventoryService'
 import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { DistributedSyncEngine } from '@features/sync/sync.engine';
+import { useAuthStore } from '@/store/authStore';
 
 describe('ProductApplicationWorkflow local commit boundary', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('requires only the permission appropriate to the operation', async () => {
+    vi.spyOn(useAuthStore, 'getState').mockReturnValue({
+      hasPermission: (permission: string) => permission === 'products.manage',
+      user: { permissions: [] }
+    } as any);
+
+    await expect(productApplicationWorkflow.validateBusinessRules({
+      product: { id: 'PROD-1', name: 'Panadol Extra' } as any,
+      isNew: true
+    })).resolves.toBeUndefined();
+
+    await expect(productApplicationWorkflow.validateBusinessRules({
+      product: { id: 'PROD-1', name: 'Panadol Extra' } as any,
+      isNew: false
+    })).rejects.toThrow('PRODUCT_PERMISSION_REQUIRED:');
+  });
 
   it('owns product sync enqueue inside the same local transaction', () => {
     expect(productApplicationWorkflow.syncHandledInDomainTransaction).toBe(true);
