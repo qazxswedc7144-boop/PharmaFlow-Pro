@@ -606,17 +606,34 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
     // Preserve the current branch only when the user still has an active
     // membership in that tenant. Otherwise use an active default membership.
     const requestedBranchId = String(req.headers["x-branch-id"] || decoded.branchId || "").trim() || null;
+    const requestedBranchHeader = String(req.headers["x-branch-id"] || "").trim();
     const requestedMembership = requestedBranchId
       ? await prisma.branchUser.findFirst({
           where: { userId: user.id, tenantId, branchId: requestedBranchId }
         })
       : null;
+
+    if (requestedBranchHeader && !requestedMembership) {
+      return res.status(403).json({
+        error: "BRANCH_MEMBERSHIP_REQUIRED",
+        message: "The selected branch is not assigned to this user in the authenticated tenant."
+      });
+    }
+
     const requestedActiveBranch = requestedMembership
       ? await prisma.branch.findFirst({
           where: { id: requestedMembership.branchId, tenantId, isActive: true },
           select: { id: true }
         })
       : null;
+
+    if (requestedBranchHeader && !requestedActiveBranch) {
+      return res.status(403).json({
+        error: "BRANCH_INACTIVE",
+        message: "The selected branch is not active in the authenticated tenant."
+      });
+    }
+
     const fallbackMembership = requestedActiveBranch
       ? requestedMembership
       : await prisma.branchUser.findFirst({
