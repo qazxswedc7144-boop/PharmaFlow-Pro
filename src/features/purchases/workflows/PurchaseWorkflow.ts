@@ -87,10 +87,12 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     // the Dexie transaction. Never synthesize a branch or trust an unbound local row.
     const finalStatus = input.invoiceStatus || 'POSTED';
     if (finalStatus === 'POSTED' || finalStatus === 'LOCKED') {
-      await ensureActiveBranchRegistered({
+      const trustedBranch = await ensureActiveBranchRegistered({
         tenantId: ctx.tenantId,
         branchId: ctx.branchId
       });
+      // Continue the entire purchase operation with the server-confirmed branch.
+      ctx.branchId = trustedBranch.id;
     }
 
     if (!input.id) {
