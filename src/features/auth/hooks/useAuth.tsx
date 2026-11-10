@@ -106,9 +106,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const logout = useCallback(async () => {
-    if (!TokenProvider.isAuthEnabled()) {
-      return;
-    }
     setLoading(true);
     try {
       await TokenProvider.logout();
