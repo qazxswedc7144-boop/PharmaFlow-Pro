@@ -577,16 +577,44 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
     });
     const tenantId = tUser?.tenantId || null;
 
-    // Generate fresh access token
+    // Preserve the current branch only when the user still has an active
+    // membership in that tenant. Otherwise use an active default membership.
+    const requestedBranchId = decoded.branchId || null;
+    const requestedMembership = requestedBranchId
+      ? await prisma.branchUser.findFirst({
+          where: { userId: user.id, tenantId, branchId: requestedBranchId }
+        })
+      : null;
+    const fallbackMembership = requestedMembership || await prisma.branchUser.findFirst({
+      where: { userId: user.id, tenantId, isDefault: true }
+    }) || await prisma.branchUser.findFirst({
+      where: { userId: user.id, tenantId }
+    });
+    const activeBranch = fallbackMembership
+      ? await prisma.branch.findFirst({
+          where: { id: fallbackMembership.branchId, tenantId, isActive: true },
+          select: { id: true }
+        })
+      : null;
+    const branchId = activeBranch?.id || null;
+
+    if (!tenantId || !branchId) {
+      return res.status(403).json({
+        error: "TRUSTED_BRANCH_CONTEXT_REQUIRED",
+        message: "No active branch membership is available for this authenticated tenant."
+      });
+    }
+
+    // Generate fresh access token with the same verified tenant + branch context.
     const accessToken = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role, tenantId },
+      { userId: user.id, username: user.username, role: user.role, tenantId, branchId },
       getJwtSecret(),
       { expiresIn: "4h" }
     );
 
-    // Rotate refresh token
+    // Rotate refresh token while preserving the verified branch context.
     const newRefreshToken = jwt.sign(
-      { userId: user.id, tenantId },
+      { userId: user.id, tenantId, branchId },
       getJwtRefreshSecret(),
       { expiresIn: "7d" }
     );
@@ -615,6 +643,7 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
         username: user.username,
         role: user.role,
         tenantId,
+        branchId,
         isActive: user.isActive,
         lastLoginAt: user.lastLoginAt
       }
