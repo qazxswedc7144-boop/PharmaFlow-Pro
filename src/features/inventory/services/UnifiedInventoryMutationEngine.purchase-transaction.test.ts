@@ -48,7 +48,7 @@ describe('UnifiedInventoryMutationEngine purchase transaction propagation', () =
     const internalTx = { table: vi.fn() };
     vi.spyOn(engine as any, 'validateCommandBasics').mockResolvedValue(undefined);
     const mutate = vi.spyOn(engine as any, 'mutateSingleItem').mockResolvedValue({ success: true, productId: 'PROD-TX' });
-    vi.spyOn(engine as any, 'executeAtomicTransaction').mockImplementation(async (operation: (tx: any) => Promise<any>) => operation(internalTx));
+    vi.spyOn(engine as any, 'executeAtomicTransaction').mockImplementation((...args: any[]) => (args[0] as (tx: any) => Promise<any>)(internalTx));
 
     await engine.executeReceivePurchase(command as any);
 
