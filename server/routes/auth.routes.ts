@@ -576,6 +576,12 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
       where: { userId: user.id }
     });
     const tenantId = tUser?.tenantId || null;
+    if (!tenantId) {
+      return res.status(403).json({
+        error: "TRUSTED_TENANT_CONTEXT_REQUIRED",
+        message: "No active tenant membership is available for this authenticated user."
+      });
+    }
 
     // Preserve the current branch only when the user still has an active
     // membership in that tenant. Otherwise use an active default membership.
