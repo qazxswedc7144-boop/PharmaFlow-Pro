@@ -33,4 +33,19 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     expect(foreignBranch.status).toBe(403);
     expect(foreignBranch.body.error).toBe("BRANCH_MEMBERSHIP_REQUIRED");
   });
+
+  it("reconciles a missing stale branch ID only when exactly one active membership exists", async () => {
+    const ctx = getContext();
+
+    const recovered = await request(ctx, "/api/auth/branch-context", {
+      token: ctx.tokenA,
+      branchId: "deleted-stale-branch-id"
+    });
+
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.data.id).toBe(ctx.branchAId);
+    expect(recovered.body.data.tenantId).toBe(ctx.tenantAId);
+    expect(recovered.body.contextCorrected).toBe(true);
+  });
+  });
 });
