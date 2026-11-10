@@ -22,6 +22,8 @@ import { normalizeToISODate } from '@/utils/expiryUtils';
 import { generateTransactionUuid } from '@/utils/uuid';
 import { collectPendingProductsForInvoice } from '../utils/pendingProducts';
 import { buildFailedPurchaseDraft } from '../utils/failedPurchaseDraft';
+import { getPurchaseFailureDisposition } from '../utils/purchaseFailureDisposition';
+import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -315,6 +317,42 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const failureOperationId = currentOperationRef.current || generateTransactionUuid('PURCHASE_FAILED');
       const rawErrorMessage = error instanceof Error ? error.message : String(error);
       const errorCode = rawErrorMessage.match(/[A-Z][A-Z0-9_]{3,}/)?.[0] || 'PURCHASE_SAVE_FAILED';
+      const currentUser = authService.getCurrentUser();
+      const tenantId = currentUser?.tenantId || (currentUser as any)?.tenant_id;
+      const idempotencyRecord = await IdempotencyRegistry.get(failureOperationId, tenantId);
+      const disposition = getPurchaseFailureDisposition(idempotencyRecord?.status || null);
+      const normalized = ErrorManager.handleError(error, { module: 'PURCHASES', action: 'SAVE_PURCHASE', showToast: false });
+
+      // A committed transaction must never be treated as a failed invoice.
+      // Preserve the idempotency key until active-draft cleanup succeeds.
+      if (disposition === 'COMMITTED') {
+        try {
+          await db.draft_invoices.delete('purchases_draft_current');
+          await db.drafts.delete('purchases');
+          await configurationService.set(DRAFT_KEY, null);
+          currentOperationRef.current = null;
+          pendingProductsRef.current = [];
+          resetInvoiceState();
+          showNotification('تم اعتماد الفاتورة بالفعل. تمت معالجة حالة الواجهة دون إعادة ترحيلها.', 'success');
+          addToast('تم حفظ الفاتورة بنجاح.', 'success');
+        } catch (cleanupError) {
+          console.error('[usePurchases] Committed invoice draft cleanup failed:', cleanupError);
+          setSavePhase('failed');
+          showNotification('الفاتورة معتمدة بالفعل. لا تنشئ فاتورة بديلة؛ أعد المحاولة بنفس الفاتورة.', 'error');
+          addToast(normalized.arabicMessage, 'error');
+        }
+        return;
+      }
+
+      // PROCESSING is an unresolved operation: keep the same form and
+      // idempotency key so a retry/replay cannot create a duplicate purchase.
+      if (disposition === 'PENDING') {
+        setSavePhase('failed');
+        showNotification('نتيجة الحفظ لم تُحسم بعد. لا تنشئ فاتورة جديدة؛ احتفظ بهذه المحاولة وأعد التحقق.', 'error');
+        addToast(normalized.arabicMessage, 'error');
+        return;
+      }
+
       let failedInvoiceIsolated = false;
 
       // Keep a recoverable forensic snapshot separate from the active draft.
@@ -353,7 +391,6 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         setSavePhase('failed');
       }
 
-      const normalized = ErrorManager.handleError(error, { module: 'PURCHASES', action: 'SAVE_PURCHASE', showToast: false });
       showNotification(
         failedInvoiceIsolated
           ? '❌ تعذر حفظ فاتورة المشتريات. تم عزل بيانات المحاولة الفاشلة.'
