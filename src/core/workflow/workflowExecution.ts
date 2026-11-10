@@ -23,6 +23,14 @@ export class WorkflowExecutionPipeline {
     ctx: WorkflowContext
   ): Promise<WorkflowResult<TResult>> {
     const startTime = Date.now();
+    let transactionCommitted = false;
+    let committedResult!: TResult;
+    const postCommitWarnings: string[] = [];
+    let syncStatus: 'ENQUEUED' | 'SYNCED' | 'FAILED' | 'LOCAL_ONLY' = 'ENQUEUED';
+    const addPostCommitWarning = (step: string, error: unknown) => {
+      console.warn(`[WorkflowExecutionPipeline] Post-commit step failed (${step}):`, error);
+      postCommitWarnings.push(step);
+    };
     const tables = workflow.tables || [
       'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
       'warehouseStock', 'branchInventory', 'medicineBatches',
@@ -140,7 +148,7 @@ export class WorkflowExecutionPipeline {
           entityId: ctx.idempotencyKey
         },
         async () => {
-          return await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
+          const committed = await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
             // Step 11: Execute Domain Steps
             const res = await workflow.executeDomainSteps(input, ctx, tx);
 
@@ -169,13 +177,26 @@ export class WorkflowExecutionPipeline {
             }
             return res;
           });
+          // TransactionBoundary resolves only after the IndexedDB transaction commits.
+          transactionCommitted = true;
+          committedResult = committed;
+          return committed;
         }
       );
 
       // Step 12: Mark Idempotency Completed & Invalidate Meter Cache
       if (ctx.idempotencyKey) {
-        await IdempotencyRegistry.updateStatus(ctx.idempotencyKey, 'COMMITTED', domainResult, undefined, ctx.tenantId).catch(() => null);
-        UsageMeterService.invalidate();
+        try {
+          await IdempotencyRegistry.updateStatus(ctx.idempotencyKey, 'COMMITTED', domainResult, undefined, ctx.tenantId);
+        } catch (idempotencyError) {
+          // The domain transaction is already committed: never roll back its key.
+          addPostCommitWarning('idempotency-status-update', idempotencyError);
+        }
+        try {
+          UsageMeterService.invalidate();
+        } catch (usageMeterError) {
+          addPostCommitWarning('usage-meter-invalidation', usageMeterError);
+        }
       }
 
       // Step 13: Audit & Observability
@@ -191,19 +212,34 @@ export class WorkflowExecutionPipeline {
         console.warn('[WorkflowExecutionPipeline] Audit log failed silently:', aErr);
       }
 
-      (observabilityService as any).recordMetric?.('workflow.duration_ms', Date.now() - startTime, {
-        workflow: workflow.id,
-        status: 'success'
-      });
+      try {
+        (observabilityService as any).recordMetric?.('workflow.duration_ms', Date.now() - startTime, {
+          workflow: workflow.id,
+          status: 'success'
+        });
+      } catch (metricError) {
+        addPostCommitWarning('success-metric', metricError);
+      }
 
-      // Step 14: Emit Outbox / Sync Event
-      await WorkflowEventBus.emit('WORKFLOW_COMPLETED', ctx, {
-        result: domainResult
-      });
+      // Step 14: Emit the completion event without changing the committed transaction result.
+      try {
+        await WorkflowEventBus.emit('WORKFLOW_COMPLETED', ctx, {
+          result: domainResult
+        });
+      } catch (eventError) {
+        addPostCommitWarning('workflow-completed-event', eventError);
+      }
 
       if (workflow.id.toUpperCase() === 'SALE' && (domainResult as any)?.sale?.isReturn !== true) {
-        const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
-        DistributedSyncEngine.getInstance().requestSync().catch(() => {});
+        try {
+          const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
+          DistributedSyncEngine.getInstance().requestSync().catch((syncError: unknown) => {
+            addPostCommitWarning('sync-dispatch-request', syncError);
+          });
+        } catch (syncDispatchError) {
+          // The SALE queue/outbox pair was committed atomically with the invoice.
+          addPostCommitWarning('sync-dispatch-request', syncDispatchError);
+        }
       } else {
         try {
           const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
@@ -220,20 +256,36 @@ export class WorkflowExecutionPipeline {
             { tenantId: ctx.tenantId, branchId: ctx.branchId }
           );
         } catch (syncErr) {
-          console.warn('[WorkflowExecutionPipeline] Sync enqueue non-blocking notification:', syncErr);
+          syncStatus = 'FAILED';
+          addPostCommitWarning('sync-enqueue', syncErr);
         }
       }
 
       // Step 15: After Execute & After Commit Hooks
-      await WorkflowHooksRunner.runHook(workflow.hooks?.afterExecute, domainResult, ctx, 'afterExecute');
-      await WorkflowHooksRunner.runHook(workflow.hooks?.afterCommit, domainResult, ctx, 'afterCommit');
+      try {
+        await WorkflowHooksRunner.runHook(workflow.hooks?.afterExecute, domainResult, ctx, 'afterExecute');
+        await WorkflowHooksRunner.runHook(workflow.hooks?.afterCommit, domainResult, ctx, 'afterCommit');
+      } catch (hookError) {
+        addPostCommitWarning('after-commit-hooks', hookError);
+      }
 
       return WorkflowResultBuilder.success(domainResult, ctx, {
         auditReference: auditRef,
-        syncStatus: 'ENQUEUED'
+        warnings: postCommitWarnings,
+        syncStatus
       });
 
     } catch (err: any) {
+      if (transactionCommitted) {
+        // A post-commit exception cannot turn a durable invoice into a failed transaction.
+        addPostCommitWarning('unexpected-post-commit-error', err);
+        return WorkflowResultBuilder.success(committedResult, ctx, {
+          auditReference: `AUDIT-${ctx.workflowId}`,
+          warnings: postCommitWarnings,
+          syncStatus
+        });
+      }
+
       const errorObj = err instanceof WorkflowExecutionError ? err : new WorkflowExecutionError(err.message || String(err), 'TRANSACTION_FAILED', { originalError: err });
 
       // Rollback Idempotency status
