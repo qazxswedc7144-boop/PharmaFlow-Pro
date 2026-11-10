@@ -88,4 +88,38 @@ describe('active branch registration', () => {
     await expect(ensureActiveBranchRegistered(expected)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
     expect(await db.branches.get('branch-a')).toBeUndefined();
   });
+
+  it('revalidates a cached branch membership with the server while online', async () => {
+    await db.branches.put({
+      id: 'branch-a',
+      tenantId: 'tenant-a',
+      isActive: true
+    } as any);
+    vi.spyOn(unifiedTransport, 'get').mockResolvedValue({
+      success: true,
+      data: {
+        id: 'branch-b',
+        tenantId: 'tenant-a',
+        isActive: true
+      }
+    } as any);
+
+    await expect(ensureActiveBranchRegistered(expected)).rejects.toThrow(/BRANCH_CONTEXT_MISMATCH/);
+    expect(unifiedTransport.get).toHaveBeenCalledWith('/api/auth/branch-context');
+  });
+
+  it('uses a tenant-bound active cached branch only when the browser is offline', async () => {
+    await db.branches.put({
+      id: 'branch-a',
+      tenantId: 'tenant-a',
+      isActive: true
+    } as any);
+    vi.stubGlobal('navigator', { onLine: false });
+
+    const branch = await ensureActiveBranchRegistered(expected);
+
+    expect(branch).toMatchObject({ id: 'branch-a', tenantId: 'tenant-a' });
+    expect(unifiedTransport.get).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
 });
