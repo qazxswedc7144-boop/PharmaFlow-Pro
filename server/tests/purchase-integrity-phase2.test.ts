@@ -248,4 +248,35 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     expect((await db.suppliers.get(supplierAId))?.balance).toBe(100);
     expect((await db.invoices.toArray()).length).toBe(1);
   });
+
+  it('P1: a purchases index write failure aborts the purchase transaction before inventory or accounting mutations', async () => {
+    const purchaseTablePrototype = Object.getPrototypeOf(db.purchases as any);
+    const originalPut = purchaseTablePrototype.put;
+    const putSpy = vi.spyOn(purchaseTablePrototype, 'put').mockImplementation(function(this: any, ...args: any[]) {
+      if (this.name === 'purchases') {
+        throw new Error('SIMULATED_PURCHASES_INDEX_WRITE_FAILURE');
+      }
+      return originalPut.apply(this, args);
+    });
+
+    try {
+      await expect(UnifiedBusinessWorkflowOrchestrator.processPurchase({
+        supplierId: supplierAId,
+        items: [{ productId: productAId, quantity: 10, unitCost: 8, unitPrice: 8 } as any],
+        total: 80
+      })).rejects.toThrow('SIMULATED_PURCHASES_INDEX_WRITE_FAILURE');
+
+      expect(await db.invoices.count()).toBe(0);
+      expect(await db.purchases.count()).toBe(0);
+      expect((await db.products.get(productAId))?.stock).toBe(100);
+      expect((await db.suppliers.get(supplierAId))?.balance).toBe(0);
+      expect(await db.inventoryTransactions.count()).toBe(0);
+      expect(await db.financialTransactions.count()).toBe(0);
+      expect(await db.journalEntries.count()).toBe(0);
+      expect(await db.journalLines.count()).toBe(0);
+    } finally {
+      putSpy.mockRestore();
+    }
+  });
+
 });
