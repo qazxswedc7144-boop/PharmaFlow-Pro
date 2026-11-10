@@ -113,14 +113,15 @@ export class UnifiedInventoryMutationEngine {
   /**
    * 2. Receive Purchase Stock (Increase for purchases)
    */
-  public async executeReceivePurchase(command: ReceivePurchaseStockCommand): Promise<InventoryMutationResult[]> {
+  public async executeReceivePurchase(command: ReceivePurchaseStockCommand, tx?: any): Promise<InventoryMutationResult[]> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_INVENTORY_TRANSACTION');
     await this.validateCommandBasics(command, 'ReceivePurchase');
     if (!Array.isArray(command.items) || command.items.length === 0) {
       throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
     }
     const timestamp = command.timestamp || new Date().toISOString();
 
-    return await this.executeAtomicTransaction(async () => {
+    const execute = async (activeTx: any): Promise<InventoryMutationResult[]> => {
       const results: InventoryMutationResult[] = [];
 
       for (let i = 0; i < command.items.length; i++) {
@@ -145,13 +146,15 @@ export class UnifiedInventoryMutationEngine {
           idempotencyKey: itemKey,
           notes: command.notes || `استلام مشتريات فاتورة #${command.invoiceId}`,
           timestamp
-        });
+        }, activeTx);
 
         results.push(res);
       }
 
       return results;
-    });
+    };
+
+    return tx ? execute(tx) : this.executeAtomicTransaction(execute);
   }
 
   /**
@@ -185,14 +188,15 @@ export class UnifiedInventoryMutationEngine {
   /**
    * 4. Process Purchase Return (Return to supplier -> stock OUT)
    */
-  public async executePurchaseReturn(command: ProcessPurchaseReturnStockCommand): Promise<InventoryMutationResult[]> {
+  public async executePurchaseReturn(command: ProcessPurchaseReturnStockCommand, tx?: any): Promise<InventoryMutationResult[]> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_INVENTORY_TRANSACTION');
     await this.validateCommandBasics(command, 'ProcessPurchaseReturn');
     if (!Array.isArray(command.items) || command.items.length === 0) {
       throw new Error(`[UnifiedEngine] items[] is required and must be non-empty.`);
     }
     const timestamp = command.timestamp || new Date().toISOString();
 
-    return await this.executeAtomicTransaction(async () => {
+    const execute = async (activeTx: any): Promise<InventoryMutationResult[]> => {
       const results: InventoryMutationResult[] = [];
 
       for (let i = 0; i < command.items.length; i++) {
@@ -216,13 +220,15 @@ export class UnifiedInventoryMutationEngine {
           idempotencyKey: itemKey,
           notes: command.notes || `مرتجع مشتريات #${command.returnInvoiceId}`,
           timestamp
-        });
+        }, activeTx);
 
         results.push(res);
       }
 
       return results;
-    });
+    };
+
+    return tx ? execute(tx) : this.executeAtomicTransaction(execute);
   }
 
   /**
@@ -782,17 +788,17 @@ export class UnifiedInventoryMutationEngine {
     const isOutward = delta < 0 && ['SALE', 'DISPATCH', 'TRANSFER_OUT', 'ADJUSTMENT', 'CORRECTION', 'DAMAGE', 'RETURN'].includes(movementType);
 
     if (isInward) {
-      await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId);
+      await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId, tx);
     } else if (isOutward) {
-      const fifoConsumption = await FIFOEngine.consumeFIFO(docId, productId, Math.abs(delta), tenantId);
+      const fifoConsumption = await FIFOEngine.consumeFIFO(docId, productId, Math.abs(delta), tenantId, tx);
       if (fifoConsumption && fifoConsumption.unitCost > 0) {
         resolvedUnitCost = fifoConsumption.unitCost;
       }
     } else if (movementType === 'REVERSAL') {
       if (delta > 0) {
-        await FIFOEngine.reverseFIFO(docId);
+        await FIFOEngine.reverseFIFO(docId, tx);
       } else if (delta < 0) {
-        await FIFOEngine.removePurchaseLayer(docId);
+        await FIFOEngine.removePurchaseLayer(docId, tx);
       }
     }
 
@@ -963,7 +969,7 @@ const brInv = await branchInventoryTable
   // HELPER METHODS
   // =========================================================================
 
-  private async executeAtomicTransaction<T>(operation: () => Promise<T>): Promise<T> {
+  private async executeAtomicTransaction<T>(operation: (tx: any) => Promise<T>): Promise<T> {
     const tables = [
       'products',
       'inventoryTransactions',
@@ -979,8 +985,8 @@ const brInv = await branchInventoryTable
       'systemSettings'
     ];
 
-    return await db.safeTransaction('rw', tables, async () => {
-      return await operation();
+    return await db.safeTransaction('rw', tables, async (tx) => {
+      return await operation(tx);
     });
   }
 
