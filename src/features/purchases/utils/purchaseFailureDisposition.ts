@@ -1,4 +1,4 @@
-type IdempotencyState = 'PROCESSING' | 'COMMITTED' | 'FAILED' | null | undefined;
+type IdempotencyState = 'PROCESSING' | 'COMMITTED' | 'FAILED' | 'EXPIRED' | null | undefined;
 
 export type PurchaseFailureDisposition = 'COMMITTED' | 'PENDING' | 'QUARANTINE';
 
