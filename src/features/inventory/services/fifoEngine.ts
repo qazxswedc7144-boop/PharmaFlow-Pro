@@ -24,9 +24,11 @@ export class FIFOEngine {
   /**
    * ON PURCHASE: Create new layer directly in inventory_layers
    */
-  static async addPurchaseLayer(item_id: string, quantity: number, unit_cost: number, reference_id: string, tenantId?: string): Promise<void> {
+  static async addPurchaseLayer(item_id: string, quantity: number, unit_cost: number, reference_id: string, tenantId?: string, tx?: any): Promise<void> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_FIFO_TRANSACTION');
+    const inventoryLayers = tx ? tx.table('inventory_layers') : db.inventory_layers;
     const layerId = db.generateId('LYR');
-    await db.inventory_layers.add({
+    await inventoryLayers.add({
       id: layerId,
       product_id: item_id,
       item_id: item_id,
@@ -44,9 +46,12 @@ export class FIFOEngine {
   /**
    * FIFO CONSUMPTION directly on inventory_layers and logging to fifo_consumption_log
    */
-  static async consumeFIFO(sale_id: string, item_id: string, quantity: number, tenantId?: string): Promise<{ totalCost: number, unitCost: number }> {
+  static async consumeFIFO(sale_id: string, item_id: string, quantity: number, tenantId?: string, tx?: any): Promise<{ totalCost: number, unitCost: number }> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_FIFO_TRANSACTION');
+    const inventoryLayers = tx ? tx.table('inventory_layers') : db.inventory_layers;
+    const consumptionLogTable = tx ? tx.table('fifo_consumption_log') : db.fifo_consumption_log;
     const absQty = Math.abs(quantity);
-    const layers = await db.inventory_layers
+    const layers = await inventoryLayers
       .filter((l: any) => {
         const match = (l.item_id === item_id || l.product_id === item_id) && Number(l.quantity_remaining || 0) > 0;
         if (!match) return false;
@@ -95,14 +100,14 @@ export class FIFOEngine {
     }
 
     for (const ul of updatedLayers) {
-      await db.inventory_layers.update(ul.id, {
+      await inventoryLayers.update(ul.id, {
         quantity_remaining: ul.quantity_remaining,
         lastModified: new Date().toISOString()
       });
     }
 
     if (consumptionLogs.length > 0) {
-      await db.fifo_consumption_log.bulkAdd(consumptionLogs);
+      await consumptionLogTable.bulkAdd(consumptionLogs);
     }
 
     const unitCost = totalConsumed > 0 ? totalCost / totalConsumed : 0;
@@ -112,18 +117,21 @@ export class FIFOEngine {
   /**
    * ON UNPOST: Restore consumed quantities from fifo_consumption_log
    */
-  static async reverseFIFO(sale_id: string): Promise<void> {
-    const logs = await db.fifo_consumption_log
+  static async reverseFIFO(sale_id: string, tx?: any): Promise<void> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_FIFO_TRANSACTION');
+    const inventoryLayers = tx ? tx.table('inventory_layers') : db.inventory_layers;
+    const consumptionLogTable = tx ? tx.table('fifo_consumption_log') : db.fifo_consumption_log;
+    const logs = await consumptionLogTable
       .filter((log: any) => log.sale_id === sale_id || log.invoice_id === sale_id)
       .toArray();
 
     for (const log of logs) {
-      const layer = await db.inventory_layers.get(log.layer_id);
+      const layer = await inventoryLayers.get(log.layer_id);
       if (layer) {
         const currentRemaining = Number(layer.quantity_remaining ?? 0);
         const initial = Number(layer.quantity_initial ?? layer.quantity ?? currentRemaining);
         const restored = Math.min(initial, currentRemaining + Number(log.quantity_consumed || 0));
-        await db.inventory_layers.update(layer.id, {
+        await inventoryLayers.update(layer.id, {
           quantity_remaining: restored,
           lastModified: new Date().toISOString()
         });
@@ -131,28 +139,33 @@ export class FIFOEngine {
     }
     const logIds = logs.map((l: any) => l.id).filter(Boolean);
     if (logIds.length > 0) {
-      await db.fifo_consumption_log.bulkDelete(logIds);
+      await consumptionLogTable.bulkDelete(logIds);
     }
   }
 
   /**
    * ON PURCHASE UNPOST: Remove purchase layers
    */
-  static async removePurchaseLayer(reference_id: string): Promise<void> {
-    const layers = await db.inventory_layers
+  static async removePurchaseLayer(reference_id: string, tx?: any): Promise<void> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_FIFO_TRANSACTION');
+    const inventoryLayers = tx ? tx.table('inventory_layers') : db.inventory_layers;
+    const layers = await inventoryLayers
       .filter((l: any) => l.reference_id === reference_id || l.purchase_id === reference_id)
       .toArray();
 
     const layerIds = layers.map((l: any) => l.id).filter(Boolean);
     if (layerIds.length > 0) {
-      await db.inventory_layers.bulkDelete(layerIds);
+      await inventoryLayers.bulkDelete(layerIds);
     }
   }
 
   /**
    * APPLY FIFO COSTING
    */
-  static async apply(invoice: Sale | Purchase | UnifiedInvoice | { type?: string; customerId?: string; isReturn?: boolean; invoiceType?: string; items?: Array<{ product_id: string; qty: number; cost?: number; price: number }>; invoiceId?: string; id?: string }): Promise<{ totalCost: number, itemCosts: Record<string, number> }> {
+  static async apply(invoice: Sale | Purchase | UnifiedInvoice | { type?: string; customerId?: string; isReturn?: boolean; invoiceType?: string; items?: Array<{ product_id: string; qty: number; cost?: number; price: number }>; invoiceId?: string; id?: string }, tx?: any): Promise<{ totalCost: number, itemCosts: Record<string, number> }> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_FIFO_TRANSACTION');
+    const inventoryLayers = tx ? tx.table('inventory_layers') : db.inventory_layers;
+    const consumptionLogTable = tx ? tx.table('fifo_consumption_log') : db.fifo_consumption_log;
     const invAny = invoice as Record<string, unknown>;
     const type = (invAny.type as string) || (invAny.customerId ? 'SALE' : 'PURCHASE');
     const isReturn = Boolean(invAny.isReturn) || invAny.invoiceType === 'مرتجع';
@@ -163,14 +176,14 @@ export class FIFOEngine {
       const productIds = items.map(itm => itm.product_id || itm.productId || itm.id).filter(Boolean);
       
       const layers = productIds.length > 0
-        ? await db.inventory_layers.where('item_id').anyOf(productIds).toArray()
+        ? await inventoryLayers.where('item_id').anyOf(productIds).toArray()
         : [];
 
       const result = await WorkerClient.runFIFO(invoice, layers);
 
       if (result.updatedLayers.length > 0) {
         for (const layer of result.updatedLayers) {
-          await db.inventory_layers.update(layer.id, { 
+          await inventoryLayers.update(layer.id, { 
             quantity_remaining: layer.quantity_remaining, 
             lastModified: new Date().toISOString() 
           });
@@ -178,7 +191,7 @@ export class FIFOEngine {
       }
       
       if (result.consumptionLogs.length > 0) {
-        await db.fifo_consumption_log.bulkAdd(result.consumptionLogs);
+        await consumptionLogTable.bulkAdd(result.consumptionLogs);
       }
 
       return {
@@ -193,7 +206,7 @@ export class FIFOEngine {
 
       for (const item of items) {
         const returnCost = type === 'SALE' ? (item.cost || item.price) : item.price;
-        await this.addPurchaseLayer(item.product_id, item.qty, returnCost, invoiceId);
+        await this.addPurchaseLayer(item.product_id, item.qty, returnCost, invoiceId, undefined, tx);
         itemCosts[item.product_id] = item.qty * returnCost;
         totalCost += itemCosts[item.product_id] ?? 0;
       }

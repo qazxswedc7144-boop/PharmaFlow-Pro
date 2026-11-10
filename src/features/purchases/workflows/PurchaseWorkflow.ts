@@ -573,7 +573,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
                 input.notes ||
                 `مرتجع مشتريات فاتورة #${refId}`,
               timestamp: effectiveDate
-            });
+            }, tx);
 
           const totalCost = mutationResults.reduce(
             (sum, r) =>
@@ -608,7 +608,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
                 input.notes ||
                 `استلام مشتريات فاتورة #${refId}`,
               timestamp: effectiveDate
-            });
+            }, tx);
 
           const totalCost = mutationResults.reduce(
             (sum, r) =>
