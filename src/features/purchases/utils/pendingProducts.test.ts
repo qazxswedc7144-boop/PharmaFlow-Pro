@@ -16,7 +16,9 @@ describe('pending products retry handling', () => {
     );
 
     expect(firstAttempt.pendingProducts).toHaveLength(1);
-    expect(firstAttempt.items[0].productId).toBe(firstAttempt.pendingProducts[0].id);
+    const firstPendingProduct = firstAttempt.pendingProducts[0]!;
+    const firstFinalizedItem = firstAttempt.items[0]!;
+    expect(firstFinalizedItem.productId).toBe(firstPendingProduct.id);
 
     // Simulate a failed save: the caller retains the pending list and current invoice items.
     const retryAttempt = collectPendingProductsForInvoice(
@@ -36,8 +38,12 @@ describe('pending products retry handling', () => {
 
     expect(retryAttempt.pendingProducts).toHaveLength(2);
     expect(retryAttempt.items).toHaveLength(2);
-    expect(retryAttempt.items[0].productId).toBe(firstAttempt.pendingProducts[0].id);
-    expect(retryAttempt.items[1].productId).toBe(retryAttempt.pendingProducts[1].id);
+    const retainedPendingProduct = retryAttempt.pendingProducts[0]!;
+    const newlyCollectedPendingProduct = retryAttempt.pendingProducts[1]!;
+    const retainedItem = retryAttempt.items[0]!;
+    const newlyAddedItem = retryAttempt.items[1]!;
+    expect(retainedItem.productId).toBe(retainedPendingProduct.id);
+    expect(newlyAddedItem.productId).toBe(newlyCollectedPendingProduct.id);
     expect(retryAttempt.pendingProducts.map(product => product.name)).toEqual([
       'First manual item',
       'Second manual item'
