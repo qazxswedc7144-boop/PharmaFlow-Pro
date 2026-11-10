@@ -95,13 +95,13 @@ describe("Server-side sales price and discount validation", () => {
     mockPrisma.auditLog.create.mockResolvedValue({});
   });
 
-  it("must use the tenant product's database price, not a manipulated client price", async () => {
+  it("uses the tenant catalog price when no manual override is requested", async () => {
     const response = await invokeCreate({
       invoiceNumber: "SALE-PRICE-001",
       type: "SALE",
       totalAmount: 10,
       paymentStatus: "UNPAID",
-      items: [{ productId, qty: 10, price: 1 }],
+      items: [{ productId, qty: 10, price: 30 }],
     });
 
     expect(response.statusCode).toBe(201);

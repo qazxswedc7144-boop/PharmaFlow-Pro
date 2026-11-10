@@ -97,7 +97,9 @@ export class AtomicPostSaleService {
     }
 
     const itemsData = validated.items.map((item, index) => {
-      const price = pricingItems[index].price;
+      const pricingItem = pricingItems[index];
+      if (!pricingItem) throw new Error('SALE_PRICING_ITEM_MISMATCH');
+      const price = pricingItem.price;
       const lineTotal = price.mul(item.qty);
       return {
         productId: item.productId,

@@ -7,6 +7,7 @@ import { FinancialTransactionRepository } from '@/database/repositories/Financia
 import { AccountingEngine as accountingEngine } from '@features/accounting/services/AccountingEngine';
 import { CurrencyService } from '@/services/localization/CurrencyService';
 import { db } from '@/core/db';
+import { useAuthStore } from '@/store/authStore';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { configurationService } from '@/services/config/configurationService';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
@@ -95,6 +96,7 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
     }
 
     // 2. Cross-Tenant Product Validation
+    const validatedProducts = new Map<string, any>();
     for (const item of input.items || []) {
       const productId = item.productId || (item as any).product_id;
       if (productId) {
@@ -105,34 +107,54 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
         if (ctx?.tenantId && product.tenantId && product.tenantId !== ctx.tenantId) {
           throw new Error(`CROSS_TENANT_PRODUCT_FORBIDDEN: الصنف [${productId}] تابع لمؤسسة أخرى.`);
         }
+        validatedProducts.set(String(productId), product);
       }
     }
 
-    // SALE pricing is derived from the authenticated tenant policy and the locally
-    // cached tenant-owned product catalog. Client-supplied totals and item prices
-    // are never authoritative. Returns retain their existing reversal path.
+    // SALE prices normally follow the tenant catalog. An explicit manual price is
+    // accepted only with the dedicated RBAC permission; offline requests use the
+    // locally cached permission set and are revalidated by the server on sync.
     if (!input.isReturn) {
       const policy = await TenantSalesPolicyService.getForTenant(ctx.tenantId);
-      input.items = await Promise.all(input.items.map(async (item) => {
+      const canOverridePrice = useAuthStore.getState().hasPermission?.('sales.price.override') ?? false;
+
+      input.items = input.items.map((item) => {
         const productId = item.productId || (item as any).product_id;
-        const product = productId ? await db.products.get(productId) : undefined;
-        const authoritativePrice = product?.price;
-        if (authoritativePrice === undefined || authoritativePrice === null) {
+        const product = productId ? validatedProducts.get(String(productId)) : undefined;
+        if (!product || product.price === undefined || product.price === null) {
           throw new Error('LOCAL_PRODUCT_PRICE_UNAVAILABLE');
         }
+
+        const catalogPrice = Number(product.price);
+        const requestedPrice = Number(item.price ?? item.unitPrice ?? catalogPrice);
+        if (!Number.isFinite(catalogPrice) || catalogPrice < 0 ||
+            !Number.isFinite(requestedPrice) || requestedPrice < 0) {
+          throw new Error('INVALID_SERVER_PRODUCT_PRICE');
+        }
+
+        if (Math.round(requestedPrice * 10000) !== Math.round(catalogPrice * 10000) && !canOverridePrice) {
+          throw new Error('PRICE_OVERRIDE_FORBIDDEN');
+        }
+
         return {
           ...item,
-          price: Number(authoritativePrice),
-          unitPrice: Number(authoritativePrice),
+          price: requestedPrice,
+          unitPrice: requestedPrice,
           qty: Number(item.quantity ?? (item as any).qty)
         } as InvoiceItem;
-      }));
+      });
 
       const pricing = LocalSalesPricingService.calculate(
-        input.items.map((item: any) => ({
-          price: String(item.price ?? item.unitPrice),
-          qty: Number(item.quantity ?? item.qty)
-        })),
+        input.items.map((item: any) => {
+          const productId = item.productId || item.product_id;
+          const product = productId ? validatedProducts.get(String(productId)) : undefined;
+          if (!product) throw new Error('LOCAL_PRODUCT_PRICE_UNAVAILABLE');
+          return {
+            price: String(item.price ?? item.unitPrice),
+            catalogPrice: String(product.price),
+            qty: Number(item.quantity ?? item.qty)
+          };
+        }),
         policy,
         input.discountPercent ?? 0
       );
