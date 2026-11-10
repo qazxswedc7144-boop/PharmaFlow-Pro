@@ -241,7 +241,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           date: currentHeader.date,
           isEdit: !!editingInvoiceId
         }
-      }) as { success: boolean };
+      }) as { success: boolean; syncStatus?: 'ENQUEUED' | 'SYNCED' | 'FAILED' | 'LOCAL_ONLY' };
 
       if (res?.success) {
         setSavePhase('idle');
