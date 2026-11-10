@@ -10,6 +10,7 @@ import { normalizeToISODate, getExpiryStatus, formatDateDisplay } from '@/utils/
 import { priceIntelligenceService } from '@/features/inventory/services/priceIntelligenceService';
 import { useToast } from '@/hooks/useToast';
 import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './itemEntryModalLifecycle';
+import { getProjectedAutocompleteStock } from '@features/purchases/utils/projectedAutocompleteStock';
 
 interface ProductItem {
   id: string;
@@ -44,6 +45,7 @@ interface ItemEntryModalProps {
   mode: 'purchase' | 'sale';
   isReturnMode?: boolean;
   customerId?: string;
+  invoiceItems?: Array<{ productId?: string; product_id?: string; qty?: number | string; quantity?: number | string }>;
   initialData?: {
     id?: string;
     name?: string;
@@ -58,7 +60,7 @@ interface ItemEntryModalProps {
 }
 
 export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
-  isOpen, onClose, onAdd, mode, initialData, isReturnMode = false, customerId
+  isOpen, onClose, onAdd, mode, initialData, isReturnMode = false, customerId, invoiceItems = []
 }) => {
   const [manualItemName, setManualItemName] = useState<string>('');
   const [tempQty, setTempQty] = useState<string | number>('');
@@ -133,8 +135,10 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       categoryName: cat || 'عام',
       UnitPrice: parseFloat(price as string) || 0,
       price: parseFloat(price as string) || 0,
-      StockQuantity: parseFloat(qty as string) || 0,
-      stock: parseFloat(qty as string) || 0,
+      // A purchase line is only a draft until the purchase workflow posts it.
+      // Initializing master stock here would count the same receipt twice.
+      StockQuantity: 0,
+      stock: 0,
       Is_Active: 1,
       created_at: new Date().toISOString()
     };
@@ -593,7 +597,7 @@ if (mode === 'sale') {
                       >
                         <span>{p.Name}</span>
                         <span className="text-[11px] font-bold text-slate-400">
-                          رصيد: {p.StockQuantity ?? p.stock ?? 0}
+                          رصيد: {getProjectedAutocompleteStock(p, mode, invoiceItems)}
                         </span>
                       </button>
                     ))}
