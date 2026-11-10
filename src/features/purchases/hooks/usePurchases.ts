@@ -218,8 +218,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     const snapshot = getPurchaseDraftSnapshot(draftObj);
     const rawItems = snapshot.items || [];
 
-    if (snapshot.header) setHeader(snapshot.header as any);
-    setItems(rawItems.map((item: any, idx: number) => ({
+    const restoredItems = rawItems.map((item: any, idx: number) => ({
       ...item,
       name: item.name || item.productName || item.Name || '',
       productName: item.productName || item.name || item.Name || '',
@@ -230,7 +229,9 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       sum: Number(item.sum ?? ((item.qty ?? item.quantity ?? 0) * (item.price ?? item.unitPrice ?? 0))),
       row_order: item.row_order || idx + 1,
       expiryDate: normalizeToISODate(item.expiryDate || item.ExpiryDate || item.expiry_date || item.expirationDate || '')
-    })));
+    }));
+    if (snapshot.header) setHeader(snapshot.header as any);
+    setItems(restoredItems as any);
     setAdjData(snapshot.adjData as any);
     pendingProductsRef.current = Array.isArray(snapshot.pendingProducts)
       ? snapshot.pendingProducts
@@ -253,9 +254,28 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 
     if (draftObj.status === 'FAILED_QUARANTINED' && draftObj.draftId) {
       try {
+        // Materialize the restored snapshot as the active draft before marking
+        // the forensic quarantine as recovered. This avoids falling back to a
+        // stale pre-failure autosave if the user closes the app immediately.
+        const restoredSubtotal = restoredItems.reduce(
+          (sum: number, item: any) => sum + Number(item.qty || 0) * Number(item.price || 0),
+          0
+        );
+        await DraftService.saveInvoiceDraft('purchases_draft_current', 'PURCHASE', restoredItems, {
+          header: snapshot.header,
+          adjData: snapshot.adjData,
+          subtotal: restoredSubtotal,
+          partner: snapshot.partner,
+          pendingProducts: snapshot.pendingProducts
+        });
+        const activeDraft = await DraftService.getInvoiceDraft('purchases_draft_current');
+        if (!activeDraft || JSON.stringify(activeDraft.items || []) !== JSON.stringify(restoredItems)) {
+          throw new Error('PURCHASE_DRAFT_RESTORE_VERIFY_FAILED');
+        }
         await DraftService.markInvoiceDraftRecovered(draftObj.draftId);
       } catch (recoveryMarkerError) {
-        console.warn('[usePurchases] Failed to mark quarantined draft as recovered:', recoveryMarkerError);
+        console.warn('[usePurchases] Failed to finalize recovered purchase draft:', recoveryMarkerError);
+        addToast('تمت استعادة الأصناف، لكن تعذر تحديث نسخة المسودة النشطة؛ بقيت نسخة الاسترداد محفوظة.', 'warning');
       }
     }
 
