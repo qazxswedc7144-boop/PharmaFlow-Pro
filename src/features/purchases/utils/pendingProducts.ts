@@ -16,7 +16,6 @@ type PurchaseItemWithProductReference = {
   name?: string;
   price?: number;
   category?: string;
-  [key: string]: unknown;
 };
 
 export function normalizePendingProductId(value: unknown): string {
