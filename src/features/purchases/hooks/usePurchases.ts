@@ -245,19 +245,43 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 
       if (res?.success) {
         setSavePhase('idle');
-        reportCache.purge();
-        db.incrementDataVersion();
-        await ReportEngine.refresh();
-        await refreshGlobal();
+        // Local persistence has succeeded. Post-commit UI work must never report save failure.
         showNotification("Invoice Saved Successfully\nReturning to Dashboard...", 'success', 1000);
         addToast("Invoice Saved Successfully\nReturning to Dashboard...", "success");
+
+        const postCommitWarnings: string[] = [];
+        const runPostCommitTask = async (name: string, task: () => Promise<unknown> | unknown) => {
+          try {
+            await task();
+          } catch (postCommitError) {
+            console.warn(`[usePurchases] Post-commit task failed (${name}):`, postCommitError);
+            postCommitWarnings.push(name);
+          }
+        };
+
+        await runPostCommitTask('report-and-provider-refresh', async () => {
+          reportCache.purge();
+          db.incrementDataVersion();
+          await ReportEngine.refresh();
+          await refreshGlobal();
+        });
         configurationService.set(DRAFT_KEY, null).catch(() => {});
         setHasUnsavedAI(false);
-        await auditLogService.log({ table: 'purchases', action: 'PURCHASE', entityId: editingInvoiceId || header.invoice_number, newData: { items, total: vTotalSum }, details: `Purchase ${header.isReturn ? 'Return' : ''}: ${header.invoice_number}` });
+        await runPostCommitTask('audit-log', () =>
+          auditLogService.log({ table: 'purchases', action: 'PURCHASE', entityId: editingInvoiceId || header.invoice_number, newData: { items, total: vTotalSum }, details: `Purchase ${header.isReturn ? 'Return' : ''}: ${header.invoice_number}` })
+        );
         const supplier = suppliers.find(s => s.id === header.supplier_id);
         const supplierName = supplier ? supplier.Supplier_Name : 'مورد غير محدد';
-        await DraftService.clearInvoiceDraft('purchases_draft_current');
-        await DraftService.clearDraft('purchases');
+        await runPostCommitTask('draft-cleanup', async () => {
+          await DraftService.clearInvoiceDraft('purchases_draft_current');
+          await DraftService.clearDraft('purchases');
+        });
+
+        if (res.syncStatus === 'FAILED') {
+          showNotification('تم حفظ الفاتورة محلياً، لكن فشلت المزامنة. ستتم المحاولة لاحقاً.', 'warning');
+        } else if (postCommitWarnings.length > 0) {
+          showNotification('تم حفظ الفاتورة، لكن بعض تحديثات ما بعد الحفظ لم تكتمل.', 'warning');
+        }
         setSaveSuccessData({ invoiceNumber: header.invoice_number, totalAmount: vTotalSum, type: 'PURCHASE', date: header.date, partnerName: supplierName, accountingStatus: 'قيد ذمم دائنة مرحل وتلقائي', inventoryStatus: 'قيد المخزون المتاح والوجبات المدخلة', balanceStatus: 'معدل ومرحل لحساب المورد' });
         resetInvoiceState();
         setTimeout(() => { try { onNavigate?.('dashboard'); } catch (error) { window.location.hash = '#/dashboard'; } }, 1000);
