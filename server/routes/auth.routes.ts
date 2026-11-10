@@ -25,9 +25,12 @@ export const authRouter = Router();
 authRouter.get("/branch-context", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const tenantId = req.user?.tenantId;
-    const branchId = req.user?.branchId;
+    // X-Branch-ID represents the currently selected branch in the client store.
+    // It is never trusted by itself: verify a user-to-branch membership and the
+    // branch's tenant ownership before returning a local registry record.
+    const requestedBranchId = String(req.headers["x-branch-id"] || req.user?.branchId || "").trim();
 
-    if (!tenantId || !branchId) {
+    if (!tenantId || !requestedBranchId) {
       return res.status(403).json({
         success: false,
         error: "TRUSTED_BRANCH_CONTEXT_REQUIRED",
@@ -35,8 +38,25 @@ authRouter.get("/branch-context", authenticateToken, async (req: AuthenticatedRe
       });
     }
 
+    const membership = await prisma.branchUser.findFirst({
+      where: {
+        userId: req.user!.userId,
+        tenantId,
+        branchId: requestedBranchId
+      },
+      select: { branchId: true }
+    });
+
+    if (!membership) {
+      return res.status(403).json({
+        success: false,
+        error: "BRANCH_MEMBERSHIP_REQUIRED",
+        message: "The authenticated user is not assigned to the selected branch in this tenant."
+      });
+    }
+
     const branch = await prisma.branch.findFirst({
-      where: { id: branchId, tenantId, isActive: true },
+      where: { id: membership.branchId, tenantId, isActive: true },
       select: { id: true, code: true, name: true, isActive: true, tenantId: true }
     });
 
@@ -44,7 +64,7 @@ authRouter.get("/branch-context", authenticateToken, async (req: AuthenticatedRe
       return res.status(404).json({
         success: false,
         error: "BRANCH_NOT_FOUND_FOR_TENANT",
-        message: "The authenticated branch is not active or is not registered to this tenant."
+        message: "The selected branch is not active or is not registered to this tenant."
       });
     }
 
