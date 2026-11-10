@@ -136,7 +136,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<string, string[]> = {
     'sync.view', 'sync.trigger', 'sync.configure', 'api.access', 'api.keys.manage'
   ],
   ADMIN: [
-    'sales.invoice.view', 'sales.invoice.create', 'sales.invoice.update', 'sales.invoice.delete', 'sales.invoice.approve', 'sales.invoice.export', 'sales.refund', 'sales.pos.access',
+    'sales.invoice.view', 'sales.invoice.create', 'sales.invoice.update', 'sales.invoice.delete', 'sales.invoice.approve', 'sales.invoice.export', 'sales.refund', 'sales.pos.access', 'sales.price.override',
     'purchases.invoice.view', 'purchases.invoice.create', 'purchases.invoice.update', 'purchases.invoice.delete', 'purchases.invoice.approve', 'purchases.invoice.export',
     'inventory.product.view', 'inventory.product.create', 'inventory.product.update', 'inventory.product.delete', 'inventory.adjust', 'inventory.batch.view', 'inventory.batch.manage', 'inventory.audit.view', 'inventory.audit.perform', 'inventory.transfer.create', 'inventory.transfer.approve',
     'accounting.journal.view', 'accounting.journal.create', 'accounting.account.view', 'accounting.voucher.create', 'accounting.voucher.view', 'accounting.reconcile',
