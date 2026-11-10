@@ -240,6 +240,18 @@ export class WorkflowExecutionPipeline {
           // The SALE queue/outbox pair was committed atomically with the invoice.
           addPostCommitWarning('sync-dispatch-request', syncDispatchError);
         }
+      } else if (workflow.syncHandledInDomainTransaction === true) {
+        // The workflow already committed its local queue/outbox pair atomically.
+        // Dispatch is deliberately fire-and-forget: local business success must
+        // never wait for remote synchronization.
+        try {
+          const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
+          DistributedSyncEngine.getInstance().requestSync().catch((syncError: unknown) => {
+            addPostCommitWarning('sync-dispatch-request', syncError);
+          });
+        } catch (syncDispatchError) {
+          addPostCommitWarning('sync-dispatch-request', syncDispatchError);
+        }
       } else {
         try {
           const { DistributedSyncEngine } = await import('@/features/sync/sync.engine');
