@@ -17,6 +17,47 @@ import { loginAttemptGuard, releaseLoginAttempt, recordFailedLoginAttempt, Login
 
 export const authRouter = Router();
 
+/**
+ * GET /api/auth/branch-context
+ * Returns only the active branch embedded in the authenticated JWT,
+ * and verifies that it is still active and belongs to the JWT tenant.
+ */
+authRouter.get("/branch-context", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const tenantId = req.user?.tenantId;
+    const branchId = req.user?.branchId;
+
+    if (!tenantId || !branchId) {
+      return res.status(403).json({
+        success: false,
+        error: "TRUSTED_BRANCH_CONTEXT_REQUIRED",
+        message: "The authenticated session has no trusted branch context."
+      });
+    }
+
+    const branch = await prisma.branch.findFirst({
+      where: { id: branchId, tenantId, isActive: true },
+      select: { id: true, code: true, name: true, isActive: true, tenantId: true }
+    });
+
+    if (!branch) {
+      return res.status(404).json({
+        success: false,
+        error: "BRANCH_NOT_FOUND_FOR_TENANT",
+        message: "The authenticated branch is not active or is not registered to this tenant."
+      });
+    }
+
+    return res.json({ success: true, data: branch });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: "BRANCH_CONTEXT_LOOKUP_FAILED",
+      message: err.message || "Failed to resolve authenticated branch context."
+    });
+  }
+});
+
 
 
 /**
