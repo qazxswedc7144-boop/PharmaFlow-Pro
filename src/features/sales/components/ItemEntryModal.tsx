@@ -95,6 +95,9 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const modalWasOpenRef = useRef(false);
   const initializedSessionKeyRef = useRef<string | null>(null);
   const hasUserEditedNameRef = useRef(false);
+  const initialDataRef = useRef(initialData);
+  const resetFormRef = useRef<() => void>(() => {});
+  initialDataRef.current = initialData;
 
   // Mobile IMEs do not always expose Enter consistently through event.key alone.
   // Defer focus until React has committed dropdown/state updates.
@@ -283,21 +286,22 @@ if (mode === 'sale') {
     hasUserEditedNameRef.current = false;
     setShowSearchDropdown(false);
 
-    if (initialData) {
-      setManualItemName(initialData.name || '');
-      setTempQty(initialData.qty || '');
-      setTempPrice(initialData.price ?? '');
-      manualPriceEditedRef.current = initialData.price !== undefined && initialData.price !== null && initialData.price !== '';
-      setTempExpiry(normalizeToISODate(initialData.expiryDate));
-      setTempNote(initialData.note || '');
-      setCategoryName(initialData.category || '');
-      const pId = initialData.productId || (initialData.product as any)?.id || null;
+    const sessionData = initialDataRef.current;
+    if (sessionData) {
+      setManualItemName(sessionData.name || '');
+      setTempQty(sessionData.qty || '');
+      setTempPrice(sessionData.price ?? '');
+      manualPriceEditedRef.current = sessionData.price !== undefined && sessionData.price !== null && sessionData.price !== '';
+      setTempExpiry(normalizeToISODate(sessionData.expiryDate));
+      setTempNote(sessionData.note || '');
+      setCategoryName(sessionData.category || '');
+      const pId = sessionData.productId || (sessionData.product as any)?.id || null;
       setSelectedProductId(pId);
       if (pId) {
-        loadProductIntelligenceRef.current(pId, initialData.product || undefined);
+        loadProductIntelligenceRef.current(pId, sessionData.product || undefined);
       }
     } else {
-      resetForm();
+      resetFormRef.current();
     }
 
     const focusTimer = window.setTimeout(() => itemNameInputRef.current?.focus(), 120);
@@ -320,6 +324,8 @@ if (mode === 'sale') {
   setFilteredProducts([]);
   setShowSearchDropdown(false);
 };
+  resetFormRef.current = resetForm;
+
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (manualItemName.length > 1) {
@@ -548,6 +554,7 @@ if (mode === 'sale') {
   hasUserEditedNameRef.current = true;
   setManualItemName(e.target.value); 
   setSelectedProductId(null); 
+  setFilteredProducts([]);
   setShowSearchDropdown(true); 
 }}
                 onFocus={() => {
