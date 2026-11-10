@@ -278,6 +278,20 @@ export class WorkflowExecutionPipeline {
     } catch (err: any) {
       if (transactionCommitted) {
         // A post-commit exception cannot turn a durable invoice into a failed transaction.
+        // Reassert COMMITTED if the exception happened between the transaction and normal status update.
+        if (ctx.idempotencyKey) {
+          try {
+            await IdempotencyRegistry.updateStatus(
+              ctx.idempotencyKey,
+              'COMMITTED',
+              committedResult,
+              undefined,
+              ctx.tenantId
+            );
+          } catch (idempotencyError) {
+            addPostCommitWarning('idempotency-status-update', idempotencyError);
+          }
+        }
         addPostCommitWarning('unexpected-post-commit-error', err);
         return WorkflowResultBuilder.success(committedResult, ctx, {
           auditReference: `AUDIT-${ctx.workflowId}`,
