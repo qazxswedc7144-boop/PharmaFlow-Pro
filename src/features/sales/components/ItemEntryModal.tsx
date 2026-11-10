@@ -10,7 +10,7 @@ import { normalizeToISODate, getExpiryStatus, formatDateDisplay } from '@/utils/
 import { priceIntelligenceService } from '@/features/inventory/services/priceIntelligenceService';
 import { useToast } from '@/hooks/useToast';
 import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './itemEntryModalLifecycle';
-import { getProjectedAutocompleteStock } from '@features/purchases/utils/projectedAutocompleteStock';
+import { getProjectedAutocompleteStock } from '@features/inventory/utils/projectedAutocompleteStock';
 
 interface ProductItem {
   id: string;
