@@ -45,17 +45,26 @@ export async function ensureActiveBranchRegistered(
   }
 
   const localBranch = await db.branches.get(expected.branchId);
+  let trustedLocalBranch: any = null;
+
   if (localBranch) {
     const localTenantId = (localBranch as any).tenantId || (localBranch as any).tenant_id;
     if (localTenantId && localTenantId !== expected.tenantId) {
       throw new Error('CROSS_TENANT_VIOLATION: Local branch belongs to another tenant.');
     }
-    if (localTenantId === expected.tenantId && (localBranch.isActive === true || (localBranch as any).is_active === true)) {
-      return validateActiveBranchRecord(localBranch, expected);
-    }
     if (localBranch.isActive === false || (localBranch as any).is_active === false) {
       throw new Error('BRANCH_INACTIVE: The local branch is inactive.');
     }
+    if (localTenantId === expected.tenantId && (localBranch.isActive === true || (localBranch as any).is_active === true)) {
+      trustedLocalBranch = validateActiveBranchRecord(localBranch, expected);
+    }
+  }
+
+  // Online posting revalidates that the selected branch is still assigned to
+  // this user. Offline posting may use only a previously trusted local record.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    if (trustedLocalBranch) return trustedLocalBranch;
+    throw new Error('BRANCH_CONTEXT_UNAVAILABLE_OFFLINE: No trusted local branch is registered for this tenant.');
   }
 
   const response = await unifiedTransport.get<any>('/api/auth/branch-context');
