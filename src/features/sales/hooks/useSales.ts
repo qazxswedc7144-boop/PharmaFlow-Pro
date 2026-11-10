@@ -721,29 +721,44 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
 
       if (res?.success) { 
         setSavePhase('idle');
-        
-        // --- REAL-TIME ARCHIVE & REPORT SYNCHRONIZATION (PHASE 5.2.5-B) ---
-        // 1. Invalidate report cache
-        reportCache.purge();
-        // 2. Increment data version to signal components of data changes
-        db.incrementDataVersion();
-        // 3. Clear report engine state and refresh
-        await ReportEngine.refresh();
-        // 4. Force state synchronization across related providers/views
-        await refreshGlobal();
-
-        // Display success toast for 1 second only (from PHASE 5.2.5-A)
+        // Local persistence has succeeded. Post-commit UI work must never report save failure.
         showNotification("Invoice Saved Successfully\nReturning to Dashboard...", 'success', 1000);
         addToast("Invoice Saved Successfully\nReturning to Dashboard...", "success");
-        
-        await auditLogService.logSale(res.refId || editingInvoiceId || header.invoice_number, `Sale created: ${header.invoice_number}`, { items, total: vTotalSum });
-        configurationService.delete(DRAFT_KEY).catch(() => {}); 
+
+        const postCommitWarnings: string[] = [];
+        const runPostCommitTask = async (name: string, task: () => Promise<unknown> | unknown) => {
+          try {
+            await task();
+          } catch (postCommitError) {
+            console.warn(`[useSales] Post-commit task failed (${name}):`, postCommitError);
+            postCommitWarnings.push(name);
+          }
+        };
+
+        await runPostCommitTask('report-and-provider-refresh', async () => {
+          reportCache.purge();
+          db.incrementDataVersion();
+          await ReportEngine.refresh();
+          await refreshGlobal();
+        });
+        await runPostCommitTask('audit-log', () =>
+          auditLogService.logSale(res.refId || editingInvoiceId || header.invoice_number, `Sale created: ${header.invoice_number}`, { items, total: vTotalSum })
+        );
+        configurationService.delete(DRAFT_KEY).catch(() => {});
         
         // Capture data for success modal 2.0 (Task 4) and dispose of draft (Task 5)
         const partner = customers.find(c => c.id === header.customer_id);
         const partnerName = partner ? partner.Supplier_Name : 'عميل مبيعات كاشير عام';
-        await DraftService.clearInvoiceDraft('sales_draft_current');
-        await DraftService.clearDraft('sales');
+        await runPostCommitTask('draft-cleanup', async () => {
+          await DraftService.clearInvoiceDraft('sales_draft_current');
+          await DraftService.clearDraft('sales');
+        });
+
+        if (res.syncStatus === 'FAILED') {
+          showNotification('تم حفظ الفاتورة محلياً، لكن فشلت المزامنة. ستتم المحاولة لاحقاً.', 'warning');
+        } else if (postCommitWarnings.length > 0) {
+          showNotification('تم حفظ الفاتورة، لكن بعض تحديثات ما بعد الحفظ لم تكتمل.', 'warning');
+        }
 
         setSaveSuccessData({
           invoiceNumber: header.invoice_number,

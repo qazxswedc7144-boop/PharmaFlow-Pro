@@ -63,6 +63,7 @@ jobs:
           src/features/sync/saleSyncDto.test.ts
           src/features/sync/sync.engine.transactional-enqueue.test.ts
           src/core/workflow/workflowExecution.sales-atomicity.integration.test.ts
+          src/core/workflow/workflowExecution.post-commit.test.ts
         env:
           NODE_ENV: test
 
