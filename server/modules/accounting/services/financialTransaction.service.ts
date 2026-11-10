@@ -39,7 +39,8 @@ export class FinancialTransactionService {
     invoiceId: string,
     userId: string | null = null,
     ipAddress: string | null = null,
-    tenantId: string | null = null
+    tenantId: string | null = null,
+    userRole?: string
   ) {
     try {
       return await runInTransaction("AccountingService", async (tx) => {
@@ -62,7 +63,7 @@ export class FinancialTransactionService {
           throw new Error(`INVOICE_NOT_FOUND: Invoice ID ${invoiceId} doesn't exist or access is unauthorized.`);
         }
 
-        return await this.executeInvoiceLedgerPosting(tx, invoice, userId, ipAddress, tenantId);
+        return await this.executeInvoiceLedgerPosting(tx, invoice, userId, ipAddress, tenantId, userRole);
       });
     } catch (err: any) {
       if (
@@ -99,7 +100,8 @@ export class FinancialTransactionService {
     invoice: Prisma.InvoiceGetPayload<{ include: { items: { include: { product: true } } } }>,
     userId: string | null = null,
     ipAddress: string | null = null,
-    tenantId: string | null = null
+    tenantId: string | null = null,
+    userRole?: string
   ) {
     // ⚠️ P0 FIX: Pessimistic row-level lock on the invoice.
     // This must run FIRST, inside the caller's transaction (tx).
@@ -139,6 +141,61 @@ export class FinancialTransactionService {
         `ALREADY_POSTED: Invoice ${invoice.invoiceNumber} is already posted ` +
         `(status=${lockedInvoice.status}, documentStatus=${lockedInvoice.documentStatus}).`
       );
+    }
+
+    // Revalidate sale pricing at the posting boundary. A draft must not become
+    // postable after its override permission or tenant discount ceiling changes.
+    if (invoice.type === InvoiceType.SALE) {
+      const policy = await tx.tenantSalesPolicy.findUnique({ where: { tenantId } });
+      const pricingItems = invoice.items.map((item: any) => {
+        if (!item.product) {
+          const error: any = new Error("PRODUCT_NOT_FOUND");
+          error.code = "PRODUCT_NOT_FOUND";
+          throw error;
+        }
+        return {
+          price: item.price,
+          catalogPrice: item.product.price,
+          qty: item.qty
+        };
+      });
+
+      const hasManualPriceOverride = pricingItems.some(
+        (item: any) => !new Prisma.Decimal(item.price).equals(new Prisma.Decimal(item.catalogPrice))
+      );
+      if (hasManualPriceOverride) {
+        const canOverridePrice = await AuthorizationService.can({
+          userId: userId || "",
+          role: userRole,
+          tenantId
+        }, "sales.price.override", { tenantId });
+
+        if (!canOverridePrice) {
+          const error: any = new Error("PRICE_OVERRIDE_FORBIDDEN");
+          error.code = "PRICE_OVERRIDE_FORBIDDEN";
+          throw error;
+        }
+      }
+
+      const validatedPricing = SalesPricingService.calculate(
+        pricingItems,
+        {
+          maxDiscountPercent: policy?.maxDiscountPercent ?? 0,
+          // Tax settings are snapshotted on the draft; only the discount ceiling
+          // is taken from the current tenant policy at posting time.
+          taxRatePercent: invoice.taxRatePercent ?? policy?.taxRatePercent ?? 0,
+          taxMode: invoice.taxMode ?? policy?.taxMode ?? "NONE"
+        },
+        invoice.discountPercent ?? 0
+      );
+      const pricingDifference = validatedPricing.totalAmount
+        .minus(new Prisma.Decimal(invoice.totalAmount.toString()))
+        .abs();
+      if (pricingDifference.greaterThan(new Prisma.Decimal("0.01"))) {
+        const error: any = new Error("SALES_PRICE_POLICY_MISMATCH");
+        error.code = "SALES_PRICE_POLICY_MISMATCH";
+        throw error;
+      }
     }
 
     const ZERO = new Prisma.Decimal(0);
