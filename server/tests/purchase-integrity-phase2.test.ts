@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { db } from '@/core/db';
 import { UnifiedBusinessWorkflowOrchestrator } from '@/services/orchestration/UnifiedBusinessWorkflowOrchestrator';
@@ -16,6 +16,8 @@ describe('Purchase Phase 2 Integrity Verification', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    // This suite exercises the local Dexie workflow with an already trusted branch.
+    vi.stubGlobal('navigator', { onLine: false });
 
     // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
     const userObj = {
@@ -100,6 +102,10 @@ describe('Purchase Phase 2 Integrity Verification', () => {
       { id: 'ACC-102', code: '102', name: 'Inventory', type: 'Asset', tenantId, branchId, balance: 800 },
       { id: 'ACC-201', code: '201', name: 'Payables', type: 'Liability', tenantId, branchId, balance: 0 }
     ] as any);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('P0-1: Creates purchase with manual invoice number and ensures internal ID is different', async () => {
