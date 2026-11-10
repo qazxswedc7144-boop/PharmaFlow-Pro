@@ -11,7 +11,6 @@ export const ENTERPRISE_PERMISSIONS: StandardPermission[] = [
   { key: 'sales.invoice.export', module: 'sales', action: 'export', description: 'تصدير وطباعة فواتير المبيعات' },
   { key: 'sales.refund', module: 'sales', action: 'manage', description: 'معالجة مرتجعات المبيعات' },
   { key: 'sales.pos.access', module: 'sales', action: 'view', description: 'الوصول إلى شاشة نقطة البيع السريعة' },
-  { key: 'sales.price.override', module: 'sales', action: 'manage', description: 'تعديل سعر بيع الصنف يدوياً ضمن حد الخصم المعتمد للمؤسسة' },
 
   // 2. Purchases Module
   { key: 'purchases.invoice.view', module: 'purchases', action: 'view', description: 'عرض فواتير المشتريات' },
