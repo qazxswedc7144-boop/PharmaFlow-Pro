@@ -11,7 +11,7 @@ import { priceIntelligenceService } from '@/features/inventory/services/priceInt
 import { useToast } from '@/hooks/useToast';
 import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './itemEntryModalLifecycle';
 import { getProjectedAutocompleteStock } from '@features/inventory/utils/projectedAutocompleteStock';
-import { createNewPurchaseProductRecord } from '@features/purchases/utils/newPurchaseProduct';
+import { createNewPurchaseProductRecord } from '@features/inventory/utils/newPurchaseProduct';
 
 interface ProductItem {
   id: string;
@@ -129,7 +129,6 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const createAndSaveNewProduct = useCallback(async (
     name: string,
     price: string | number,
-    _qty: string | number,
     cat: string
   ): Promise<string> => {
     const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
@@ -482,7 +481,7 @@ if (mode === 'sale') {
     setIsSubmitting(true);
     try {
       if (!existing && mode === 'purchase' && isConfirmedNewProduct) {
-        finalProductId = await createAndSaveNewProduct(manualItemName, tempPrice, tempQty, categoryName);
+        finalProductId = await createAndSaveNewProduct(manualItemName, tempPrice, categoryName);
       }
 
       // ✅ إرسال الصنف للجدول فوراً (سيظهر مباشرة)
