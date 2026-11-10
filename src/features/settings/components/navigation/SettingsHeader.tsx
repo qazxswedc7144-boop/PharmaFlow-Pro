@@ -1,6 +1,7 @@
 import React from 'react';
-import { Settings, LucideIcon } from 'lucide-react';
+import { LogOut, Settings, LucideIcon, LoaderCircle } from 'lucide-react';
 import { BackButton } from '@/components/shared/BackButton';
+import { useAuth } from '@features/auth/hooks/useAuth';
 
 interface SettingsHeaderProps {
   // تم جعل الخصائص القديمة اختيارية (Optional) لكي لا ينكسر الملف الأب SettingsModule
@@ -41,6 +42,19 @@ export const SettingsHeader: React.FC<SettingsHeaderProps> = ({
     : "إدارة وضبط إعدادات النظام";
 
   const IconComponent = isMobileDrillDown && ActiveIcon ? ActiveIcon : Settings;
+  const { signOut } = useAuth();
+  const [isSigningOut, setIsSigningOut] = React.useState(false);
+
+  const handleSignOut = async () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    try {
+      await signOut();
+    } finally {
+      if (typeof window !== 'undefined') window.location.hash = '#/login';
+      setIsSigningOut(false);
+    }
+  };
 
   return (
     <header 
@@ -75,6 +89,18 @@ export const SettingsHeader: React.FC<SettingsHeaderProps> = ({
             </p>
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => { void handleSignOut(); }}
+          disabled={isSigningOut}
+          aria-label="تسجيل الخروج"
+          title="تسجيل الخروج"
+          className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-300/40 bg-red-500/10 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold text-white hover:bg-red-500/20 disabled:opacity-60 transition-colors"
+        >
+          {isSigningOut ? <LoaderCircle size={16} className="animate-spin" /> : <LogOut size={16} />}
+          <span className="hidden sm:inline">تسجيل الخروج</span>
+        </button>
       </div>
     </header>
   );
