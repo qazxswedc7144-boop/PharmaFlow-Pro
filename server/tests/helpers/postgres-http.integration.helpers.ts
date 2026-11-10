@@ -149,6 +149,13 @@ async function initialize(
   ctx.branchAId = branchA.id;
   ctx.branchBId = branchB.id;
 
+  await prisma.branchUser.createMany({
+    data: [
+      { tenantId: ctx.tenantAId, branchId: ctx.branchAId, userId: ctx.userAId, isDefault: true },
+      { tenantId: ctx.tenantBId, branchId: ctx.branchBId, userId: ctx.userBId, isDefault: true },
+    ],
+  });
+
   await prisma.tenantSubscription.createMany({
     data: [
       { tenantId: ctx.tenantAId, planId: ctx.planId, startDate: new Date(), endDate: new Date(Date.now() + 30 * 86400000), isActive: true },
