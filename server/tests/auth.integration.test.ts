@@ -18,6 +18,27 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     expect(sessions).toBe(2);
   });
 
+  it("recreates a missing branch membership during legacy login and returns that branch in the JWT payload", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+
+    await prisma.branchUser.deleteMany({
+      where: { userId: ctx.userAId, tenantId: ctx.tenantAId }
+    });
+
+    const login = await request(ctx, "/api/auth/login", {
+      method: "POST",
+      body: { username: ctx.usernameA, password: "Ci-Only-Password-2026!" }
+    });
+
+    expect(login.status).toBe(200);
+    expect(login.body.branchId).toBe(ctx.branchAId);
+    const membership = await prisma.branchUser.findFirst({
+      where: { userId: ctx.userAId, tenantId: ctx.tenantAId, branchId: ctx.branchAId }
+    });
+    expect(membership).toBeTruthy();
+  });
+
   it("resolves only the selected branch assigned to the authenticated tenant user", async () => {
     const ctx = getContext();
 
