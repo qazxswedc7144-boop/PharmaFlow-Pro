@@ -179,7 +179,11 @@ export class TokenProvider {
 
         const response = await fetch('/api/auth/refresh', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.getCurrentSession().tenantId ? { 'X-Tenant-ID': this.getCurrentSession().tenantId! } : {}),
+            ...(this.getCurrentSession().branchId ? { 'X-Branch-ID': this.getCurrentSession().branchId! } : {})
+          },
           body: JSON.stringify({ refreshToken: currentRefresh }),
           signal: controller.signal
         });
