@@ -89,7 +89,8 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
   const expiryInputRef = useRef<HTMLInputElement>(null);
   const noteInputRef = useRef<HTMLInputElement>(null);
   const categoryInputRef = useRef<HTMLSelectElement>(null);
-  const requestIdRef = useRef<number>(0); // 👈 لمنع تسابق البيانات
+  const requestIdRef = useRef<number>(0); // منع تسابق طلبات بيانات الصنف
+  const manualPriceEditedRef = useRef<boolean>(false); // حماية السعر الذي أدخله المستخدم من التحميلات المتأخرة
 
   const createAndSaveNewProduct = useCallback((name: string, price: string | number, qty: string | number, cat: string): string => {
     const newProdId = 'PROD-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7);
@@ -189,7 +190,7 @@ if (mode === 'sale') {
   // The posting workflow uses products.price as the authoritative amount.
   // Keep the preview aligned; intelligence suggestions remain informational only.
   const authoritativePrice = (prod as any)?.price;
-  if (authoritativePrice !== undefined && authoritativePrice !== null) {
+  if (authoritativePrice !== undefined && authoritativePrice !== null && !manualPriceEditedRef.current) {
     setTempPrice(authoritativePrice);
   }
 }
@@ -231,7 +232,8 @@ if (mode === 'sale') {
       if (initialData) {
         setManualItemName(initialData.name || '');
         setTempQty(initialData.qty || '');
-        setTempPrice(initialData.price || '');
+        setTempPrice(initialData.price ?? '');
+        manualPriceEditedRef.current = initialData.price !== undefined && initialData.price !== null && initialData.price !== '';
         setTempExpiry(normalizeToISODate(initialData.expiryDate));
         setTempNote(initialData.note || '');
         setCategoryName(initialData.category || '');
@@ -248,6 +250,7 @@ if (mode === 'sale') {
   }, [isOpen, initialData, loadProductIntelligence]);
 
   const resetForm = () => {
+    manualPriceEditedRef.current = false;
     setManualItemName('');
     setTempQty('');
     setTempPrice('');
@@ -346,7 +349,7 @@ if (mode === 'sale') {
 
       const lastPrice = Number(latest.unitPrice ?? latest.unit_price ?? latest.price);
       if (Number.isFinite(lastPrice) && lastPrice > 0) {
-        setTempPrice(lastPrice);
+        if (!manualPriceEditedRef.current) setTempPrice(lastPrice);
         setLastSellingPriceSuggestion(lastPrice);
         setPriceInsight(`آخر سعر بيع مسجل: ${lastPrice} ${currency}`);
       }
@@ -362,6 +365,7 @@ if (mode === 'sale') {
   }, [customerId, currency]);
 
   const selectProduct = (p: ProductItem) => {
+    manualPriceEditedRef.current = false;
     setManualItemName(p.Name || '');
     setCategoryName(p.categoryName || p.category || p.Category || '');
     setSelectedProductId(p.id);
@@ -493,6 +497,14 @@ if (mode === 'sale') {
                 onFocus={() => setShowSearchDropdown(true)}
                 className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-[14px] font-semibold text-[#1E4D4D] outline-none focus:bg-white text-right"
                 placeholder="ابحث عن صنف أو اكتب اسماً..." 
+                enterKeyHint="next"
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    setShowSearchDropdown(false);
+                    qtyInputRef.current?.focus();
+                  }
+                }}
               />
               <AnimatePresence>
                 {showSearchDropdown && filteredProducts.length > 0 && (
@@ -557,7 +569,14 @@ if (mode === 'sale') {
                   type="number" 
                   value={tempQty} 
                   onChange={e => setTempQty(e.target.value)} 
-                  onKeyDown={e => e.key === 'Enter' && (mode === 'sale' ? priceInputRef.current?.focus() : expiryInputRef.current?.focus())} 
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      priceInputRef.current?.focus();
+                    }
+                  }}
+                  inputMode="decimal"
+                  enterKeyHint="next"
                   className={`w-full box-border h-10 bg-slate-50 border rounded-xl px-2 text-center text-[14px] font-semibold text-[#1E4D4D] outline-none ${
                     mode === 'sale' && availableStock !== null && Number(tempQty) > availableStock
                       ? 'border-red-400 bg-red-50 text-red-600' 
@@ -607,11 +626,19 @@ if (mode === 'sale') {
                   type="number" 
                   step="any" 
                   value={tempPrice} 
-                  disabled={mode === 'sale'}
-                  readOnly={mode === 'sale'}
-                  onChange={e => setTempPrice(e.target.value)} 
-                  onKeyDown={e => e.key === 'Enter' && (mode === 'sale' ? noteInputRef.current?.focus() : categoryInputRef.current?.focus())} 
-                  className={`w-full box-border h-10 border border-slate-200 rounded-xl px-2 text-center text-[14px] font-semibold text-[#1E4D4D] outline-none ${mode === 'sale' ? 'bg-slate-100/80 cursor-not-allowed' : 'bg-slate-50'}`}
+                  onChange={e => {
+                    manualPriceEditedRef.current = true;
+                    setTempPrice(e.target.value);
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      noteInputRef.current?.focus();
+                    }
+                  }}
+                  inputMode="decimal"
+                  enterKeyHint="next"
+                  className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-2 text-center text-[14px] font-semibold text-[#1E4D4D] outline-none focus:bg-white"
                   placeholder="0.00" 
                 />
               </div>
@@ -653,7 +680,13 @@ if (mode === 'sale') {
                 ref={noteInputRef} 
                 value={tempNote} 
                 onChange={e => setTempNote(e.target.value)} 
-                onKeyDown={e => e.key === 'Enter' && handleFinalize()} 
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void handleFinalize();
+                  }
+                }}
+                enterKeyHint="done"
                 className="w-full box-border h-10 bg-slate-50 border border-slate-200 rounded-xl px-3 text-[13px] font-semibold text-[#1E4D4D] outline-none focus:bg-white text-right" 
                 placeholder="أضف ملاحظة هنا (اختياري)..." 
               />
