@@ -505,6 +505,11 @@ if (mode === 'sale') {
         resetForm();
         setTimeout(() => itemNameInputRef.current?.focus(), 100);
       }
+    } catch (registrationError) {
+      console.error('[ItemEntryModal] Product registration failed:', registrationError);
+      setIsConfirmedNewProduct(false);
+      setIsConfirmNewProductOpen(true);
+      error('تعذر تسجيل الصنف. لم تتم إضافته إلى الفاتورة؛ يرجى إعادة المحاولة.');
     } finally {
       setIsSubmitting(false);
     }
@@ -534,6 +539,11 @@ if (mode === 'sale') {
         resetForm();
         setTimeout(() => itemNameInputRef.current?.focus(), 100);
       }
+    } catch (registrationError) {
+      console.error('[ItemEntryModal] Product registration failed:', registrationError);
+      setIsConfirmedNewProduct(false);
+      setIsConfirmNewProductOpen(true);
+      error('تعذر تسجيل الصنف. لم تتم إضافته إلى الفاتورة؛ يرجى إعادة المحاولة.');
     } finally {
       setIsSubmitting(false);
     }
