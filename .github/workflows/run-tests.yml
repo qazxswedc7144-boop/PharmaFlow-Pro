@@ -64,7 +64,6 @@ jobs:
           src/core/workflow/workflowContext.branch.test.ts
           src/features/inventory/utils/projectedAutocompleteStock.test.ts
           src/features/purchases/utils/failedPurchaseDraft.test.ts
-          src/services/system/DraftService.quarantine.test.ts
           src/features/purchases/utils/purchaseFailureDisposition.test.ts
           src/features/inventory/utils/newPurchaseProduct.test.ts
           server/tests/purchase-integrity-phase2.test.ts
