@@ -226,6 +226,9 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       const currentScope = getCurrentUserSession();
       const tenantId = currentScope.tenantId;
       const branchId = currentScope.branchId;
+      const tenantLayers = layers.filter((layer: any) => (
+        tenantId && (layer.tenantId || layer.tenant_id) === tenantId
+      ));
       const tenantBatches = batchRecords.filter((batch: any) => (
         tenantId && (batch.tenantId || batch.tenant_id) === tenantId
       ));
@@ -233,7 +236,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
         const batchBranchId = batch.branchId || batch.branch_id;
         return !branchId || !batchBranchId || batchBranchId === branchId;
       });
-      const positiveLayers = layers.filter((layer: any) => {
+      const positiveLayers = tenantLayers.filter((layer: any) => {
         const quantity = Number(
           layer.quantity_remaining ?? layer.quantityRemaining ??
           layer.remaining_qty ?? layer.remainingQty ?? 0
@@ -250,7 +253,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       // FIFO layers cap the balance; medicineBatches supplies batch expiry and
       // sellable batch quantity. Never fall back to product master stock in sales.
       let stock = mode === 'sale'
-        ? getSellableLayerQuantity(layers, ownedBatches, tenantBatches.length > 0)
+        ? getSellableLayerQuantity(tenantLayers, ownedBatches, tenantBatches.length > 0)
         : (prod?.StockQuantity ?? prod?.stock ?? 0);
 
       if (mode !== 'sale' && activeLayers.length > 0) {
@@ -467,6 +470,20 @@ if (mode === 'sale') {
           const currentScope = getCurrentUserSession();
           const tenantId = currentScope.tenantId;
           const branchId = currentScope.branchId;
+          const tenantLayers = new Map<string, any[]>();
+          const tenantLayerIds = new Map<string, any>();
+          [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
+            if (!tenantId || (layer.tenantId || layer.tenant_id) !== tenantId) return;
+            tenantLayerIds.set(String(layer.id || JSON.stringify(layer)), layer);
+          });
+          Array.from(tenantLayerIds.values()).forEach((layer: any) => {
+            const productId = String(layer.item_id || layer.product_id || layer.productId || '');
+            if (!productIds.includes(productId)) return;
+            const current = tenantLayers.get(productId) || [];
+            current.push(layer);
+            tenantLayers.set(productId, current);
+          });
+
           const batchRecordsByProduct = new Map<string, any[]>();
           const ownedBatchesByProduct = new Map<string, any[]>();
           allBatchRecords.forEach((batch: any) => {
@@ -490,7 +507,7 @@ if (mode === 'sale') {
             const productId = String(product.id || product.ProductID || '');
             const hasBatchRecords = (batchRecordsByProduct.get(productId) || []).length > 0;
             return getSellableLayerQuantity(
-              layersByProduct.get(productId) || [],
+              tenantLayers.get(productId) || [],
               ownedBatchesByProduct.get(productId) || [],
               hasBatchRecords
             ) > 0;
