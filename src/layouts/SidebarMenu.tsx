@@ -322,7 +322,11 @@ export const SidebarMenu: React.FC<SidebarMenuProps> = ({ isOpen, onClose, onNav
               <button 
                 onClick={() => {
                   onClose();
-                  signOut();
+                  void signOut().catch((logoutError) => {
+                    console.error('[SidebarMenu] Logout failed:', logoutError);
+                  }).finally(() => {
+                    window.location.hash = '#/login';
+                  });
                 }} 
                 className="flex items-center justify-center gap-2 text-red-600 dark:text-red-400 text-sm font-bold w-full py-2.5 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors focus:outline-none cursor-pointer"
               >

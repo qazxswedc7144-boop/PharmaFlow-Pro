@@ -55,6 +55,7 @@ export class WorkflowContextFactory {
       deviceId,
       operationType,
       startedAt: options?.startedAt || new Date().toISOString(),
+      onLocalCommit: options?.onLocalCommit,
       metadata: options?.metadata || {}
     };
   }

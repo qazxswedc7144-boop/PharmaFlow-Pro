@@ -28,6 +28,23 @@ export class ReportEngine {
   async refresh(): Promise<void> {
     await ReportEngine.refresh();
   }
+
+  /**
+   * Defers report-cache refresh work to the next event-loop turn so domain
+   * workflows and projection queue acknowledgements do not wait for it.
+   */
+  static scheduleRefreshInBackground(): void {
+    setTimeout(() => {
+      void ReportEngine.refresh().catch((error: unknown) => {
+        console.error('[ReportEngine] Background refresh failed:', error);
+      });
+    }, 0);
+  }
+
+  /** Instance wrapper for services holding the reportEngine singleton. */
+  scheduleRefresh(): void {
+    ReportEngine.scheduleRefreshInBackground();
+  }
   
   /**
    * Retrieves and aggregates standard sales summary.

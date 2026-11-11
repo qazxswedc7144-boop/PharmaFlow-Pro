@@ -29,6 +29,8 @@ export interface WorkflowContext {
   deviceId: string;
   operationType: string;
   startedAt: string;
+  /** Invoked synchronously after the local Dexie transaction commits; never awaited or serialized. */
+  onLocalCommit?: (result: unknown) => void;
   metadata?: Record<string, unknown>;
 }
 
@@ -63,6 +65,10 @@ export interface BusinessWorkflow<TInput = any, TResult = any> {
   name: string;
   operationType: string;
   requiredPermissions?: string[];
+  /** Sync mutation is durably written inside the domain transaction; dispatch must remain post-commit and non-blocking. */
+  syncHandledInDomainTransaction?: boolean;
+  /** Use the in-tab guard instead of a remote Redis lock for local-first catalog operations. */
+  localExecutionGuard?: boolean | ((input: TInput) => boolean);
   tables?: string[];
   hooks?: WorkflowHooks<TInput, TResult>;
   validateInput?: (input: TInput, ctx: WorkflowContext) => Promise<void>;

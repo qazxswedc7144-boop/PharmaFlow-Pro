@@ -1002,8 +1002,21 @@ function MainLayout() {
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-bold text-[#1E4D4D] truncate">{profile?.name || profile?.email?.split('@')[0] || profile?.role || 'مستخدم'}</p>
               </div>
-              <button onClick={() => signOut()} className="w-8 h-8 flex items-center justify-center text-slate-400 hover:text-red-500 transition-colors">
-                <LogOut size={18} />
+              <button
+                type="button"
+                title="تسجيل الخروج"
+                aria-label="تسجيل الخروج"
+                onClick={() => {
+                  void signOut().catch((logoutError) => {
+                    console.error('[App] Logout failed:', logoutError);
+                  }).finally(() => {
+                    window.location.hash = '#/login';
+                  });
+                }}
+                className="min-h-9 inline-flex items-center justify-center gap-2 rounded-xl border border-red-100 bg-white px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors"
+              >
+                <LogOut size={17} />
+                <span>تسجيل الخروج</span>
               </button>
             </div>
           </div>

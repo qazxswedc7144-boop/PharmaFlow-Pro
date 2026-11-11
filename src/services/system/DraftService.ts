@@ -1,4 +1,5 @@
 import { db } from '@/core/db';
+import { selectRecoverablePurchaseDraft } from './recoverablePurchaseDraft';
 
 export interface DraftData {
   id: string; // e.g., 'sales', 'purchases', 'supplier-payment', 'customer-receipt'
@@ -113,6 +114,33 @@ export const DraftService = {
     } catch (e) {
       console.error(`[DraftService] Failed to load invoice draft ${draftId}:`, e);
       return undefined;
+    }
+  },
+
+  getRecoverablePurchaseDraft: async (): Promise<any | undefined> => {
+    try {
+      const drafts = await db.draft_invoices
+        .where('invoiceType')
+        .equals('PURCHASE')
+        .toArray();
+      return selectRecoverablePurchaseDraft(drafts as any[]);
+    } catch (e) {
+      console.error('[DraftService] Failed to load recoverable purchase draft:', e);
+      return undefined;
+    }
+  },
+
+  markInvoiceDraftRecovered: async (draftId: string): Promise<void> => {
+    if (!draftId) return;
+    try {
+      const draft = await db.draft_invoices.get(draftId);
+      if (!draft || draft.status !== 'FAILED_QUARANTINED') return;
+      await db.draft_invoices.update(draftId, {
+        recoveredAt: new Date().toISOString()
+      });
+    } catch (e) {
+      console.error(`[DraftService] Failed to mark purchase draft ${draftId} as recovered:`, e);
+      throw e;
     }
   },
 

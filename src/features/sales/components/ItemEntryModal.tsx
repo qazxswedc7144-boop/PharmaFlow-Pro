@@ -12,6 +12,8 @@ import { useToast } from '@/hooks/useToast';
 import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './itemEntryModalLifecycle';
 import { getProjectedAutocompleteStock } from '@features/inventory/utils/projectedAutocompleteStock';
 import { createNewPurchaseProductRecord } from '@features/inventory/utils/newPurchaseProduct';
+import { formatProductRegistrationError } from './productRegistrationError';
+import { findExistingProductByName } from './productLookup';
 
 interface ProductItem {
   id: string;
@@ -139,22 +141,67 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       category: cat
     });
 
-    const result = await WorkflowOrchestrator.execute(
+    let resolveLocalCommit!: (productId: string) => void;
+    let rejectLocalCommit!: (reason: Error) => void;
+    let localCommitSettled = false;
+    const localCommitPromise = new Promise<string>((resolve, reject) => {
+      resolveLocalCommit = (productId: string) => {
+        if (localCommitSettled) return;
+        if (!productId) {
+          localCommitSettled = true;
+          reject(new Error('PRODUCT_REGISTRATION_ID_MISSING: لم يُرجع الحفظ المحلي معرف الصنف.'));
+          return;
+        }
+        localCommitSettled = true;
+        resolve(productId);
+      };
+      rejectLocalCommit = (reason: Error) => {
+        if (localCommitSettled) {
+          console.warn('[ItemEntryModal] Product workflow reported an error after local commit:', reason);
+          return;
+        }
+        localCommitSettled = true;
+        reject(reason);
+      };
+    });
+
+    // The workflow signals immediately after its Dexie transaction commits.
+    // Durable sync queue/outbox writes are already part of that transaction;
+    // remote synchronization continues in the background.
+    const workflowPromise = WorkflowOrchestrator.execute(
       productApplicationWorkflow,
-      { product: newProd as any, isNew: true }
+      { product: newProd as any, isNew: true },
+      {
+        onLocalCommit: (committedResult: any) => {
+          resolveLocalCommit(String(committedResult?.productId || ''));
+        }
+      }
     );
-    if (!result.success) {
-      throw new Error(result.error?.message || 'PRODUCT_REGISTRATION_FAILED');
-    }
 
-    // InventoryService.saveProduct is the authoritative writer; do not overwrite
-    // its tenant/branch-bound row with the raw form object after the workflow.
-    const persistedProduct = await db.products.get(newProdId);
+    void workflowPromise.then(result => {
+      if (!result.success) {
+        const workflowCode = result.error?.code || 'PRODUCT_REGISTRATION_FAILED';
+        const workflowMessage = result.error?.message || 'لم يُرجع سير العمل سبباً محدداً.';
+        rejectLocalCommit(new Error(`${workflowCode}: ${workflowMessage}`));
+        return;
+      }
+      resolveLocalCommit(String(result.data?.productId || newProdId));
+    }).catch(workflowError => {
+      const workflowCode = (workflowError as any)?.code;
+      const workflowMessage = workflowError instanceof Error ? workflowError.message : String(workflowError);
+      const detail = workflowCode && !workflowMessage.includes(workflowCode)
+        ? `${workflowCode}: ${workflowMessage}`
+        : workflowMessage;
+      rejectLocalCommit(new Error(detail));
+    });
+
+    const savedProductId = await localCommitPromise;
+    const persistedProduct = await db.products.get(savedProductId);
     if (!persistedProduct) {
-      throw new Error('PRODUCT_REGISTRATION_NOT_CONFIRMED');
+      throw new Error('PRODUCT_REGISTRATION_NOT_CONFIRMED: لم يتم العثور على سجل الصنف بعد اكتمال الحفظ المحلي.');
     }
 
-    return newProdId;
+    return savedProductId;
   }, []);
 
   // Load live stock, expiry, and price intelligence for the selected product
@@ -462,10 +509,8 @@ if (mode === 'sale') {
   const handleFinalize = async () => {
     if (!manualItemName || !tempQty || !tempPrice) return;
     
-    const searchName = manualItemName.trim().toLowerCase();
-    let existing = await db.products.filter(p => 
-      ((p.Name || p.name || '')).trim().toLowerCase() === searchName
-    ).first().catch(() => null);
+    // Resolve exact product names through the indexed Name/name fields (no full-table scan).
+    const existing = await findExistingProductByName<any>(db.products, manualItemName);
 
     let finalProductId = selectedProductId || existing?.id || null;
 
@@ -506,9 +551,10 @@ if (mode === 'sale') {
       }
     } catch (registrationError) {
       console.error('[ItemEntryModal] Product registration failed:', registrationError);
-      setIsConfirmedNewProduct(false);
-      setIsConfirmNewProductOpen(true);
-      error('تعذر تسجيل الصنف. لم تتم إضافته إلى الفاتورة؛ يرجى إعادة المحاولة.');
+      // Keep the explicit confirmation; retrying must not ask the same question again.
+      setIsConfirmedNewProduct(true);
+      setIsConfirmNewProductOpen(false);
+      error(formatProductRegistrationError(registrationError));
     } finally {
       setIsSubmitting(false);
     }
@@ -540,9 +586,10 @@ if (mode === 'sale') {
       }
     } catch (registrationError) {
       console.error('[ItemEntryModal] Product registration failed:', registrationError);
-      setIsConfirmedNewProduct(false);
-      setIsConfirmNewProductOpen(true);
-      error('تعذر تسجيل الصنف. لم تتم إضافته إلى الفاتورة؛ يرجى إعادة المحاولة.');
+      // Keep the explicit confirmation; retrying must not ask the same question again.
+      setIsConfirmedNewProduct(true);
+      setIsConfirmNewProductOpen(false);
+      error(formatProductRegistrationError(registrationError));
     } finally {
       setIsSubmitting(false);
     }
