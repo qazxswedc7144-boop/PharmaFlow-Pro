@@ -6,12 +6,17 @@ const normalizeInvoiceType = (value: unknown): string =>
   typeof value === 'string' ? value.trim().toUpperCase() : '';
 
 const matchesInvoiceType = (invoice: any, expected: 'SALE' | 'PURCHASE'): boolean => {
-  const declaredTypes = [
-    normalizeInvoiceType(invoice?.type),
-    normalizeInvoiceType(invoice?.Type),
-    normalizeInvoiceType(invoice?.invoiceType),
-    normalizeInvoiceType(invoice?.invoice_type)
-  ].filter(Boolean);
+  const primaryTypes = [invoice?.type, invoice?.Type]
+    .map(normalizeInvoiceType)
+    .filter(Boolean);
+  const invoiceTypeAliases = [invoice?.invoiceType, invoice?.invoice_type]
+    .map(normalizeInvoiceType)
+    .filter(Boolean);
+  const canonicalInvoiceTypes = invoiceTypeAliases.filter(type => type === 'SALE' || type === 'PURCHASE');
+  const declaredTypes = [...primaryTypes, ...canonicalInvoiceTypes];
+
+  // invoiceType may also describe a subtype (for example Arabic "مرتجع").
+  // Only canonical SALE/PURCHASE values participate in the document-kind check.
   return declaredTypes.length > 0 && declaredTypes.every(type => type === expected);
 };
 
