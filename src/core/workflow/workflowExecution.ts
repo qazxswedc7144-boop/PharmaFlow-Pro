@@ -140,56 +140,62 @@ export class WorkflowExecutionPipeline {
         : null;
 
       // Step 9 & 10: ExecutionGuard + TransactionBoundary Execution
-      const domainResult = await ExecutionGuard.executeWithGuard<TResult>(
-        {
-          tenantId: ctx.tenantId,
-          branchId: ctx.branchId,
-          operation: workflow.operationType,
-          entityId: ctx.idempotencyKey
-        },
-        async () => {
-          const committed = await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
-            // Step 11: Execute Domain Steps
-            const res = await workflow.executeDomainSteps(input, ctx, tx);
+      const guardOptions = {
+        tenantId: ctx.tenantId,
+        branchId: ctx.branchId,
+        operation: workflow.operationType,
+        entityId: ctx.idempotencyKey
+      };
 
-            // SALE persistence and both durable sync records share the same Dexie transaction.
-            if (workflow.id.toUpperCase() === 'SALE' && (res as any)?.sale?.isReturn !== true) {
-              if (!saleSyncDependencies) {
-                throw new WorkflowExecutionError(
-                  'SYNC_ENQUEUE_FAILED: Sale sync dependencies were not initialized before transaction start.',
-                  'SYNC_ENQUEUE_FAILED'
-                );
-              }
-              const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = saleSyncDependencies;
-              const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
-                workflow.operationType,
-                toSaleSyncDTO(res),
-                'SALE',
-                ctx.idempotencyKey,
-                { tenantId: ctx.tenantId, branchId: ctx.branchId }
+      const executeDomainTransaction = async (): Promise<TResult> => {
+        const committed = await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
+          // Step 11: Execute Domain Steps
+          const res = await workflow.executeDomainSteps(input, ctx, tx);
+
+          // SALE persistence and both durable sync records share the same Dexie transaction.
+          if (workflow.id.toUpperCase() === 'SALE' && (res as any)?.sale?.isReturn !== true) {
+            if (!saleSyncDependencies) {
+              throw new WorkflowExecutionError(
+                'SYNC_ENQUEUE_FAILED: Sale sync dependencies were not initialized before transaction start.',
+                'SYNC_ENQUEUE_FAILED'
               );
-              if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
-                throw new WorkflowExecutionError(
-                  'SYNC_ENQUEUE_FAILED: Durable sale queue/outbox acknowledgement is incomplete.',
-                  'SYNC_ENQUEUE_FAILED'
-                );
-              }
             }
-            return res;
-          });
-          // TransactionBoundary resolves only after the IndexedDB transaction commits.
-          transactionCommitted = true;
-          committedResult = committed;
-          // Release local-first UI consumers as soon as Dexie confirms commit.
-          // Post-commit audit/projection/sync work must not hold the item-entry UI.
-          try {
-            ctx.onLocalCommit?.(committed);
-          } catch (localCommitCallbackError) {
-            addPostCommitWarning('local-commit-callback', localCommitCallbackError);
+            const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = saleSyncDependencies;
+            const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
+              workflow.operationType,
+              toSaleSyncDTO(res),
+              'SALE',
+              ctx.idempotencyKey,
+              { tenantId: ctx.tenantId, branchId: ctx.branchId }
+            );
+            if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
+              throw new WorkflowExecutionError(
+                'SYNC_ENQUEUE_FAILED: Durable sale queue/outbox acknowledgement is incomplete.',
+                'SYNC_ENQUEUE_FAILED'
+              );
+            }
           }
-          return committed;
+          return res;
+        });
+
+        // TransactionBoundary resolves only after the IndexedDB transaction commits.
+        transactionCommitted = true;
+        committedResult = committed;
+        // Release local-first UI consumers as soon as Dexie confirms commit.
+        // Post-commit audit/projection/sync work must not hold the item-entry UI.
+        try {
+          ctx.onLocalCommit?.(committed);
+        } catch (localCommitCallbackError) {
+          addPostCommitWarning('local-commit-callback', localCommitCallbackError);
         }
-      );
+        return committed;
+      };
+
+      // Catalog product creation uses only an in-tab guard; its idempotency and
+      // queue/outbox writes remain durable inside the Dexie transaction.
+      const domainResult = workflow.localExecutionGuard === true
+        ? await ExecutionGuard.executeWithLocalGuard<TResult>(guardOptions, executeDomainTransaction)
+        : await ExecutionGuard.executeWithGuard<TResult>(guardOptions, executeDomainTransaction);
 
       // Step 12: Mark Idempotency Completed & Invalidate Meter Cache
       if (ctx.idempotencyKey) {
