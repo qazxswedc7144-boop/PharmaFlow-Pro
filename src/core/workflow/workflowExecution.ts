@@ -180,6 +180,13 @@ export class WorkflowExecutionPipeline {
           // TransactionBoundary resolves only after the IndexedDB transaction commits.
           transactionCommitted = true;
           committedResult = committed;
+          // Release local-first UI consumers as soon as Dexie confirms commit.
+          // Post-commit audit/projection/sync work must not hold the item-entry UI.
+          try {
+            ctx.onLocalCommit?.(committed);
+          } catch (localCommitCallbackError) {
+            addPostCommitWarning('local-commit-callback', localCommitCallbackError);
+          }
           return committed;
         }
       );
