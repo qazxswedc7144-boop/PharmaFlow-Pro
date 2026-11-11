@@ -511,10 +511,28 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const rawErrorMessage = error instanceof Error ? error.message : String(error);
       const errorCode = rawErrorMessage.match(/[A-Z][A-Z0-9_]{3,}/)?.[0] || 'PURCHASE_SAVE_FAILED';
       const currentUser = authService.getCurrentUser();
-      const tenantId = currentUser?.tenantId || (currentUser as any)?.tenant_id;
-      const idempotencyRecord = await IdempotencyRegistry.get(failureOperationId, tenantId);
-      const disposition = getPurchaseFailureDisposition(idempotencyRecord?.status || null);
+      const tenantId = currentUser?.tenantId || (currentUser as any)?.tenant_id || purchaseDraftKeys?.tenantId;
       const normalized = ErrorManager.handleError(error, { module: 'PURCHASES', action: 'SAVE_PURCHASE', showToast: false });
+
+      // If the registry cannot be read, the operation outcome is unknown.
+      // Do not quarantine, clear artifacts, reset the form, or rotate its key.
+      if (!tenantId || !purchaseDraftKeys) {
+        setSavePhase('failed');
+        showNotification('تعذر التحقق من سياق المؤسسة وحالة العملية. احتفظ بالفاتورة الحالية ولا تنشئ بديلاً.', 'error');
+        addToast(normalized.arabicMessage, 'error');
+        return;
+      }
+      let idempotencyRecord = null;
+      try {
+        idempotencyRecord = await IdempotencyRegistry.get(failureOperationId, tenantId);
+      } catch (registryReadError) {
+        console.error('[usePurchases] Idempotency state could not be read; preserving the unresolved operation:', registryReadError);
+        setSavePhase('failed');
+        showNotification('تعذر التحقق من نتيجة الحفظ. احتفظ بالفاتورة ومفتاح العملية ولا تعِد إنشاءها.', 'error');
+        addToast(normalized.arabicMessage, 'error');
+        return;
+      }
+      const disposition = getPurchaseFailureDisposition(idempotencyRecord?.status || null);
 
       // A committed transaction must never be treated as a failed invoice.
       // Preserve the idempotency key until active-draft cleanup succeeds.
