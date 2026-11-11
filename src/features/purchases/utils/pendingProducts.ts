@@ -94,3 +94,31 @@ export function collectPendingProductsForInvoice<
 
   return { items: finalizedItems, pendingProducts };
 }
+
+/**
+ * Merges pending products restored from an invoice snapshot into autocomplete
+ * results without persisting them prematurely or returning duplicate IDs.
+ */
+export function mergePendingProductSuggestions<
+  T extends { id?: string; name?: string; Name?: string }
+>(
+  persistedProducts: T[],
+  pendingProducts: T[],
+  query: string
+): T[] {
+  const normalizedQuery = String(query || '').trim().toLocaleLowerCase('en-US');
+  if (!normalizedQuery) return persistedProducts || [];
+
+  const pendingMatches = (pendingProducts || []).filter(product => {
+    const name = String(product.name || product.Name || '').trim().toLocaleLowerCase('en-US');
+    return name.includes(normalizedQuery);
+  });
+
+  const seenIds = new Set<string>();
+  return [...pendingMatches, ...(persistedProducts || [])].filter(product => {
+    const normalizedId = normalizePendingProductId(product.id);
+    if (!normalizedId || seenIds.has(normalizedId)) return false;
+    seenIds.add(normalizedId);
+    return true;
+  });
+}
