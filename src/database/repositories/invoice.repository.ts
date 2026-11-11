@@ -104,7 +104,11 @@ export const InvoiceRepository = {
 
   generateInvoiceNumber: async (type: 'SALE' | 'PURCHASE' = 'SALE'): Promise<string> => {
     const prefix = type === 'SALE' ? 'INV' : 'PUR';
-    const records = await db[type === 'SALE' ? 'sales' : 'purchases'].toArray();
+    const [legacyRecords, unifiedRecords] = await Promise.all([
+      db[type === 'SALE' ? 'sales' : 'purchases'].toArray(),
+      db.invoices.where('type').equals(type).toArray()
+    ]);
+    const records = [...legacyRecords, ...unifiedRecords];
     const numberFields = type === 'SALE'
       ? ['SaleID', 'saleId', 'invoice_number', 'invoiceNumber', 'invoiceId']
       : ['invoiceId', 'purchase_id', 'purchaseId', 'invoice_number', 'invoiceNumber'];
