@@ -49,4 +49,17 @@ describe('pending products retry handling', () => {
       'Second manual item'
     ]);
   });
+  it('keeps recovered pending products available to the autocomplete before posting', async () => {
+    const { mergePendingProductSuggestions } = await import('./pendingProducts');
+    const persisted = [
+      { id: 'PROD-2', Name: 'Panadol Advance', name: 'Panadol Advance' }
+    ];
+    const recoveredPending = [
+      { id: 'PROD-1', Name: 'Panadol Extra', name: 'Panadol Extra' }
+    ];
+
+    expect(mergePendingProductSuggestions(persisted, recoveredPending, 'Panadol'))
+      .toEqual([recoveredPending[0], persisted[0]]);
+  });
+
 });
