@@ -60,6 +60,15 @@ describe('sale inventory-layer availability', () => {
     )).toBe(6);
   });
 
+  it('rejects expired product-level stock when no batch records exist', () => {
+    expect(getSellableLayerQuantity(
+      [{ item_id: 'p-1', quantity_remaining: 5 }],
+      [],
+      false,
+      '2000-01-01'
+    )).toBe(0);
+  });
+
   it('ignores non-finite and negative quantities', () => {
     expect(getSellableLayerQuantity([
       { quantity_remaining: -3 },
