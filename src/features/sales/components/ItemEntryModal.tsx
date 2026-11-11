@@ -454,19 +454,6 @@ if (mode === 'sale') {
             db.inventory_layers.where('productId').anyOf(productIds).toArray(),
             db.medicineBatches.where('productId').anyOf(productIds).toArray()
           ]);
-          const uniqueLayers = new Map<string, any>();
-          [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
-            uniqueLayers.set(String(layer.id || JSON.stringify(layer)), layer);
-          });
-          const layersByProduct = new Map<string, any[]>();
-          Array.from(uniqueLayers.values()).forEach((layer: any) => {
-            const productId = String(layer.item_id || layer.product_id || layer.productId || '');
-            if (!productIds.includes(productId)) return;
-            const current = layersByProduct.get(productId) || [];
-            current.push(layer);
-            layersByProduct.set(productId, current);
-          });
-
           const currentScope = getCurrentUserSession();
           const tenantId = currentScope.tenantId;
           const branchId = currentScope.branchId;
