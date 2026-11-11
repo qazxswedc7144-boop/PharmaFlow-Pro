@@ -72,5 +72,29 @@ describe('ProductApplicationWorkflow local commit boundary', () => {
       'IDEM-PRODUCT-1',
       { tenantId: 'TEN-1', branchId: 'BR-1' }
     );
+
+    await productApplicationWorkflow.executeDomainSteps(
+      { product: { id: 'PROD-LOCAL-1', name: 'Panadol Extra' } as any, isNew: false },
+      {
+        workflowId: 'WF-2',
+        correlationId: 'CORR-2',
+        idempotencyKey: 'IDEM-PRODUCT-2',
+        tenantId: 'TEN-1',
+        branchId: 'BR-1',
+        userId: 'USER-1',
+        deviceId: 'DEVICE-1',
+        operationType: 'PRODUCT_SAVE',
+        startedAt: new Date().toISOString()
+      },
+      {}
+    );
+
+    expect(enqueue).toHaveBeenLastCalledWith(
+      'UPDATE',
+      expect.objectContaining({ id: 'PROD-LOCAL-1', tenantId: 'TEN-1', branchId: 'BR-1' }),
+      'PRODUCT',
+      'IDEM-PRODUCT-2',
+      { tenantId: 'TEN-1', branchId: 'BR-1' }
+    );
   });
 });
