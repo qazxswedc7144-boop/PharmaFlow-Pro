@@ -26,7 +26,7 @@ export class ProductApplicationWorkflow implements BusinessWorkflow<ProductAppli
   // Product + its durable sync mutation are committed together in the local Dexie transaction.
   public syncHandledInDomainTransaction = true;
   // Catalog creation is local-first and must not wait for a remote Redis lock.
-  public localExecutionGuard = true;
+  public localExecutionGuard = (input: ProductApplicationInput) => input.isNew === true;
   public tables = ['products', 'auditLogs', 'idempotencyKeys', 'projectionEvents', 'syncQueue', 'outbox'];
 
   public async validateInput(input: ProductApplicationInput): Promise<void> {
