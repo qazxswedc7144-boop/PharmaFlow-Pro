@@ -29,6 +29,23 @@ import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOp
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
+function getPurchaseDraftKeys() {
+  const user = authService.getCurrentUser() as any;
+  const tenantId = String(user?.tenantId || user?.tenant_id || '').trim();
+  const branchValue = user?.branchId || user?.branch_id;
+  const branchId = typeof branchValue === 'string' && branchValue.trim() ? branchValue.trim() : null;
+  if (!tenantId) throw new Error('PURCHASE_DRAFT_TENANT_REQUIRED: refusing to use an unscoped purchase draft.');
+  const tenantKey = encodeURIComponent(tenantId);
+  const branchKey = encodeURIComponent(branchId || 'no-branch');
+  return {
+    tenantId,
+    branchId,
+    invoiceDraftId: `purchases_draft_${tenantKey}_${branchKey}`,
+    draftId: `purchases_${tenantKey}_${branchKey}`,
+    configKey: `${DRAFT_KEY}_${tenantKey}_${branchKey}`
+  };
+}
+
 export interface AIParsedInvoiceData {
   invoice_number?: string;
   supplier?: string;
@@ -207,6 +224,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       try {
         // Failed quarantine is preferred to a debounced autosave because it
         // contains the exact invoice lines captured at the failed save boundary.
+        const draftKeys = getPurchaseDraftKeys();
         const recoverable = await DraftService.getRecoverablePurchaseDraft();
         if (recoverable) {
           setRecoveryDraftData(recoverable);
@@ -214,9 +232,9 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           return;
         }
 
-        const hasSavedDraft = await DraftService.hasDraft('purchases');
+        const hasSavedDraft = await DraftService.hasDraft(draftKeys.draftId);
         if (hasSavedDraft) {
-          const draft = await DraftService.getDraft('purchases');
+          const draft = await DraftService.getDraft(draftKeys.draftId);
           if (draft && draft.items && draft.items.length > 0) {
             setRecoveryDraftData(draft as any);
             setIsRecoveryModalOpen(true);
@@ -236,6 +254,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     }
 
     const draftObj: any = recoveryDraftData;
+    const draftKeys = getPurchaseDraftKeys();
     // Clear stale item-entry state before restoring the snapshot. Pending products
     // are rehydrated from the snapshot immediately below because they are required
     // for atomic product creation when this invoice is posted.
@@ -293,14 +312,14 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           (sum: number, item: any) => sum + Number(item.qty || 0) * Number(item.price || 0),
           0
         );
-        await DraftService.saveInvoiceDraft('purchases_draft_current', 'PURCHASE', restoredItems, {
+        await DraftService.saveInvoiceDraft(draftKeys.invoiceDraftId, 'PURCHASE', restoredItems, {
           header: snapshot.header,
           adjData: snapshot.adjData,
           subtotal: restoredSubtotal,
           partner: snapshot.partner,
           pendingProducts: snapshot.pendingProducts
         });
-        const activeDraft = await DraftService.getInvoiceDraft('purchases_draft_current');
+        const activeDraft = await DraftService.getInvoiceDraft(draftKeys.invoiceDraftId);
         const activeTotals = activeDraft?.totals || {};
         if (
           !activeDraft ||
@@ -325,10 +344,11 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
   }, [recoveryDraftData, addToast, suppliers]);
   const discardDraft = useCallback(async () => {
     try {
+      const draftKeys = getPurchaseDraftKeys();
       if ((recoveryDraftData as any)?.draftId) {
         await DraftService.clearInvoiceDraft((recoveryDraftData as any).draftId);
       }
-      await DraftService.clearDraft('purchases');
+      await DraftService.clearDraft(draftKeys.draftId);
       const unfinished = await DraftService.getUnfinishedInvoiceDraft('PURCHASE');
       if (unfinished?.draftId) await DraftService.clearInvoiceDraft(unfinished.draftId);
       addToast("تم حذف مسودة المشتريات المتروكة وبدء قيد جديد", "info");
@@ -360,7 +380,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 
   const vTotalSum = useMemo(() => { const subtotal = items.reduce((sum, item) => sum + (item.qty * item.price), 0); const discount = subtotal * (adjData.discountPercent / 100); return subtotal - discount + adjData.otherFees + adjData.tax; }, [items, adjData]);
   const prevItemsRef = useRef<InvoiceItem[]>(items); const prevSupplierIdRef = useRef<string>(header.supplier_id); const prevNotesRef = useRef<string>(header.notes); const prevAdjDataRef = useRef<{ discountPercent: number; otherFees: number; tax: number }>(adjData);
-  useEffect(() => { if (savePhase === 'failed' || editingInvoiceId) return; if (items.length === 0 && !header.supplier_id && !header.notes) return; const itemsChanged = JSON.stringify(items) !== JSON.stringify(prevItemsRef.current); const supplierChanged = header.supplier_id !== prevSupplierIdRef.current; const notesChanged = header.notes !== prevNotesRef.current; const adjChanged = JSON.stringify(adjData) !== JSON.stringify(prevAdjDataRef.current); if (itemsChanged || supplierChanged || notesChanged || adjChanged) { prevItemsRef.current = items; prevSupplierIdRef.current = header.supplier_id; prevNotesRef.current = header.notes; prevAdjDataRef.current = adjData; const timer = setTimeout(async () => { try { const partner = suppliers.find(s => s.id === header.supplier_id); const partnerName = partner ? partner.Supplier_Name : ''; await DraftService.saveInvoiceDraft('purchases_draft_current', 'PURCHASE', items, { adjData, subtotal: vTotalSum, header, partner: { partnerName } }); } catch (e) { console.error("Debounced auto-save failed:", e); } }, 1000); return () => clearTimeout(timer); } return undefined; }, [items, header, adjData, vTotalSum, editingInvoiceId, suppliers, savePhase]);
+  useEffect(() => { if (savePhase === 'failed' || editingInvoiceId) return; if (items.length === 0 && !header.supplier_id && !header.notes) return; const itemsChanged = JSON.stringify(items) !== JSON.stringify(prevItemsRef.current); const supplierChanged = header.supplier_id !== prevSupplierIdRef.current; const notesChanged = header.notes !== prevNotesRef.current; const adjChanged = JSON.stringify(adjData) !== JSON.stringify(prevAdjDataRef.current); if (itemsChanged || supplierChanged || notesChanged || adjChanged) { prevItemsRef.current = items; prevSupplierIdRef.current = header.supplier_id; prevNotesRef.current = header.notes; prevAdjDataRef.current = adjData; const timer = setTimeout(async () => { try { const partner = suppliers.find(s => s.id === header.supplier_id); const partnerName = partner ? partner.Supplier_Name : ''; await DraftService.saveInvoiceDraft(getPurchaseDraftKeys().invoiceDraftId, 'PURCHASE', items, { adjData, subtotal: vTotalSum, header, partner: { partnerName } }); } catch (e) { console.error("Debounced auto-save failed:", e); } }, 1000); return () => clearTimeout(timer); } return undefined; }, [items, header, adjData, vTotalSum, editingInvoiceId, suppliers, savePhase]);
 
   const selectProduct = useCallback((p: Product) => { setSelectedProduct(p); setManualItemName(p.Name || ''); setTempPrice(p.LastPurchasePrice || p.CostPrice || ''); setTempQty(1); if (p.StockQuantity !== undefined) addToast(`المخزون الحالي: ${p.StockQuantity}`, "info"); if (p.LastPurchasePrice) addToast(`آخر سعر شراء: ${p.LastPurchasePrice} ${currency}`, "info"); setSearchTerm(''); setShowSearchDropdown(false); setSelectedIndex(-1); qtyInputRef.current?.focus(); }, [addToast, currency]);
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, filteredProducts.length - 1)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, -1)); } else if (e.key === 'Enter') { if (selectedIndex >= 0) { e.preventDefault(); const prod = filteredProducts[selectedIndex]; if (prod) selectProduct(prod); } else if (manualItemName) { e.preventDefault(); qtyInputRef.current?.focus(); } } else if (e.key === 'Escape') { setShowSearchDropdown(false); setSelectedIndex(-1); } }, [filteredProducts, selectedIndex, selectProduct, manualItemName]);
@@ -381,7 +401,10 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     addToast("جاري الحفظ والمزامنة... ⏳", "info");
     setIsSaving(true);
     setSavePhase('saving');
+    let purchaseDraftKeys: ReturnType<typeof getPurchaseDraftKeys> | null = null;
+    let itemsForSave: InvoiceItem[] = currentItems;
     try {
+      purchaseDraftKeys = getPurchaseDraftKeys();
       if (aiParsedData) {
         const originalSupplier = aiParsedData.supplier;
         const finalSupplier = suppliers.find(s => s.id === currentHeader.supplier_id)?.Supplier_Name;
@@ -395,7 +418,11 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         pendingProductsRef.current
       );
       pendingProductsRef.current = preparedProducts.pendingProducts;
-      const itemsForSave = preparedProducts.items as InvoiceItem[];
+      // Preserve the exact normalized lines submitted to addInvoice for quarantine/retry.
+      itemsForSave = preparedProducts.items.map((item: InvoiceItem) => ({
+        ...item,
+        expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
+      })) as InvoiceItem[];
       setItems(itemsForSave);
 
       // تنفيذ الحفظ المحلي مباشرة (بدون Promise.race أو مهلة زمنية)
@@ -403,10 +430,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         type: 'PURCHASE',
         payload: {
           supplierId: currentHeader.supplier_id,
-          items: itemsForSave.map(item => ({
-            ...item,
-            expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
-          })),
+          items: itemsForSave,
           total: currentTotal,
           invoiceId: currentHeader.invoice_number,
           invoiceNumber: currentHeader.invoice_number,
@@ -459,7 +483,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
               console.warn('[usePurchases] Background provider refresh failed:', refreshError);
             });
         }, 0);
-        configurationService.set(DRAFT_KEY, null).catch(() => {});
+        configurationService.set(purchaseDraftKeys!.configKey, null).catch(() => {});
         setHasUnsavedAI(false);
         await runPostCommitTask('audit-log', () =>
           auditLogService.log({ table: 'purchases', action: 'PURCHASE', entityId: editingInvoiceId || header.invoice_number, newData: { items, total: vTotalSum }, details: `Purchase ${header.isReturn ? 'Return' : ''}: ${header.invoice_number}` })
@@ -494,9 +518,9 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       // Preserve the idempotency key until active-draft cleanup succeeds.
       if (disposition === 'COMMITTED') {
         try {
-          await db.draft_invoices.delete('purchases_draft_current');
-          await db.drafts.delete('purchases');
-          await configurationService.set(DRAFT_KEY, null);
+          await DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId);
+          await DraftService.clearDraft(purchaseDraftKeys!.draftId);
+          await configurationService.set(purchaseDraftKeys!.configKey, null);
           currentOperationRef.current = null;
           pendingProductsRef.current = [];
           resetInvoiceState();
@@ -539,7 +563,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const failedDraft = buildFailedPurchaseDraft({
         operationId: failureOperationId,
         header: currentHeader as any,
-        items: currentItems,
+        items: itemsForSave,
         adjData: currentAdjData,
         errorCode
       });
@@ -550,8 +574,8 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         partnerName: failedSupplier?.Supplier_Name || failedSupplier?.name || ''
       };
       (failedDraft as any).pendingProducts = JSON.parse(JSON.stringify(pendingProductsRef.current));
-      (failedDraft as any).tenantId = authService.getCurrentUser()?.tenantId || (authService.getCurrentUser() as any)?.tenant_id;
-      (failedDraft as any).branchId = authService.getCurrentUser()?.branchId || (authService.getCurrentUser() as any)?.branch_id;
+      (failedDraft as any).tenantId = purchaseDraftKeys!.tenantId;
+      (failedDraft as any).branchId = purchaseDraftKeys!.branchId;
 
       try {
         await DraftService.quarantineInvoiceDraft(failedDraft);
@@ -570,7 +594,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         const cleanupResults = await Promise.allSettled([
           Promise.resolve().then(() => db.draft_invoices.delete('purchases_draft_current')),
           Promise.resolve().then(() => db.drafts.delete('purchases')),
-          Promise.resolve().then(() => configurationService.set(DRAFT_KEY, null))
+          Promise.resolve().then(() => configurationService.set(purchaseDraftKeys!.configKey, null))
         ]);
         activeDraftCleanupComplete = cleanupResults.every(result => result.status === 'fulfilled');
         if (!activeDraftCleanupComplete) {
