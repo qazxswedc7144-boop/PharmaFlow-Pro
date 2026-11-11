@@ -66,7 +66,7 @@ describe('ProductApplicationWorkflow local commit boundary', () => {
 
     expect(result).toEqual({ success: true, productId: 'PROD-LOCAL-1' });
     expect(enqueue).toHaveBeenCalledWith(
-      'PRODUCT_SAVE',
+      'CREATE',
       expect.objectContaining({ id: 'PROD-LOCAL-1', tenantId: 'TEN-1', branchId: 'BR-1' }),
       'PRODUCT',
       'IDEM-PRODUCT-1',
