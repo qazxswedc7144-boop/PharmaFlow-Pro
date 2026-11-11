@@ -241,8 +241,8 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
           })
         : positiveLayers;
 
-      // In sales mode, FIFO layers are authoritative. Never fall back to the
-      // product master balance when no valid, non-expired layer exists.
+      // FIFO layers cap the balance; medicineBatches supplies batch expiry and
+      // sellable batch quantity. Never fall back to product master stock in sales.
       let stock = mode === 'sale'
         ? getSellableLayerQuantity(layers, ownedBatches, batchRecords.length > 0)
         : (prod?.StockQuantity ?? prod?.stock ?? 0);
@@ -445,8 +445,12 @@ if (mode === 'sale') {
             db.inventory_layers.where('productId').anyOf(productIds).toArray(),
             db.medicineBatches.where('productId').anyOf(productIds).toArray()
           ]);
-          const layersByProduct = new Map<string, any[]>();
+          const uniqueLayers = new Map<string, any>();
           [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
+            uniqueLayers.set(String(layer.id || JSON.stringify(layer)), layer);
+          });
+          const layersByProduct = new Map<string, any[]>();
+          Array.from(uniqueLayers.values()).forEach((layer: any) => {
             const productId = String(layer.item_id || layer.product_id || layer.productId || '');
             if (!productIds.includes(productId)) return;
             const current = layersByProduct.get(productId) || [];
