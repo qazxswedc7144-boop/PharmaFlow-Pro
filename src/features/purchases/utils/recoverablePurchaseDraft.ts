@@ -1,30 +1,4 @@
-export interface PurchaseDraftSnapshot {
-  header: Record<string, unknown> | null;
-  items: any[];
-  adjData: Record<string, unknown>;
-  partner: Record<string, unknown> | null;
-  pendingProducts: any[];
-}
-
-/**
- * Failed quarantines contain the exact invoice snapshot from the failed save.
- * Prefer them over debounced autosaves, which may predate the last item entry.
- */
-export function selectRecoverablePurchaseDraft<T extends Record<string, any>>(drafts: T[]): T | undefined {
-  const eligible = (drafts || []).filter(draft =>
-    draft?.invoiceType === 'PURCHASE' &&
-    (draft.status !== 'FAILED_QUARANTINED' || !draft.recoveredAt)
-  );
-  const failed = eligible.filter(draft => draft.status === 'FAILED_QUARANTINED');
-  const candidates = failed.length > 0
-    ? failed
-    : eligible.filter(draft => draft.status !== 'FAILED_QUARANTINED');
-
-  return [...candidates].sort((a, b) =>
-    new Date(b.updatedAt || b.createdAt || 0).getTime() -
-    new Date(a.updatedAt || a.createdAt || 0).getTime()
-  )[0];
-}
+export { selectRecoverablePurchaseDraft } from '@/services/system/recoverablePurchaseDraft';
 
 export function getPurchaseDraftSnapshot(draft: any): PurchaseDraftSnapshot {
   const payload = draft?.payload || {};
