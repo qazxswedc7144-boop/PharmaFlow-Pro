@@ -11,7 +11,7 @@ describe('ProductApplicationWorkflow local commit boundary', () => {
 
   it('requires only the permission appropriate to the operation', async () => {
     vi.spyOn(useAuthStore, 'getState').mockReturnValue({
-      hasPermission: (permission: string) => permission === 'products.manage',
+      hasPermission: (permission: string) => permission === 'inventory.product.create',
       user: { permissions: [] }
     } as any);
 
