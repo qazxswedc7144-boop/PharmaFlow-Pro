@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Modal, Button } from '@/components/shared/SharedUI';
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { WorkflowOrchestrator } from '@/core/workflow';
 import { productApplicationWorkflow } from '@features/catalog/workflows/ProductApplicationWorkflow';
 import { Package, Lock, TrendingUp, Box } from 'lucide-react';
@@ -213,15 +213,20 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       // 1. Read FIFO layers through their declared Dexie indexes.
       // FIFOEngine writes item_id + quantity_remaining; legacy rows may use productId.
       const prod = currentProd || (await db.products.get(prodId)) as ProductItem;
-      const [itemIdLayers, productIdLayers] = await Promise.all([
+      const [itemIdLayers, productIdLayers, batchRecords] = await Promise.all([
         db.inventory_layers.where('item_id').equals(prodId).toArray(),
-        db.inventory_layers.where('productId').equals(prodId).toArray()
+        db.inventory_layers.where('productId').equals(prodId).toArray(),
+        mode === 'sale' ? db.medicineBatches.where('productId').equals(prodId).toArray() : Promise.resolve([])
       ]);
       const layersById = new Map<string, any>();
       [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
         layersById.set(String(layer.id || JSON.stringify(layer)), layer);
       });
       const layers = Array.from(layersById.values());
+      const tenantId = getCurrentUserSession().tenantId;
+      const ownedBatches = batchRecords.filter((batch: any) => (
+        tenantId && (batch.tenantId || batch.tenant_id) === tenantId
+      ));
       const positiveLayers = layers.filter((layer: any) => {
         const quantity = Number(
           layer.quantity_remaining ?? layer.quantityRemaining ??
@@ -239,7 +244,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       // In sales mode, FIFO layers are authoritative. Never fall back to the
       // product master balance when no valid, non-expired layer exists.
       let stock = mode === 'sale'
-        ? getSellableLayerQuantity(layers)
+        ? getSellableLayerQuantity(layers, ownedBatches, batchRecords.length > 0)
         : (prod?.StockQuantity ?? prod?.stock ?? 0);
 
       if (mode !== 'sale' && activeLayers.length > 0) {
@@ -435,9 +440,10 @@ if (mode === 'sale') {
 
         if (mode === 'sale' && !isReturnMode && results.length > 0) {
           const productIds = results.map((product: any) => product.id || product.ProductID).filter(Boolean);
-          const [itemIdLayers, productIdLayers] = await Promise.all([
+          const [itemIdLayers, productIdLayers, allBatchRecords] = await Promise.all([
             db.inventory_layers.where('item_id').anyOf(productIds).toArray(),
-            db.inventory_layers.where('productId').anyOf(productIds).toArray()
+            db.inventory_layers.where('productId').anyOf(productIds).toArray(),
+            db.medicineBatches.where('productId').anyOf(productIds).toArray()
           ]);
           const layersByProduct = new Map<string, any[]>();
           [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
@@ -448,9 +454,31 @@ if (mode === 'sale') {
             layersByProduct.set(productId, current);
           });
 
+          const tenantId = getCurrentUserSession().tenantId;
+          const batchRecordsByProduct = new Map<string, any[]>();
+          const ownedBatchesByProduct = new Map<string, any[]>();
+          allBatchRecords.forEach((batch: any) => {
+            const productId = String(batch.productId || batch.product_id || '');
+            if (!productIds.includes(productId)) return;
+            const allForProduct = batchRecordsByProduct.get(productId) || [];
+            allForProduct.push(batch);
+            batchRecordsByProduct.set(productId, allForProduct);
+
+            if (tenantId && (batch.tenantId || batch.tenant_id) === tenantId) {
+              const ownedForProduct = ownedBatchesByProduct.get(productId) || [];
+              ownedForProduct.push(batch);
+              ownedBatchesByProduct.set(productId, ownedForProduct);
+            }
+          });
+
           results = results.filter((product: any) => {
             const productId = String(product.id || product.ProductID || '');
-            return getSellableLayerQuantity(layersByProduct.get(productId) || []) > 0;
+            const hasBatchRecords = (batchRecordsByProduct.get(productId) || []).length > 0;
+            return getSellableLayerQuantity(
+              layersByProduct.get(productId) || [],
+              ownedBatchesByProduct.get(productId) || [],
+              hasBatchRecords
+            ) > 0;
           });
         }
 
