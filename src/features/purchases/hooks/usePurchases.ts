@@ -418,12 +418,18 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           }
         };
 
-        await runPostCommitTask('report-and-provider-refresh', async () => {
-          reportCache.purge();
-          db.incrementDataVersion();
-          await ReportEngine.refresh();
-          await refreshGlobal();
-        });
+        // Invalidate cached report values immediately, but defer refresh/provider
+        // work so a successful invoice never waits on report processing.
+        reportCache.purge();
+        db.incrementDataVersion();
+        ReportEngine.scheduleRefresh();
+        setTimeout(() => {
+          void Promise.resolve()
+            .then(() => refreshGlobal())
+            .catch((refreshError: unknown) => {
+              console.warn('[usePurchases] Background provider refresh failed:', refreshError);
+            });
+        }, 0);
         configurationService.set(DRAFT_KEY, null).catch(() => {});
         setHasUnsavedAI(false);
         await runPostCommitTask('audit-log', () =>
