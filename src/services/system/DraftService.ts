@@ -165,8 +165,8 @@ export const DraftService = {
   getRecoverablePurchaseDraft: async (): Promise<any | undefined> => {
     const scope = getDraftScope();
     const drafts = await db.draft_invoices
-      .where('invoiceType')
-      .equals('PURCHASE')
+      .where('[tenantId+invoiceType]')
+      .equals([scope.tenantId, 'PURCHASE'])
       .filter((draft: any) => belongsToScope(draft, scope))
       .toArray();
     return selectRecoverablePurchaseDraft(drafts as any[]);
@@ -188,8 +188,8 @@ export const DraftService = {
   getUnfinishedInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<any | undefined> => {
     const scope = getDraftScope();
     const drafts = await db.draft_invoices
-      .where('invoiceType')
-      .equals(invoiceType)
+      .where('[tenantId+invoiceType]')
+      .equals([scope.tenantId, invoiceType])
       .filter((draft: any) => draft.status !== 'FAILED_QUARANTINED' && belongsToScope(draft, scope))
       .toArray();
     if (!drafts.length) return undefined;
@@ -210,8 +210,8 @@ export const DraftService = {
   hasInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<boolean> => {
     const scope = getDraftScope();
     const count = await db.draft_invoices
-      .where('invoiceType')
-      .equals(invoiceType)
+      .where('[tenantId+invoiceType]')
+      .equals([scope.tenantId, invoiceType])
       .filter((draft: any) => draft.status !== 'FAILED_QUARANTINED' && belongsToScope(draft, scope))
       .count();
     return count > 0;
