@@ -13,6 +13,7 @@ import { getItemEntryModalSessionKey, shouldInitializeItemEntryModal } from './i
 import { getProjectedAutocompleteStock } from '@features/inventory/utils/projectedAutocompleteStock';
 import { createNewPurchaseProductRecord } from '@features/inventory/utils/newPurchaseProduct';
 import { formatProductRegistrationError } from './productRegistrationError';
+import { findExistingProductByName } from './productLookup';
 
 interface ProductItem {
   id: string;
@@ -508,13 +509,8 @@ if (mode === 'sale') {
   const handleFinalize = async () => {
     if (!manualItemName || !tempQty || !tempPrice) return;
     
-    const searchName = manualItemName.trim();
-    // Both product-name casings are indexed in Dexie schema v12.
-    // Use indexed case-insensitive equality instead of scanning every product row.
-    let existing = await db.products.where('Name').equalsIgnoreCase(searchName).first();
-    if (!existing) {
-      existing = await db.products.where('name').equalsIgnoreCase(searchName).first();
-    }
+    // Resolve exact product names through the indexed Name/name fields (no full-table scan).
+    const existing = await findExistingProductByName(db.products, manualItemName);
 
     let finalProductId = selectedProductId || existing?.id || null;
 
