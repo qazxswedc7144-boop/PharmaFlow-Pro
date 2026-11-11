@@ -44,7 +44,7 @@ describe('DraftService tenant isolation and persistence errors', () => {
     await DraftService.saveInvoiceDraft(logicalId, 'PURCHASE', [{ productId: 'p-b' }], { total: 20 });
     expect((await DraftService.getRecoverablePurchaseDraft())?.items).toEqual([{ productId: 'p-b' }]);
 
-    setTenantSession('tenant-a', 'branch-a');
+    setTenantSession(tenantA, 'branch-a');
     expect((await DraftService.getInvoiceDraft(logicalId))?.items).toEqual([{ productId: 'p-a' }]);
     await DraftService.clearInvoiceDraft(logicalId);
 
