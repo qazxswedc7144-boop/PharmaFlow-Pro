@@ -568,9 +568,9 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         // Quarantine is the durable recovery source. Attempt each active-draft
         // cleanup independently so one failed delete cannot block the UI reset.
         const cleanupResults = await Promise.allSettled([
-          db.draft_invoices.delete('purchases_draft_current'),
-          db.drafts.delete('purchases'),
-          configurationService.set(DRAFT_KEY, null)
+          Promise.resolve().then(() => db.draft_invoices.delete('purchases_draft_current')),
+          Promise.resolve().then(() => db.drafts.delete('purchases')),
+          Promise.resolve().then(() => configurationService.set(DRAFT_KEY, null))
         ]);
         activeDraftCleanupComplete = cleanupResults.every(result => result.status === 'fulfilled');
         if (!activeDraftCleanupComplete) {
