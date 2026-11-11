@@ -5,6 +5,7 @@ import { Product, InvoiceStatus, InvoiceItem, PaymentStatus, Supplier } from '@/
 import { useUI, useInventory, useAccounting } from '@/contexts/AppContext';
 import { useAppStore } from '@/hooks/useAppStore';
 import { authService } from '@features/auth/services/authService';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
 import { SupplierRepository } from '@/database/repositories/SupplierRepository';
 import { auditLogService } from '@/services/audit/auditLog';
@@ -24,9 +25,29 @@ import { collectPendingProductsForInvoice, mergePendingProductSuggestions } from
 import { buildFailedPurchaseDraft } from '../utils/failedPurchaseDraft';
 import { getPurchaseFailureDisposition } from '../utils/purchaseFailureDisposition';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import type { IdempotencyRecord } from '@/core/integrity/types';
 import { getPurchaseDraftSnapshot } from '../utils/recoverablePurchaseDraft';
+import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOperation';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
+
+function getPurchaseDraftKeys() {
+  const session = TokenProvider.getCurrentSession();
+  const user = session.user as any;
+  const tenantId = String(session.tenantId || user?.tenantId || user?.tenant_id || '').trim();
+  const branchValue = session.branchId || user?.branchId || user?.branch_id;
+  const branchId = typeof branchValue === 'string' && branchValue.trim() ? branchValue.trim() : null;
+  if (!tenantId) throw new Error('PURCHASE_DRAFT_TENANT_REQUIRED: refusing to use an unscoped purchase draft.');
+  const tenantKey = encodeURIComponent(tenantId);
+  const branchKey = encodeURIComponent(branchId || 'no-branch');
+  return {
+    tenantId,
+    branchId,
+    invoiceDraftId: `purchases_draft_${tenantKey}_${branchKey}`,
+    draftId: `purchases_${tenantKey}_${branchKey}`,
+    configKey: `${DRAFT_KEY}_${tenantKey}_${branchKey}`
+  };
+}
 
 export interface AIParsedInvoiceData {
   invoice_number?: string;
@@ -206,6 +227,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       try {
         // Failed quarantine is preferred to a debounced autosave because it
         // contains the exact invoice lines captured at the failed save boundary.
+        const draftKeys = getPurchaseDraftKeys();
         const recoverable = await DraftService.getRecoverablePurchaseDraft();
         if (recoverable) {
           setRecoveryDraftData(recoverable);
@@ -213,9 +235,9 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           return;
         }
 
-        const hasSavedDraft = await DraftService.hasDraft('purchases');
+        const hasSavedDraft = await DraftService.hasDraft(draftKeys.draftId);
         if (hasSavedDraft) {
-          const draft = await DraftService.getDraft('purchases');
+          const draft = await DraftService.getDraft(draftKeys.draftId);
           if (draft && draft.items && draft.items.length > 0) {
             setRecoveryDraftData(draft as any);
             setIsRecoveryModalOpen(true);
@@ -235,6 +257,18 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     }
 
     const draftObj: any = recoveryDraftData;
+    const draftKeys = getPurchaseDraftKeys();
+    // Clear stale item-entry state before restoring the snapshot. Pending products
+    // are rehydrated from the snapshot immediately below because they are required
+    // for atomic product creation when this invoice is posted.
+    currentOperationRef.current = null;
+    pendingProductsRef.current = [];
+    setFilteredProducts([]);
+    setSelectedProduct(null);
+    setManualItemName('');
+    setSearchTerm('');
+    setSelectedIndex(-1);
+    setShowSearchDropdown(false);
     const snapshot = getPurchaseDraftSnapshot(draftObj);
     const rawItems = snapshot.items || [];
 
@@ -281,14 +315,14 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           (sum: number, item: any) => sum + Number(item.qty || 0) * Number(item.price || 0),
           0
         );
-        await DraftService.saveInvoiceDraft('purchases_draft_current', 'PURCHASE', restoredItems, {
+        await DraftService.saveInvoiceDraft(draftKeys.invoiceDraftId, 'PURCHASE', restoredItems, {
           header: snapshot.header,
           adjData: snapshot.adjData,
           subtotal: restoredSubtotal,
           partner: snapshot.partner,
           pendingProducts: snapshot.pendingProducts
         });
-        const activeDraft = await DraftService.getInvoiceDraft('purchases_draft_current');
+        const activeDraft = await DraftService.getInvoiceDraft(draftKeys.invoiceDraftId);
         const activeTotals = activeDraft?.totals || {};
         if (
           !activeDraft ||
@@ -311,7 +345,25 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     setIsRecoveryModalOpen(false);
     setRecoveryDraftData(null);
   }, [recoveryDraftData, addToast, suppliers]);
-  const discardDraft = useCallback(async () => { try { if ((recoveryDraftData as any)?.draftId) await DraftService.clearInvoiceDraft((recoveryDraftData as any).draftId); await DraftService.clearDraft('purchases'); const unfinished = await DraftService.getUnfinishedInvoiceDraft('PURCHASE'); if (unfinished?.draftId) await DraftService.clearInvoiceDraft(unfinished.draftId); addToast("تم حذف مسودة المشتريات المتروكة وبدء قيد جديد", "info"); resetInvoiceState(); } catch (e) { console.error("discardDraft failed:", e); } finally { setIsRecoveryModalOpen(false); setRecoveryDraftData(null); } }, [addToast, resetInvoiceState, recoveryDraftData]);
+  const discardDraft = useCallback(async () => {
+    try {
+      const draftKeys = getPurchaseDraftKeys();
+      if ((recoveryDraftData as any)?.draftId) {
+        await DraftService.clearInvoiceDraft((recoveryDraftData as any).draftId);
+      }
+      await DraftService.clearDraft(draftKeys.draftId);
+      const unfinished = await DraftService.getUnfinishedInvoiceDraft('PURCHASE');
+      if (unfinished?.draftId) await DraftService.clearInvoiceDraft(unfinished.draftId);
+      addToast("تم حذف مسودة المشتريات المتروكة وبدء قيد جديد", "info");
+    } catch (e) {
+      console.error("discardDraft failed:", e);
+    } finally {
+      pendingProductsRef.current = [];
+      resetInvoiceState();
+      setIsRecoveryModalOpen(false);
+      setRecoveryDraftData(null);
+    }
+  }, [addToast, resetInvoiceState, recoveryDraftData]);
 
   const handleSupplierSearch = useCallback((val: string) => { setSupplierSearchTerm(val); setShowSupplierDropdown(true); setSelectedSupplierIndex(-1); }, []);
   const handleSupplierKeyDown = useCallback((e: React.KeyboardEvent) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedSupplierIndex(prev => Math.min(prev + 1, filteredSuppliers.length - 1)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedSupplierIndex(prev => Math.max(prev - 1, -1)); } else if (e.key === 'Enter') { if (selectedSupplierIndex >= 0 && filteredSuppliers[selectedSupplierIndex]) { e.preventDefault(); selectSupplier(filteredSuppliers[selectedSupplierIndex]); } } else if (e.key === 'Escape') { setShowSupplierDropdown(false); setSelectedSupplierIndex(-1); } }, [filteredSuppliers, selectedSupplierIndex]);
@@ -331,7 +383,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 
   const vTotalSum = useMemo(() => { const subtotal = items.reduce((sum, item) => sum + (item.qty * item.price), 0); const discount = subtotal * (adjData.discountPercent / 100); return subtotal - discount + adjData.otherFees + adjData.tax; }, [items, adjData]);
   const prevItemsRef = useRef<InvoiceItem[]>(items); const prevSupplierIdRef = useRef<string>(header.supplier_id); const prevNotesRef = useRef<string>(header.notes); const prevAdjDataRef = useRef<{ discountPercent: number; otherFees: number; tax: number }>(adjData);
-  useEffect(() => { if (savePhase === 'failed' || editingInvoiceId) return; if (items.length === 0 && !header.supplier_id && !header.notes) return; const itemsChanged = JSON.stringify(items) !== JSON.stringify(prevItemsRef.current); const supplierChanged = header.supplier_id !== prevSupplierIdRef.current; const notesChanged = header.notes !== prevNotesRef.current; const adjChanged = JSON.stringify(adjData) !== JSON.stringify(prevAdjDataRef.current); if (itemsChanged || supplierChanged || notesChanged || adjChanged) { prevItemsRef.current = items; prevSupplierIdRef.current = header.supplier_id; prevNotesRef.current = header.notes; prevAdjDataRef.current = adjData; const timer = setTimeout(async () => { try { const partner = suppliers.find(s => s.id === header.supplier_id); const partnerName = partner ? partner.Supplier_Name : ''; await DraftService.saveInvoiceDraft('purchases_draft_current', 'PURCHASE', items, { adjData, subtotal: vTotalSum, header, partner: { partnerName } }); } catch (e) { console.error("Debounced auto-save failed:", e); } }, 1000); return () => clearTimeout(timer); } return undefined; }, [items, header, adjData, vTotalSum, editingInvoiceId, suppliers, savePhase]);
+  useEffect(() => { if (savePhase === 'failed' || editingInvoiceId) return; if (items.length === 0 && !header.supplier_id && !header.notes) return; const itemsChanged = JSON.stringify(items) !== JSON.stringify(prevItemsRef.current); const supplierChanged = header.supplier_id !== prevSupplierIdRef.current; const notesChanged = header.notes !== prevNotesRef.current; const adjChanged = JSON.stringify(adjData) !== JSON.stringify(prevAdjDataRef.current); if (itemsChanged || supplierChanged || notesChanged || adjChanged) { prevItemsRef.current = items; prevSupplierIdRef.current = header.supplier_id; prevNotesRef.current = header.notes; prevAdjDataRef.current = adjData; const timer = setTimeout(async () => { try { const partner = suppliers.find(s => s.id === header.supplier_id); const partnerName = partner ? partner.Supplier_Name : ''; await DraftService.saveInvoiceDraft(getPurchaseDraftKeys().invoiceDraftId, 'PURCHASE', items, { adjData, subtotal: vTotalSum, header, partner: { partnerName }, pendingProducts: JSON.parse(JSON.stringify(pendingProductsRef.current)) }); } catch (e) { console.error("Debounced auto-save failed:", e); } }, 1000); return () => clearTimeout(timer); } return undefined; }, [items, header, adjData, vTotalSum, editingInvoiceId, suppliers, savePhase]);
 
   const selectProduct = useCallback((p: Product) => { setSelectedProduct(p); setManualItemName(p.Name || ''); setTempPrice(p.LastPurchasePrice || p.CostPrice || ''); setTempQty(1); if (p.StockQuantity !== undefined) addToast(`المخزون الحالي: ${p.StockQuantity}`, "info"); if (p.LastPurchasePrice) addToast(`آخر سعر شراء: ${p.LastPurchasePrice} ${currency}`, "info"); setSearchTerm(''); setShowSearchDropdown(false); setSelectedIndex(-1); qtyInputRef.current?.focus(); }, [addToast, currency]);
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex(prev => Math.min(prev + 1, filteredProducts.length - 1)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex(prev => Math.max(prev - 1, -1)); } else if (e.key === 'Enter') { if (selectedIndex >= 0) { e.preventDefault(); const prod = filteredProducts[selectedIndex]; if (prod) selectProduct(prod); } else if (manualItemName) { e.preventDefault(); qtyInputRef.current?.focus(); } } else if (e.key === 'Escape') { setShowSearchDropdown(false); setSelectedIndex(-1); } }, [filteredProducts, selectedIndex, selectProduct, manualItemName]);
@@ -352,7 +404,10 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     addToast("جاري الحفظ والمزامنة... ⏳", "info");
     setIsSaving(true);
     setSavePhase('saving');
+    let purchaseDraftKeys: ReturnType<typeof getPurchaseDraftKeys> | null = null;
+    let itemsForSave: InvoiceItem[] = currentItems;
     try {
+      purchaseDraftKeys = getPurchaseDraftKeys();
       if (aiParsedData) {
         const originalSupplier = aiParsedData.supplier;
         const finalSupplier = suppliers.find(s => s.id === currentHeader.supplier_id)?.Supplier_Name;
@@ -366,7 +421,11 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         pendingProductsRef.current
       );
       pendingProductsRef.current = preparedProducts.pendingProducts;
-      const itemsForSave = preparedProducts.items as InvoiceItem[];
+      // Preserve the exact normalized lines submitted to addInvoice for quarantine/retry.
+      itemsForSave = preparedProducts.items.map((item: InvoiceItem) => ({
+        ...item,
+        expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
+      })) as InvoiceItem[];
       setItems(itemsForSave);
 
       // تنفيذ الحفظ المحلي مباشرة (بدون Promise.race أو مهلة زمنية)
@@ -374,10 +433,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         type: 'PURCHASE',
         payload: {
           supplierId: currentHeader.supplier_id,
-          items: itemsForSave.map(item => ({
-            ...item,
-            expiryDate: normalizeToISODate(item.expiryDate || (item as any).ExpiryDate || (item as any).expiry_date || (item as any).expirationDate || '')
-          })),
+          items: itemsForSave,
           total: currentTotal,
           invoiceId: currentHeader.invoice_number,
           invoiceNumber: currentHeader.invoice_number,
@@ -430,7 +486,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
               console.warn('[usePurchases] Background provider refresh failed:', refreshError);
             });
         }, 0);
-        configurationService.set(DRAFT_KEY, null).catch(() => {});
+        configurationService.set(purchaseDraftKeys!.configKey, null).catch(() => {});
         setHasUnsavedAI(false);
         await runPostCommitTask('audit-log', () =>
           auditLogService.log({ table: 'purchases', action: 'PURCHASE', entityId: editingInvoiceId || header.invoice_number, newData: { items, total: vTotalSum }, details: `Purchase ${header.isReturn ? 'Return' : ''}: ${header.invoice_number}` })
@@ -438,8 +494,8 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         const supplier = suppliers.find(s => s.id === header.supplier_id);
         const supplierName = supplier ? supplier.Supplier_Name : 'مورد غير محدد';
         await runPostCommitTask('draft-cleanup', async () => {
-          await DraftService.clearInvoiceDraft('purchases_draft_current');
-          await DraftService.clearDraft('purchases');
+          await DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId);
+          await DraftService.clearDraft(purchaseDraftKeys!.draftId);
         });
 
         if (res.syncStatus === 'FAILED') {
@@ -456,23 +512,42 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const rawErrorMessage = error instanceof Error ? error.message : String(error);
       const errorCode = rawErrorMessage.match(/[A-Z][A-Z0-9_]{3,}/)?.[0] || 'PURCHASE_SAVE_FAILED';
       const currentUser = authService.getCurrentUser();
-      const tenantId = currentUser?.tenantId || (currentUser as any)?.tenant_id;
-      const idempotencyRecord = await IdempotencyRegistry.get(failureOperationId, tenantId);
-      const disposition = getPurchaseFailureDisposition(idempotencyRecord?.status || null);
+      const tenantId = currentUser?.tenantId || (currentUser as any)?.tenant_id || purchaseDraftKeys?.tenantId;
       const normalized = ErrorManager.handleError(error, { module: 'PURCHASES', action: 'SAVE_PURCHASE', showToast: false });
+
+      // If the registry cannot be read, the operation outcome is unknown.
+      // Do not quarantine, clear artifacts, reset the form, or rotate its key.
+      if (!tenantId || !purchaseDraftKeys) {
+        setSavePhase('failed');
+        showNotification('تعذر التحقق من سياق المؤسسة وحالة العملية. احتفظ بالفاتورة الحالية ولا تنشئ بديلاً.', 'error');
+        addToast(normalized.arabicMessage, 'error');
+        return;
+      }
+      let idempotencyRecord: IdempotencyRecord | null = null;
+      try {
+        idempotencyRecord = await IdempotencyRegistry.get(failureOperationId, tenantId);
+      } catch (registryReadError) {
+        console.error('[usePurchases] Idempotency state could not be read; preserving the unresolved operation:', registryReadError);
+        setSavePhase('failed');
+        showNotification('تعذر التحقق من نتيجة الحفظ. احتفظ بالفاتورة ومفتاح العملية ولا تعِد إنشاءها.', 'error');
+        addToast(normalized.arabicMessage, 'error');
+        return;
+      }
+      const disposition = getPurchaseFailureDisposition(idempotencyRecord?.status || null);
 
       // A committed transaction must never be treated as a failed invoice.
       // Preserve the idempotency key until active-draft cleanup succeeds.
       if (disposition === 'COMMITTED') {
         try {
-          await db.draft_invoices.delete('purchases_draft_current');
-          await db.drafts.delete('purchases');
-          await configurationService.set(DRAFT_KEY, null);
-          currentOperationRef.current = null;
-          pendingProductsRef.current = [];
-          resetInvoiceState();
-          showNotification('تم اعتماد الفاتورة بالفعل. تمت معالجة حالة الواجهة دون إعادة ترحيلها.', 'success');
-          addToast('تم حفظ الفاتورة بنجاح.', 'success');
+          await DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId);
+          await DraftService.clearDraft(purchaseDraftKeys!.draftId);
+          await configurationService.set(purchaseDraftKeys!.configKey, null);
+          // Keep the committed operation key and pending-product snapshot intact.
+          // The component may retry/reconcile this same operation, but must not
+          // silently turn a committed transaction into a new operation.
+          setSavePhase('failed');
+          showNotification('تم اعتماد الفاتورة بالفعل. احتفظنا بمفتاح العملية لمنع إعادة ترحيلها.', 'success');
+          addToast('تم حفظ الفاتورة بنجاح؛ لا تنشئ فاتورة بديلة قبل مغادرة هذه الشاشة.', 'success');
         } catch (cleanupError) {
           console.error('[usePurchases] Committed invoice draft cleanup failed:', cleanupError);
           setSavePhase('failed');
@@ -492,14 +567,25 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
 
       let failedInvoiceQuarantined = false;
+      let failedOperationArtifactsCleaned = false;
       let activeDraftCleanupComplete = false;
+
+      // The workflow rolls back domain writes before returning QUARANTINE. Remove
+      // only sync/idempotency artifacts proven to belong to this failed tenant-scoped
+      // operation; COMMITTED and PROCESSING paths returned above are untouched.
+      try {
+        await cleanupFailedPurchaseOperation(failureOperationId, tenantId);
+        failedOperationArtifactsCleaned = true;
+      } catch (operationCleanupError) {
+        console.error('[usePurchases] Failed operation artifact cleanup failed:', operationCleanupError);
+      }
 
       // Persist and verify the forensic copy first. Cleanup is a separate stage:
       // a cleanup failure must not be misreported as a quarantine-write failure.
       const failedDraft = buildFailedPurchaseDraft({
         operationId: failureOperationId,
         header: currentHeader as any,
-        items: currentItems,
+        items: itemsForSave,
         adjData: currentAdjData,
         errorCode
       });
@@ -510,8 +596,8 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         partnerName: failedSupplier?.Supplier_Name || failedSupplier?.name || ''
       };
       (failedDraft as any).pendingProducts = JSON.parse(JSON.stringify(pendingProductsRef.current));
-      (failedDraft as any).tenantId = authService.getCurrentUser()?.tenantId || (authService.getCurrentUser() as any)?.tenant_id;
-      (failedDraft as any).branchId = authService.getCurrentUser()?.branchId || (authService.getCurrentUser() as any)?.branch_id;
+      (failedDraft as any).tenantId = purchaseDraftKeys!.tenantId;
+      (failedDraft as any).branchId = purchaseDraftKeys!.branchId;
 
       try {
         await DraftService.quarantineInvoiceDraft(failedDraft);
@@ -525,17 +611,23 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
 
       if (failedInvoiceQuarantined) {
-        try {
-          await db.draft_invoices.delete('purchases_draft_current');
-          await db.drafts.delete('purchases');
-          await configurationService.set(DRAFT_KEY, null);
-          activeDraftCleanupComplete = true;
-        } catch (cleanupError) {
-          console.error('[usePurchases] Quarantine was saved, but active draft cleanup failed:', cleanupError);
+        // Quarantine is the durable recovery source. Attempt each active-draft
+        // cleanup independently so one failed delete cannot block the UI reset.
+        const cleanupResults = await Promise.allSettled([
+          Promise.resolve().then(() => DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId)),
+          Promise.resolve().then(() => DraftService.clearDraft(purchaseDraftKeys!.draftId)),
+          Promise.resolve().then(() => configurationService.set(purchaseDraftKeys!.configKey, null))
+        ]);
+        activeDraftCleanupComplete = cleanupResults.every(result => result.status === 'fulfilled');
+        if (!activeDraftCleanupComplete) {
+          console.error('[usePurchases] Quarantine was saved, but one or more active draft cleanup operations failed:', cleanupResults);
         }
       }
 
-      const failedInvoiceIsolated = failedInvoiceQuarantined && activeDraftCleanupComplete;
+      // A persisted quarantine permits UI reset even if the stale active-draft
+      // cleanup failed. However, if operation artifacts could not be isolated,
+      // retain the form and operation key to prevent an unsafe retry.
+      const failedInvoiceIsolated = failedInvoiceQuarantined && failedOperationArtifactsCleaned;
 
       if (failedInvoiceIsolated) {
         currentOperationRef.current = null;
@@ -552,9 +644,11 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 
       showNotification(
         failedInvoiceIsolated
-          ? '❌ تعذر حفظ فاتورة المشتريات. تم عزل بيانات المحاولة الفاشلة.'
+          ? activeDraftCleanupComplete
+            ? '❌ تعذر حفظ فاتورة المشتريات. تم عزل بيانات المحاولة الفاشلة وتنظيف المسودة النشطة.'
+            : 'تعذر حفظ الفاتورة. تم حفظ نسخة العزل وإعادة ضبط الواجهة، لكن بقيت مسودة نشطة قديمة وسيتم تفضيل نسخة العزل عند الاسترداد.'
           : failedInvoiceQuarantined
-            ? 'تعذر حفظ الفاتورة. تم حفظ نسخة العزل، لكن تعذر تنظيف المسودة النشطة؛ بقيت البيانات الحالية محفوظة للمراجعة الآمنة.'
+            ? 'تم حفظ نسخة العزل، لكن تعذر تنظيف آثار العملية؛ بقيت بيانات النموذج لمنع إعادة المحاولة غير الآمنة.'
             : 'تعذر حفظ الفاتورة وفشل حفظ نسخة العزل؛ بقيت البيانات الحالية محفوظة للمحاولة الآمنة.',
         'error'
       );

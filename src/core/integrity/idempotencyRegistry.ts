@@ -76,7 +76,9 @@ export class IdempotencyRegistry {
         }
       }
     } catch (err) {
-      console.warn('[IdempotencyRegistry] Database read error, using fallback:', err);
+      // A storage read failure is not equivalent to "no prior operation".
+      // Fail closed so a caller cannot execute a duplicate workflow.
+      throw err;
     }
 
     return null;
@@ -98,27 +100,38 @@ export class IdempotencyRegistry {
       key: effectiveKey
     };
 
-    this.inMemoryStore.set(effectiveKey, tenantScopedRecord);
-
-    try {
-      if (typeof indexedDB !== 'undefined' && db) {
-        if (db.idempotency_records) {
-          await db.idempotency_records.put(tenantScopedRecord);
-        }
-        if (db.idempotencyKeys) {
-          await db.idempotencyKeys.put({
-            id: effectiveKey,
-            status: record.status,
-            createdAt: record.createdAt,
-            completedAt: record.completedAt,
-            tenantId: record.tenantId,
-            branchId: record.branchId
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('[IdempotencyRegistry] Failed to save idempotency record to Dexie:', err);
+    if (typeof indexedDB === 'undefined' || !db?.idempotency_records || !db?.idempotencyKeys) {
+      throw new Error('IDEMPOTENCY_PERSISTENCE_UNAVAILABLE: durable IndexedDB tables are required before executing a workflow.');
     }
+
+    // Do not publish the new state to the in-memory cache until both durable
+    // representations have committed successfully.
+    await db.transaction('rw', db.idempotency_records, db.idempotencyKeys, async () => {
+      await db.idempotency_records.put(tenantScopedRecord);
+      await db.idempotencyKeys.put({
+        id: effectiveKey,
+        status: record.status,
+        createdAt: record.createdAt,
+        completedAt: record.completedAt,
+        tenantId: record.tenantId,
+        branchId: record.branchId
+      });
+
+      const persisted = await db.idempotency_records.get(effectiveKey);
+      const legacyPersisted = await db.idempotencyKeys.get(effectiveKey);
+      if (
+        !persisted ||
+        persisted.tenantId !== record.tenantId ||
+        persisted.status !== record.status ||
+        !legacyPersisted ||
+        legacyPersisted.tenantId !== record.tenantId ||
+        legacyPersisted.status !== record.status
+      ) {
+        throw new Error('IDEMPOTENCY_PERSISTENCE_VERIFY_FAILED: durable PROCESSING/COMMITTED state could not be verified.');
+      }
+    });
+
+    this.inMemoryStore.set(effectiveKey, tenantScopedRecord);
   }
 
   /**
@@ -150,23 +163,22 @@ export class IdempotencyRegistry {
     const now = new Date().toISOString();
 
     if (existing) {
-      existing.status = status;
-      if (status === 'COMMITTED') existing.completedAt = now;
-      if (result !== undefined) {
-        existing.result = result;
-        existing.responseData = result;
-      }
-      if (effectiveFailureReason !== undefined) existing.failureReason = effectiveFailureReason;
-
-      await this.save(existing);
+      const updated: IdempotencyRecord = {
+        ...existing,
+        status,
+        ...(status === 'COMMITTED' ? { completedAt: now } : {}),
+        ...(result !== undefined ? { result, responseData: result } : {}),
+        ...(effectiveFailureReason !== undefined ? { failureReason: effectiveFailureReason } : {})
+      };
+      await this.save(updated);
     } else {
-      if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'main') {
+      if (!effectiveTenantId || effectiveTenantId === 'default' || effectiveTenantId === 'default-tenant' || effectiveTenantId === 'main') {
         throw new Error("FAIL_CLOSED: لا يمكن تحديث حالة Idempotency بدون سياق مؤسسة موثوق (Trusted Tenant Context Required).");
       }
       await this.save({
         key,
         status,
-        tenantId,
+        tenantId: effectiveTenantId,
         branchId: 'BRH-DEFAULT-GUARDED',
         operationType: 'unknown',
         entityType: 'transaction',
@@ -183,23 +195,38 @@ export class IdempotencyRegistry {
    * Deletes an idempotency record (e.g., on rollbacks if allowed)
    */
   public static async delete(key: string, tenantId?: string): Promise<void> {
-    const effectiveKey = this.scopedKey(key, tenantId);
-    this.inMemoryStore.delete(effectiveKey);
-    this.inMemoryStore.delete(key);
-    try {
-      if (typeof indexedDB !== 'undefined' && db) {
-        if (db.idempotency_records) {
-          await db.idempotency_records.delete(effectiveKey);
-          await db.idempotency_records.delete(key);
-        }
-        if (db.idempotencyKeys) {
-          await db.idempotencyKeys.delete(effectiveKey);
-          await db.idempotencyKeys.delete(key);
-        }
-      }
-    } catch (err) {
-      console.warn('[IdempotencyRegistry] Failed to delete idempotency key:', err);
+    if (!tenantId || tenantId === 'default' || tenantId === 'default-tenant' || tenantId === 'main') {
+      throw new Error('FAIL_CLOSED: tenantId is required to delete an idempotency record.');
     }
+    if (typeof indexedDB === 'undefined' || !db?.idempotency_records || !db?.idempotencyKeys) {
+      throw new Error('IDEMPOTENCY_PERSISTENCE_UNAVAILABLE: cannot confirm durable idempotency cleanup.');
+    }
+
+    const effectiveKey = this.scopedKey(key, tenantId);
+    await db.transaction('rw', db.idempotency_records, db.idempotencyKeys, async () => {
+      const scopedRecord = await db.idempotency_records.get(effectiveKey);
+      if (scopedRecord && scopedRecord.tenantId !== tenantId) {
+        throw new Error('IDEMPOTENCY_TENANT_MISMATCH: refusing to delete another tenant record.');
+      }
+      const scopedLegacy = await db.idempotencyKeys.get(effectiveKey);
+      if (scopedLegacy && scopedLegacy.tenantId !== tenantId) {
+        throw new Error('IDEMPOTENCY_TENANT_MISMATCH: refusing to delete another tenant legacy record.');
+      }
+
+      await db.idempotency_records.delete(effectiveKey);
+      await db.idempotencyKeys.delete(effectiveKey);
+
+      // Remove unscoped legacy keys only when their persisted owner is explicit
+      // and matches this tenant. Ownerless historical rows remain quarantined.
+      const legacyRecord = await db.idempotency_records.get(key);
+      if (legacyRecord?.tenantId === tenantId) await db.idempotency_records.delete(key);
+      const legacyKey = await db.idempotencyKeys.get(key);
+      if (legacyKey?.tenantId === tenantId) await db.idempotencyKeys.delete(key);
+    });
+
+    this.inMemoryStore.delete(effectiveKey);
+    const memoryLegacy = this.inMemoryStore.get(key);
+    if (memoryLegacy?.tenantId === tenantId) this.inMemoryStore.delete(key);
   }
 
   /**

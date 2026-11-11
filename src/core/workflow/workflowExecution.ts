@@ -116,16 +116,26 @@ export class WorkflowExecutionPipeline {
             );
           }
         } else {
-          await IdempotencyRegistry.save({
-            key: ctx.idempotencyKey,
-            status: 'PROCESSING',
-            tenantId: ctx.tenantId,
-            branchId: ctx.branchId,
-            operationType: ctx.operationType,
-            entityType: workflow.id.toUpperCase(),
-            fingerprint: payloadFingerprint,
-            createdAt: new Date().toISOString()
-          });
+          // Durable PROCESSING persistence is a hard precondition for domain execution.
+          // If IndexedDB cannot commit and verify this marker, abort before opening
+          // the domain transaction; never continue with an in-memory-only key.
+          try {
+            await IdempotencyRegistry.save({
+              key: ctx.idempotencyKey,
+              status: 'PROCESSING',
+              tenantId: ctx.tenantId,
+              branchId: ctx.branchId,
+              operationType: ctx.operationType,
+              entityType: workflow.id.toUpperCase(),
+              fingerprint: payloadFingerprint,
+              createdAt: new Date().toISOString()
+            });
+          } catch (persistenceError: any) {
+            throw new WorkflowExecutionError(
+              `IDEMPOTENCY_PERSISTENCE_FAILED: workflow aborted before domain execution: ${persistenceError?.message || String(persistenceError)}`,
+              'IDEMPOTENCY_PERSISTENCE_FAILED'
+            );
+          }
         }
       }
 
@@ -207,7 +217,9 @@ export class WorkflowExecutionPipeline {
         try {
           await IdempotencyRegistry.updateStatus(ctx.idempotencyKey, 'COMMITTED', domainResult, undefined, ctx.tenantId);
         } catch (idempotencyError) {
-          // The domain transaction is already committed: never roll back its key.
+          // The domain transaction is already committed: never roll it back or
+          // delete its key. The previously persisted PROCESSING marker remains
+          // durable and blocks a duplicate until COMMITTED can be reconciled.
           addPostCommitWarning('idempotency-status-update', idempotencyError);
         }
         try {

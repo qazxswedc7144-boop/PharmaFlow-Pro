@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   mockEmit,
   mockInvalidate,
+  mockSave,
   mockUpdateStatus,
   mockDelete,
   mockExecuteDomainSteps,
@@ -10,6 +11,7 @@ const {
 } = vi.hoisted(() => ({
   mockEmit: vi.fn(),
   mockInvalidate: vi.fn(),
+  mockSave: vi.fn(),
   mockUpdateStatus: vi.fn(),
   mockDelete: vi.fn(),
   mockExecuteDomainSteps: vi.fn(),
@@ -51,7 +53,7 @@ vi.mock('@/core/integrity/transactionBoundary', () => ({
 vi.mock('@/core/integrity/idempotencyRegistry', () => ({
   IdempotencyRegistry: {
     get: vi.fn().mockResolvedValue(undefined),
-    save: vi.fn().mockResolvedValue(undefined),
+    save: mockSave,
     updateStatus: mockUpdateStatus,
     delete: mockDelete,
   },
@@ -97,10 +99,24 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     vi.clearAllMocks();
     mockEmit.mockResolvedValue(undefined);
     mockInvalidate.mockImplementation(() => undefined);
+    mockSave.mockResolvedValue(undefined);
     mockUpdateStatus.mockResolvedValue(undefined);
     mockDelete.mockResolvedValue(undefined);
     mockExecuteDomainSteps.mockResolvedValue({ refId: 'invoice-post-commit-test' });
     mockExecuteWithGuard.mockImplementation(async (_options: unknown, operation: () => Promise<unknown>) => operation());
+  });
+
+  it('aborts before domain execution when durable PROCESSING persistence fails', async () => {
+    mockSave.mockRejectedValueOnce(new Error('IDEMPOTENCY_DISK_WRITE_FAILED'));
+
+    const result = await WorkflowExecutionPipeline.run(workflow as any, {}, context as any);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('IDEMPOTENCY_PERSISTENCE_FAILED');
+    expect(mockSave).toHaveBeenCalledTimes(1);
+    expect(mockExecuteDomainSteps).not.toHaveBeenCalled();
+    expect(mockUpdateStatus).not.toHaveBeenCalled();
+    expect(mockDelete).toHaveBeenCalledWith(context.idempotencyKey, context.tenantId);
   });
 
   it('keeps a committed workflow successful when the completion event fails', async () => {
