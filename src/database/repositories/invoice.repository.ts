@@ -185,10 +185,20 @@ export const InvoiceRepository = {
       throw new Error('FAIL_CLOSED: Cannot check invoice dependencies without an active tenant session.');
     }
 
-    const [inventoryTransactions, journalEntries] = await Promise.all([
-      db.inventoryTransactions.toArray(),
-      db.journalEntries.toArray()
+    // Use the canonical indexed references written by the inventory and accounting engines.
+    // This avoids a full-table scan when users open or edit invoices.
+    const [inventoryTransactions, journalEntryGroups] = await Promise.all([
+      db.inventoryTransactions.where('source_doc_id').equals(invoiceId).toArray(),
+      Promise.all([
+        db.journalEntries.where('sourceId').equals(invoiceId).toArray(),
+        db.journalEntries.where('source_id').equals(invoiceId).toArray(),
+        db.journalEntries.where('referenceId').equals(invoiceId).toArray(),
+        db.journalEntries.where('reference_id').equals(invoiceId).toArray()
+      ])
     ]);
+    const journalEntries = Array.from(new Map(
+      journalEntryGroups.flat().map((entry: any) => [String(entry.id), entry])
+    ).values());
 
     const hasInventoryDependency = inventoryTransactions.some((record: any) =>
       belongsToCurrentInvoiceScope(record, scope) && hasInvoiceReference(record, invoiceId)
