@@ -1007,7 +1007,9 @@ function MainLayout() {
                 title="تسجيل الخروج"
                 aria-label="تسجيل الخروج"
                 onClick={() => {
-                  void signOut().finally(() => {
+                  void signOut().catch((logoutError) => {
+                    console.error('[App] Logout failed:', logoutError);
+                  }).finally(() => {
                     window.location.hash = '#/login';
                   });
                 }}
