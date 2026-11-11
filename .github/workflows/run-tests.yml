@@ -64,6 +64,7 @@ jobs:
           src/features/sales/components/productRegistrationError.test.ts
           src/features/catalog/workflows/ProductApplicationWorkflow.test.ts
           src/core/workflow/workflowContext.test.ts
+          src/core/integrity/executionGuard.local.test.ts
           src/features/branches/services/activeBranchRegistry.test.ts
           src/core/workflow/workflowContext.branch.test.ts
           src/features/inventory/utils/projectedAutocompleteStock.test.ts
