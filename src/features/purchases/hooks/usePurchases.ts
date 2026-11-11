@@ -523,11 +523,12 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           await DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId);
           await DraftService.clearDraft(purchaseDraftKeys!.draftId);
           await configurationService.set(purchaseDraftKeys!.configKey, null);
-          currentOperationRef.current = null;
-          pendingProductsRef.current = [];
-          resetInvoiceState();
-          showNotification('تم اعتماد الفاتورة بالفعل. تمت معالجة حالة الواجهة دون إعادة ترحيلها.', 'success');
-          addToast('تم حفظ الفاتورة بنجاح.', 'success');
+          // Keep the committed operation key and pending-product snapshot intact.
+          // The component may retry/reconcile this same operation, but must not
+          // silently turn a committed transaction into a new operation.
+          setSavePhase('failed');
+          showNotification('تم اعتماد الفاتورة بالفعل. احتفظنا بمفتاح العملية لمنع إعادة ترحيلها.', 'success');
+          addToast('تم حفظ الفاتورة بنجاح؛ لا تنشئ فاتورة بديلة قبل مغادرة هذه الشاشة.', 'success');
         } catch (cleanupError) {
           console.error('[usePurchases] Committed invoice draft cleanup failed:', cleanupError);
           setSavePhase('failed');
