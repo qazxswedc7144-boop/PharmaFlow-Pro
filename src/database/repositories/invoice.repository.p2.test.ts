@@ -8,6 +8,7 @@ const tenantId = 'invoice-repository-p2-tenant';
 const branchId = 'invoice-repository-p2-branch';
 const ids = {
   saleFallback: 'P2-SALE-FALLBACK',
+  saleReturnFallback: 'P2-SALE-RETURN-FALLBACK',
   purchaseFallback: 'P2-PURCHASE-FALLBACK',
   saleWrongType: 'P2-SALE-WRONG-TYPE',
   purchaseWrongType: 'P2-PURCHASE-WRONG-TYPE',
@@ -43,9 +44,13 @@ describe('InvoiceRepository P2 safeguards', () => {
 
   it('accepts only SALE fallback invoices in getSaleById', async () => {
     await db.invoices.put({ id: ids.saleFallback, type: 'SALE', tenantId, branchId } as any);
+    await db.invoices.put({
+      id: ids.saleReturnFallback, type: 'SALE', invoiceType: 'مرتجع', tenantId, branchId
+    } as any);
     await db.invoices.put({ id: ids.saleWrongType, type: 'PURCHASE', tenantId, branchId } as any);
 
     await expect(InvoiceRepository.getSaleById(ids.saleFallback)).resolves.toMatchObject({ type: 'SALE' });
+    await expect(InvoiceRepository.getSaleById(ids.saleReturnFallback)).resolves.toMatchObject({ invoiceType: 'مرتجع' });
     await expect(InvoiceRepository.getSaleById(ids.saleWrongType)).resolves.toBeUndefined();
   });
 
