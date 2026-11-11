@@ -26,7 +26,7 @@ export class ProductApplicationWorkflow implements BusinessWorkflow<ProductAppli
   // Product + its durable sync mutation are committed together in the local Dexie transaction.
   public syncHandledInDomainTransaction = true;
   // Catalog creation is local-first and must not wait for a remote Redis lock.
-  public localExecutionGuard = (input: ProductApplicationInput) => input.isNew === true;
+  public localExecutionGuard = (input: ProductApplicationInput) => input.isNew !== false;
   public tables = ['products', 'auditLogs', 'idempotencyKeys', 'projectionEvents', 'syncQueue', 'outbox'];
 
   public async validateInput(input: ProductApplicationInput): Promise<void> {
@@ -63,10 +63,11 @@ export class ProductApplicationWorkflow implements BusinessWorkflow<ProductAppli
       throw new Error('PRODUCT_TRANSACTION_REQUIRED: Product registration must run inside the workflow transaction.');
     }
 
+    const isNew = input.isNew !== false;
     const savedId = await InventoryService.saveProduct(input.product);
 
     await (AuditService.log as any)({
-      action: input.isNew ? 'CREATE' : 'EDIT',
+      action: isNew ? 'CREATE' : 'EDIT',
       module: 'CATALOG',
       transactionUuid: ctx.workflowId,
       recordId: savedId
@@ -86,7 +87,7 @@ export class ProductApplicationWorkflow implements BusinessWorkflow<ProductAppli
     };
 
     // Sync protocol operations are CREATE/UPDATE, not the workflow's domain operation name.
-    const syncOperation = input.isNew ? 'CREATE' : 'UPDATE';
+    const syncOperation = isNew ? 'CREATE' : 'UPDATE';
     const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
       syncOperation,
       syncPayload,
