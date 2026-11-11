@@ -62,6 +62,8 @@ jobs:
           src/features/purchases/utils/pendingProducts.test.ts
           src/features/purchases/utils/recoverablePurchaseDraft.test.ts
           src/features/sales/components/productRegistrationError.test.ts
+          src/features/sales/components/productLookup.test.ts
+          src/services/reports/reportEngine.refresh.test.ts
           src/features/catalog/workflows/ProductApplicationWorkflow.test.ts
           src/core/workflow/workflowContext.test.ts
           src/core/integrity/executionGuard.local.test.ts
