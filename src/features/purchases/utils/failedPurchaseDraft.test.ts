@@ -14,7 +14,8 @@ describe('failed purchase draft quarantine', () => {
       errorCode: 'CROSS_TENANT_VIOLATION'
     });
 
-    expect(failed.id).toBe('failed_purchase_op-123');
+    expect(failed.id).toMatch(/^FAILED-\d+-op-123$/);
+    expect(failed.draftId).not.toBe('purchases_draft_current');
     expect(failed.invoiceType).toBe('PURCHASE');
     expect(failed.status).toBe('FAILED_QUARANTINED');
     expect(failed.items).toHaveLength(1);
@@ -49,8 +50,8 @@ describe('DraftService failed purchase quarantine persistence', () => {
 
   it('persists and reads back the failed draft using draftId, the Dexie primary key', async () => {
     const draft = {
-      id: 'failed_purchase_operation-1',
-      draftId: 'failed_purchase_operation-1',
+      id: 'FAILED-1700000000000-operation-1',
+      draftId: 'FAILED-1700000000000-operation-1',
       invoiceType: 'PURCHASE' as const,
       status: 'FAILED_QUARANTINED' as const,
       header: { invoice_number: 'PUR-100' },
@@ -72,7 +73,7 @@ describe('DraftService failed purchase quarantine persistence', () => {
 
   it('rejects a quarantine record missing the draftId primary key', async () => {
     await expect(DraftService.quarantineInvoiceDraft({
-      id: 'failed_purchase_missing-key',
+      id: 'FAILED-missing-key',
       invoiceType: 'PURCHASE',
       status: 'FAILED_QUARANTINED'
     })).rejects.toThrow(/INVALID_FAILED_PURCHASE_DRAFT/);
