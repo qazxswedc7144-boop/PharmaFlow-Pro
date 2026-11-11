@@ -25,6 +25,7 @@ import { buildFailedPurchaseDraft } from '../utils/failedPurchaseDraft';
 import { getPurchaseFailureDisposition } from '../utils/purchaseFailureDisposition';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { getPurchaseDraftSnapshot } from '../utils/recoverablePurchaseDraft';
+import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOperation';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -235,6 +236,17 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     }
 
     const draftObj: any = recoveryDraftData;
+    // Clear stale item-entry state before restoring the snapshot. Pending products
+    // are rehydrated from the snapshot immediately below because they are required
+    // for atomic product creation when this invoice is posted.
+    currentOperationRef.current = null;
+    pendingProductsRef.current = [];
+    setFilteredProducts([]);
+    setSelectedProduct(null);
+    setManualItemName('');
+    setSearchTerm('');
+    setSelectedIndex(-1);
+    setShowSearchDropdown(false);
     const snapshot = getPurchaseDraftSnapshot(draftObj);
     const rawItems = snapshot.items || [];
 
@@ -311,7 +323,24 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     setIsRecoveryModalOpen(false);
     setRecoveryDraftData(null);
   }, [recoveryDraftData, addToast, suppliers]);
-  const discardDraft = useCallback(async () => { try { if ((recoveryDraftData as any)?.draftId) await DraftService.clearInvoiceDraft((recoveryDraftData as any).draftId); await DraftService.clearDraft('purchases'); const unfinished = await DraftService.getUnfinishedInvoiceDraft('PURCHASE'); if (unfinished?.draftId) await DraftService.clearInvoiceDraft(unfinished.draftId); addToast("تم حذف مسودة المشتريات المتروكة وبدء قيد جديد", "info"); resetInvoiceState(); } catch (e) { console.error("discardDraft failed:", e); } finally { setIsRecoveryModalOpen(false); setRecoveryDraftData(null); } }, [addToast, resetInvoiceState, recoveryDraftData]);
+  const discardDraft = useCallback(async () => {
+    try {
+      if ((recoveryDraftData as any)?.draftId) {
+        await DraftService.clearInvoiceDraft((recoveryDraftData as any).draftId);
+      }
+      await DraftService.clearDraft('purchases');
+      const unfinished = await DraftService.getUnfinishedInvoiceDraft('PURCHASE');
+      if (unfinished?.draftId) await DraftService.clearInvoiceDraft(unfinished.draftId);
+      addToast("تم حذف مسودة المشتريات المتروكة وبدء قيد جديد", "info");
+    } catch (e) {
+      console.error("discardDraft failed:", e);
+    } finally {
+      pendingProductsRef.current = [];
+      resetInvoiceState();
+      setIsRecoveryModalOpen(false);
+      setRecoveryDraftData(null);
+    }
+  }, [addToast, resetInvoiceState, recoveryDraftData]);
 
   const handleSupplierSearch = useCallback((val: string) => { setSupplierSearchTerm(val); setShowSupplierDropdown(true); setSelectedSupplierIndex(-1); }, []);
   const handleSupplierKeyDown = useCallback((e: React.KeyboardEvent) => { if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedSupplierIndex(prev => Math.min(prev + 1, filteredSuppliers.length - 1)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedSupplierIndex(prev => Math.max(prev - 1, -1)); } else if (e.key === 'Enter') { if (selectedSupplierIndex >= 0 && filteredSuppliers[selectedSupplierIndex]) { e.preventDefault(); selectSupplier(filteredSuppliers[selectedSupplierIndex]); } } else if (e.key === 'Escape') { setShowSupplierDropdown(false); setSelectedSupplierIndex(-1); } }, [filteredSuppliers, selectedSupplierIndex]);
@@ -492,7 +521,18 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
 
       let failedInvoiceQuarantined = false;
+      let failedOperationArtifactsCleaned = false;
       let activeDraftCleanupComplete = false;
+
+      // The workflow rolls back domain writes before returning QUARANTINE. Remove
+      // only sync/idempotency artifacts proven to belong to this failed tenant-scoped
+      // operation; COMMITTED and PROCESSING paths returned above are untouched.
+      try {
+        await cleanupFailedPurchaseOperation(failureOperationId, tenantId);
+        failedOperationArtifactsCleaned = true;
+      } catch (operationCleanupError) {
+        console.error('[usePurchases] Failed operation artifact cleanup failed:', operationCleanupError);
+      }
 
       // Persist and verify the forensic copy first. Cleanup is a separate stage:
       // a cleanup failure must not be misreported as a quarantine-write failure.
@@ -525,17 +565,23 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
 
       if (failedInvoiceQuarantined) {
-        try {
-          await db.draft_invoices.delete('purchases_draft_current');
-          await db.drafts.delete('purchases');
-          await configurationService.set(DRAFT_KEY, null);
-          activeDraftCleanupComplete = true;
-        } catch (cleanupError) {
-          console.error('[usePurchases] Quarantine was saved, but active draft cleanup failed:', cleanupError);
+        // Quarantine is the durable recovery source. Attempt each active-draft
+        // cleanup independently so one failed delete cannot block the UI reset.
+        const cleanupResults = await Promise.allSettled([
+          db.draft_invoices.delete('purchases_draft_current'),
+          db.drafts.delete('purchases'),
+          configurationService.set(DRAFT_KEY, null)
+        ]);
+        activeDraftCleanupComplete = cleanupResults.every(result => result.status === 'fulfilled');
+        if (!activeDraftCleanupComplete) {
+          console.error('[usePurchases] Quarantine was saved, but one or more active draft cleanup operations failed:', cleanupResults);
         }
       }
 
-      const failedInvoiceIsolated = failedInvoiceQuarantined && activeDraftCleanupComplete;
+      // A persisted quarantine permits UI reset even if the stale active-draft
+      // cleanup failed. However, if operation artifacts could not be isolated,
+      // retain the form and operation key to prevent an unsafe retry.
+      const failedInvoiceIsolated = failedInvoiceQuarantined && failedOperationArtifactsCleaned;
 
       if (failedInvoiceIsolated) {
         currentOperationRef.current = null;
@@ -552,9 +598,11 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
 
       showNotification(
         failedInvoiceIsolated
-          ? '❌ تعذر حفظ فاتورة المشتريات. تم عزل بيانات المحاولة الفاشلة.'
+          ? activeDraftCleanupComplete
+            ? '❌ تعذر حفظ فاتورة المشتريات. تم عزل بيانات المحاولة الفاشلة وتنظيف المسودة النشطة.'
+            : 'تعذر حفظ الفاتورة. تم حفظ نسخة العزل وإعادة ضبط الواجهة، لكن بقيت مسودة نشطة قديمة وسيتم تفضيل نسخة العزل عند الاسترداد.'
           : failedInvoiceQuarantined
-            ? 'تعذر حفظ الفاتورة. تم حفظ نسخة العزل، لكن تعذر تنظيف المسودة النشطة؛ بقيت البيانات الحالية محفوظة للمراجعة الآمنة.'
+            ? 'تم حفظ نسخة العزل، لكن تعذر تنظيف آثار العملية؛ بقيت بيانات النموذج لمنع إعادة المحاولة غير الآمنة.'
             : 'تعذر حفظ الفاتورة وفشل حفظ نسخة العزل؛ بقيت البيانات الحالية محفوظة للمحاولة الآمنة.',
         'error'
       );
