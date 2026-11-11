@@ -17,12 +17,15 @@ const getInvoiceSequence = (value: unknown, type: 'SALE' | 'PURCHASE'): number |
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   const normalized = String(value).trim();
   if (!normalized) return null;
-  const prefixes = type === 'SALE' ? '(?:INV|SALE|SAL)' : '(?:PUR|PURCHASE)';
-  const match = normalized.match(new RegExp(`^(?:${prefixes}[-_/]?)?(\\d+)
-import { db, getCurrentUserSession } from '@/core/db';
-, 'i'));
-  if (!match?.[1]) return null;
-  const sequence = Number(match[1]);
+
+  const match = normalized.match(/[0-9]+$/);
+  if (!match?.[0]) return null;
+
+  const prefix = normalized.slice(0, -match[0].length).replace(/[-_/]$/, '').toUpperCase();
+  const allowedPrefixes = type === 'SALE' ? ['INV', 'SALE', 'SAL'] : ['PUR', 'PURCHASE'];
+  if (prefix && !allowedPrefixes.includes(prefix)) return null;
+
+  const sequence = Number(match[0]);
   return Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : null;
 };
 
