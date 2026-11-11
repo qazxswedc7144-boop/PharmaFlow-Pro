@@ -43,10 +43,12 @@ export class ReportProjector {
       event.eventType === 'INVOICE_UNPOSTED' || 
       event.eventType === 'INVOICE_DELETED'
     ) {
-      if (reportEngine && typeof reportEngine.refresh === 'function') {
-        await reportEngine.refresh();
+      if (reportEngine && typeof reportEngine.scheduleRefresh === 'function') {
+        // The projection event is durable; report cache refresh is deferred and
+        // must not hold FIFO checkpoint advancement.
+        reportEngine.scheduleRefresh();
       } else {
-        throw new Error("ReportEngine.refresh is not defined or initialized");
+        throw new Error("ReportEngine.scheduleRefresh is not defined or initialized");
       }
     }
   }
