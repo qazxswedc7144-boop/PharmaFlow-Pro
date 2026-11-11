@@ -253,7 +253,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       // FIFO layers cap the balance; medicineBatches supplies batch expiry and
       // sellable batch quantity. Never fall back to product master stock in sales.
       let stock = mode === 'sale'
-        ? getSellableLayerQuantity(tenantLayers, ownedBatches, tenantBatches.length > 0, prod?.ExpiryDate || prod?.expiryDate)
+        ? getSellableLayerQuantity(tenantLayers, ownedBatches, tenantBatches.length > 0, prod?.ExpiryDate || prod?.Expiry_Date || prod?.expiryDate)
         : (prod?.StockQuantity ?? prod?.stock ?? 0);
 
       if (mode !== 'sale' && activeLayers.length > 0) {
@@ -497,7 +497,7 @@ if (mode === 'sale') {
               tenantLayers.get(productId) || [],
               ownedBatchesByProduct.get(productId) || [],
               hasBatchRecords,
-              product.ExpiryDate || product.expiryDate
+              product.ExpiryDate || product.Expiry_Date || product.expiryDate
             ) > 0;
           });
         }
