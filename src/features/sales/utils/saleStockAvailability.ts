@@ -31,7 +31,8 @@ type MedicineBatchLike = {
 export function getSellableLayerQuantity(
   layers: InventoryLayerLike[],
   batches: MedicineBatchLike[] = [],
-  hasBatchRecords = batches.length > 0
+  hasBatchRecords = batches.length > 0,
+  productExpiry?: string | null
 ): number {
   const layerQuantity = layers.reduce((total, layer) => {
     const rawQuantity = layer.quantity_remaining
@@ -48,7 +49,9 @@ export function getSellableLayerQuantity(
     return total + quantity;
   }, 0);
 
-  if (!hasBatchRecords) return layerQuantity;
+  if (!hasBatchRecords) {
+    return productExpiry && getExpiryStatus(productExpiry).isExpired ? 0 : layerQuantity;
+  }
 
   const validBatchQuantity = batches.reduce((total, batch) => {
     const quantity = Number(
