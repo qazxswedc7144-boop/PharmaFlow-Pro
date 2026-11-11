@@ -1,16 +1,59 @@
 import { db } from '@/core/db';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { selectRecoverablePurchaseDraft } from './recoverablePurchaseDraft';
 
 export interface DraftData {
-  id: string; // e.g., 'sales', 'purchases', 'supplier-payment', 'customer-receipt'
+  id: string;
   moduleName: 'Sales Invoice' | 'Purchase Invoice' | 'Supplier Payment' | 'Customer Receipt';
   header: any;
   items: any[];
   totals: any;
   notes?: string;
   paymentType?: string;
-  partner?: any; // Customer/Supplier details
+  partner?: any;
+  tenantId?: string;
+  branchId?: string | null;
   updatedAt: string;
+}
+
+interface DraftScope {
+  tenantId: string;
+  branchId: string | null;
+}
+
+function getDraftScope(): DraftScope {
+  const session = TokenProvider.getCurrentSession();
+  const user = session.user as any;
+  const tenantId = String(session.tenantId || user?.tenantId || user?.tenant_id || '').trim();
+  const branchValue = session.branchId || user?.branchId || user?.branch_id;
+  const branchId = typeof branchValue === 'string' && branchValue.trim() ? branchValue.trim() : null;
+
+  if (!session.isAuthenticated || !tenantId) {
+    throw new Error('DRAFT_SCOPE_REQUIRED: an authenticated tenant context is required.');
+  }
+  return { tenantId, branchId };
+}
+
+function scopedDraftId(id: string, scope: DraftScope): string {
+  if (!id) throw new Error('DRAFT_ID_REQUIRED');
+  // Failed quarantine IDs are globally unique operation snapshots and retain
+  // their FAILED-* prefix; ownership is enforced by their explicit scope fields.
+  if (id.startsWith('FAILED-')) return id;
+
+  const prefix = `tenant:${encodeURIComponent(scope.tenantId)}:branch:${encodeURIComponent(scope.branchId || '')}:`;
+  return id.startsWith(prefix) ? id : `${prefix}${id}`;
+}
+
+function belongsToScope(draft: any, scope: DraftScope): boolean {
+  return !!draft &&
+    draft.tenantId === scope.tenantId &&
+    (draft.branchId ?? null) === scope.branchId;
+}
+
+function assertDraftScope(draft: any, scope: DraftScope, action: string): void {
+  if (!belongsToScope(draft, scope)) {
+    throw new Error(`DRAFT_TENANT_MISMATCH: refusing to ${action} a draft outside the active tenant/branch.`);
+  }
 }
 
 export const DraftService = {
@@ -19,51 +62,45 @@ export const DraftService = {
     moduleName: DraftData['moduleName'],
     data: Omit<DraftData, 'id' | 'moduleName' | 'updatedAt'>
   ): Promise<void> => {
-    try {
-      const draft: DraftData = {
-        id,
-        moduleName,
-        header: data.header,
-        items: data.items,
-        totals: data.totals,
-        notes: data.notes || '',
-        paymentType: data.paymentType || '',
-        partner: data.partner || null,
-        updatedAt: new Date().toISOString()
-      };
-      await db.drafts.put(draft);
-    } catch (e) {
-      console.error(`[DraftService] Failed to auto-save draft for ${moduleName}:`, e);
-    }
+    const scope = getDraftScope();
+    const storageId = scopedDraftId(id, scope);
+    const existing = await db.drafts.get(storageId);
+    if (existing) assertDraftScope(existing, scope, 'overwrite');
+    const draft: DraftData = {
+      id: storageId,
+      moduleName,
+      header: data.header,
+      items: data.items,
+      totals: data.totals,
+      notes: data.notes || '',
+      paymentType: data.paymentType || '',
+      partner: data.partner || null,
+      tenantId: scope.tenantId,
+      branchId: scope.branchId,
+      updatedAt: new Date().toISOString()
+    };
+    await db.drafts.put(draft);
   },
 
   getDraft: async (id: string): Promise<DraftData | undefined> => {
-    try {
-      return await db.drafts.get(id);
-    } catch (e) {
-      console.error(`[DraftService] Failed to load draft for ${id}:`, e);
-      return undefined;
-    }
+    const scope = getDraftScope();
+    const draft = await db.drafts.get(scopedDraftId(id, scope));
+    return belongsToScope(draft, scope) ? draft : undefined;
   },
 
   clearDraft: async (id: string): Promise<void> => {
-    try {
-      await db.drafts.delete(id);
-    } catch (e) {
-      console.error(`[DraftService] Failed to clear draft ${id}:`, e);
-    }
+    const scope = getDraftScope();
+    const storageId = scopedDraftId(id, scope);
+    const draft = await db.drafts.get(storageId);
+    if (!draft) return;
+    assertDraftScope(draft, scope, 'delete');
+    await db.drafts.delete(storageId);
   },
 
   hasDraft: async (id: string): Promise<boolean> => {
-    try {
-      const draft = await db.drafts.get(id);
-      return !!draft;
-    } catch (e) {
-      return false;
-    }
+    return !!(await DraftService.getDraft(id));
   },
 
-  // Phase 5.2.5-C - Smart Auto Save Draft Engine
   saveInvoiceDraft: async (
     draftId: string,
     invoiceType: 'SALE' | 'PURCHASE',
@@ -71,113 +108,112 @@ export const DraftService = {
     totals: any,
     createdAt?: string
   ): Promise<void> => {
-    try {
-      const existing = await db.draft_invoices.get(draftId);
-      const now = new Date().toISOString();
-      const draft = {
-        id: draftId,
-        draftId,
-        invoiceType,
-        items,
-        totals,
-        createdAt: existing?.createdAt || createdAt || now,
-        updatedAt: now
-      };
-      await db.draft_invoices.put(draft);
-    } catch (e) {
-      console.error(`[DraftService] Failed to save invoice draft ${draftId}:`, e);
-    }
+    const scope = getDraftScope();
+    const storageId = scopedDraftId(draftId, scope);
+    const existing = await db.draft_invoices.get(storageId);
+    if (existing) assertDraftScope(existing, scope, 'overwrite');
+    const now = new Date().toISOString();
+    const draft = {
+      id: storageId,
+      draftId: storageId,
+      invoiceType,
+      items,
+      totals,
+      tenantId: scope.tenantId,
+      branchId: scope.branchId,
+      createdAt: existing?.createdAt || createdAt || now,
+      updatedAt: now
+    };
+    await db.draft_invoices.put(draft);
   },
 
   quarantineInvoiceDraft: async (draft: any): Promise<void> => {
-    try {
-      // draft_invoices uses draftId as its Dexie primary key (not id).
-      if (
-        !draft?.draftId ||
-        !String(draft.draftId).startsWith('FAILED-') ||
-        draft.draftId === 'purchases_draft_current' ||
-        draft.status !== 'FAILED_QUARANTINED' ||
-        draft.invoiceType !== 'PURCHASE'
-      ) {
-        throw new Error('INVALID_FAILED_PURCHASE_DRAFT: a FAILED-* draftId, PURCHASE type and FAILED_QUARANTINED status are required.');
-      }
-      await db.transaction('rw', db.draft_invoices, async () => {
-        await db.draft_invoices.put(draft);
-        const persisted = await db.draft_invoices.get(draft.draftId);
-        if (!persisted || persisted.status !== 'FAILED_QUARANTINED' || persisted.invoiceType !== 'PURCHASE') {
-          throw new Error('FAILED_PURCHASE_QUARANTINE_VERIFY_FAILED');
-        }
-      });
-    } catch (e) {
-      console.error('[DraftService] Failed to quarantine failed purchase invoice:', e);
-      throw e;
+    const scope = getDraftScope();
+    if (
+      !draft?.draftId ||
+      !String(draft.draftId).startsWith('FAILED-') ||
+      draft.status !== 'FAILED_QUARANTINED' ||
+      draft.invoiceType !== 'PURCHASE'
+    ) {
+      throw new Error('INVALID_FAILED_PURCHASE_DRAFT: a FAILED-* draftId, PURCHASE type and FAILED_QUARANTINED status are required.');
     }
+    assertDraftScope(draft, scope, 'save');
+    await db.transaction('rw', db.draft_invoices, async () => {
+      const existing = await db.draft_invoices.get(draft.draftId);
+      if (existing && !belongsToScope(existing, scope)) {
+        throw new Error('DRAFT_TENANT_MISMATCH: quarantine ID already belongs to another tenant/branch.');
+      }
+      await db.draft_invoices.put(draft);
+      const persisted = await db.draft_invoices.get(draft.draftId);
+      if (
+        !persisted ||
+        persisted.status !== 'FAILED_QUARANTINED' ||
+        persisted.invoiceType !== 'PURCHASE' ||
+        !belongsToScope(persisted, scope)
+      ) {
+        throw new Error('FAILED_PURCHASE_QUARANTINE_VERIFY_FAILED');
+      }
+    });
   },
 
   getInvoiceDraft: async (draftId: string): Promise<any | undefined> => {
-    try {
-      return await db.draft_invoices.get(draftId);
-    } catch (e) {
-      console.error(`[DraftService] Failed to load invoice draft ${draftId}:`, e);
-      return undefined;
-    }
+    const scope = getDraftScope();
+    const draft = await db.draft_invoices.get(scopedDraftId(draftId, scope));
+    return belongsToScope(draft, scope) ? draft : undefined;
   },
 
   getRecoverablePurchaseDraft: async (): Promise<any | undefined> => {
-    try {
-      const drafts = await db.draft_invoices
-        .where('invoiceType')
-        .equals('PURCHASE')
-        .toArray();
-      return selectRecoverablePurchaseDraft(drafts as any[]);
-    } catch (e) {
-      console.error('[DraftService] Failed to load recoverable purchase draft:', e);
-      return undefined;
-    }
+    const scope = getDraftScope();
+    const drafts = await db.draft_invoices
+      .where('invoiceType')
+      .equals('PURCHASE')
+      .filter((draft: any) => belongsToScope(draft, scope))
+      .toArray();
+    return selectRecoverablePurchaseDraft(drafts as any[]);
   },
 
   markInvoiceDraftRecovered: async (draftId: string): Promise<void> => {
     if (!draftId) return;
-    try {
-      const draft = await db.draft_invoices.get(draftId);
-      if (!draft || draft.status !== 'FAILED_QUARANTINED') return;
-      await db.draft_invoices.update(draftId, {
-        recoveredAt: new Date().toISOString()
-      });
-    } catch (e) {
-      console.error(`[DraftService] Failed to mark purchase draft ${draftId} as recovered:`, e);
-      throw e;
-    }
+    const scope = getDraftScope();
+    const storageId = scopedDraftId(draftId, scope);
+    const draft = await db.draft_invoices.get(storageId);
+    if (!draft) return;
+    assertDraftScope(draft, scope, 'update');
+    if (draft.status !== 'FAILED_QUARANTINED') return;
+    await db.draft_invoices.update(storageId, {
+      recoveredAt: new Date().toISOString()
+    });
   },
 
   getUnfinishedInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<any | undefined> => {
-    try {
-      const drafts = await db.draft_invoices.where('invoiceType').equals(invoiceType).filter((draft: any) => draft.status !== 'FAILED_QUARANTINED').toArray();
-      if (drafts && drafts.length > 0) {
-        // Return most recently updated
-        return drafts.sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
-      }
-      return undefined;
-    } catch (e) {
-      console.error(`[DraftService] Failed to find unfinished draft:`, e);
-      return undefined;
-    }
+    const scope = getDraftScope();
+    const drafts = await db.draft_invoices
+      .where('invoiceType')
+      .equals(invoiceType)
+      .filter((draft: any) => draft.status !== 'FAILED_QUARANTINED' && belongsToScope(draft, scope))
+      .toArray();
+    if (!drafts.length) return undefined;
+    return drafts.sort((a: any, b: any) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    )[0];
   },
 
   clearInvoiceDraft: async (draftId: string): Promise<void> => {
-    try {
-      await db.draft_invoices.delete(draftId);
-    } catch (e) {
-      console.error(`[DraftService] Failed to clear invoice draft ${draftId}:`, e);
-    }
+    const scope = getDraftScope();
+    const storageId = scopedDraftId(draftId, scope);
+    const draft = await db.draft_invoices.get(storageId);
+    if (!draft) return;
+    assertDraftScope(draft, scope, 'delete');
+    await db.draft_invoices.delete(storageId);
   },
 
   hasInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<boolean> => {
-    try {
-      const count = await db.draft_invoices.where('invoiceType').equals(invoiceType).filter((draft: any) => draft.status !== 'FAILED_QUARANTINED').count();
-      return count > 0;
-    } catch (e) {
-      return false;
-    }
+    const scope = getDraftScope();
+    const count = await db.draft_invoices
+      .where('invoiceType')
+      .equals(invoiceType)
+      .filter((draft: any) => draft.status !== 'FAILED_QUARANTINED' && belongsToScope(draft, scope))
+      .count();
+    return count > 0;
   }
 };
