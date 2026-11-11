@@ -10,7 +10,7 @@ describe('failed purchase draft quarantine', () => {
     const failed = buildFailedPurchaseDraft({
       operationId: 'op-123',
       header: { invoice_number: 'PUR-10', supplier_id: 'supplier-a' },
-      items: [{ productId: 'product-a', qty: 3, price: 10 }],
+      items: [{ product_id: 'resolved-product-a', productId: 'resolved-product-a', qty: 3, price: 10 }],
       adjData: { discountPercent: 0, otherFees: 0, tax: 0 },
       errorCode: 'CROSS_TENANT_VIOLATION'
     });
@@ -20,6 +20,8 @@ describe('failed purchase draft quarantine', () => {
     expect(failed.invoiceType).toBe('PURCHASE');
     expect(failed.status).toBe('FAILED_QUARANTINED');
     expect(failed.items).toHaveLength(1);
+    expect(failed.items[0]?.product_id).toBe('resolved-product-a');
+    expect(failed.items[0]?.productId).toBe('resolved-product-a');
     expect(failed.errorCode).toBe('CROSS_TENANT_VIOLATION');
   });
 
