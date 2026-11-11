@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Modal, Button } from '@/components/shared/SharedUI';
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { WorkflowOrchestrator } from '@/core/workflow';
 import { productApplicationWorkflow } from '@features/catalog/workflows/ProductApplicationWorkflow';
 import { Package, Lock, TrendingUp, Box } from 'lucide-react';
@@ -14,6 +14,7 @@ import { getProjectedAutocompleteStock } from '@features/inventory/utils/project
 import { createNewPurchaseProductRecord } from '@features/inventory/utils/newPurchaseProduct';
 import { formatProductRegistrationError } from './productRegistrationError';
 import { findExistingProductByName } from './productLookup';
+import { getSellableLayerQuantity } from '../utils/saleStockAvailability';
 
 interface ProductItem {
   id: string;
@@ -209,32 +210,59 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     if (!prodId) return;
     const currentRequestId = ++requestIdRef.current;
     try {
-      // 1. Fetch live stock from product master & inventory layers
+      // 1. Read FIFO layers through their declared Dexie indexes.
+      // FIFOEngine writes item_id + quantity_remaining; legacy rows may use productId.
       const prod = currentProd || (await db.products.get(prodId)) as ProductItem;
-      let stock = prod?.StockQuantity ?? prod?.stock ?? 0;
-      
-      // Also query available active layers for batches and expiry
-      const layers = await db.inventory_layers.where('product_id').equals(prodId).toArray().catch(() => []);
-      let activeLayers = layers.filter((l: any) => (l.remaining_qty || l.remainingQty || 0) > 0);
-      
-      // In sales mode: Filter out expired layers
-      if (mode === 'sale' && activeLayers.length > 0) {
-        const nonExpiredLayers = activeLayers.filter((l: any) => {
-          const exp = l.expiry_date || l.expiryDate;
-          return !getExpiryStatus(exp).isExpired;
-        });
-        
-        if (nonExpiredLayers.length > 0) {
-          activeLayers = nonExpiredLayers;
-          const layerStock = activeLayers.reduce((sum: number, l: any) => sum + (l.remaining_qty || l.remainingQty || 0), 0);
-          stock = layerStock;
-        } else {
-          // All active layers are expired
-          stock = 0;
-          activeLayers = [];
-        }
-      } else if (activeLayers.length > 0) {
-        const layerStock = activeLayers.reduce((sum: number, l: any) => sum + (l.remaining_qty || l.remainingQty || 0), 0);
+      const [itemIdLayers, productIdLayers, batchRecords] = await Promise.all([
+        db.inventory_layers.where('item_id').equals(prodId).toArray(),
+        db.inventory_layers.where('productId').equals(prodId).toArray(),
+        mode === 'sale' ? db.medicineBatches.where('productId').equals(prodId).toArray() : Promise.resolve([])
+      ]);
+      const layersById = new Map<string, any>();
+      [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
+        layersById.set(String(layer.id || JSON.stringify(layer)), layer);
+      });
+      const layers = Array.from(layersById.values());
+      const currentScope = getCurrentUserSession();
+      const tenantId = currentScope.tenantId;
+      const branchId = currentScope.branchId;
+      const tenantLayers = layers.filter((layer: any) => (
+        tenantId && (layer.tenantId || layer.tenant_id) === tenantId
+      ));
+      const tenantBatches = batchRecords.filter((batch: any) => (
+        tenantId && (batch.tenantId || batch.tenant_id) === tenantId
+      ));
+      const ownedBatches = tenantBatches.filter((batch: any) => {
+        const batchBranchId = batch.branchId || batch.branch_id;
+        return !branchId || !batchBranchId || batchBranchId === branchId;
+      });
+      const positiveLayers = tenantLayers.filter((layer: any) => {
+        const quantity = Number(
+          layer.quantity_remaining ?? layer.quantityRemaining ??
+          layer.remaining_qty ?? layer.remainingQty ?? 0
+        );
+        return Number.isFinite(quantity) && quantity > 0;
+      });
+      let activeLayers = mode === 'sale'
+        ? positiveLayers.filter((layer: any) => {
+            const expiry = layer.expiry_date || layer.expiryDate;
+            return !getExpiryStatus(expiry).isExpired;
+          })
+        : positiveLayers;
+
+      // FIFO layers cap the balance; medicineBatches supplies batch expiry and
+      // sellable batch quantity. Never fall back to product master stock in sales.
+      let stock = mode === 'sale'
+        ? getSellableLayerQuantity(tenantLayers, ownedBatches, tenantBatches.length > 0, prod?.ExpiryDate || prod?.Expiry_Date || prod?.expiryDate)
+        : (prod?.StockQuantity ?? prod?.stock ?? 0);
+
+      if (mode !== 'sale' && activeLayers.length > 0) {
+        const layerStock = activeLayers.reduce((sum: number, layer: any) => (
+          sum + Number(
+            layer.quantity_remaining ?? layer.quantityRemaining ??
+            layer.remaining_qty ?? layer.remainingQty ?? 0
+          )
+        ), 0);
         if (layerStock > 0) stock = layerStock;
       }
 
@@ -419,8 +447,59 @@ if (mode === 'sale') {
         });
         let results = Array.from(combinedMap.values());
 
-        if (mode === 'sale' && !isReturnMode) {
-          results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
+        if (mode === 'sale' && !isReturnMode && results.length > 0) {
+          const productIds = results.map((product: any) => product.id || product.ProductID).filter(Boolean);
+          const [itemIdLayers, productIdLayers, allBatchRecords] = await Promise.all([
+            db.inventory_layers.where('item_id').anyOf(productIds).toArray(),
+            db.inventory_layers.where('productId').anyOf(productIds).toArray(),
+            db.medicineBatches.where('productId').anyOf(productIds).toArray()
+          ]);
+          const currentScope = getCurrentUserSession();
+          const tenantId = currentScope.tenantId;
+          const branchId = currentScope.branchId;
+          const tenantLayers = new Map<string, any[]>();
+          const tenantLayerIds = new Map<string, any>();
+          [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
+            if (!tenantId || (layer.tenantId || layer.tenant_id) !== tenantId) return;
+            tenantLayerIds.set(String(layer.id || JSON.stringify(layer)), layer);
+          });
+          Array.from(tenantLayerIds.values()).forEach((layer: any) => {
+            const productId = String(layer.item_id || layer.product_id || layer.productId || '');
+            if (!productIds.includes(productId)) return;
+            const current = tenantLayers.get(productId) || [];
+            current.push(layer);
+            tenantLayers.set(productId, current);
+          });
+
+          const batchRecordsByProduct = new Map<string, any[]>();
+          const ownedBatchesByProduct = new Map<string, any[]>();
+          allBatchRecords.forEach((batch: any) => {
+            const productId = String(batch.productId || batch.product_id || '');
+            if (!productIds.includes(productId) || !tenantId) return;
+            if ((batch.tenantId || batch.tenant_id) !== tenantId) return;
+
+            const allForProduct = batchRecordsByProduct.get(productId) || [];
+            allForProduct.push(batch);
+            batchRecordsByProduct.set(productId, allForProduct);
+
+            const batchBranchId = batch.branchId || batch.branch_id;
+            if (!branchId || !batchBranchId || batchBranchId === branchId) {
+              const ownedForProduct = ownedBatchesByProduct.get(productId) || [];
+              ownedForProduct.push(batch);
+              ownedBatchesByProduct.set(productId, ownedForProduct);
+            }
+          });
+
+          results = results.filter((product: any) => {
+            const productId = String(product.id || product.ProductID || '');
+            const hasBatchRecords = (batchRecordsByProduct.get(productId) || []).length > 0;
+            return getSellableLayerQuantity(
+              tenantLayers.get(productId) || [],
+              ownedBatchesByProduct.get(productId) || [],
+              hasBatchRecords,
+              product.ExpiryDate || product.Expiry_Date || product.expiryDate
+            ) > 0;
+          });
         }
 
         results = results.slice(0, 20);

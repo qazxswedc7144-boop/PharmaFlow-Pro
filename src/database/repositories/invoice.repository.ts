@@ -1,6 +1,66 @@
 
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 import { Sale, Purchase } from '@/types';
+
+const normalizeInvoiceType = (value: unknown): string =>
+  typeof value === 'string' ? value.trim().toUpperCase() : '';
+
+const matchesInvoiceType = (invoice: any, expected: 'SALE' | 'PURCHASE'): boolean => {
+  const primaryTypes = [invoice?.type, invoice?.Type]
+    .map(normalizeInvoiceType)
+    .filter(Boolean);
+  const invoiceTypeAliases = [invoice?.invoiceType, invoice?.invoice_type]
+    .map(normalizeInvoiceType)
+    .filter(Boolean);
+  const canonicalInvoiceTypes = invoiceTypeAliases.filter(type => type === 'SALE' || type === 'PURCHASE');
+  const declaredTypes = [...primaryTypes, ...canonicalInvoiceTypes];
+
+  // invoiceType may also describe a subtype (for example Arabic "مرتجع").
+  // Only canonical SALE/PURCHASE values participate in the document-kind check.
+  return declaredTypes.length > 0 && declaredTypes.every(type => type === expected);
+};
+
+const getInvoiceSequence = (value: unknown, type: 'SALE' | 'PURCHASE'): number | null => {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+
+  const match = normalized.match(/[0-9]+$/);
+  if (!match?.[0]) return null;
+
+  const prefix = normalized.slice(0, -match[0].length).replace(/[-_/]$/, '').toUpperCase();
+  const allowedPrefixes = type === 'SALE' ? ['INV', 'SALE', 'SAL'] : ['PUR', 'PURCHASE'];
+  if (prefix && !allowedPrefixes.includes(prefix)) return null;
+
+  const sequence = Number(match[0]);
+  return Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : null;
+};
+
+const invoiceReferenceFields = [
+  'invoiceId', 'invoice_id', 'source_doc_id', 'sourceDocId',
+  'SourceDocumentID', 'SourceDocumentId', 'referenceId', 'reference_id',
+  'sourceId', 'source_id', 'documentId', 'document_id',
+  'linkedInvoiceId', 'linked_invoice_id'
+] as const;
+
+const hasInvoiceReference = (record: any, invoiceId: string): boolean =>
+  invoiceReferenceFields.some(field => (
+    record?.[field] !== undefined &&
+    record?.[field] !== null &&
+    String(record[field]) === invoiceId
+  ));
+
+const belongsToCurrentInvoiceScope = (
+  record: any,
+  scope: ReturnType<typeof getCurrentUserSession>
+): boolean => {
+  const recordTenantId = record?.tenantId ?? record?.tenant_id;
+  const recordBranchId = record?.branchId ?? record?.branch_id;
+  if (scope.tenantId && recordTenantId && recordTenantId !== scope.tenantId) return false;
+  if (scope.branchId && recordBranchId && recordBranchId !== scope.branchId) return false;
+  return true;
+};
+
 
 export const InvoiceRepository = {
   getUnifiedInvoice: async (id: string): Promise<(Sale | Purchase | Record<string, unknown>) | null> => {
@@ -15,11 +75,21 @@ export const InvoiceRepository = {
   },
 
   getSaleById: async (id: string): Promise<Sale | undefined> => {
-    return (await db.sales.get(id) || await db.invoices.get(id)) as unknown as Sale | undefined;
+    const legacySale = await db.sales.get(id);
+    if (legacySale) return legacySale as Sale;
+
+    const unifiedInvoice = await db.invoices.get(id);
+    if (!unifiedInvoice || !matchesInvoiceType(unifiedInvoice, 'SALE')) return undefined;
+    return unifiedInvoice as unknown as Sale;
   },
 
   getPurchaseById: async (id: string): Promise<Purchase | undefined> => {
-    return (await db.purchases.get(id) || await db.invoices.get(id)) as unknown as Purchase | undefined;
+    const legacyPurchase = await db.purchases.get(id);
+    if (legacyPurchase) return legacyPurchase as Purchase;
+
+    const unifiedInvoice = await db.invoices.get(id);
+    if (!unifiedInvoice || !matchesInvoiceType(unifiedInvoice, 'PURCHASE')) return undefined;
+    return unifiedInvoice as unknown as Purchase;
   },
 
   saveSale: async (...args: any[]): Promise<unknown> => {
@@ -34,16 +104,24 @@ export const InvoiceRepository = {
 
   generateInvoiceNumber: async (type: 'SALE' | 'PURCHASE' = 'SALE'): Promise<string> => {
     const prefix = type === 'SALE' ? 'INV' : 'PUR';
-    const last = await db[type === 'SALE' ? 'sales' : 'purchases']
-      .orderBy('createdAt')
-      .last();
-    
-    if (!last) return `${prefix}-1001`;
-    
-    const lastNumMatch = last.SaleID || last.invoiceId || last.invoice_number;
-    const match = String(lastNumMatch).match(/\d+$/);
-    const nextNum = match ? parseInt(match[0]) + 1 : 1001;
-    return `${prefix}-${nextNum}`;
+    const [legacyRecords, unifiedRecords] = await Promise.all([
+      db[type === 'SALE' ? 'sales' : 'purchases'].toArray(),
+      db.invoices.where('type').equals(type).toArray()
+    ]);
+    const records = [...legacyRecords, ...unifiedRecords];
+    const numberFields = type === 'SALE'
+      ? ['SaleID', 'saleId', 'invoice_number', 'invoiceNumber', 'invoiceId']
+      : ['invoiceId', 'purchase_id', 'purchaseId', 'invoice_number', 'invoiceNumber'];
+
+    const highestSequence = records.reduce((highest, record: any) => {
+      for (const field of numberFields) {
+        const sequence = getInvoiceSequence(record?.[field], type);
+        if (sequence !== null && sequence > highest) highest = sequence;
+      }
+      return highest;
+    }, 1000);
+
+    return `${prefix}-${highestSequence + 1}`;
   },
 
   isNumberDuplicate: async (num: string, type: 'SALE' | 'PURCHASE', excludeId?: string | null): Promise<boolean> => {
@@ -86,7 +164,17 @@ export const InvoiceRepository = {
     return [
       ...sales.map(s => ({ ...s, entityType: 'SALE' as const })),
       ...purchases.map(p => ({ ...p, entityType: 'PURCHASE' as const }))
-    ].sort((a,b) => new Date((a as Sale).Date || (a as Sale).date || (a as Purchase).date || Date.now()).getTime() - new Date((b as Sale).Date || (b as Sale).date || (b as Purchase).date || Date.now()).getTime());
+    ].sort((a, b) => {
+      const dateA = new Date(
+        (a as Sale).Date || (a as Sale).date || (a as Purchase).date ||
+        (a as any).createdAt || (a as any).created_at || 0
+      ).getTime();
+      const dateB = new Date(
+        (b as Sale).Date || (b as Sale).date || (b as Purchase).date ||
+        (b as any).createdAt || (b as any).created_at || 0
+      ).getTime();
+      return dateB - dateA;
+    });
   },
 
   getInvoicesArchive: async (): Promise<Array<(Sale | Purchase) & { entityType: 'SALE' | 'PURCHASE' }>> => {
@@ -98,7 +186,38 @@ export const InvoiceRepository = {
     ];
   },
 
-  checkHasDependencies: async (_invoiceId: string, _type: 'SALE' | 'PURCHASE'): Promise<boolean> => {
-    return false; 
+  checkHasDependencies: async (invoiceId: string, _type: 'SALE' | 'PURCHASE'): Promise<boolean> => {
+    if (!invoiceId) return false;
+
+    const scope = getCurrentUserSession();
+    if (!scope.tenantId) {
+      throw new Error('FAIL_CLOSED: Cannot check invoice dependencies without an active tenant session.');
+    }
+
+    // Use the canonical indexed references written by the inventory and accounting engines.
+    // This avoids a full-table scan when users open or edit invoices.
+    const [inventoryTransactions, journalEntryGroups] = await Promise.all([
+      db.inventoryTransactions.where('source_doc_id').equals(invoiceId).toArray(),
+      Promise.all([
+        db.journalEntries.where('sourceId').equals(invoiceId).toArray(),
+        db.journalEntries.where('source_id').equals(invoiceId).toArray(),
+        db.journalEntries.where('referenceId').equals(invoiceId).toArray(),
+        db.journalEntries.where('reference_id').equals(invoiceId).toArray()
+      ])
+    ]);
+    const journalEntryMap = new Map<string, any>();
+    journalEntryGroups.flat().forEach((entry: any) => {
+      journalEntryMap.set(String(entry.id), entry);
+    });
+    const journalEntries = Array.from(journalEntryMap.values());
+
+    const hasInventoryDependency = inventoryTransactions.some((record: any) =>
+      belongsToCurrentInvoiceScope(record, scope) && hasInvoiceReference(record, invoiceId)
+    );
+    if (hasInventoryDependency) return true;
+
+    return journalEntries.some((record: any) =>
+      belongsToCurrentInvoiceScope(record, scope) && hasInvoiceReference(record, invoiceId)
+    );
   }
 };
