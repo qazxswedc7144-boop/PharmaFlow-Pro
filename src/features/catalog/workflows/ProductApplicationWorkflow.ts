@@ -39,9 +39,12 @@ export class ProductApplicationWorkflow implements BusinessWorkflow<ProductAppli
 
   public async validateBusinessRules(input: ProductApplicationInput): Promise<void> {
     const requiredPermission = getProductApplicationPermission(input.isNew);
+    const legacyPermission = input.isNew === false ? 'products.edit' : 'products.manage';
     const authState = useAuthStore.getState();
     const hasPermission =
       authState.hasPermission(requiredPermission) ||
+      // Preserve explicitly assigned legacy custom grants during the RBAC migration.
+      authState.hasPermission(legacyPermission) ||
       authState.user?.permissions?.includes('ALL') === true;
 
     if (!hasPermission) {
