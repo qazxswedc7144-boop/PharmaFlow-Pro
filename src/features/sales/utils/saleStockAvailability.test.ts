@@ -33,6 +33,33 @@ describe('sale inventory-layer availability', () => {
     expect(getSellableLayerQuantity([])).toBe(0);
   });
 
+  it('caps FIFO stock to non-expired tenant batch quantity', () => {
+    expect(getSellableLayerQuantity(
+      [{ item_id: 'p-1', quantity_remaining: 10 }],
+      [
+        { quantity: 7, expiryDate: '2000-01-01' },
+        { quantity: 3, expiryDate: '2099-12-31' }
+      ],
+      true
+    )).toBe(3);
+  });
+
+  it('fails closed when batch records exist but none belong to the active tenant', () => {
+    expect(getSellableLayerQuantity(
+      [{ item_id: 'p-1', quantity_remaining: 10 }],
+      [],
+      true
+    )).toBe(0);
+  });
+
+  it('uses FIFO layers for non-batched products when no batch records exist', () => {
+    expect(getSellableLayerQuantity(
+      [{ item_id: 'p-1', quantity_remaining: 6 }],
+      [],
+      false
+    )).toBe(6);
+  });
+
   it('ignores non-finite and negative quantities', () => {
     expect(getSellableLayerQuantity([
       { quantity_remaining: -3 },
