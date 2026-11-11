@@ -50,6 +50,8 @@ export const SettingsHeader: React.FC<SettingsHeaderProps> = ({
     setIsSigningOut(true);
     try {
       await signOut();
+    } catch (logoutError) {
+      console.error('[SettingsHeader] Logout failed:', logoutError);
     } finally {
       if (typeof window !== 'undefined') window.location.hash = '#/login';
       setIsSigningOut(false);
