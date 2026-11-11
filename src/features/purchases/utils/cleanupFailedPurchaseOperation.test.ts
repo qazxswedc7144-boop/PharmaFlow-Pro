@@ -1,45 +1,79 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/core/db';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { cleanupFailedPurchaseOperation } from './cleanupFailedPurchaseOperation';
+
+const setTenantSession = (tenantId: string) => {
+  TokenProvider.setSession({
+    id: 'user-' + tenantId,
+    tenantId,
+    branchId: 'branch-' + tenantId
+  } as any, 'access-' + tenantId, 'refresh-' + tenantId);
+};
+
+const uniqueOperationId = (prefix: string) => prefix + '-' + Date.now() + '-' + Math.random().toString(36).slice(2);
 
 describe('cleanupFailedPurchaseOperation', () => {
   beforeEach(async () => {
     await db.open();
-    await Promise.all([db.syncQueue.clear(), db.outbox.clear(), db.idempotencyKeys.clear(), db.idempotency_records.clear()]);
+    setTenantSession('tenant-a');
     IdempotencyRegistry.clearInMemory();
   });
-  afterEach(async () => {
-    await Promise.all([db.syncQueue.clear(), db.outbox.clear(), db.idempotencyKeys.clear(), db.idempotency_records.clear()]);
+
+  afterEach(() => {
     IdempotencyRegistry.clearInMemory();
+    TokenProvider.clearSession();
   });
 
   it('removes only the failed operation queue, outbox and tenant-scoped idempotency records', async () => {
-    await db.syncQueue.add({ idempotencyKey: 'op-failed', mutationId: 'mutation-failed', tenantId: 'tenant-a' });
-    await db.syncQueue.add({ idempotencyKey: 'op-other', mutationId: 'mutation-other', tenantId: 'tenant-a' });
-    await db.outbox.add({ idempotencyKey: 'op-failed', mutationId: 'mutation-failed', tenantId: 'tenant-a' });
-    await db.outbox.add({ idempotencyKey: 'op-other', mutationId: 'mutation-other', tenantId: 'tenant-a' });
-    await IdempotencyRegistry.save({ key: 'op-failed', status: 'FAILED', tenantId: 'tenant-a', branchId: 'branch-a', operationType: 'PURCHASE', entityType: 'PURCHASE', fingerprint: 'payload', createdAt: new Date().toISOString() });
+    const operationId = uniqueOperationId('op-failed');
+    const unrelatedOperationId = uniqueOperationId('op-other');
+    await db.syncQueue.add({ idempotencyKey: operationId, mutationId: 'mutation-' + operationId, tenantId: 'tenant-a' });
+    await db.syncQueue.add({ idempotencyKey: unrelatedOperationId, mutationId: 'mutation-' + unrelatedOperationId, tenantId: 'tenant-a' });
+    await db.outbox.add({ idempotencyKey: operationId, mutationId: 'outbox-' + operationId, tenantId: 'tenant-a' });
+    await db.outbox.add({ idempotencyKey: unrelatedOperationId, mutationId: 'outbox-' + unrelatedOperationId, tenantId: 'tenant-a' });
+    await IdempotencyRegistry.save({
+      key: operationId, status: 'FAILED', tenantId: 'tenant-a', branchId: 'branch-tenant-a',
+      operationType: 'PURCHASE', entityType: 'PURCHASE', fingerprint: 'payload', createdAt: new Date().toISOString()
+    });
 
-    await cleanupFailedPurchaseOperation('op-failed', 'tenant-a');
+    await cleanupFailedPurchaseOperation(operationId, 'tenant-a');
 
-    expect(await db.syncQueue.where('idempotencyKey').equals('op-failed').count()).toBe(0);
-    expect(await db.outbox.where('idempotencyKey').equals('op-failed').count()).toBe(0);
-    expect(await db.syncQueue.where('idempotencyKey').equals('op-other').count()).toBe(1);
-    expect(await db.outbox.where('idempotencyKey').equals('op-other').count()).toBe(1);
-    await expect(IdempotencyRegistry.get('op-failed', 'tenant-a')).resolves.toBeNull();
+    expect(await db.syncQueue.where('idempotencyKey').equals(operationId).count()).toBe(0);
+    expect(await db.outbox.where('idempotencyKey').equals(operationId).count()).toBe(0);
+    expect(await db.syncQueue.where('idempotencyKey').equals(unrelatedOperationId).count()).toBe(1);
+    expect(await db.outbox.where('idempotencyKey').equals(unrelatedOperationId).count()).toBe(1);
+    await expect(IdempotencyRegistry.get(operationId, 'tenant-a')).resolves.toBeNull();
+
+    await db.syncQueue.where('idempotencyKey').equals(unrelatedOperationId).delete();
+    await db.outbox.where('idempotencyKey').equals(unrelatedOperationId).delete();
   });
 
-  it('fails closed and preserves records when a matching operation belongs to another tenant', async () => {
-    await db.syncQueue.add({ idempotencyKey: 'op-cross-tenant', mutationId: 'mutation-cross-tenant', tenantId: 'tenant-b' });
-    await expect(cleanupFailedPurchaseOperation('op-cross-tenant', 'tenant-a')).rejects.toThrow('PURCHASE_OPERATION_CLEANUP_TENANT_MISMATCH');
-    expect(await db.syncQueue.where('idempotencyKey').equals('op-cross-tenant').count()).toBe(1);
+  it('cannot see or delete a matching operation owned by another tenant', async () => {
+    const operationId = uniqueOperationId('op-cross-tenant');
+    setTenantSession('tenant-b');
+    await db.syncQueue.add({ idempotencyKey: operationId, mutationId: 'mutation-' + operationId, tenantId: 'tenant-b' });
+
+    setTenantSession('tenant-a');
+    await expect(cleanupFailedPurchaseOperation(operationId, 'tenant-a')).resolves.toBeUndefined();
+    expect(await db.syncQueue.where('idempotencyKey').equals(operationId).count()).toBe(0);
+
+    setTenantSession('tenant-b');
+    expect(await db.syncQueue.where('idempotencyKey').equals(operationId).count()).toBe(1);
+    await db.syncQueue.where('idempotencyKey').equals(operationId).delete();
   });
 
   it('requires a trusted tenant before deleting any operation artifacts', async () => {
-    await db.syncQueue.add({ idempotencyKey: 'op-no-tenant', mutationId: 'mutation-no-tenant', tenantId: 'tenant-a' });
-    await expect(cleanupFailedPurchaseOperation('op-no-tenant')).rejects.toThrow('PURCHASE_OPERATION_CLEANUP_REQUIRES_OPERATION_AND_TENANT');
-    expect(await db.syncQueue.where('idempotencyKey').equals('op-no-tenant').count()).toBe(1);
+    const operationId = uniqueOperationId('op-no-tenant');
+    await db.syncQueue.add({ idempotencyKey: operationId, mutationId: 'mutation-' + operationId, tenantId: 'tenant-a' });
+
+    TokenProvider.clearSession();
+    await expect(cleanupFailedPurchaseOperation(operationId)).rejects.toThrow('PURCHASE_OPERATION_CLEANUP_REQUIRES_OPERATION_AND_TENANT');
+
+    setTenantSession('tenant-a');
+    expect(await db.syncQueue.where('idempotencyKey').equals(operationId).count()).toBe(1);
+    await db.syncQueue.where('idempotencyKey').equals(operationId).delete();
   });
 });
