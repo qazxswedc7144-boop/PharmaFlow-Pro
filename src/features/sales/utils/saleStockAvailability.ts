@@ -1,6 +1,9 @@
 import { getExpiryStatus } from '@/utils/expiryUtils';
 
 type InventoryLayerLike = {
+  item_id?: string;
+  product_id?: string;
+  productId?: string;
   remaining_qty?: number | string | null;
   remainingQty?: number | string | null;
   quantity_remaining?: number | string | null;
