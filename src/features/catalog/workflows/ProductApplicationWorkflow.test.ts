@@ -43,10 +43,15 @@ describe('ProductApplicationWorkflow local commit boundary', () => {
     const enqueue = vi.spyOn(
       DistributedSyncEngine.getInstance(),
       'enqueueWithinTransaction'
-    ).mockResolvedValue({
-      mutationId: 'MUT-LOCAL-1',
-      idempotencyKey: 'IDEM-PRODUCT-1'
-    });
+    )
+      .mockResolvedValueOnce({
+        mutationId: 'MUT-LOCAL-1',
+        idempotencyKey: 'IDEM-PRODUCT-1'
+      })
+      .mockResolvedValueOnce({
+        mutationId: 'MUT-LOCAL-2',
+        idempotencyKey: 'IDEM-PRODUCT-2'
+      });
 
     const result = await productApplicationWorkflow.executeDomainSteps(
       { product: { id: 'PROD-LOCAL-1', name: 'Panadol Extra' } as any, isNew: true },
