@@ -29,6 +29,8 @@ export interface WorkflowContext {
   deviceId: string;
   operationType: string;
   startedAt: string;
+  /** Invoked synchronously after the local Dexie transaction commits; never awaited or serialized. */
+  onLocalCommit?: (result: unknown) => void;
   metadata?: Record<string, unknown>;
 }
 
