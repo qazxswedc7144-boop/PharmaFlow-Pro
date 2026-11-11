@@ -510,7 +510,7 @@ if (mode === 'sale') {
     if (!manualItemName || !tempQty || !tempPrice) return;
     
     // Resolve exact product names through the indexed Name/name fields (no full-table scan).
-    const existing = await findExistingProductByName(db.products, manualItemName);
+    const existing = await findExistingProductByName<any>(db.products, manualItemName);
 
     let finalProductId = selectedProductId || existing?.id || null;
 
