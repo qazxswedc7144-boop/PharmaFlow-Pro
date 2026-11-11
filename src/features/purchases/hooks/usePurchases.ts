@@ -422,7 +422,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         // work so a successful invoice never waits on report processing.
         reportCache.purge();
         db.incrementDataVersion();
-        ReportEngine.scheduleRefresh();
+        ReportEngine.scheduleRefreshInBackground();
         setTimeout(() => {
           void Promise.resolve()
             .then(() => refreshGlobal())
