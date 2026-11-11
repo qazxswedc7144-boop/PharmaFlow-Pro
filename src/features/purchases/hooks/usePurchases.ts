@@ -25,6 +25,7 @@ import { collectPendingProductsForInvoice, mergePendingProductSuggestions } from
 import { buildFailedPurchaseDraft } from '../utils/failedPurchaseDraft';
 import { getPurchaseFailureDisposition } from '../utils/purchaseFailureDisposition';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import type { IdempotencyRecord } from '@/core/integrity/types';
 import { getPurchaseDraftSnapshot } from '../utils/recoverablePurchaseDraft';
 import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOperation';
 
@@ -522,7 +523,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         addToast(normalized.arabicMessage, 'error');
         return;
       }
-      let idempotencyRecord = null;
+      let idempotencyRecord: IdempotencyRecord | null = null;
       try {
         idempotencyRecord = await IdempotencyRegistry.get(failureOperationId, tenantId);
       } catch (registryReadError) {
