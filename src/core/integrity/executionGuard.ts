@@ -65,6 +65,33 @@ export class ExecutionGuard {
   }
 
   /**
+   * Executes a local-first catalog operation with an in-tab guard only.
+   * It intentionally avoids the remote Redis lock round-trip; the caller must
+   * still persist its idempotency/outbox records atomically in IndexedDB.
+   */
+  public static async executeWithLocalGuard<T>(
+    options: GuardOptions,
+    callback: () => Promise<T>
+  ): Promise<T> {
+    const tenant = options.tenantId || 'default';
+    const branch = options.branchId || 'main';
+    const op = options.operation || 'op';
+    const entity = options.entityId || 'new';
+    const lockKey = `${tenant}:${branch}:${op}:${entity}`;
+
+    if (this.activeInMemoryLocks.has(lockKey)) {
+      throw new Error(`⚠️ العملية [${op}] للمورد [${entity}] قيد التنفيذ حالياً. يرجى الانتظار... ⏳`);
+    }
+
+    this.activeInMemoryLocks.add(lockKey);
+    try {
+      return await callback();
+    } finally {
+      this.activeInMemoryLocks.delete(lockKey);
+    }
+  }
+
+  /**
    * Directly checks if a resource is currently locked
    */
   public static isLocked(options: GuardOptions): boolean {
