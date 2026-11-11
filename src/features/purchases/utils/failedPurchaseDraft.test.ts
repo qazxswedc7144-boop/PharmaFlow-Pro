@@ -71,6 +71,15 @@ describe('DraftService failed purchase quarantine persistence', () => {
     });
   });
 
+  it('rejects an active draft key as a failed quarantine key', async () => {
+    await expect(DraftService.quarantineInvoiceDraft({
+      id: 'purchases_draft_current',
+      draftId: 'purchases_draft_current',
+      invoiceType: 'PURCHASE',
+      status: 'FAILED_QUARANTINED'
+    })).rejects.toThrow(/INVALID_FAILED_PURCHASE_DRAFT/);
+  });
+
   it('rejects a quarantine record missing the draftId primary key', async () => {
     await expect(DraftService.quarantineInvoiceDraft({
       id: 'FAILED-missing-key',
