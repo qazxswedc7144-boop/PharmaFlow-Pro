@@ -47,7 +47,8 @@ const SYNC_OWNED_TABLES = new Set(['syncQueue', 'sync_queue', 'outbox']);
 
 const TENANT_SCOPED_TABLES = new Set([
   'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
-  'accounts', 'journalLines', 'sales', 'purchases', 'syncQueue', 'sync_queue', 'outbox',
+  'accounts', 'journalLines', 'sales', 'purchases', 'drafts', 'draft_invoices',
+  'syncQueue', 'sync_queue', 'outbox',
   'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
   'cashboxes', 'cashFlow', 'users', 'userPermissions', 'vouchers', 'receipts', 'payments',
   'financialHealthSnapshots', 'systemAlerts', 'accountingPeriods', 'tenantSalesPolicies'
@@ -1098,6 +1099,13 @@ export class PharmaFlowDB extends Dexie {
     // Version 39: Tenant-scoped offline cache for server-authoritative sales policy.
     this.version(39).stores({
       tenantSalesPolicies: '&tenantId, updatedAt'
+    });
+
+    // Version 40: Tenant/branch-scoped draft persistence.
+    // Existing ownerless drafts are intentionally not assigned to the current tenant.
+    this.version(40).stores({
+      drafts: '&id, moduleName, updatedAt, tenantId, branchId, [tenantId+branchId]',
+      draft_invoices: '&draftId, invoiceType, createdAt, updatedAt, status, tenantId, branchId, [tenantId+invoiceType], [tenantId+branchId]'
     });
 
     // Handle structural integrity and recovery
