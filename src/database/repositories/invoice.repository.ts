@@ -7,8 +7,10 @@ const normalizeInvoiceType = (value: unknown): string =>
 
 const matchesInvoiceType = (invoice: any, expected: 'SALE' | 'PURCHASE'): boolean => {
   const declaredTypes = [
-    normalizeInvoiceType(invoice?.type ?? invoice?.Type),
-    normalizeInvoiceType(invoice?.invoiceType ?? invoice?.invoice_type)
+    normalizeInvoiceType(invoice?.type),
+    normalizeInvoiceType(invoice?.Type),
+    normalizeInvoiceType(invoice?.invoiceType),
+    normalizeInvoiceType(invoice?.invoice_type)
   ].filter(Boolean);
   return declaredTypes.length > 0 && declaredTypes.every(type => type === expected);
 };
