@@ -186,7 +186,12 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       }
       resolveLocalCommit(String(result.data?.productId || newProdId));
     }).catch(workflowError => {
-      rejectLocalCommit(workflowError instanceof Error ? workflowError : new Error(String(workflowError)));
+      const workflowCode = (workflowError as any)?.code;
+      const workflowMessage = workflowError instanceof Error ? workflowError.message : String(workflowError);
+      const detail = workflowCode && !workflowMessage.includes(workflowCode)
+        ? `${workflowCode}: ${workflowMessage}`
+        : workflowMessage;
+      rejectLocalCommit(new Error(detail));
     });
 
     const savedProductId = await localCommitPromise;
