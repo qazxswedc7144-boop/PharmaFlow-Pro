@@ -493,8 +493,8 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         const supplier = suppliers.find(s => s.id === header.supplier_id);
         const supplierName = supplier ? supplier.Supplier_Name : 'مورد غير محدد';
         await runPostCommitTask('draft-cleanup', async () => {
-          await DraftService.clearInvoiceDraft('purchases_draft_current');
-          await DraftService.clearDraft('purchases');
+          await DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId);
+          await DraftService.clearDraft(purchaseDraftKeys!.draftId);
         });
 
         if (res.syncStatus === 'FAILED') {
