@@ -30,6 +30,7 @@ describe('ProductApplicationWorkflow local commit boundary', () => {
     expect(productApplicationWorkflow.syncHandledInDomainTransaction).toBe(true);
     expect(typeof productApplicationWorkflow.localExecutionGuard).toBe('function');
     expect((productApplicationWorkflow.localExecutionGuard as Function)({ isNew: true })).toBe(true);
+    expect((productApplicationWorkflow.localExecutionGuard as Function)({})).toBe(true);
     expect((productApplicationWorkflow.localExecutionGuard as Function)({ isNew: false })).toBe(false);
     expect(productApplicationWorkflow.tables).toEqual(
       expect.arrayContaining(['products', 'syncQueue', 'outbox', 'auditLogs'])
