@@ -27,20 +27,29 @@ describe('DraftService tenant isolation and persistence errors', () => {
 
   it('scopes invoice drafts by tenant and branch and only returns the active owner draft', async () => {
     const logicalId = uniqueId();
+    const tenantA = uniqueId();
+    const tenantB = uniqueId();
     await DraftService.saveInvoiceDraft(logicalId, 'PURCHASE', [{ productId: 'p-a' }], { total: 10 });
 
-    setTenantSession('tenant-b', 'branch-b');
+    setTenantSession(tenantA, 'branch-b');
+    expect(await DraftService.getInvoiceDraft(logicalId)).toBeUndefined();
+    expect(await DraftService.getRecoverablePurchaseDraft()).toBeUndefined();
+    await DraftService.saveInvoiceDraft(logicalId, 'PURCHASE', [{ productId: 'p-branch-b' }], { total: 15 });
+    expect((await DraftService.getRecoverablePurchaseDraft())?.items).toEqual([{ productId: 'p-branch-b' }]);
+
+    setTenantSession(tenantB, 'branch-b');
     expect(await DraftService.getInvoiceDraft(logicalId)).toBeUndefined();
     expect(await DraftService.getRecoverablePurchaseDraft()).toBeUndefined();
     await DraftService.saveInvoiceDraft(logicalId, 'PURCHASE', [{ productId: 'p-b' }], { total: 20 });
-
     expect((await DraftService.getRecoverablePurchaseDraft())?.items).toEqual([{ productId: 'p-b' }]);
 
     setTenantSession('tenant-a', 'branch-a');
     expect((await DraftService.getInvoiceDraft(logicalId))?.items).toEqual([{ productId: 'p-a' }]);
     await DraftService.clearInvoiceDraft(logicalId);
 
-    setTenantSession('tenant-b', 'branch-b');
+    setTenantSession(tenantA, 'branch-b');
+    await DraftService.clearInvoiceDraft(logicalId);
+    setTenantSession(tenantB, 'branch-b');
     await DraftService.clearInvoiceDraft(logicalId);
   });
 
