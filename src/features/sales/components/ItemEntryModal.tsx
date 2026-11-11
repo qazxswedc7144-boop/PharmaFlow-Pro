@@ -140,18 +140,56 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       category: cat
     });
 
-    const result = await WorkflowOrchestrator.execute(
-      productApplicationWorkflow,
-      { product: newProd as any, isNew: true }
-    );
-    if (!result.success) {
-      const workflowCode = result.error?.code || 'PRODUCT_REGISTRATION_FAILED';
-      const workflowMessage = result.error?.message || 'لم يُرجع سير العمل سبباً محدداً.';
-      throw new Error(`${workflowCode}: ${workflowMessage}`);
-    }
+    let resolveLocalCommit!: (productId: string) => void;
+    let rejectLocalCommit!: (reason: Error) => void;
+    let localCommitSettled = false;
+    const localCommitPromise = new Promise<string>((resolve, reject) => {
+      resolveLocalCommit = (productId: string) => {
+        if (localCommitSettled) return;
+        if (!productId) {
+          localCommitSettled = true;
+          reject(new Error('PRODUCT_REGISTRATION_ID_MISSING: لم يُرجع الحفظ المحلي معرف الصنف.'));
+          return;
+        }
+        localCommitSettled = true;
+        resolve(productId);
+      };
+      rejectLocalCommit = (reason: Error) => {
+        if (localCommitSettled) {
+          console.warn('[ItemEntryModal] Product workflow reported an error after local commit:', reason);
+          return;
+        }
+        localCommitSettled = true;
+        reject(reason);
+      };
+    });
 
-    // The workflow may return a normalized ID; verify the exact persisted row.
-    const savedProductId = result.data?.productId || newProdId;
+    // The workflow signals immediately after its Dexie transaction commits.
+    // Durable sync queue/outbox writes are already part of that transaction;
+    // remote synchronization continues in the background.
+    const workflowPromise = WorkflowOrchestrator.execute(
+      productApplicationWorkflow,
+      { product: newProd as any, isNew: true },
+      {
+        onLocalCommit: (committedResult: any) => {
+          resolveLocalCommit(String(committedResult?.productId || ''));
+        }
+      }
+    );
+
+    void workflowPromise.then(result => {
+      if (!result.success) {
+        const workflowCode = result.error?.code || 'PRODUCT_REGISTRATION_FAILED';
+        const workflowMessage = result.error?.message || 'لم يُرجع سير العمل سبباً محدداً.';
+        rejectLocalCommit(new Error(`${workflowCode}: ${workflowMessage}`));
+        return;
+      }
+      resolveLocalCommit(String(result.data?.productId || newProdId));
+    }).catch(workflowError => {
+      rejectLocalCommit(workflowError instanceof Error ? workflowError : new Error(String(workflowError)));
+    });
+
+    const savedProductId = await localCommitPromise;
     const persistedProduct = await db.products.get(savedProductId);
     if (!persistedProduct) {
       throw new Error('PRODUCT_REGISTRATION_NOT_CONFIRMED: لم يتم العثور على سجل الصنف بعد اكتمال الحفظ المحلي.');
