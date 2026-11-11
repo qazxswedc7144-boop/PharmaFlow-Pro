@@ -20,7 +20,7 @@ import { SmartImportOrchestrator } from '../services/smartImport/smartImportOrch
 import { ImportAnalysisResult, ExtractedImportRow } from '../services/smartImport/types';
 import { normalizeToISODate } from '@/utils/expiryUtils';
 import { generateTransactionUuid } from '@/utils/uuid';
-import { collectPendingProductsForInvoice } from '../utils/pendingProducts';
+import { collectPendingProductsForInvoice, mergePendingProductSuggestions } from '../utils/pendingProducts';
 import { buildFailedPurchaseDraft } from '../utils/failedPurchaseDraft';
 import { getPurchaseFailureDisposition } from '../utils/purchaseFailureDisposition';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
@@ -170,7 +170,27 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
   }, [setEditingInvoiceId]);
 
   const [isDateLockedStatus, setIsDateLockedStatus] = useState(false);
-  useEffect(() => { const timer = setTimeout(async () => { try { if (manualItemName.trim()) setFilteredProducts(await predictionService.searchProducts(manualItemName)); else setFilteredProducts([]); } catch (e) { console.error("Product prediction failed:", e); } }, 300); return () => clearTimeout(timer); }, [manualItemName]);
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const query = manualItemName.trim();
+        if (!query) {
+          setFilteredProducts([]);
+          return;
+        }
+        const persistedProducts = await predictionService.searchProducts(query);
+        const suggestions = mergePendingProductSuggestions(
+          persistedProducts as any[],
+          pendingProductsRef.current,
+          query
+        );
+        setFilteredProducts(suggestions as Product[]);
+      } catch (e) {
+        console.error('Product prediction failed:', e);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [manualItemName]);
   useEffect(() => { const checkLock = async () => { try { const locked = await db.isDateLocked(header.date || ""); setIsDateLockedStatus(locked); } catch (e) { console.error("checkLock failed:", e); } }; checkLock().catch(e => console.error("[usePurchases] checkLock fatal error:", e)); }, [header.date]);
   const isLocked = useMemo(() => { const isWorkflowLocked = InvoiceWorkflowEngine.isLocked(header.status); const isPeriodLocked = isDateLockedStatus && authService.getCurrentUser()?.Role !== 'Admin'; return isWorkflowLocked || isPeriodLocked || hasDependencies; }, [header.status, isDateLockedStatus, hasDependencies]);
 
