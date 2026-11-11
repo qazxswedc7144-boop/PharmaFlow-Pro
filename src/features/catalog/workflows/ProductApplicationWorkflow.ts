@@ -85,8 +85,10 @@ export class ProductApplicationWorkflow implements BusinessWorkflow<ProductAppli
       branchId: ctx.branchId
     };
 
+    // Sync protocol operations are CREATE/UPDATE, not the workflow's domain operation name.
+    const syncOperation = input.isNew ? 'CREATE' : 'UPDATE';
     const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
-      this.operationType,
+      syncOperation,
       syncPayload,
       'PRODUCT',
       ctx.idempotencyKey,
