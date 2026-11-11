@@ -14,7 +14,9 @@ const ids = {
   purchaseWrongType: 'P2-PURCHASE-WRONG-TYPE',
   saleNumberOld: 'P2-SALE-NUMBER-OLD',
   saleNumberRecent: 'P2-SALE-NUMBER-RECENT',
+  saleUnifiedNumber: 'P2-SALE-UNIFIED-NUMBER',
   purchaseNumber: 'P2-PURCHASE-NUMBER',
+  purchaseUnifiedNumber: 'P2-PURCHASE-UNIFIED-NUMBER',
   recentSale: 'P2-RECENT-SALE',
   recentPurchase: 'P2-RECENT-PURCHASE',
   inventoryDependency: 'P2-INVENTORY-DEPENDENCY',
@@ -72,9 +74,15 @@ describe('InvoiceRepository P2 safeguards', () => {
     await db.purchases.put({
       id: ids.purchaseNumber, invoiceId: 'PUR-2042', createdAt: '2025-01-01T00:00:00.000Z', tenantId, branchId
     } as any);
+    await db.invoices.put({
+      id: ids.saleUnifiedNumber, type: 'SALE', invoice_number: 'INV-1300', tenantId, branchId
+    } as any);
+    await db.invoices.put({
+      id: ids.purchaseUnifiedNumber, type: 'PURCHASE', invoice_number: 'PUR-3042', tenantId, branchId
+    } as any);
 
-    await expect(InvoiceRepository.generateInvoiceNumber('SALE')).resolves.toBe('INV-1101');
-    await expect(InvoiceRepository.generateInvoiceNumber('PURCHASE')).resolves.toBe('PUR-2043');
+    await expect(InvoiceRepository.generateInvoiceNumber('SALE')).resolves.toBe('INV-1301');
+    await expect(InvoiceRepository.generateInvoiceNumber('PURCHASE')).resolves.toBe('PUR-3043');
   });
 
   it('returns recent invoices newest first across sales and purchases', async () => {
