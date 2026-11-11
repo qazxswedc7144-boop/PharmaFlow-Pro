@@ -196,9 +196,11 @@ export const InvoiceRepository = {
         db.journalEntries.where('reference_id').equals(invoiceId).toArray()
       ])
     ]);
-    const journalEntries = Array.from(new Map(
-      journalEntryGroups.flat().map((entry: any) => [String(entry.id), entry])
-    ).values());
+    const journalEntryMap = new Map<string, any>();
+    journalEntryGroups.flat().forEach((entry: any) => {
+      journalEntryMap.set(String(entry.id), entry);
+    });
+    const journalEntries = Array.from(journalEntryMap.values());
 
     const hasInventoryDependency = inventoryTransactions.some((record: any) =>
       belongsToCurrentInvoiceScope(record, scope) && hasInvoiceReference(record, invoiceId)
