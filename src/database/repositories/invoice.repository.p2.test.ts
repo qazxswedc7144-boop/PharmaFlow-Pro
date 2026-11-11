@@ -89,6 +89,7 @@ describe('InvoiceRepository P2 safeguards', () => {
   it('detects inventory transaction dependencies for the matching invoice', async () => {
     await db.inventoryTransactions.put({
       id: ids.inventoryDependency,
+      source_doc_id: 'P2-DEPENDENT-SALE',
       SourceDocumentID: 'P2-DEPENDENT-SALE',
       SourceDocumentType: 'SALE',
       tenantId,
