@@ -29,6 +29,7 @@ describe('DraftService tenant isolation and persistence errors', () => {
     const logicalId = uniqueId();
     const tenantA = uniqueId();
     const tenantB = uniqueId();
+    setTenantSession(tenantA, 'branch-a');
     await DraftService.saveInvoiceDraft(logicalId, 'PURCHASE', [{ productId: 'p-a' }], { total: 10 });
 
     setTenantSession(tenantA, 'branch-b');
