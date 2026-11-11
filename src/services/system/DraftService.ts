@@ -92,8 +92,14 @@ export const DraftService = {
   quarantineInvoiceDraft: async (draft: any): Promise<void> => {
     try {
       // draft_invoices uses draftId as its Dexie primary key (not id).
-      if (!draft?.draftId || draft.status !== 'FAILED_QUARANTINED' || draft.invoiceType !== 'PURCHASE') {
-        throw new Error('INVALID_FAILED_PURCHASE_DRAFT: draftId, PURCHASE type and FAILED_QUARANTINED status are required.');
+      if (
+        !draft?.draftId ||
+        !String(draft.draftId).startsWith('FAILED-') ||
+        draft.draftId === 'purchases_draft_current' ||
+        draft.status !== 'FAILED_QUARANTINED' ||
+        draft.invoiceType !== 'PURCHASE'
+      ) {
+        throw new Error('INVALID_FAILED_PURCHASE_DRAFT: a FAILED-* draftId, PURCHASE type and FAILED_QUARANTINED status are required.');
       }
       await db.transaction('rw', db.draft_invoices, async () => {
         await db.draft_invoices.put(draft);
