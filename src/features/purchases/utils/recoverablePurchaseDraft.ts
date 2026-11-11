@@ -1,5 +1,13 @@
 export { selectRecoverablePurchaseDraft } from '@/services/system/recoverablePurchaseDraft';
 
+export interface PurchaseDraftSnapshot {
+  header: Record<string, unknown> | null;
+  items: any[];
+  adjData: Record<string, unknown>;
+  partner: Record<string, unknown> | null;
+  pendingProducts: any[];
+}
+
 export function getPurchaseDraftSnapshot(draft: any): PurchaseDraftSnapshot {
   const payload = draft?.payload || {};
   const totals = draft?.totals || {};
