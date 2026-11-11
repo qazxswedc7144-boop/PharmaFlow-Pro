@@ -140,11 +140,16 @@ export class WorkflowExecutionPipeline {
         : null;
 
       // Step 9 & 10: ExecutionGuard + TransactionBoundary Execution
+      const useLocalExecutionGuard = typeof workflow.localExecutionGuard === 'function'
+        ? workflow.localExecutionGuard(input)
+        : workflow.localExecutionGuard === true;
       const guardOptions = {
         tenantId: ctx.tenantId,
         branchId: ctx.branchId,
         operation: workflow.operationType,
-        entityId: ctx.idempotencyKey
+        entityId: useLocalExecutionGuard
+          ? String((input as any)?.product?.id || ctx.idempotencyKey)
+          : ctx.idempotencyKey
       };
 
       const executeDomainTransaction = async (): Promise<TResult> => {
@@ -193,7 +198,7 @@ export class WorkflowExecutionPipeline {
 
       // Catalog product creation uses only an in-tab guard; its idempotency and
       // queue/outbox writes remain durable inside the Dexie transaction.
-      const domainResult = workflow.localExecutionGuard === true
+      const domainResult = useLocalExecutionGuard
         ? await ExecutionGuard.executeWithLocalGuard<TResult>(guardOptions, executeDomainTransaction)
         : await ExecutionGuard.executeWithGuard<TResult>(guardOptions, executeDomainTransaction);
 
