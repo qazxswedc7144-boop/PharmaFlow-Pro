@@ -289,7 +289,15 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
           pendingProducts: snapshot.pendingProducts
         });
         const activeDraft = await DraftService.getInvoiceDraft('purchases_draft_current');
-        if (!activeDraft || JSON.stringify(activeDraft.items || []) !== JSON.stringify(restoredItems)) {
+        const activeTotals = activeDraft?.totals || {};
+        if (
+          !activeDraft ||
+          JSON.stringify(activeDraft.items || []) !== JSON.stringify(restoredItems) ||
+          JSON.stringify(activeTotals.header || null) !== JSON.stringify(snapshot.header) ||
+          JSON.stringify(activeTotals.adjData || {}) !== JSON.stringify(snapshot.adjData) ||
+          JSON.stringify(activeTotals.partner || null) !== JSON.stringify(snapshot.partner) ||
+          JSON.stringify(activeTotals.pendingProducts || []) !== JSON.stringify(snapshot.pendingProducts)
+        ) {
           throw new Error('PURCHASE_DRAFT_RESTORE_VERIFY_FAILED');
         }
         await DraftService.markInvoiceDraftRecovered(draftObj.draftId);
