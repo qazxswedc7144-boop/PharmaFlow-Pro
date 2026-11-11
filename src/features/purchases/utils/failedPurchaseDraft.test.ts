@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/core/db';
 import { DraftService } from '@/services/system/DraftService';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { buildFailedPurchaseDraft } from './failedPurchaseDraft';
 
 describe('failed purchase draft quarantine', () => {
@@ -39,21 +40,33 @@ describe('failed purchase draft quarantine', () => {
 
 
 describe('DraftService failed purchase quarantine persistence', () => {
+  const persistedIds: string[] = [];
+
   beforeEach(async () => {
     await db.open();
-    await db.draft_invoices.clear();
+    TokenProvider.setSession(
+      { id: 'quarantine-test-user', tenantId: 'quarantine-test-tenant', branchId: 'quarantine-test-branch' } as any,
+      'quarantine-test-access',
+      'quarantine-test-refresh'
+    );
   });
 
   afterEach(async () => {
-    await db.draft_invoices.clear();
+    for (const id of persistedIds.splice(0)) {
+      await DraftService.clearInvoiceDraft(id);
+    }
+    TokenProvider.clearSession();
   });
 
   it('persists and reads back the failed draft using draftId, the Dexie primary key', async () => {
+    const draftId = `FAILED-${Date.now()}-operation-1`;
     const draft = {
-      id: 'FAILED-1700000000000-operation-1',
-      draftId: 'FAILED-1700000000000-operation-1',
+      id: draftId,
+      draftId,
       invoiceType: 'PURCHASE' as const,
       status: 'FAILED_QUARANTINED' as const,
+      tenantId: 'quarantine-test-tenant',
+      branchId: 'quarantine-test-branch',
       header: { invoice_number: 'PUR-100' },
       items: [{ productId: 'product-1', qty: 2, price: 10 }],
       totals: { adjData: { discountPercent: 0 } },
@@ -63,11 +76,14 @@ describe('DraftService failed purchase quarantine persistence', () => {
     };
 
     await DraftService.quarantineInvoiceDraft(draft);
+    persistedIds.push(draft.draftId);
 
     await expect(DraftService.getInvoiceDraft(draft.draftId)).resolves.toMatchObject({
       draftId: draft.draftId,
       status: 'FAILED_QUARANTINED',
-      invoiceType: 'PURCHASE'
+      invoiceType: 'PURCHASE',
+      tenantId: 'quarantine-test-tenant',
+      branchId: 'quarantine-test-branch'
     });
   });
 
