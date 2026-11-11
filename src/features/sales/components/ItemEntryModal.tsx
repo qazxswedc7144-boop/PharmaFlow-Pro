@@ -223,10 +223,16 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
         layersById.set(String(layer.id || JSON.stringify(layer)), layer);
       });
       const layers = Array.from(layersById.values());
-      const tenantId = getCurrentUserSession().tenantId;
-      const ownedBatches = batchRecords.filter((batch: any) => (
+      const currentScope = getCurrentUserSession();
+      const tenantId = currentScope.tenantId;
+      const branchId = currentScope.branchId;
+      const tenantBatches = batchRecords.filter((batch: any) => (
         tenantId && (batch.tenantId || batch.tenant_id) === tenantId
       ));
+      const ownedBatches = tenantBatches.filter((batch: any) => {
+        const batchBranchId = batch.branchId || batch.branch_id;
+        return !branchId || !batchBranchId || batchBranchId === branchId;
+      });
       const positiveLayers = layers.filter((layer: any) => {
         const quantity = Number(
           layer.quantity_remaining ?? layer.quantityRemaining ??
@@ -244,7 +250,7 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
       // FIFO layers cap the balance; medicineBatches supplies batch expiry and
       // sellable batch quantity. Never fall back to product master stock in sales.
       let stock = mode === 'sale'
-        ? getSellableLayerQuantity(layers, ownedBatches, batchRecords.length > 0)
+        ? getSellableLayerQuantity(layers, ownedBatches, tenantBatches.length > 0)
         : (prod?.StockQuantity ?? prod?.stock ?? 0);
 
       if (mode !== 'sale' && activeLayers.length > 0) {
@@ -458,17 +464,22 @@ if (mode === 'sale') {
             layersByProduct.set(productId, current);
           });
 
-          const tenantId = getCurrentUserSession().tenantId;
+          const currentScope = getCurrentUserSession();
+          const tenantId = currentScope.tenantId;
+          const branchId = currentScope.branchId;
           const batchRecordsByProduct = new Map<string, any[]>();
           const ownedBatchesByProduct = new Map<string, any[]>();
           allBatchRecords.forEach((batch: any) => {
             const productId = String(batch.productId || batch.product_id || '');
-            if (!productIds.includes(productId)) return;
+            if (!productIds.includes(productId) || !tenantId) return;
+            if ((batch.tenantId || batch.tenant_id) !== tenantId) return;
+
             const allForProduct = batchRecordsByProduct.get(productId) || [];
             allForProduct.push(batch);
             batchRecordsByProduct.set(productId, allForProduct);
 
-            if (tenantId && (batch.tenantId || batch.tenant_id) === tenantId) {
+            const batchBranchId = batch.branchId || batch.branch_id;
+            if (!branchId || !batchBranchId || batchBranchId === branchId) {
               const ownedForProduct = ownedBatchesByProduct.get(productId) || [];
               ownedForProduct.push(batch);
               ownedBatchesByProduct.set(productId, ownedForProduct);
