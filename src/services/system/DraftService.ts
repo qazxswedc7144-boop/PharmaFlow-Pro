@@ -1,4 +1,5 @@
 import { db } from '@/core/db';
+import { selectRecoverablePurchaseDraft } from './recoverablePurchaseDraft';
 
 export interface DraftData {
   id: string; // e.g., 'sales', 'purchases', 'supplier-payment', 'customer-receipt'
@@ -122,23 +123,7 @@ export const DraftService = {
         .where('invoiceType')
         .equals('PURCHASE')
         .toArray();
-      const failed = drafts
-        .filter((draft: any) => draft.status === 'FAILED_QUARANTINED' && !draft.recoveredAt)
-        .sort((a: any, b: any) =>
-          new Date(b.updatedAt || b.createdAt || 0).getTime() -
-          new Date(a.updatedAt || a.createdAt || 0).getTime()
-        );
-
-      // A failed-save quarantine is the authoritative point-in-time snapshot;
-      // a debounced active draft may be older and omit the last entered item.
-      if (failed.length > 0) return failed[0];
-
-      return drafts
-        .filter((draft: any) => draft.status !== 'FAILED_QUARANTINED')
-        .sort((a: any, b: any) =>
-          new Date(b.updatedAt || b.createdAt || 0).getTime() -
-          new Date(a.updatedAt || a.createdAt || 0).getTime()
-        )[0];
+      return selectRecoverablePurchaseDraft(drafts as any[]);
     } catch (e) {
       console.error('[DraftService] Failed to load recoverable purchase draft:', e);
       return undefined;
