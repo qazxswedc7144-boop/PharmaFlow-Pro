@@ -508,10 +508,13 @@ if (mode === 'sale') {
   const handleFinalize = async () => {
     if (!manualItemName || !tempQty || !tempPrice) return;
     
-    const searchName = manualItemName.trim().toLowerCase();
-    let existing = await db.products.filter(p => 
-      ((p.Name || p.name || '')).trim().toLowerCase() === searchName
-    ).first().catch(() => null);
+    const searchName = manualItemName.trim();
+    // Both product-name casings are indexed in Dexie schema v12.
+    // Use indexed case-insensitive equality instead of scanning every product row.
+    let existing = await db.products.where('Name').equalsIgnoreCase(searchName).first();
+    if (!existing) {
+      existing = await db.products.where('name').equalsIgnoreCase(searchName).first();
+    }
 
     let finalProductId = selectedProductId || existing?.id || null;
 
