@@ -14,6 +14,7 @@ import { getProjectedAutocompleteStock } from '@features/inventory/utils/project
 import { createNewPurchaseProductRecord } from '@features/inventory/utils/newPurchaseProduct';
 import { formatProductRegistrationError } from './productRegistrationError';
 import { findExistingProductByName } from './productLookup';
+import { getSellableLayerQuantity } from '../utils/saleStockAvailability';
 
 interface ProductItem {
   id: string;
@@ -209,32 +210,45 @@ export const ItemEntryModal: React.FC<ItemEntryModalProps> = ({
     if (!prodId) return;
     const currentRequestId = ++requestIdRef.current;
     try {
-      // 1. Fetch live stock from product master & inventory layers
+      // 1. Read FIFO layers through their declared Dexie indexes.
+      // FIFOEngine writes item_id + quantity_remaining; legacy rows may use productId.
       const prod = currentProd || (await db.products.get(prodId)) as ProductItem;
-      let stock = prod?.StockQuantity ?? prod?.stock ?? 0;
-      
-      // Also query available active layers for batches and expiry
-      const layers = await db.inventory_layers.where('product_id').equals(prodId).toArray().catch(() => []);
-      let activeLayers = layers.filter((l: any) => (l.remaining_qty || l.remainingQty || 0) > 0);
-      
-      // In sales mode: Filter out expired layers
-      if (mode === 'sale' && activeLayers.length > 0) {
-        const nonExpiredLayers = activeLayers.filter((l: any) => {
-          const exp = l.expiry_date || l.expiryDate;
-          return !getExpiryStatus(exp).isExpired;
-        });
-        
-        if (nonExpiredLayers.length > 0) {
-          activeLayers = nonExpiredLayers;
-          const layerStock = activeLayers.reduce((sum: number, l: any) => sum + (l.remaining_qty || l.remainingQty || 0), 0);
-          stock = layerStock;
-        } else {
-          // All active layers are expired
-          stock = 0;
-          activeLayers = [];
-        }
-      } else if (activeLayers.length > 0) {
-        const layerStock = activeLayers.reduce((sum: number, l: any) => sum + (l.remaining_qty || l.remainingQty || 0), 0);
+      const [itemIdLayers, productIdLayers] = await Promise.all([
+        db.inventory_layers.where('item_id').equals(prodId).toArray(),
+        db.inventory_layers.where('productId').equals(prodId).toArray()
+      ]);
+      const layersById = new Map<string, any>();
+      [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
+        layersById.set(String(layer.id || JSON.stringify(layer)), layer);
+      });
+      const layers = Array.from(layersById.values());
+      const positiveLayers = layers.filter((layer: any) => {
+        const quantity = Number(
+          layer.quantity_remaining ?? layer.quantityRemaining ??
+          layer.remaining_qty ?? layer.remainingQty ?? 0
+        );
+        return Number.isFinite(quantity) && quantity > 0;
+      });
+      let activeLayers = mode === 'sale'
+        ? positiveLayers.filter((layer: any) => {
+            const expiry = layer.expiry_date || layer.expiryDate;
+            return !getExpiryStatus(expiry).isExpired;
+          })
+        : positiveLayers;
+
+      // In sales mode, FIFO layers are authoritative. Never fall back to the
+      // product master balance when no valid, non-expired layer exists.
+      let stock = mode === 'sale'
+        ? getSellableLayerQuantity(layers)
+        : (prod?.StockQuantity ?? prod?.stock ?? 0);
+
+      if (mode !== 'sale' && activeLayers.length > 0) {
+        const layerStock = activeLayers.reduce((sum: number, layer: any) => (
+          sum + Number(
+            layer.quantity_remaining ?? layer.quantityRemaining ??
+            layer.remaining_qty ?? layer.remainingQty ?? 0
+          )
+        ), 0);
         if (layerStock > 0) stock = layerStock;
       }
 
@@ -419,8 +433,25 @@ if (mode === 'sale') {
         });
         let results = Array.from(combinedMap.values());
 
-        if (mode === 'sale' && !isReturnMode) {
-          results = results.filter(p => (p.StockQuantity || p.stock || 0) > 0);
+        if (mode === 'sale' && !isReturnMode && results.length > 0) {
+          const productIds = results.map((product: any) => product.id || product.ProductID).filter(Boolean);
+          const [itemIdLayers, productIdLayers] = await Promise.all([
+            db.inventory_layers.where('item_id').anyOf(productIds).toArray(),
+            db.inventory_layers.where('productId').anyOf(productIds).toArray()
+          ]);
+          const layersByProduct = new Map<string, any[]>();
+          [...itemIdLayers, ...productIdLayers].forEach((layer: any) => {
+            const productId = String(layer.item_id || layer.product_id || layer.productId || '');
+            if (!productIds.includes(productId)) return;
+            const current = layersByProduct.get(productId) || [];
+            current.push(layer);
+            layersByProduct.set(productId, current);
+          });
+
+          results = results.filter((product: any) => {
+            const productId = String(product.id || product.ProductID || '');
+            return getSellableLayerQuantity(layersByProduct.get(productId) || []) > 0;
+          });
         }
 
         results = results.slice(0, 20);
