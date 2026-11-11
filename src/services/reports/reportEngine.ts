@@ -33,12 +33,17 @@ export class ReportEngine {
    * Defers report-cache refresh work to the next event-loop turn so domain
    * workflows and projection queue acknowledgements do not wait for it.
    */
-  scheduleRefresh(): void {
+  static scheduleRefreshInBackground(): void {
     setTimeout(() => {
-      void this.refresh().catch((error: unknown) => {
+      void ReportEngine.refresh().catch((error: unknown) => {
         console.error('[ReportEngine] Background refresh failed:', error);
       });
     }, 0);
+  }
+
+  /** Instance wrapper for services holding the reportEngine singleton. */
+  scheduleRefresh(): void {
+    ReportEngine.scheduleRefreshInBackground();
   }
   
   /**
