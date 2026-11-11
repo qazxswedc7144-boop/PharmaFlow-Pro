@@ -67,6 +67,8 @@ export interface BusinessWorkflow<TInput = any, TResult = any> {
   requiredPermissions?: string[];
   /** Sync mutation is durably written inside the domain transaction; dispatch must remain post-commit and non-blocking. */
   syncHandledInDomainTransaction?: boolean;
+  /** Use the in-tab guard instead of a remote Redis lock for local-first catalog operations. */
+  localExecutionGuard?: boolean;
   tables?: string[];
   hooks?: WorkflowHooks<TInput, TResult>;
   validateInput?: (input: TInput, ctx: WorkflowContext) => Promise<void>;
