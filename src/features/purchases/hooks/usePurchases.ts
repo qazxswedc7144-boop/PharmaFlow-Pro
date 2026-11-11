@@ -5,6 +5,7 @@ import { Product, InvoiceStatus, InvoiceItem, PaymentStatus, Supplier } from '@/
 import { useUI, useInventory, useAccounting } from '@/contexts/AppContext';
 import { useAppStore } from '@/hooks/useAppStore';
 import { authService } from '@features/auth/services/authService';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
 import { SupplierRepository } from '@/database/repositories/SupplierRepository';
 import { auditLogService } from '@/services/audit/auditLog';
@@ -30,9 +31,10 @@ import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOp
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
 function getPurchaseDraftKeys() {
-  const user = authService.getCurrentUser() as any;
-  const tenantId = String(user?.tenantId || user?.tenant_id || '').trim();
-  const branchValue = user?.branchId || user?.branch_id;
+  const session = TokenProvider.getCurrentSession();
+  const user = session.user as any;
+  const tenantId = String(session.tenantId || user?.tenantId || user?.tenant_id || '').trim();
+  const branchValue = session.branchId || user?.branchId || user?.branch_id;
   const branchId = typeof branchValue === 'string' && branchValue.trim() ? branchValue.trim() : null;
   if (!tenantId) throw new Error('PURCHASE_DRAFT_TENANT_REQUIRED: refusing to use an unscoped purchase draft.');
   const tenantKey = encodeURIComponent(tenantId);
@@ -592,8 +594,8 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         // Quarantine is the durable recovery source. Attempt each active-draft
         // cleanup independently so one failed delete cannot block the UI reset.
         const cleanupResults = await Promise.allSettled([
-          Promise.resolve().then(() => db.draft_invoices.delete('purchases_draft_current')),
-          Promise.resolve().then(() => db.drafts.delete('purchases')),
+          Promise.resolve().then(() => DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId)),
+          Promise.resolve().then(() => DraftService.clearDraft(purchaseDraftKeys!.draftId)),
           Promise.resolve().then(() => configurationService.set(purchaseDraftKeys!.configKey, null))
         ]);
         activeDraftCleanupComplete = cleanupResults.every(result => result.status === 'fulfilled');
