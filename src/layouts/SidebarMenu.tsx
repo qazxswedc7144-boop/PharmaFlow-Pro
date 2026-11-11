@@ -322,7 +322,9 @@ export const SidebarMenu: React.FC<SidebarMenuProps> = ({ isOpen, onClose, onNav
               <button 
                 onClick={() => {
                   onClose();
-                  void signOut().finally(() => {
+                  void signOut().catch((logoutError) => {
+                    console.error('[SidebarMenu] Logout failed:', logoutError);
+                  }).finally(() => {
                     window.location.hash = '#/login';
                   });
                 }} 
