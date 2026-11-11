@@ -8,9 +8,10 @@ export interface FailedPurchaseDraftInput {
 
 export function buildFailedPurchaseDraft(input: FailedPurchaseDraftInput) {
   const now = new Date().toISOString();
+  const quarantineId = `FAILED-${Date.now()}-${input.operationId}`;
   return {
-    id: `failed_purchase_${input.operationId}`,
-    draftId: `failed_purchase_${input.operationId}`,
+    id: quarantineId,
+    draftId: quarantineId,
     invoiceType: 'PURCHASE' as const,
     status: 'FAILED_QUARANTINED' as const,
     header: JSON.parse(JSON.stringify(input.header)),
