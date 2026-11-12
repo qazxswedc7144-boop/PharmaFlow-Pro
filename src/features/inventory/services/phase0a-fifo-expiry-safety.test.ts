@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { db } from "@/core/db";
 import { FIFOEngine } from "./fifoEngine";
 import { UnifiedInventoryMutationEngine } from "./UnifiedInventoryMutationEngine";
 import { FifoService } from "../../../../server/modules/inventory/services/fifo.service";
-import { getExpiryStatus } from "@/utils/expiryUtils";
 
 const TENANT = "TENANT-PHASE-0A";
 const BRANCH = "BRANCH-PHASE-0A";
@@ -135,10 +133,44 @@ describe("Phase 0A — FIFO & Expiry safety (tests only)", () => {
     expect(batches.rows.find((row) => row.id === "BATCH-VALID")?.quantity).toBe(4);
   });
 
-  it("T-03: records the current null-expiry utility behavior without declaring it an accepted stock policy", () => {
-    // Characterization only: getExpiryStatus(null) currently treats the date as unknown,
-    // not expired. Product policy for missing expiry dates remains an explicit decision.
-    expect(getExpiryStatus(null).isExpired).toBe(false);
+  it("T-03: consumes dated valid layers before NULL layers and allows NULL-only stock", async () => {
+    const layers = makeFifoTable([
+      { id: "LAYER-VALID", item_id: PRODUCT, quantity_initial: 2, quantity_remaining: 2, unit_cost: 10, expiry_date: "2099-12-31", created_at: "2026-01-01", tenantId: TENANT },
+      { id: "LAYER-NULL", item_id: PRODUCT, quantity_initial: 5, quantity_remaining: 5, unit_cost: 20, expiry_date: null, created_at: "2026-01-02", tenantId: TENANT },
+      { id: "LAYER-EXPIRED", item_id: PRODUCT, quantity_initial: 7, quantity_remaining: 7, unit_cost: 30, expiry_date: "2000-01-01", created_at: "2025-01-01", tenantId: TENANT },
+    ]);
+    const logs = makeFifoTable([]);
+    const tx = { table: vi.fn((name: string) => name === "inventory_layers" ? layers : logs) };
+
+    await FIFOEngine.consumeFIFO("SALE-T03-A", PRODUCT, 3, TENANT, tx);
+
+    expect(layers.rows.find((row) => row.id === "LAYER-VALID")?.quantity_remaining).toBe(0);
+    expect(layers.rows.find((row) => row.id === "LAYER-NULL")?.quantity_remaining).toBe(4);
+    expect(layers.rows.find((row) => row.id === "LAYER-EXPIRED")?.quantity_remaining).toBe(7);
+    expect(logs.rows.map((row) => row.layer_id)).toEqual(["LAYER-VALID", "LAYER-NULL"]);
+
+    const nullOnlyLayers = makeFifoTable([
+      { id: "LAYER-NULL-ONLY", item_id: PRODUCT, quantity_initial: 2, quantity_remaining: 2, unit_cost: 15, expiry_date: "", created_at: "2026-01-03", tenantId: TENANT },
+    ]);
+    const nullOnlyLogs = makeFifoTable([]);
+    const nullOnlyTx = { table: vi.fn((name: string) => name === "inventory_layers" ? nullOnlyLayers : nullOnlyLogs) };
+
+    await expect(FIFOEngine.consumeFIFO("SALE-T03-B", PRODUCT, 1, TENANT, nullOnlyTx))
+      .resolves.toMatchObject({ totalCost: 15, unitCost: 15 });
+    expect(nullOnlyLayers.rows[0].quantity_remaining).toBe(1);
+  });
+
+  it("stores expiry_date and batch_number on purchase FIFO layers", async () => {
+    const rows: any[] = [];
+    const layers = { add: vi.fn(async (row: any) => { rows.push(row); }) };
+    const tx = { table: vi.fn(() => layers) };
+
+    await FIFOEngine.addPurchaseLayer("PROD-META", 4, 12, "PUR-META", TENANT, tx, "2099-10-01", "BATCH-META");
+
+    expect(layers.add).toHaveBeenCalledWith(expect.objectContaining({
+      expiry_date: "2099-10-01",
+      batch_number: "BATCH-META",
+    }));
   });
 
   it("T-04: rejects FIFO consumption when requested quantity exceeds all available layers", async () => {
@@ -177,14 +209,7 @@ describe("Phase 0A — FIFO & Expiry safety (tests only)", () => {
     const tx = {
       $queryRaw: vi.fn()
         .mockResolvedValueOnce([{ id: PRODUCT, tenantId: TENANT, stockQuantity: 10, version: 0 }])
-        .mockResolvedValueOnce([{
-          id: "SERVER-EXPIRED",
-          batchNumber: "SERVER-EXPIRED-06",
-          stockQuantity: 5,
-          cost: 12,
-          expiryDate: new Date("2000-01-01T00:00:00.000Z"),
-          version: 0,
-        }]),
+        .mockResolvedValueOnce([]),
       inventoryBatch: { update: vi.fn() },
       inventoryMovement: { create: vi.fn() },
       product: { update: vi.fn() },
@@ -198,8 +223,11 @@ describe("Phase 0A — FIFO & Expiry safety (tests only)", () => {
       "INVOICE",
       "Phase 0A expired batch test",
       TENANT,
-    )).rejects.toThrow(/EXPIRED|EXPIRY|NO_ELIGIBLE_BATCH/i);
+    )).rejects.toThrow(/FIFO_DEPLETION_MISMATCH|INSUFFICIENT_FIFO_STOCK/i);
 
+    const batchQuery = tx.$queryRaw.mock.calls[1][0];
+    expect(batchQuery.sql).toContain('"expiryDate" IS NULL OR "expiryDate" > NOW()');
+    expect(batchQuery.sql).toContain('"expiryDate" ASC NULLS LAST');
     expect(tx.inventoryBatch.update).not.toHaveBeenCalled();
     expect(tx.inventoryMovement.create).not.toHaveBeenCalled();
     expect(tx.product.update).not.toHaveBeenCalled();
