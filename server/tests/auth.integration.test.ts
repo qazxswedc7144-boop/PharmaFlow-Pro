@@ -1,4 +1,6 @@
 import { expect, it } from "vitest";
+import jwt from "jsonwebtoken";
+import { getJwtSecret } from "../security/jwtSecrets.js";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
 definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) => {
@@ -90,4 +92,52 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     expect(recovered.body.data.tenantId).toBe(ctx.tenantAId);
     expect(recovered.body.contextCorrected).toBe(true);
   });
+  it("rejects admin-reset without authentication and denies tenant ADMIN", async () => {
+    const ctx = getContext();
+
+    const anonymous = await request(ctx, "/api/auth/admin-reset", {
+      method: "POST",
+      body: { username: ctx.usernameA }
+    });
+    expect(anonymous.status).toBe(401);
+
+    const tenantAdmin = await request(ctx, "/api/auth/admin-reset", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: { username: ctx.usernameA }
+    });
+    expect(tenantAdmin.status).toBe(403);
+  });
+
+  it("fails closed when ADMIN_RESET_KEY is missing for an authenticated Platform Owner", async () => {
+    const ctx = getContext();
+    const originalResetKey = process.env.ADMIN_RESET_KEY;
+    delete process.env.ADMIN_RESET_KEY;
+
+    try {
+      const platformOwnerToken = jwt.sign(
+        {
+          userId: "ci-platform-owner",
+          username: "ci-platform-owner",
+          role: "PLATFORM_OWNER",
+          tenantId: ctx.tenantAId
+        },
+        getJwtSecret(),
+        { expiresIn: "5m" }
+      );
+
+      const response = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: platformOwnerToken,
+        body: { username: ctx.usernameA }
+      });
+
+      expect(response.status).toBe(503);
+      expect(response.body.error).toBe("ADMIN_RESET_DISABLED");
+    } finally {
+      if (originalResetKey === undefined) delete process.env.ADMIN_RESET_KEY;
+      else process.env.ADMIN_RESET_KEY = originalResetKey;
+    }
+  });
+
 });
