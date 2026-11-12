@@ -149,6 +149,42 @@ describe("Phase 0A — FIFO & Expiry safety (tests only)", () => {
     expect(layers.rows.find((row) => row.id === "LAYER-EXPIRED")?.quantity_remaining).toBe(7);
     expect(logs.rows.map((row) => row.layer_id)).toEqual(["LAYER-VALID", "LAYER-NULL"]);
 
+    // The pharmacy batch projection must apply the same FEFO + NULLS LAST policy.
+    const medicineBatches = makeBatchTable([
+      { id: "MED-VALID", productId: PRODUCT, batchNumber: "MED-VALID", quantity: 2, expiryDate: "2099-12-31", tenantId: TENANT, warehouseId: WAREHOUSE },
+      { id: "MED-NULL", productId: PRODUCT, batchNumber: "MED-NULL", quantity: 5, expiryDate: null, tenantId: TENANT, warehouseId: WAREHOUSE },
+      { id: "MED-EXPIRED", productId: PRODUCT, batchNumber: "MED-EXPIRED", quantity: 7, expiryDate: "2000-01-01", tenantId: TENANT, warehouseId: WAREHOUSE },
+    ]);
+    const medicineTx = { table: vi.fn(() => medicineBatches) };
+    await (UnifiedInventoryMutationEngine.getInstance() as any).mutateMedicineBatch({
+      productId: PRODUCT,
+      warehouseId: WAREHOUSE,
+      delta: -3,
+      movementType: "SALE",
+      docId: "SALE-T03-MED",
+      tenantId: TENANT,
+      branchId: BRANCH,
+      timestamp: new Date().toISOString(),
+    }, medicineTx);
+    expect(medicineBatches.rows.find((row) => row.id === "MED-VALID")?.quantity).toBe(0);
+    expect(medicineBatches.rows.find((row) => row.id === "MED-NULL")?.quantity).toBe(4);
+    expect(medicineBatches.rows.find((row) => row.id === "MED-EXPIRED")?.quantity).toBe(7);
+
+    const nullOnlyBatches = makeBatchTable([
+      { id: "MED-NULL-ONLY", productId: PRODUCT, batchNumber: "MED-NULL-ONLY", quantity: 2, expiryDate: "", tenantId: TENANT, warehouseId: WAREHOUSE },
+    ]);
+    await (UnifiedInventoryMutationEngine.getInstance() as any).mutateMedicineBatch({
+      productId: PRODUCT,
+      warehouseId: WAREHOUSE,
+      delta: -1,
+      movementType: "SALE",
+      docId: "SALE-T03-MED-NULL",
+      tenantId: TENANT,
+      branchId: BRANCH,
+      timestamp: new Date().toISOString(),
+    }, { table: vi.fn(() => nullOnlyBatches) });
+    expect(nullOnlyBatches.rows[0].quantity).toBe(1);
+
     const nullOnlyLayers = makeFifoTable([
       { id: "LAYER-NULL-ONLY", item_id: PRODUCT, quantity_initial: 2, quantity_remaining: 2, unit_cost: 15, expiry_date: "", created_at: "2026-01-03", tenantId: TENANT },
     ]);
