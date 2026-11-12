@@ -824,48 +824,106 @@ authRouter.post(
       const suppliedKey = typeof req.headers["x-reset-key"] === "string"
         ? req.headers["x-reset-key"]
         : "";
-      const expectedBuffer = Buffer.from(expectedKey, "utf8");
-      const suppliedBuffer = Buffer.from(suppliedKey, "utf8");
-      const keyMatches = suppliedBuffer.length === expectedBuffer.length &&
-        crypto.timingSafeEqual(suppliedBuffer, expectedBuffer);
-
-      if (!keyMatches) {
-        return res.status(403).json({
+      const expectedDigest = crypto.createHash("sha256").update(expectedKey, "utf8").digest();
+      const suppliedDigest = crypto.createHash("sha256").update(suppliedKey, "utf8").digest();
+      if (!crypto.timingSafeEqual(suppliedDigest, expectedDigest)) {
+        return res.status(401).json({
           success: false,
-          error: "FORBIDDEN",
+          error: "INVALID_RESET_KEY",
           message: "Invalid or missing reset key."
         });
       }
 
-      const targetUsername = typeof req.body?.username === "string" && req.body.username.trim()
-        ? req.body.username.trim()
-        : "admin";
-
-      const deletedCount = await prisma.$transaction(async (tx) => {
-        const users = await tx.user.findMany({
-          where: { username: targetUsername },
-          select: { id: true }
+      const targetUserId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
+      const targetTenantId = typeof req.body?.targetTenantId === "string" ? req.body.targetTenantId.trim() : "";
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidPattern.test(targetUserId) || !uuidPattern.test(targetTenantId)) {
+        return res.status(400).json({
+          success: false,
+          error: "INVALID_TARGET",
+          message: "A valid userId and explicit targetTenantId are required."
         });
-        const userIds = users.map((user) => user.id);
-        if (userIds.length === 0) return 0;
+      }
 
-        await tx.refreshToken.deleteMany({
-          where: { userId: { in: userIds } }
+      if (targetUserId === req.user!.userId) {
+        return res.status(403).json({
+          success: false,
+          error: "SELF_RESET_FORBIDDEN",
+          message: "A Platform Owner cannot delete their own account through admin-reset."
+        });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const targetUser = await tx.user.findUnique({
+          where: { id: targetUserId },
+          select: { id: true, username: true, role: true }
+        });
+        if (!targetUser) return { kind: "not_found" as const };
+
+        const memberships = await tx.tenantUser.findMany({
+          where: { userId: targetUserId },
+          select: { tenantId: true }
+        });
+        if (memberships.length !== 1 || memberships[0]?.tenantId !== targetTenantId) {
+          return { kind: "scope_denied" as const };
+        }
+
+        await tx.refreshToken.deleteMany({ where: { userId: targetUserId } });
+        await tx.user.delete({ where: { id: targetUserId } });
+
+        const deletedAt = new Date();
+        await tx.auditLog.create({
+          data: {
+            userId: req.user!.userId,
+            action: "DELETE",
+            entity: "User",
+            entityId: targetUserId,
+            before: JSON.stringify({
+              userId: targetUser.id,
+              username: targetUser.username,
+              role: targetUser.role,
+              tenantId: targetTenantId
+            }),
+            after: JSON.stringify({
+              deleted: true,
+              deletedAt: deletedAt.toISOString(),
+              targetTenantId,
+              actorUserId: req.user!.userId,
+              userAgent: req.get("user-agent") || null
+            }),
+            timestamp: deletedAt,
+            ipAddress: req.ip || req.socket.remoteAddress || null,
+            tenantId: targetTenantId
+          }
         });
 
-        const deletedUsers = await tx.user.deleteMany({
-          where: { id: { in: userIds } }
-        });
-        return deletedUsers.count;
+        return { kind: "deleted" as const, userId: targetUser.id };
       });
 
-      return res.json({
+      if (result.kind === "not_found") {
+        return res.status(404).json({ success: false, error: "USER_NOT_FOUND" });
+      }
+      if (result.kind === "scope_denied") {
+        return res.status(403).json({
+          success: false,
+          error: "TARGET_TENANT_SCOPE_DENIED",
+          message: "The target user is not exclusively associated with the explicitly supplied tenant."
+        });
+      }
+
+      return res.status(200).json({
         success: true,
-        deletedCount,
-        message: `Successfully reset user ${targetUsername}.`
+        deletedCount: 1,
+        userId: result.userId,
+        targetTenantId
       });
     } catch (err: any) {
-      return res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
+      console.error("[admin-reset] Transaction failed:", err?.message || err);
+      return res.status(500).json({
+        success: false,
+        error: "ADMIN_RESET_FAILED",
+        message: "The reset operation failed and no partial changes were committed."
+      });
     }
   }
 );
