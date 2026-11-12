@@ -788,7 +788,7 @@ export class UnifiedInventoryMutationEngine {
     const isOutward = delta < 0 && ['SALE', 'DISPATCH', 'TRANSFER_OUT', 'ADJUSTMENT', 'CORRECTION', 'DAMAGE', 'RETURN'].includes(movementType);
 
     if (isInward) {
-      await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId, tx, expiryDate ?? null, batchNumber ?? batchId ?? null);
+      await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId, tx, expiryDate ?? null, batchNumber ?? null);
     } else if (isOutward) {
       const fifoConsumption = await FIFOEngine.consumeFIFO(docId, productId, Math.abs(delta), tenantId, tx);
       if (fifoConsumption && fifoConsumption.unitCost > 0) {
