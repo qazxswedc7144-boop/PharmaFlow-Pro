@@ -24,7 +24,7 @@ export class FIFOEngine {
   /**
    * ON PURCHASE: Create new layer directly in inventory_layers
    */
-  static async addPurchaseLayer(item_id: string, quantity: number, unit_cost: number, reference_id: string, tenantId?: string, tx?: any): Promise<void> {
+  static async addPurchaseLayer(item_id: string, quantity: number, unit_cost: number, reference_id: string, tenantId?: string, tx?: any, expiryDate?: string | null, batchNumber?: string | null): Promise<void> {
     if (tx && typeof tx.table !== 'function') throw new Error('INVALID_FIFO_TRANSACTION');
     const inventoryLayers = tx ? tx.table('inventory_layers') : db.inventory_layers;
     const layerId = db.generateId('LYR');
@@ -37,6 +37,8 @@ export class FIFOEngine {
       unit_cost: unit_cost,
       reference_id: reference_id,
       purchase_id: reference_id,
+      expiry_date: expiryDate && expiryDate.trim() ? expiryDate : null,
+      batch_number: batchNumber && batchNumber.trim() ? batchNumber : null,
       created_at: new Date().toISOString(),
       lastModified: new Date().toISOString(),
       ...(tenantId ? { tenant_id: tenantId, tenantId } : {})
@@ -57,12 +59,25 @@ export class FIFOEngine {
         if (!match) return false;
         if (tenantId && l.tenant_id && l.tenant_id !== tenantId) return false;
         if (tenantId && l.tenantId && l.tenantId !== tenantId) return false;
+        const expiryValue = l.expiry_date ?? l.expiryDate;
+        if (expiryValue !== null && expiryValue !== undefined && expiryValue !== '') {
+          const expiryTime = new Date(expiryValue).getTime();
+          if (!Number.isFinite(expiryTime) || expiryTime < Date.now()) return false;
+        }
         return true;
       })
       .toArray();
 
-    // Sort by creation date (FIFO)
-    layers.sort((a, b) => new Date(a.created_at || a.createdAt || 0).getTime() - new Date(b.created_at || b.createdAt || 0).getTime());
+    // FEFO: known valid expiry dates first; missing expiry dates are sellable but NULLS LAST.
+    // FIFO creation time is the deterministic tie-breaker for equal/missing expiry dates.
+    layers.sort((a, b) => {
+      const expiryA = a.expiry_date ?? a.expiryDate;
+      const expiryB = b.expiry_date ?? b.expiryDate;
+      const timeA = expiryA === null || expiryA === undefined || expiryA === '' ? Number.POSITIVE_INFINITY : new Date(expiryA).getTime();
+      const timeB = expiryB === null || expiryB === undefined || expiryB === '' ? Number.POSITIVE_INFINITY : new Date(expiryB).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return new Date(a.created_at || a.createdAt || 0).getTime() - new Date(b.created_at || b.createdAt || 0).getTime();
+    });
 
     let remainingToConsume = absQty;
     let totalCost = 0;
@@ -97,6 +112,11 @@ export class FIFOEngine {
         created_at: new Date().toISOString(),
         ...(tenantId ? { tenant_id: tenantId, tenantId } : {})
       });
+    }
+
+    // Preflight before the first Dexie write: never partially consume FIFO layers.
+    if (remainingToConsume > 0) {
+      throw new Error(`INSUFFICIENT_FIFO_STOCK: Requested ${absQty} units of ${item_id}, but only ${totalConsumed} eligible FIFO units are available.`);
     }
 
     for (const ul of updatedLayers) {
@@ -206,7 +226,7 @@ export class FIFOEngine {
 
       for (const item of items) {
         const returnCost = type === 'SALE' ? (item.cost || item.price) : item.price;
-        await this.addPurchaseLayer(item.product_id, item.qty, returnCost, invoiceId, undefined, tx);
+        await this.addPurchaseLayer(item.product_id, item.qty, returnCost, invoiceId, undefined, tx, (item as any).expiryDate ?? (item as any).expiry_date ?? null, (item as any).batchNumber ?? (item as any).batch_number ?? null);
         itemCosts[item.product_id] = item.qty * returnCost;
         totalCost += itemCosts[item.product_id] ?? 0;
       }
