@@ -1128,7 +1128,7 @@ const brInv = await branchInventoryTable
             warehouseId,
             warehouse_id: warehouseId,
             quantity: delta,
-            expiryDate: expiryDate || '',
+            expiryDate: expiryDate && expiryDate.trim() ? expiryDate : null,
             unitCost: unitCost || 0,
             cost: unitCost || 0,
             sourceInvoiceId: docId,
