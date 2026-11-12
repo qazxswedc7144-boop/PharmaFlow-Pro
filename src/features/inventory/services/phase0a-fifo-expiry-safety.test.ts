@@ -19,6 +19,12 @@ function makeBatchTable(initial: any[] = []) {
       Object.assign(row, patch);
       return 1;
     }),
+    put: vi.fn(async (row: any) => {
+      const existing = rows.findIndex((item) => item.id === row.id);
+      if (existing >= 0) rows[existing] = row;
+      else rows.push(row);
+      return row.id;
+    }),
     filter: vi.fn((predicate: (row: any) => boolean) => {
       const selected = rows.filter(predicate);
       return {
@@ -207,6 +213,28 @@ describe("Phase 0B — FIFO & Expiry safety regression", () => {
       expiry_date: "2099-10-01",
       batch_number: "BATCH-META",
     }));
+
+    await FIFOEngine.addPurchaseLayer("PROD-META-NULL", 2, 8, "PUR-META-NULL", TENANT, tx, "", "");
+    expect(layers.add).toHaveBeenLastCalledWith(expect.objectContaining({
+      expiry_date: null,
+      batch_number: null,
+    }));
+
+    const medicineBatches = makeBatchTable([]);
+    await (UnifiedInventoryMutationEngine.getInstance() as any).mutateMedicineBatch({
+      productId: "PROD-META-NULL",
+      warehouseId: WAREHOUSE,
+      delta: 2,
+      movementType: "PURCHASE",
+      batchNumber: "BATCH-NULL-EXPIRY",
+      expiryDate: "",
+      unitCost: 8,
+      docId: "PUR-META-NULL",
+      tenantId: TENANT,
+      branchId: BRANCH,
+      timestamp: new Date().toISOString(),
+    }, { table: vi.fn(() => medicineBatches) });
+    expect(medicineBatches.rows[0].expiryDate).toBeNull();
   });
 
   it("T-04: rejects FIFO consumption when requested quantity exceeds all available layers", async () => {
