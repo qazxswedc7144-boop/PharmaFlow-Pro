@@ -788,7 +788,7 @@ export class UnifiedInventoryMutationEngine {
     const isOutward = delta < 0 && ['SALE', 'DISPATCH', 'TRANSFER_OUT', 'ADJUSTMENT', 'CORRECTION', 'DAMAGE', 'RETURN'].includes(movementType);
 
     if (isInward) {
-      await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId, tx);
+      await FIFOEngine.addPurchaseLayer(productId, Math.abs(delta), resolvedUnitCost, docId, tenantId, tx, expiryDate ?? null, batchNumber ?? batchId ?? null);
     } else if (isOutward) {
       const fifoConsumption = await FIFOEngine.consumeFIFO(docId, productId, Math.abs(delta), tenantId, tx);
       if (fifoConsumption && fifoConsumption.unitCost > 0) {
@@ -1072,6 +1072,28 @@ const brInv = await branchInventoryTable
     const { productId, warehouseId, delta, batchId, batchNumber, expiryDate, unitCost, docId, tenantId, branchId, timestamp } = params;
     const medicineBatchesTable = tx ? tx.table('medicineBatches') : db.medicineBatches;
 
+    const getBatchExpiry = (batch: any): any => batch.expiryDate ?? batch.expiry_date ?? null;
+    const isExpiredBatch = (batch: any): boolean => {
+      const rawExpiry = getBatchExpiry(batch);
+      if (rawExpiry === null || rawExpiry === undefined || rawExpiry === '') return false;
+      const expiryTime = new Date(rawExpiry).getTime();
+      return !Number.isFinite(expiryTime) || expiryTime < Date.now();
+    };
+    const isEligibleBatch = (batch: any): boolean => {
+      const rawExpiry = getBatchExpiry(batch);
+      if (rawExpiry === null || rawExpiry === undefined || rawExpiry === '') return true;
+      const expiryTime = new Date(rawExpiry).getTime();
+      return Number.isFinite(expiryTime) && expiryTime >= Date.now();
+    };
+    const compareFefoNullsLast = (a: any, b: any): number => {
+      const expiryA = getBatchExpiry(a);
+      const expiryB = getBatchExpiry(b);
+      const timeA = expiryA === null || expiryA === undefined || expiryA === '' ? Number.POSITIVE_INFINITY : new Date(expiryA).getTime();
+      const timeB = expiryB === null || expiryB === undefined || expiryB === '' ? Number.POSITIVE_INFINITY : new Date(expiryB).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return new Date(a.created_at || a.createdAt || 0).getTime() - new Date(b.created_at || b.createdAt || 0).getTime();
+    };
+
     // 1. Inward movements (PURCHASE, TRANSFER_IN, positive ADJUSTMENT, positive CORRECTION, positive REVERSAL)
     if (delta > 0) {
       if (batchNumber || expiryDate || batchId) {
@@ -1133,6 +1155,12 @@ const brInv = await branchInventoryTable
         if (!bTenant || bTenant !== tenantId) {
           throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Batch '${batchId}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
         }
+        if (isExpiredBatch(batch)) {
+          throw new Error(`EXPIRED_BATCH_REJECTED: Batch '${batch.batchNumber || batchId}' is past its expiry date.`);
+        }
+        if (isExpiredBatch(batch)) {
+          throw new Error(`EXPIRED_BATCH_REJECTED: Batch '${batch.batchNumber || batchNumber}' is past its expiry date.`);
+        }
         const currentQty = Number(batch.quantity || 0);
         if (currentQty < deductQty) {
           throw new InsufficientStockError({
@@ -1182,22 +1210,26 @@ const brInv = await branchInventoryTable
         let batches = await medicineBatchesTable
           .where('productId')
           .equals(productId)
-          .filter((b: any) => 
+          .filter((b: any) =>
             ((b.tenantId || b.tenant_id) === tenantId) &&
             Number(b.quantity || 0) > 0 &&
-            (!b.warehouseId || b.warehouseId === warehouseId)
+            (!b.warehouseId || b.warehouseId === warehouseId) &&
+            isEligibleBatch(b)
           )
-          .sortBy('expiryDate');
+          .toArray();
+        batches.sort(compareFefoNullsLast);
 
         if (batches.length === 0) {
           batches = await medicineBatchesTable
             .where('productId')
             .equals(productId)
-            .filter((b: any) => 
+            .filter((b: any) =>
               ((b.tenantId || b.tenant_id) === tenantId) &&
-              Number(b.quantity || 0) > 0
+              Number(b.quantity || 0) > 0 &&
+              isEligibleBatch(b)
             )
-            .sortBy('expiryDate');
+            .toArray();
+          batches.sort(compareFefoNullsLast);
         }
 
         if (batches.length === 0) {
