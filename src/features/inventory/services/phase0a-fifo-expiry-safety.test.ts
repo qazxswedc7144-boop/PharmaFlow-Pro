@@ -62,7 +62,7 @@ function makeFifoTable(initial: any[] = []) {
   };
 }
 
-describe("Phase 0A — FIFO & Expiry safety (tests only)", () => {
+describe("Phase 0B — FIFO & Expiry safety regression", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("T-01: rejects an explicitly selected expired batch before changing its quantity", async () => {
@@ -241,7 +241,7 @@ describe("Phase 0A — FIFO & Expiry safety (tests only)", () => {
     expect(logs.bulkAdd).not.toHaveBeenCalled();
   });
 
-  it("T-06: server FEFO depletion refuses expired batches and does not mutate stock", async () => {
+  it("T-06: server depletion rejects when no non-expired batch is eligible", async () => {
     const tx = {
       $queryRaw: vi.fn()
         .mockResolvedValueOnce([{ id: PRODUCT, tenantId: TENANT, stockQuantity: 10, version: 0 }])
