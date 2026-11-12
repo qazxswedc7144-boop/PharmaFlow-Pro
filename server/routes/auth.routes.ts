@@ -8,6 +8,7 @@ import { Role } from "@prisma/client";
 import { LoginSchema } from "../../src/shared/validation/auth.schema.js";
 import { validateRequestBody } from "../middleware/validate.js";
 import { authenticateToken, requireRoles, AuthenticatedRequest } from "../middleware/auth.middleware.js";
+import { requirePermission } from "../middleware/permission.middleware.js";
 import { AuthorizationService } from "../services/rbac/authorization.service.js";
 import { PermissionService } from "../services/rbac/permission.service.js";
 
@@ -800,42 +801,73 @@ authRouter.post("/logout", async (req: Request, res: Response) => {
 });
 
 /**
- * TEMPORARY ENDPOINT: POST /api/auth/admin-reset
- * Reset stale admin user for Phase 13 migration.
- * Will be removed in a follow-up commit.
+ * Restricted emergency reset endpoint.
+ * Requires a Platform Owner, the dedicated RBAC permission, and an explicitly
+ * configured out-of-band reset key. It is disabled when the key is absent.
  */
-authRouter.post("/admin-reset", async (req: Request, res: Response) => {
-  try {
-    const resetKey = req.headers["x-reset-key"];
-    const expectedKey = process.env.ADMIN_RESET_KEY || "pharmaflow-admin-reset-2026";
+authRouter.post(
+  "/admin-reset",
+  authenticateToken,
+  requireRoles([Role.PLATFORM_OWNER]),
+  requirePermission("system.admin_reset"),
+  async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const expectedKey = process.env.ADMIN_RESET_KEY;
+      if (!expectedKey) {
+        return res.status(503).json({
+          success: false,
+          error: "ADMIN_RESET_DISABLED",
+          message: "The admin reset endpoint is disabled because ADMIN_RESET_KEY is not configured."
+        });
+      }
 
-    if (!resetKey || resetKey !== expectedKey) {
-      return res.status(403).json({ error: "FORBIDDEN", message: "Invalid or missing reset key." });
+      const suppliedKey = typeof req.headers["x-reset-key"] === "string"
+        ? req.headers["x-reset-key"]
+        : "";
+      const expectedBuffer = Buffer.from(expectedKey, "utf8");
+      const suppliedBuffer = Buffer.from(suppliedKey, "utf8");
+      const keyMatches = suppliedBuffer.length === expectedBuffer.length &&
+        crypto.timingSafeEqual(suppliedBuffer, expectedBuffer);
+
+      if (!keyMatches) {
+        return res.status(403).json({
+          success: false,
+          error: "FORBIDDEN",
+          message: "Invalid or missing reset key."
+        });
+      }
+
+      const targetUsername = typeof req.body?.username === "string" && req.body.username.trim()
+        ? req.body.username.trim()
+        : "admin";
+
+      const deletedCount = await prisma.$transaction(async (tx) => {
+        const users = await tx.user.findMany({
+          where: { username: targetUsername },
+          select: { id: true }
+        });
+        const userIds = users.map((user) => user.id);
+        if (userIds.length === 0) return 0;
+
+        await tx.refreshToken.deleteMany({
+          where: { userId: { in: userIds } }
+        });
+
+        const deletedUsers = await tx.user.deleteMany({
+          where: { id: { in: userIds } }
+        });
+        return deletedUsers.count;
+      });
+
+      return res.json({
+        success: true,
+        deletedCount,
+        message: `Successfully reset user ${targetUsername}.`
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
     }
-
-    const targetUsername = req.body?.username || "admin";
-
-    // Find users with username
-    const users = await prisma.user.findMany({
-      where: { username: targetUsername }
-    });
-
-    for (const u of users) {
-      // Delete refresh tokens associated with user
-      await prisma.refreshToken.deleteMany({
-        where: { userId: u.id }
-      }).catch(() => {});
-
-      // Delete user
-      await prisma.user.delete({
-        where: { id: u.id }
-      }).catch(() => {});
-    }
-
-    return res.json({ success: true, message: `Successfully reset user ${targetUsername}.` });
-  } catch (err: any) {
-    return res.status(500).json({ error: "INTERNAL_ERROR", message: err.message });
   }
-});
+);
 
 
