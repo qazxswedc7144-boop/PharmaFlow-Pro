@@ -88,6 +88,7 @@ jobs:
           src/core/workflow/workflowExecution.sales-atomicity.integration.test.ts
           src/core/workflow/workflowExecution.post-commit.test.ts
           src/features/inventory/services/phase0a-fifo-expiry-safety.test.ts
+          server/tests/inventory-move-expiry-safety.test.ts
         env:
           NODE_ENV: test
 
