@@ -1158,9 +1158,6 @@ const brInv = await branchInventoryTable
         if (isExpiredBatch(batch)) {
           throw new Error(`EXPIRED_BATCH_REJECTED: Batch '${batch.batchNumber || batchId}' is past its expiry date.`);
         }
-        if (isExpiredBatch(batch)) {
-          throw new Error(`EXPIRED_BATCH_REJECTED: Batch '${batch.batchNumber || batchNumber}' is past its expiry date.`);
-        }
         const currentQty = Number(batch.quantity || 0);
         if (currentQty < deductQty) {
           throw new InsufficientStockError({
@@ -1190,6 +1187,9 @@ const brInv = await branchInventoryTable
         const bTenant = (batch as any).tenantId || (batch as any).tenant_id;
         if (!bTenant || bTenant !== tenantId) {
           throw new Error(`[UnifiedEngine] CROSS_TENANT_VIOLATION: Batch '${batch.id}' does not belong to authoritative tenant '${tenantId}' or lacks valid tenant binding.`);
+        }
+        if (isExpiredBatch(batch)) {
+          throw new Error(`EXPIRED_BATCH_REJECTED: Batch '${batch.batchNumber || batchNumber}' is past its expiry date.`);
         }
         const currentQty = Number(batch.quantity || 0);
         if (currentQty < deductQty) {
