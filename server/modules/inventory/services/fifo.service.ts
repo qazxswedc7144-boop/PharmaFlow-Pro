@@ -64,11 +64,24 @@ export class FifoService {
       Prisma.sql`
         SELECT id, "batchNumber", "stockQuantity", cost, "expiryDate", version 
         FROM inventory_batches 
-        WHERE "productId" = ${productId} AND "tenantId" = ${expectedTenantId} AND "stockQuantity" > 0 
-        ORDER BY "expiryDate" ASC, "createdAt" ASC 
+        WHERE "productId" = ${productId}
+          AND "tenantId" = ${expectedTenantId}
+          AND "stockQuantity" > 0
+          AND ("expiryDate" IS NULL OR "expiryDate" > NOW())
+        ORDER BY "expiryDate" ASC NULLS LAST, "createdAt" ASC 
         FOR UPDATE
       `
     );
+
+    const eligibleBatchQuantity = activeBatches.reduce(
+      (sum, batch) => sum + Math.max(0, Number(batch.stockQuantity) || 0),
+      0
+    );
+    if (eligibleBatchQuantity < quantityToDeplete) {
+      throw new Error(
+        `INSUFFICIENT_FIFO_STOCK: Only ${eligibleBatchQuantity} units remain in non-expired eligible batches for product ${productId}; ${quantityToDeplete} required.`
+      );
+    }
 
     let remainingNeeded = quantityToDeplete;
     const allocations: DepletionResult["allocations"] = [];
