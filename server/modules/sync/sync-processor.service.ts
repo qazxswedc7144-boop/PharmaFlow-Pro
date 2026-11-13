@@ -13,7 +13,7 @@ import { SyncConflictService } from "./sync-conflict.service.js";
 import { SyncChangelogService } from "./sync-changelog.service.js";
 import { SyncAuditService } from "./sync-audit.service.js";
 import { AuthorizationService } from "../../services/rbac/authorization.service.js";
-import { FifoService } from "../inventory/services/fifo.service.js";
+import { FinancialTransactionService } from "../accounting/services/financialTransaction.service.js";
 
 const KNOWN_ENTITIES = new Set([
   "INVOICE", "SALE", "PURCHASE", "PRODUCT", "PAYMENT", "VOUCHER", "JOURNAL_ENTRY", 
@@ -586,7 +586,13 @@ export class SyncProcessorService {
       const isService = item.isService === true ||
         item.trackStock === false ||
         String(item.itemType ?? item.type ?? "").toUpperCase() === "SERVICE";
-      const suppliedBatchNumber = String(item.batchNumber ?? item.batch_number ?? "").trim();
+      if (isService) {
+        return reject(
+          "PURCHASE_NON_STOCK_ITEM_NOT_SUPPORTED",
+          `Purchase item ${index + 1} is a non-stock service line; server purchase posting currently requires stock-tracked items.`
+        );
+      }
+      const suppliedBatchNumber = String(item.batchNumber ?? item.batch_number ?? item.note ?? "").trim();
       // Prisma requires a batchNumber. When the supplier batch is absent, use a
       // deterministic internal reference (not a claimed supplier batch number).
       const batchNumber = suppliedBatchNumber || `AUTO-PUR-${invoiceId}-${index + 1}`;
@@ -599,9 +605,11 @@ export class SyncProcessorService {
         total: lineTotal,
         expiryDate,
         batchNumber,
-        note: item.note ?? item.notes ?? null,
+        // InvoiceItem has no dedicated batchNumber column. The existing server
+        // posting service consumes note as the purchase batch reference.
+        note: batchNumber,
         category: item.category ?? null,
-        tracksStock: !isService
+        tracksStock: true
       });
     }
 
@@ -654,9 +662,9 @@ export class SyncProcessorService {
         discountAmount,
         taxAmount,
         totalAmount,
-        status: "CONFIRMED",
+        status: "DRAFT",
         paymentStatus,
-        documentStatus: "POSTED",
+        documentStatus: "ACTIVE",
         isSynced: true,
         branchId,
         tenantId
@@ -678,23 +686,27 @@ export class SyncProcessorService {
       }))
     });
 
+    const invoiceForPosting = await tx.invoice.findFirst({
+      where: { id: invoiceId, tenantId },
+      include: { items: { include: { product: true } } }
+    });
+    if (!invoiceForPosting) {
+      throw new Error("PURCHASE_POSTING_INVOICE_NOT_FOUND: Created purchase invoice could not be reloaded for posting.");
+    }
+
+    // Use the existing server posting engine in this same Prisma transaction.
+    // It creates FIFO stock layers/movements, the balanced journal entry,
+    // account balance updates, audit trail, and the final POSTED state atomically.
+    const postingResult = await FinancialTransactionService.executeInvoiceLedgerPosting(
+      tx,
+      invoiceForPosting,
+      params.userId,
+      null,
+      tenantId,
+      params.userRole
+    );
+
     for (const item of normalizedItems) {
-      if (!item.tracksStock) continue;
-
-      await FifoService.addStock(
-        tx,
-        item.productId,
-        item.batchNumber,
-        item.qty,
-        item.cost,
-        item.expiryDate,
-        invoiceId,
-        "INVOICE",
-        `Purchase ${invoiceNumber}`,
-        tenantId,
-        branchId
-      );
-
       await tx.branchInventory.upsert({
         where: { branchId_productId: { branchId, productId: item.productId } },
         create: {
@@ -718,7 +730,9 @@ export class SyncProcessorService {
         invoiceId,
         invoiceNumber,
         itemCount: normalizedItems.length,
-        stockItemCount: normalizedItems.filter(item => item.tracksStock).length
+        stockItemCount: normalizedItems.length,
+        journalId: postingResult.journalId,
+        cogs: postingResult.cogs
       }
     };
   }
