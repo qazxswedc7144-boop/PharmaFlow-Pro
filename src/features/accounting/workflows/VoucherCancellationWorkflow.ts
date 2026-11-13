@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
 import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
@@ -20,6 +20,12 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
   public id = 'accounting.voucher.cancel';
   public name = 'إلغاء وحذف سند قبض / صرف';
   public operationType = 'VOUCHER_CANCEL';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'VOUCHER',
+    operation: 'CANCEL',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['vouchers.delete', 'vouchers.manage'];
   public tables = [
     'vouchers', 'receipts', 'payments', 'suppliers', 'customers',
