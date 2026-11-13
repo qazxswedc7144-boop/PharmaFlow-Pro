@@ -199,6 +199,60 @@ export const DraftService = {
     });
   },
 
+  clearAllFailedPurchaseDrafts: async (): Promise<number> => {
+    const scope = getDraftScope();
+    const matchesCurrentPurchaseScope = (draft: any) => {
+      const recordBranchId = typeof draft.branchId === 'string' && draft.branchId.trim()
+        ? draft.branchId.trim()
+        : null;
+      return draft.status === 'FAILED_QUARANTINED' &&
+        draft.invoiceType === 'PURCHASE' &&
+        draft.tenantId === scope.tenantId &&
+        recordBranchId === scope.branchId;
+    };
+    const query = () => db.draft_invoices
+      .where('[tenantId+invoiceType]')
+      .equals([scope.tenantId, 'PURCHASE'])
+      .filter(matchesCurrentPurchaseScope);
+
+    try {
+      // Fast no-op path. Records without branch ownership are only eligible
+      // when the active scope itself has no branch; never guess their branch.
+      const candidates = await query().toArray();
+      if (candidates.length === 0) return 0;
+
+      let deletedCount = 0;
+      await db.transaction('rw', db.draft_invoices, async () => {
+        // Re-read inside the transaction so the deletion set is based on the
+        // latest tenant/branch-owned quarantine records.
+        const currentCandidates = await query().toArray();
+        const ids = currentCandidates.map((draft: any) => draft.draftId || draft.id);
+        if (ids.some((id: unknown) => typeof id !== 'string' || !id)) {
+          throw new Error('DRAFT_DELETE_IDS_INVALID');
+        }
+
+        deletedCount = ids.length;
+        if (ids.length > 0) {
+          await db.draft_invoices.bulkDelete(ids);
+        }
+
+        const remainingCount = await query().count();
+        if (remainingCount > 0) {
+          throw new Error('DRAFT_DELETE_VERIFY_FAILED');
+        }
+      });
+
+      return deletedCount;
+    } catch (error) {
+      await writeDiagnosticLog(db, error, {
+        operation: 'PURCHASE_FAILED_DRAFTS_CLEAR',
+        tenantId: scope.tenantId,
+        context: { branchId: scope.branchId }
+      });
+      throw error;
+    }
+  },
+
   getUnfinishedInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<any | undefined> => {
     const scope = getDraftScope();
     const drafts = await db.draft_invoices

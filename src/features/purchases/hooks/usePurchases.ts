@@ -30,6 +30,7 @@ import { getPurchaseDraftSnapshot } from '../utils/recoverablePurchaseDraft';
 import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOperation';
 import { canResetAfterFailedPurchase, cleanupFailedPurchaseDrafts, getPurchaseSaveFailureMessage } from '../utils/purchaseSaveFailure';
 import { writeDiagnosticLog } from '@/services/system/diagnosticLogger';
+import { discardPurchaseDrafts } from '../utils/discardPurchaseDrafts';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -348,22 +349,45 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     setRecoveryDraftData(null);
   }, [recoveryDraftData, addToast, suppliers]);
   const discardDraft = useCallback(async () => {
+    let draftKeys: ReturnType<typeof getPurchaseDraftKeys> | null = null;
     try {
-      const draftKeys = getPurchaseDraftKeys();
-      if ((recoveryDraftData as any)?.draftId) {
-        await DraftService.clearInvoiceDraft((recoveryDraftData as any).draftId);
-      }
-      await DraftService.clearDraft(draftKeys.draftId);
-      const unfinished = await DraftService.getUnfinishedInvoiceDraft('PURCHASE');
-      if (unfinished?.draftId) await DraftService.clearInvoiceDraft(unfinished.draftId);
-      addToast("تم حذف مسودة المشتريات المتروكة وبدء قيد جديد", "info");
-    } catch (e) {
-      console.error("discardDraft failed:", e);
-    } finally {
-      pendingProductsRef.current = [];
-      resetInvoiceState();
-      setIsRecoveryModalOpen(false);
-      setRecoveryDraftData(null);
+      draftKeys = getPurchaseDraftKeys();
+      await discardPurchaseDrafts({
+        clearAllFailedPurchaseDrafts: () => DraftService.clearAllFailedPurchaseDrafts(),
+        clearRecoveryInvoiceDraft: async () => {
+          const recoveryDraftId = (recoveryDraftData as any)?.draftId;
+          if (recoveryDraftId) await DraftService.clearInvoiceDraft(recoveryDraftId);
+        },
+        clearDraft: () => DraftService.clearDraft(draftKeys!.draftId),
+        getUnfinishedInvoiceDraft: () => DraftService.getUnfinishedInvoiceDraft('PURCHASE'),
+        clearInvoiceDraft: (draftId: string) => DraftService.clearInvoiceDraft(draftId),
+        onSuccess: () => {
+          pendingProductsRef.current = [];
+          resetInvoiceState();
+          setRecoveryDraftData(null);
+          addToast("تم حذف جميع مسودات المشتريات بنجاح وبدء قيد جديد", "success");
+        },
+        onFailure: async (error: unknown) => {
+          console.error("discardDraft failed:", error);
+          await writeDiagnosticLog(db, error, {
+            operation: 'PURCHASE_DISCARD_DRAFT',
+            tenantId: draftKeys?.tenantId,
+            context: {
+              branchId: draftKeys?.branchId,
+              recoveryDraftId: (recoveryDraftData as any)?.draftId || null
+            }
+          });
+          addToast("تعذر حذف جميع المسودات. حاول مرة أخرى.", "error");
+        }
+      });
+    } catch (error) {
+      console.error("discardDraft failed before cleanup:", error);
+      await writeDiagnosticLog(db, error, {
+        operation: 'PURCHASE_DISCARD_DRAFT',
+        tenantId: draftKeys?.tenantId,
+        context: { branchId: draftKeys?.branchId }
+      });
+      addToast("تعذر حذف جميع المسودات. حاول مرة أخرى.", "error");
     }
   }, [addToast, resetInvoiceState, recoveryDraftData]);
 
