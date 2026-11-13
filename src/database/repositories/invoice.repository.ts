@@ -1,6 +1,7 @@
 
 import { db, getCurrentUserSession } from '@/core/db';
 import { Sale, Purchase } from '@/types';
+import { writeDiagnosticLog } from '@/services/system/diagnosticLogger';
 
 const normalizeInvoiceType = (value: unknown): string =>
   typeof value === 'string' ? value.trim().toUpperCase() : '';
@@ -98,8 +99,26 @@ export const InvoiceRepository = {
   },
 
   savePurchase: async (...args: any[]): Promise<unknown> => {
-    const purchase = await (db.processPurchase as any)(...args);
-    return purchase;
+    try {
+      return await (db.processPurchase as any)(...args);
+    } catch (error) {
+      try {
+        const session = getCurrentUserSession();
+        await writeDiagnosticLog(db, error, {
+          operation: 'DEXIE_SAVE_PURCHASE',
+          tenantId: session.tenantId,
+          userId: session.userId,
+          context: {
+            invoiceId: args[3] ? String(args[3]) : undefined,
+            invoiceNumber: args[9] ? String(args[9]) : undefined,
+            branchId: session.branchId || undefined
+          }
+        });
+      } catch (loggingError) {
+        console.warn('[InvoiceRepository] Could not record purchase save diagnostic:', loggingError);
+      }
+      throw error;
+    }
   },
 
   generateInvoiceNumber: async (type: 'SALE' | 'PURCHASE' = 'SALE'): Promise<string> => {

@@ -78,6 +78,7 @@ jobs:
           src/features/purchases/utils/cleanupFailedPurchaseOperation.test.ts
           src/core/integrity/idempotencyRegistry.persistence.test.ts
           src/services/system/DraftService.test.ts
+          src/services/system/diagnosticLogger.test.ts
           src/features/purchases/utils/purchaseFailureDisposition.test.ts
           src/features/purchases/utils/purchaseSaveFailure.test.ts
           src/features/inventory/utils/newPurchaseProduct.test.ts

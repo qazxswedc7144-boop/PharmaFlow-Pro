@@ -29,6 +29,7 @@ import type { IdempotencyRecord } from '@/core/integrity/types';
 import { getPurchaseDraftSnapshot } from '../utils/recoverablePurchaseDraft';
 import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOperation';
 import { canResetAfterFailedPurchase, getPurchaseSaveFailureMessage } from '../utils/purchaseSaveFailure';
+import { writeDiagnosticLog } from '@/services/system/diagnosticLogger';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -509,6 +510,15 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         setTimeout(() => { try { onNavigate?.('dashboard'); } catch (error) { window.location.hash = '#/dashboard'; } }, 1000);
       }
     } catch (error: unknown) {
+      await writeDiagnosticLog(db, error, {
+        operation: 'PURCHASE_SAVE',
+        context: {
+          invoiceNumber: currentHeader.invoice_number,
+          invoiceId: editingInvoiceId || undefined,
+          operationId: currentOperationRef.current || undefined,
+          itemCount: currentItems.length
+        }
+      });
       const failureOperationId = currentOperationRef.current || generateTransactionUuid('PURCHASE_FAILED');
       const rawErrorMessage = error instanceof Error ? error.message : String(error);
       const errorCode = rawErrorMessage.match(/[A-Z][A-Z0-9_]{3,}/)?.[0] || 'PURCHASE_SAVE_FAILED';

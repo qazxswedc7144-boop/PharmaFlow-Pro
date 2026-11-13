@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { db, getCurrentUserSession } from '@/core/db';
 import { buildLocalSyncForensics, type LocalSyncForensics } from '../utils/localSyncQueueForensics';
+import { readDiagnosticLogs } from '@/services/system/diagnosticLogger';
 
 type AnyRecord = Record<string, any>;
 type AuditCounts = {
@@ -1107,6 +1108,7 @@ export default function FifoAuditTempPage() {
       )}
       <ExtendedFifoEvidencePanel />
       <LocalSyncQueueForensicsPanel />
+      <DiagnosticLogsPanel />
     </section>
   );
 }
@@ -1276,6 +1278,103 @@ function LocalSyncQueueForensicsPanel() {
           className="w-full rounded-xl border border-slate-300 bg-slate-950 p-3 font-mono text-xs leading-6 text-emerald-100" />
         {copied && <p role="status" className="text-xs text-slate-600">{copied}</p>}
       </>}
+    </section>
+  );
+}
+
+
+function DiagnosticLogsPanel() {
+  const [loading, setLoading] = useState(false);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState('');
+  const outputRef = useRef<HTMLTextAreaElement | null>(null);
+  const output = JSON.stringify(logs, null, 2);
+
+  const loadLogs = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    setCopied('');
+    try {
+      const session = getCurrentUserSession();
+      if (!session.tenantId) throw new Error('لا توجد جلسة مستأجر نشطة؛ تعذر قراءة سجلات التشخيص.');
+      setLogs(await readDiagnosticLogs(db, String(session.tenantId), 50));
+    } catch (cause: any) {
+      setError(cause?.message || 'تعذرت قراءة سجلات التشخيص.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const copyLogs = useCallback(async () => {
+    if (!logs.length) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(output);
+      } else if (outputRef.current) {
+        outputRef.current.focus();
+        outputRef.current.select();
+        if (!document.execCommand('copy')) throw new Error('Clipboard unavailable');
+      } else {
+        throw new Error('Clipboard unavailable');
+      }
+      setCopied('تم نسخ سجلات التشخيص بصيغة JSON.');
+    } catch {
+      setCopied('تعذر النسخ التلقائي؛ اضغط مطولاً داخل مربع JSON ثم اختر نسخ.');
+      outputRef.current?.focus();
+    }
+  }, [logs.length, output]);
+
+  return (
+    <section className="mt-6 space-y-4 rounded-2xl border-2 border-rose-200 bg-rose-50/40 p-3 sm:p-5" dir="rtl">
+      <div className="rounded-xl border border-rose-200 bg-white p-4">
+        <h2 className="text-lg font-black text-slate-900">Diagnostic Logs — سجلات أخطاء التطبيق</h2>
+        <p className="mt-2 text-sm leading-7 text-slate-600">
+          سجلات محلية للمستأجر الحالي فقط، بحد أقصى 50 سجلاً. تتضمن تفاصيل الخطأ الأصلي لتسهيل تشخيص فشل الحفظ من الجوال.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={loadLogs} disabled={loading}
+          className="min-h-11 rounded-xl bg-slate-900 px-5 py-3 text-sm font-black text-white disabled:opacity-50">
+          {loading ? 'جارٍ تحميل السجلات...' : 'تحميل Diagnostic Logs'}
+        </button>
+        <button type="button" onClick={copyLogs} disabled={!logs.length}
+          className="min-h-11 rounded-xl border border-rose-300 bg-white px-5 py-3 text-sm font-black text-rose-800 disabled:opacity-50">
+          نسخ JSON
+        </button>
+        <span className="text-xs font-bold text-slate-600">{logs.length} / 50 سجل</span>
+      </div>
+      {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-800">{error}</div>}
+      {logs.length > 0 && (
+        <>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="w-full min-w-[760px] text-right text-xs">
+              <thead className="bg-slate-100 text-slate-600">
+                <tr>
+                  <th className="px-3 py-3">الوقت</th>
+                  <th className="px-3 py-3">العملية</th>
+                  <th className="px-3 py-3">نوع الخطأ</th>
+                  <th className="px-3 py-3">رسالة الخطأ الأصلية</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map(log => (
+                  <tr key={log.id} className="border-t border-slate-100 align-top">
+                    <td className="whitespace-nowrap px-3 py-3 font-mono">{log.timestamp}</td>
+                    <td className="whitespace-nowrap px-3 py-3 font-bold">{log.operation}</td>
+                    <td className="whitespace-nowrap px-3 py-3">{log.errorName}</td>
+                    <td className="max-w-[420px] break-words px-3 py-3">{log.errorMessage}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <textarea ref={outputRef} readOnly value={output} rows={12} spellCheck={false}
+            aria-label="Diagnostic Logs JSON"
+            className="w-full rounded-xl border border-slate-300 bg-slate-950 p-3 font-mono text-xs leading-6 text-emerald-100" />
+        </>
+      )}
+      {copied && <p role="status" className="text-xs font-bold text-slate-600">{copied}</p>}
     </section>
   );
 }
