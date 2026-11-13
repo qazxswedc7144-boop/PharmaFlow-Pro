@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { InvoiceItem, InvoiceStatus } from '@/types';
 import { purchaseWorkflow } from '@features/purchases/workflows/PurchaseWorkflow';
 
@@ -22,6 +22,12 @@ export class PurchaseReturnWorkflow implements BusinessWorkflow<PurchaseReturnIn
   public id = 'returns.purchase.process';
   public name = 'معالجة مرتجع مشتريات';
   public operationType = 'PURCHASE_RETURN';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'PURCHASE_RETURN',
+    operation: 'CREATE',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['purchases.return', 'purchases.edit'];
   public tables = [
     'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
