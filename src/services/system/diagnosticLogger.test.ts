@@ -84,4 +84,16 @@ describe('DiagnosticLogger', () => {
       context: { invoiceNumber: 'PUR-DUP-1', invoiceId: 'DUPLICATE-PURCHASE-ID' }
     });
   });
+
+  it('does not mask the original business error when diagnostic persistence fails', async () => {
+    vi.spyOn(db.diagnosticLogs, 'add').mockRejectedValueOnce(new Error('diagnostic storage unavailable'));
+
+    await expect(
+      writeDiagnosticLog(db, new Error('original purchase failure'), {
+        operation: 'PURCHASE_SAVE',
+        tenantId: 'diagnostic-tenant',
+        userId: 'diagnostic-user'
+      })
+    ).resolves.toBeUndefined();
+  });
 });
