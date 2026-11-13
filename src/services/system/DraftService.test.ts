@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { DraftService } from './DraftService';
+import { readDiagnosticLogs } from './diagnosticLogger';
 
 const setTenantSession = (tenantId: string, branchId: string) => {
   TokenProvider.setSession(
@@ -68,6 +69,12 @@ describe('DraftService tenant isolation and persistence errors', () => {
     });
     vi.spyOn(db.drafts, 'delete').mockRejectedValueOnce(new Error('draft delete failed'));
     await expect(DraftService.clearDraft(logicalId)).rejects.toThrow('draft delete failed');
+    const draftLogs = await readDiagnosticLogs(db, 'tenant-a');
+    expect(draftLogs[0]).toMatchObject({
+      operation: 'DRAFT_CLEAR',
+      errorMessage: 'draft delete failed',
+      context: { draftId: logicalId }
+    });
     vi.restoreAllMocks();
     await DraftService.clearDraft(logicalId);
   });
@@ -95,6 +102,12 @@ describe('DraftService tenant isolation and persistence errors', () => {
     await DraftService.saveInvoiceDraft(logicalId, 'PURCHASE', [], {});
     vi.spyOn(db.draft_invoices, 'delete').mockRejectedValueOnce(new Error('invoice draft delete failed'));
     await expect(DraftService.clearInvoiceDraft(logicalId)).rejects.toThrow('invoice draft delete failed');
+    const invoiceDraftLogs = await readDiagnosticLogs(db, 'tenant-a');
+    expect(invoiceDraftLogs[0]).toMatchObject({
+      operation: 'INVOICE_DRAFT_CLEAR',
+      errorMessage: 'invoice draft delete failed',
+      context: { draftId: logicalId }
+    });
     vi.restoreAllMocks();
     await DraftService.clearInvoiceDraft(logicalId);
   });
