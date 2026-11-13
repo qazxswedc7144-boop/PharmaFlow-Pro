@@ -1,10 +1,53 @@
 import { describe, expect, it } from 'vitest';
 import {
   canResetAfterFailedPurchase,
+  cleanupFailedPurchaseDrafts,
   getPurchaseSaveFailureMessage
 } from './purchaseSaveFailure';
 
 describe('purchase save failure recovery regression', () => {
+  it('does not block safe reset when optional configuration cleanup fails', async () => {
+    const clearInvoiceDraft = vi.fn().mockResolvedValue(undefined);
+    const clearDraft = vi.fn().mockResolvedValue(undefined);
+    const clearOptionalConfig = vi.fn().mockRejectedValue(new Error('unregistered config key'));
+
+    const result = await cleanupFailedPurchaseDrafts({
+      clearInvoiceDraft,
+      clearDraft,
+      clearOptionalConfig
+    });
+
+    expect(clearInvoiceDraft).toHaveBeenCalledOnce();
+    expect(clearDraft).toHaveBeenCalledOnce();
+    expect(clearOptionalConfig).toHaveBeenCalledOnce();
+    expect(result.activeDraftCleanupComplete).toBe(true);
+    expect(result.optionalConfigCleanup).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ message: 'unregistered config key' })
+    });
+    expect(canResetAfterFailedPurchase({
+      quarantinePersisted: true,
+      operationArtifactsCleaned: true,
+      activeDraftCleanupComplete: result.activeDraftCleanupComplete
+    })).toBe(true);
+  });
+
+  it('still blocks reset when a required active draft cleanup fails', async () => {
+    const result = await cleanupFailedPurchaseDrafts({
+      clearInvoiceDraft: () => Promise.reject(new Error('invoice draft delete failed')),
+      clearDraft: async () => undefined,
+      clearOptionalConfig: async () => undefined
+    });
+
+    expect(result.activeDraftCleanupComplete).toBe(false);
+    expect(result.requiredCleanupResults[0].status).toBe('rejected');
+    expect(canResetAfterFailedPurchase({
+      quarantinePersisted: true,
+      operationArtifactsCleaned: true,
+      activeDraftCleanupComplete: result.activeDraftCleanupComplete
+    })).toBe(false);
+  });
+
   it('T-01 keeps the form when the active draft could not be cleared', () => {
     expect(canResetAfterFailedPurchase({
       quarantinePersisted: true,
