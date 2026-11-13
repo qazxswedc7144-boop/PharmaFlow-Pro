@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
 import { InventoryService } from '@features/inventory/services/InventoryService';
 import { AuditService } from '@/services/system/AuditService';
@@ -18,6 +18,12 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
   public id = 'sales.invoice.cancel';
   public name = 'إلغاء الفاتورة بالكامل';
   public operationType = 'INVOICE_CANCEL';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'INVOICE',
+    operation: 'CANCEL',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['sales.cancel', 'invoices.manage'];
   public tables = [
     'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
