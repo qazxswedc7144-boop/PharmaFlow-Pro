@@ -101,7 +101,9 @@ export async function writeDiagnosticLog(
     const activeTransaction = Dexie.currentTransaction;
     if (activeTransaction) {
       activeTransaction.on('abort', () => {
-        void Dexie.ignoreTransaction(persist);
+        void Dexie.ignoreTransaction(persist).catch(loggingError => {
+          console.warn('[DiagnosticLogger] Deferred diagnostic persistence failed:', loggingError);
+        });
       });
       return;
     }
