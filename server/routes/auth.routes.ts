@@ -854,6 +854,13 @@ authRouter.post(
       }
 
       const result = await prisma.$transaction(async (tx) => {
+        // Lock the user row before checking tenant memberships. A concurrent
+        // TenantUser insert must not slip between the scope check and deletion.
+        const lockedTarget = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id" FROM "users" WHERE "id" = ${targetUserId} FOR UPDATE
+        `;
+        if (lockedTarget.length === 0) return { kind: "not_found" as const };
+
         const targetUser = await tx.user.findUnique({
           where: { id: targetUserId },
           select: { id: true, username: true, role: true }
