@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { InvoiceItem, InvoiceStatus } from '@/types';
 import { salesWorkflow } from '@features/sales/workflows/SalesWorkflow';
 
@@ -22,6 +22,12 @@ export class SalesReturnWorkflow implements BusinessWorkflow<SalesReturnInput, S
   public id = 'returns.sales.process';
   public name = 'معالجة مرتجع مبيعات';
   public operationType = 'SALES_RETURN';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'SALES_RETURN',
+    operation: 'CREATE',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['sales.return', 'sales.edit'];
   public tables = [
     'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
