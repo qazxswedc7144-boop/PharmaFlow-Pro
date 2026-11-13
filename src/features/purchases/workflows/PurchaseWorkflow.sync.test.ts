@@ -209,4 +209,21 @@ describe('PurchaseWorkflow V-30B transactional sync', () => {
     expect(await (db as any).syncQueue.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
     expect(await (db as any).outbox.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
   });
+  it('T-01 rolls back purchase and leaves no sync/outbox records when local invoice persistence fails', async () => {
+    (InvoiceRepository.savePurchase as any).mockRejectedValueOnce(
+      new Error('SIMULATED_INVOICE_PERSISTENCE_FAILURE')
+    );
+    const ctx = context('PURCHASE-IDEM-LOCAL-ROLLBACK-001');
+
+    await expect(
+      TransactionBoundary.executeAtomic(
+        purchaseWorkflow.tables!,
+        tx => purchaseWorkflow.executeDomainSteps(postedPurchaseInput() as any, ctx as any, tx)
+      )
+    ).rejects.toThrow('SIMULATED_INVOICE_PERSISTENCE_FAILURE');
+
+    expect(await (db as any).syncQueue.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
+    expect(await (db as any).outbox.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
+  });
+
 });
