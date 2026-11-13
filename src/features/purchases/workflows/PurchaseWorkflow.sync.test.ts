@@ -1,4 +1,18 @@
 import 'fake-indexeddb/auto';
+const { getCurrentSession } = vi.hoisted(() => ({
+  getCurrentSession: vi.fn(() => ({
+    isAuthenticated: true,
+    token: 'purchase-sync-test-token',
+    tenantId: 'TENANT-PURCHASE-SYNC',
+    branchId: 'BRANCH-PURCHASE-SYNC',
+    user: { id: 'USER-PURCHASE-SYNC', tenantId: 'TENANT-PURCHASE-SYNC' }
+  }))
+}));
+
+vi.mock('@/services/auth/tokenProvider', () => ({
+  TokenProvider: { getCurrentSession }
+}));
+
 import Dexie from 'dexie';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/core/db';
@@ -62,7 +76,7 @@ describe('PurchaseWorkflow V-30B transactional sync', () => {
   });
 
   it('declares domain-transaction ownership and both durable sync stores', () => {
-    expect(purchaseWorkflow.syncHandledInDomainTransaction).toBe(true);
+    expect((purchaseWorkflow as any).syncHandledInDomainTransaction).toBe(true);
     expect(purchaseWorkflow.tables).toEqual(
       expect.arrayContaining(['syncQueue', 'outbox'])
     );
