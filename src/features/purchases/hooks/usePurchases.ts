@@ -510,16 +510,11 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         setTimeout(() => { try { onNavigate?.('dashboard'); } catch (error) { window.location.hash = '#/dashboard'; } }, 1000);
       }
     } catch (error: unknown) {
-      const diagnosticSession = TokenProvider.getCurrentSession();
-      const diagnosticUser = diagnosticSession.user as any;
       await writeDiagnosticLog(db, error, {
         operation: 'PURCHASE_SAVE',
-        tenantId: diagnosticSession.tenantId || diagnosticUser?.tenantId || diagnosticUser?.tenant_id,
-        userId: diagnosticUser?.id || diagnosticUser?.user_id,
         context: {
           invoiceNumber: currentHeader.invoice_number,
           invoiceId: editingInvoiceId || undefined,
-          branchId: diagnosticSession.branchId || diagnosticUser?.branchId || diagnosticUser?.branch_id,
           operationId: currentOperationRef.current || undefined,
           itemCount: currentItems.length
         }
