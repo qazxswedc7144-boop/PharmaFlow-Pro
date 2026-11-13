@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 
 export interface DiagnosticLogInput {
@@ -19,6 +20,13 @@ export interface DiagnosticLogRecord {
 }
 
 const RETENTION_LIMIT = 50;
+let lastTimestampMs = 0;
+
+function nextTimestamp(): string {
+  const now = Date.now();
+  lastTimestampMs = Math.max(now, lastTimestampMs + 1);
+  return new Date(lastTimestampMs).toISOString();
+}
 const MAX_MESSAGE_LENGTH = 2000;
 const MAX_STACK_LENGTH = 4000;
 
@@ -66,7 +74,7 @@ export async function writeDiagnosticLog(
     };
     const record: DiagnosticLogRecord = {
       id: createId(),
-      timestamp: new Date().toISOString(),
+      timestamp: nextTimestamp(),
       operation: String(input.operation || 'UNKNOWN').slice(0, 120),
       ...details,
       context,
@@ -74,7 +82,7 @@ export async function writeDiagnosticLog(
     };
 
     const table = database.diagnosticLogs;
-    await database.transaction('rw', table, async () => {
+    await Dexie.ignoreTransaction(() => database.transaction('rw', table, async () => {
       await table.add(record);
       const tenantRows = await table.where('tenantId').equals(tenantId).sortBy('timestamp');
       if (tenantRows.length > RETENTION_LIMIT) {
@@ -83,7 +91,7 @@ export async function writeDiagnosticLog(
           .map((row: DiagnosticLogRecord) => row.id);
         await table.bulkDelete(expiredIds);
       }
-    });
+    }));
   } catch (loggingError) {
     // Deliberately swallow only the diagnostic write failure; preserve caller error.
     console.warn('[DiagnosticLogger] Could not persist diagnostic record:', loggingError);
