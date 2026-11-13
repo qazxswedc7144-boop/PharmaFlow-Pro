@@ -102,17 +102,21 @@ export const InvoiceRepository = {
     try {
       return await (db.processPurchase as any)(...args);
     } catch (error) {
-      const session = getCurrentUserSession();
-      await writeDiagnosticLog(db, error, {
-        operation: 'DEXIE_SAVE_PURCHASE',
-        tenantId: session.tenantId,
-        userId: session.userId,
-        context: {
-          invoiceId: args[3] ? String(args[3]) : undefined,
-          invoiceNumber: args[9] ? String(args[9]) : undefined,
-          branchId: session.branchId || undefined
-        }
-      });
+      try {
+        const session = getCurrentUserSession();
+        await writeDiagnosticLog(db, error, {
+          operation: 'DEXIE_SAVE_PURCHASE',
+          tenantId: session.tenantId,
+          userId: session.userId,
+          context: {
+            invoiceId: args[3] ? String(args[3]) : undefined,
+            invoiceNumber: args[9] ? String(args[9]) : undefined,
+            branchId: session.branchId || undefined
+          }
+        });
+      } catch (loggingError) {
+        console.warn('[InvoiceRepository] Could not record purchase save diagnostic:', loggingError);
+      }
       throw error;
     }
   },
