@@ -13,9 +13,10 @@ import { SyncConflictService } from "./sync-conflict.service.js";
 import { SyncChangelogService } from "./sync-changelog.service.js";
 import { SyncAuditService } from "./sync-audit.service.js";
 import { AuthorizationService } from "../../services/rbac/authorization.service.js";
+import { FifoService } from "../inventory/services/fifo.service.js";
 
 const KNOWN_ENTITIES = new Set([
-  "INVOICE", "SALE", "PRODUCT", "PAYMENT", "VOUCHER", "JOURNAL_ENTRY", 
+  "INVOICE", "SALE", "PURCHASE", "PRODUCT", "PAYMENT", "VOUCHER", "JOURNAL_ENTRY", 
   "INVENTORY_MOVEMENT", "STOCK_ADJUSTMENT", "INVENTORY_BATCH", 
   "BRANCH_TRANSFER", "STOCK_TRANSFER", "TRANSFER", "CUSTOMER", 
   "SUPPLIER", "SETTINGS", "DEVICE"
@@ -244,6 +245,8 @@ export class SyncProcessorService {
     switch (entity.toUpperCase()) {
       case "INVOICE": case "SALE": 
         return operation === "CREATE" || operation === "POST" ? "sales.invoice.create" : "sales.invoice.update";
+      case "PURCHASE":
+        return "purchases.create";
       case "PRODUCT": 
         return "inventory.products.manage";
       case "PAYMENT": case "VOUCHER": 
@@ -276,6 +279,18 @@ export class SyncProcessorService {
     const entityId = mutation.entityId || data.id || mutationId;
     const operation = (mutation.operation || "CREATE").toUpperCase();
     const upperEntity = entity.toUpperCase();
+
+    if (upperEntity === "PURCHASE") {
+      return this.handlePurchaseCreate({
+        mutation,
+        tenantId,
+        branchId,
+        userId: params.userId,
+        deviceId: params.deviceId,
+        version,
+        tx
+      });
+    }
 
     const entityConfig = this.getEntityPrismaConfig(upperEntity);
     if (!entityConfig) {
@@ -376,6 +391,334 @@ export class SyncProcessorService {
     }
 
     return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
+  }
+
+  private static async handlePurchaseCreate(params: {
+    mutation: SyncMutation;
+    tenantId: string;
+    branchId: string | null;
+    userId: string;
+    deviceId: string;
+    version: number;
+    tx: any;
+  }): Promise<PerMutationResult> {
+    const { mutation, tenantId, branchId, version, tx } = params;
+    const mutationId = mutation.id;
+    const payload = (mutation.payload || {}) as Record<string, any>;
+    const purchase = payload.purchase && typeof payload.purchase === "object"
+      ? payload.purchase as Record<string, any>
+      : payload;
+    const reject = (errorCode: string, message: string): PerMutationResult => ({
+      id: mutationId,
+      mutationId,
+      status: "REJECTED",
+      success: false,
+      errorCode,
+      message
+    });
+
+    const operation = String(mutation.operation || "CREATE").toUpperCase();
+    if (operation !== "CREATE") {
+      return reject("PURCHASE_OPERATION_NOT_SUPPORTED", "PURCHASE sync currently accepts CREATE only.");
+    }
+
+    if (!branchId) {
+      return reject("PURCHASE_BRANCH_REQUIRED", "A trusted branch context is required for purchase synchronization.");
+    }
+
+    const payloadTenantId = payload.tenantId ?? purchase.tenantId ?? purchase.tenant_id;
+    const payloadBranchId = payload.branchId ?? purchase.branchId ?? purchase.branch_id;
+    if (payloadTenantId && payloadTenantId !== tenantId) {
+      return reject("TENANT_MISMATCH", "Purchase payload tenant does not match the authenticated tenant.");
+    }
+    if (payloadBranchId && payloadBranchId !== branchId) {
+      return reject("BRANCH_MISMATCH", "Purchase payload branch does not match the authenticated branch.");
+    }
+
+    const documentStatus = String(
+      purchase.documentStatus ??
+      purchase.document_status ??
+      purchase.InvoiceStatus ??
+      purchase.invoiceStatus ??
+      ""
+    ).trim().toUpperCase();
+    if (documentStatus !== "POSTED") {
+      return reject("PURCHASE_NOT_POSTED", "Only POSTED purchase invoices can be synchronized.");
+    }
+    if (purchase.isReturn === true || purchase.is_return === true) {
+      return reject("PURCHASE_RETURN_NOT_SUPPORTED", "Purchase returns require their separate reversal workflow.");
+    }
+    if (String(purchase.type || "").trim().toUpperCase() !== "PURCHASE") {
+      return reject("INVALID_PURCHASE_TYPE", "The synchronized document must explicitly be a PURCHASE invoice.");
+    }
+
+    const payloadId = typeof payload.id === "string" ? payload.id.trim() : "";
+    const nestedId = typeof purchase.id === "string" ? purchase.id.trim() : "";
+    if (payloadId && nestedId && payloadId !== nestedId) {
+      return reject("PURCHASE_ID_MISMATCH", "Top-level and nested purchase identifiers do not match.");
+    }
+    const invoiceId = payloadId || nestedId ||
+      (mutation.entityId && mutation.entityId !== "unknown" ? mutation.entityId : "");
+    if (!invoiceId || invoiceId === "unknown") {
+      return reject("PURCHASE_ID_REQUIRED", "A stable purchase invoice identifier is required.");
+    }
+    if (mutation.entityId && mutation.entityId !== "unknown" && mutation.entityId !== invoiceId) {
+      return reject("PURCHASE_ENTITY_ID_MISMATCH", "Mutation entityId does not match the purchase invoice identifier.");
+    }
+
+    const invoiceNumber = String(purchase.invoiceNumber ?? purchase.invoice_number ?? "").trim();
+    const supplierId = String(
+      purchase.partnerId ??
+      purchase.partner_id ??
+      purchase.supplierId ??
+      purchase.supplier_id ??
+      ""
+    ).trim();
+    const rawDate = purchase.date ?? purchase.Date;
+    const invoiceDate = rawDate ? new Date(rawDate) : null;
+    const totalAmount = Number(purchase.totalAmount ?? purchase.finalTotal ?? purchase.grandTotal);
+    const rawItems = purchase.items;
+
+    if (!invoiceNumber) return reject("PURCHASE_INVOICE_NUMBER_REQUIRED", "Purchase invoiceNumber is required.");
+    if (!supplierId) return reject("PURCHASE_SUPPLIER_REQUIRED", "Purchase supplierId is required.");
+    if (!invoiceDate || !Number.isFinite(invoiceDate.getTime())) {
+      return reject("PURCHASE_DATE_INVALID", "Purchase date must be a valid date.");
+    }
+    if (!Number.isFinite(totalAmount) || totalAmount < 0) {
+      return reject("PURCHASE_TOTAL_INVALID", "Purchase totalAmount must be a finite non-negative number.");
+    }
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      return reject("PURCHASE_ITEMS_REQUIRED", "A posted purchase must contain at least one invoice item.");
+    }
+
+    const existingInvoice = await tx.invoice.findFirst({
+      where: {
+        tenantId,
+        OR: [
+          { id: invoiceId },
+          { clientRefId: invoiceId },
+          { invoiceNumber }
+        ]
+      },
+      select: { id: true }
+    });
+    if (existingInvoice) {
+      return reject("PURCHASE_ALREADY_EXISTS", "A purchase with this identifier or invoice number already exists.");
+    }
+
+    const branch = await tx.branch.findFirst({
+      where: { id: branchId, tenantId },
+      select: { id: true }
+    });
+    if (!branch) {
+      return reject("PURCHASE_BRANCH_NOT_FOUND", "The target branch does not belong to the authenticated tenant.");
+    }
+
+    const cashSupplierLabels = new Set(["مورد نقدي", "CASH", "CASH_SUPPLIER"]);
+    if (!cashSupplierLabels.has(supplierId)) {
+      const supplier = await tx.supplier.findFirst({
+        where: { id: supplierId, tenantId },
+        select: { id: true }
+      });
+      if (!supplier) {
+        return reject("PURCHASE_SUPPLIER_NOT_FOUND", "The supplier does not belong to the authenticated tenant.");
+      }
+    }
+
+    const normalizedItems: Array<{
+      productId: string;
+      qty: number;
+      price: number;
+      cost: number;
+      total: number;
+      expiryDate: Date | null;
+      batchNumber: string;
+      note: string | null;
+      category: string | null;
+      tracksStock: boolean;
+    }> = [];
+
+    for (let index = 0; index < rawItems.length; index++) {
+      const item = rawItems[index] as Record<string, any>;
+      const productId = String(item.productId ?? item.product_id ?? "").trim();
+      const qty = Number(item.quantity ?? item.qty);
+      const price = Number(item.unitPrice ?? item.unit_price ?? item.price);
+      const itemDiscount = Number(item.discount ?? item.discount_val ?? 0);
+
+      if (!productId) return reject("PURCHASE_ITEM_PRODUCT_REQUIRED", `Purchase item ${index + 1} has no productId.`);
+      if (!Number.isSafeInteger(qty) || qty <= 0) {
+        return reject("PURCHASE_ITEM_QUANTITY_INVALID", `Purchase item ${index + 1} quantity must be a positive integer.`);
+      }
+      if (!Number.isFinite(price) || price < 0) {
+        return reject("PURCHASE_ITEM_PRICE_INVALID", `Purchase item ${index + 1} has an invalid unit price.`);
+      }
+      if (!Number.isFinite(itemDiscount) || itemDiscount < 0 || itemDiscount > qty * price) {
+        return reject("PURCHASE_ITEM_DISCOUNT_INVALID", `Purchase item ${index + 1} has an invalid discount.`);
+      }
+
+      const product = await tx.product.findFirst({
+        where: { id: productId, tenantId },
+        select: { id: true, cost: true }
+      });
+      if (!product) {
+        return reject("PURCHASE_ITEM_PRODUCT_NOT_FOUND", `Purchase item ${index + 1} product is missing or belongs to another tenant.`);
+      }
+
+      const rawCost = item.unitCost ?? item.unit_cost ?? item.cost ?? item.costPrice ?? item.cost_price ?? item.unitPrice ?? item.price;
+      const cost = rawCost === undefined || rawCost === null ? Number(product.cost) : Number(rawCost);
+      if (!Number.isFinite(cost) || cost < 0) {
+        return reject("PURCHASE_ITEM_COST_INVALID", `Purchase item ${index + 1} has no valid unit cost.`);
+      }
+
+      const lineTotal = Math.round((qty * price - itemDiscount) * 10000) / 10000;
+      const rawExpiry = item.expiryDate ?? item.expiry_date ?? null;
+      const expiryDate = rawExpiry === null || rawExpiry === undefined || rawExpiry === ""
+        ? null
+        : new Date(rawExpiry);
+      if (expiryDate && !Number.isFinite(expiryDate.getTime())) {
+        return reject("PURCHASE_ITEM_EXPIRY_INVALID", `Purchase item ${index + 1} has an invalid expiry date.`);
+      }
+
+      const isService = item.isService === true ||
+        item.trackStock === false ||
+        String(item.itemType ?? item.type ?? "").toUpperCase() === "SERVICE";
+      const suppliedBatchNumber = String(item.batchNumber ?? item.batch_number ?? "").trim();
+      // Prisma requires a batchNumber. When the supplier batch is absent, use a
+      // deterministic internal reference (not a claimed supplier batch number).
+      const batchNumber = suppliedBatchNumber || `AUTO-PUR-${invoiceId}-${index + 1}`;
+
+      normalizedItems.push({
+        productId,
+        qty,
+        price,
+        cost,
+        total: lineTotal,
+        expiryDate,
+        batchNumber,
+        note: item.note ?? item.notes ?? null,
+        category: item.category ?? null,
+        tracksStock: !isService
+      });
+    }
+
+    const computedSubtotal = normalizedItems.reduce((sum, item) => sum + item.total, 0);
+    const subtotalAmount = Number(purchase.subtotal ?? computedSubtotal);
+    const discountAmount = Number(
+      purchase.discountAmount ??
+      purchase.discountTotal ??
+      purchase.discount ??
+      purchase.discount_val ??
+      0
+    );
+    const discountPercent = Number(purchase.discountPercent ?? 0);
+    const taxAmount = Number(purchase.taxAmount ?? purchase.taxTotal ?? purchase.tax ?? purchase.tax_val ?? 0);
+    const otherFees = Number(purchase.otherFees ?? 0);
+    const expectedTotal = subtotalAmount - discountAmount + taxAmount + otherFees;
+
+    if (
+      !Number.isFinite(subtotalAmount) ||
+      !Number.isFinite(discountAmount) ||
+      !Number.isFinite(discountPercent) ||
+      !Number.isFinite(taxAmount) ||
+      !Number.isFinite(otherFees) ||
+      Math.abs(subtotalAmount - computedSubtotal) > 0.02 ||
+      Math.abs(expectedTotal - totalAmount) > 0.02
+    ) {
+      return reject("PURCHASE_TOTAL_MISMATCH", "Purchase item totals, discounts, tax and totalAmount are inconsistent.");
+    }
+
+    const rawPaymentStatus = String(purchase.paymentStatus ?? purchase.payment_status ?? "").trim().toUpperCase();
+    const rawFinancialStatus = String(purchase.financialStatus ?? purchase.financial_status ?? "").trim().toUpperCase();
+    const paidAmount = Number(purchase.paidAmount ?? purchase.paid_amount ?? 0);
+    const remainingAmount = Number(purchase.remainingAmount ?? purchase.remaining_amount ?? Math.max(0, totalAmount - paidAmount));
+    const paymentStatus = rawPaymentStatus === "CASH" || rawPaymentStatus === "PAID" ||
+      rawFinancialStatus === "PAID" || (paidAmount >= totalAmount && totalAmount > 0)
+      ? "PAID"
+      : rawPaymentStatus === "PARTIALLY_PAID" || (paidAmount > 0 && remainingAmount > 0)
+        ? "PARTIALLY_PAID"
+        : "UNPAID";
+
+    await tx.invoice.create({
+      data: {
+        id: invoiceId,
+        invoiceNumber,
+        clientRefId: invoiceId,
+        date: invoiceDate,
+        type: "PURCHASE",
+        partnerId: supplierId,
+        partnerType: "SUPPLIER",
+        subtotalAmount,
+        discountPercent,
+        discountAmount,
+        taxAmount,
+        totalAmount,
+        status: "CONFIRMED",
+        paymentStatus,
+        documentStatus: "POSTED",
+        isSynced: true,
+        branchId,
+        tenantId
+      }
+    });
+
+    await tx.invoiceItem.createMany({
+      data: normalizedItems.map(item => ({
+        invoiceId,
+        tenantId,
+        productId: item.productId,
+        qty: item.qty,
+        price: item.price,
+        cost: item.cost,
+        total: item.total,
+        expiryDate: item.expiryDate,
+        note: item.note,
+        category: item.category
+      }))
+    });
+
+    for (const item of normalizedItems) {
+      if (!item.tracksStock) continue;
+
+      await FifoService.addStock(
+        tx,
+        item.productId,
+        item.batchNumber,
+        item.qty,
+        item.cost,
+        item.expiryDate,
+        invoiceId,
+        "INVOICE",
+        `Purchase ${invoiceNumber}`,
+        tenantId,
+        branchId
+      );
+
+      await tx.branchInventory.upsert({
+        where: { branchId_productId: { branchId, productId: item.productId } },
+        create: {
+          tenantId,
+          branchId,
+          productId: item.productId,
+          stockQuantity: item.qty
+        },
+        update: { stockQuantity: { increment: item.qty } }
+      });
+    }
+
+    return {
+      id: mutationId,
+      mutationId,
+      status: "SUCCESS",
+      success: true,
+      serverVersion: version + 1,
+      processedAt: new Date().toISOString(),
+      details: {
+        invoiceId,
+        invoiceNumber,
+        itemCount: normalizedItems.length,
+        stockItemCount: normalizedItems.filter(item => item.tracksStock).length
+      }
+    };
   }
 
   private static getEntityPrismaConfig(entity: string): { modelName: string } | null {
