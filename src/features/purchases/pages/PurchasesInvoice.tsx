@@ -487,7 +487,7 @@ const existingItemIndex = items.findIndex(i =>
                 value={header.supplierInvoiceNumber || ''}
                 onChange={(e) => setHeader({ ...header, supplierInvoiceNumber: e.target.value.toLocaleUpperCase('en-US') })}
                 placeholder="رقم فاتورة المورد..."
-                required={!header.isReturn && !editingInvoiceId}
+                required={!header.isReturn && (!editingInvoiceId || header.status === 'DRAFT')}
                 disabled={isLocked}
                 className="w-full h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 rounded-none text-black text-right placeholder-gray-400 bg-transparent disabled:opacity-60"
               />

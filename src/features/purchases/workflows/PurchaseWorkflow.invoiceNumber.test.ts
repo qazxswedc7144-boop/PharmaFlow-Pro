@@ -59,6 +59,7 @@ describe('Purchase invoice number split — Phase 1 (TDD)', () => {
     await db.purchases.delete('PURCHASE-INVOICE-NUMBER-LOCAL');
     await db.invoices.delete('PURCHASE-POSTED-LOCKED');
     await db.invoices.delete('PURCHASE-EDIT-PRESERVE-NUMBER');
+    await db.invoices.delete('PURCHASE-DRAFT-TO-POST');
   });
 
   it('T1: persists the supplier invoice number with the purchase record', async () => {
@@ -91,6 +92,34 @@ describe('Purchase invoice number split — Phase 1 (TDD)', () => {
     expect(input.supplierInvoiceNumber).toBe('INV-AB-100');
     expect(result.purchase.supplierInvoiceNumber).toBe('INV-AB-100');
     await expect(db.invoices.get(result.refId)).resolves.toMatchObject({ supplierInvoiceNumber: 'INV-AB-100' });
+  });
+
+  it('T2c: requires the supplier number when converting a saved DRAFT into a posted invoice', async () => {
+    await db.invoices.put({
+      id: 'PURCHASE-DRAFT-TO-POST',
+      type: 'PURCHASE',
+      tenantId: context.tenantId,
+      branchId: context.branchId,
+      partnerId: 'SUPPLIER-DRAFT',
+      document_status: 'DRAFT',
+      invoiceStatus: 'DRAFT'
+    } as any);
+
+    await expect(
+      purchaseWorkflow.validateInput(draftInput({
+        id: 'PURCHASE-DRAFT-TO-POST',
+        isEdit: true,
+        supplierId: 'SUPPLIER-DRAFT',
+        invoiceStatus: 'POSTED',
+        supplierInvoiceNumber: ''
+      }) as any)
+    ).rejects.toThrow('SUPPLIER_INVOICE_NUMBER_REQUIRED');
+  });
+
+  it('T2d: allows a local DRAFT purchase order without a supplier-issued invoice number', async () => {
+    await expect(
+      purchaseWorkflow.validateInput(draftInput({ invoiceStatus: 'DRAFT', supplierInvoiceNumber: '   ' }) as any)
+    ).resolves.toBeUndefined();
   });
 
   it('T3b: preserves the stored supplier number when editing the same supplier', async () => {

@@ -124,6 +124,7 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     expect(res.success).toBe(true);
     const inv = await db.invoices.get(res.refId);
     expect(inv?.supplierInvoiceNumber).toBe(manualInvNum);
+    expect(res.invoiceNumber).toBe(inv?.invoiceNumber);
     expect(inv?.invoiceNumber).toBeTruthy();
     expect(inv?.invoiceNumber).not.toBe(manualInvNum);
     expect(inv?.invoice_number).toBe(inv?.invoiceNumber);

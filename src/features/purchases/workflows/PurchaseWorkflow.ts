@@ -86,18 +86,23 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
     const finalStatus = input.invoiceStatus || 'POSTED';
     let supplierInvoiceNumber = normalizeSupplierInvoiceNumber(input.supplierInvoiceNumber);
-    if (input.isEdit && input.id && !supplierInvoiceNumber) {
-      const existingInvoice = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
+    let existingInvoice: any;
+    if (input.isEdit && input.id) {
+      existingInvoice = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
       const existingSupplierId = String(
         existingInvoice?.partnerId || existingInvoice?.partner_id ||
         existingInvoice?.supplierId || existingInvoice?.supplier_id || ''
       );
-      if (!existingSupplierId || !input.supplierId || existingSupplierId === input.supplierId) {
+      if (!supplierInvoiceNumber && (!existingSupplierId || !input.supplierId || existingSupplierId === input.supplierId)) {
         supplierInvoiceNumber = normalizeSupplierInvoiceNumber(existingInvoice?.supplierInvoiceNumber);
       }
     }
     input.supplierInvoiceNumber = supplierInvoiceNumber || null;
-    if (!input.isReturn && !input.isEdit && finalStatus !== 'DRAFT' && !input.supplierInvoiceNumber) {
+    const existingStatus = String(
+      existingInvoice?.document_status || existingInvoice?.documentStatus || existingInvoice?.invoiceStatus || ''
+    ).trim().toUpperCase();
+    const postingExistingDraft = !!input.isEdit && existingStatus === 'DRAFT' && finalStatus !== 'DRAFT';
+    if (!input.isReturn && finalStatus !== 'DRAFT' && (!input.isEdit || postingExistingDraft) && !input.supplierInvoiceNumber) {
       throw new Error('SUPPLIER_INVOICE_NUMBER_REQUIRED');
     }
   }
@@ -328,7 +333,19 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     const effectiveDate = input.date || ctx.startedAt;
     const isReturn = !!input.isReturn;
     const supplierInvoiceNumber = normalizeSupplierInvoiceNumber(input.supplierInvoiceNumber);
-    if (!isReturn && !input.isEdit && finalStatus !== 'DRAFT' && !supplierInvoiceNumber) {
+    let existingInvoiceStatus = '';
+    if (input.isEdit && input.id && finalStatus !== 'DRAFT' && !supplierInvoiceNumber) {
+      const existingInvoice = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
+      existingInvoiceStatus = String(
+        existingInvoice?.document_status || existingInvoice?.documentStatus || existingInvoice?.invoiceStatus || ''
+      ).trim().toUpperCase();
+    }
+    if (
+      !isReturn &&
+      finalStatus !== 'DRAFT' &&
+      !supplierInvoiceNumber &&
+      (!input.isEdit || existingInvoiceStatus === 'DRAFT')
+    ) {
       throw new Error('SUPPLIER_INVOICE_NUMBER_REQUIRED');
     }
     input.supplierInvoiceNumber = supplierInvoiceNumber || null;

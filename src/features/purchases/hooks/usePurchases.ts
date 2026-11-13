@@ -424,7 +424,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
     const currentHeader = overridePayload?.header || header;
     const currentAdjData = overridePayload?.adjData || adjData;
     if (!currentHeader.supplier_id) { addToast("يرجى اختيار المورد", "error"); return; }
-    if (!currentHeader.isReturn && !editingInvoiceId && !normalizeSupplierInvoiceNumber(currentHeader.supplierInvoiceNumber)) { addToast("يرجى إدخال رقم فاتورة المورد", "error"); return; }
+    if (!currentHeader.isReturn && (!editingInvoiceId || currentHeader.status === 'DRAFT') && !normalizeSupplierInvoiceNumber(currentHeader.supplierInvoiceNumber)) { addToast("يرجى إدخال رقم فاتورة المورد", "error"); return; }
     if (currentItems.length === 0) { addToast("الفاتورة فارغة", "error"); return; }
     const subtotal = currentItems.reduce((sum: number, item: any) => sum + (item.qty * item.price), 0);
     const discount = subtotal * (currentAdjData.discountPercent / 100);
