@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
 import { TransferStatus } from '@/types';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
@@ -29,6 +29,12 @@ export class InventoryTransferWorkflow implements BusinessWorkflow<InventoryTran
   public id = 'inventory.transfer.create';
   public name = 'إنشاء طلب تحويل مخزني';
   public operationType = 'INVENTORY_TRANSFER';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'BRANCH_TRANSFER',
+    operation: 'CREATE',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['inventory.transfer', 'inventory.manage'];
   public tables = [
     'branchTransfers', 'branchTransferItems', 'branchInventory',

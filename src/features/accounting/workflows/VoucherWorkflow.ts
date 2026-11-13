@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
 import { Payment, Receipt, Voucher } from '@/types';
 import { PurchaseRepository } from '@/database/repositories/PurchaseRepository';
@@ -30,6 +30,12 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
   public id = 'accounting.voucher.process';
   public name = 'معالجة سند قبض / صرف';
   public operationType = 'VOUCHER';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'VOUCHER',
+    operation: 'CREATE',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['accounting.voucher.create', 'vouchers.create'];
   public tables = [
     'vouchers', 'invoices', 'suppliers', 'customers', 'financialTransactions',

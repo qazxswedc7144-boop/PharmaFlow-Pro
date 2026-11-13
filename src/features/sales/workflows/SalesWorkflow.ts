@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { InvoiceItem, InvoiceStatus, Sale } from '@/types';
 import { ValidationService as validationService } from '@/services/integrity/ValidationService';
 import { UnifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
@@ -13,6 +13,7 @@ import { configurationService } from '@/services/config/configurationService';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { TenantSalesPolicyService } from '@/features/sales/services/tenantSalesPolicy.service';
 import { LocalSalesPricingService } from '@/features/sales/services/localSalesPricing.service';
+import { toSaleSyncDTO } from '@/features/sync/saleSyncDto';
 
 export interface SalesWorkflowInput {
   customerId?: string;
@@ -49,6 +50,12 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
   public id = 'SALE';
   public name = 'ترحيل فاتورة مبيعات (آلي)';
   public operationType = 'POST';
+  /** Documentation-only contract. The existing in-transaction SALE enqueue path is unchanged. */
+  public syncContract: SyncContract = {
+    entityType: 'SALE',
+    operation: 'POST',
+    buildPayload: (result) => toSaleSyncDTO(result) as unknown as Record<string, unknown>
+  };
   public requiredPermissions = ['sales.create', 'sales.edit'];
   public tables = [
     'invoices', 'invoiceItems', 'products', 'inventoryTransactions',

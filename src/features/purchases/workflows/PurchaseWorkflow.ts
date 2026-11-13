@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { InvoiceItem, InvoiceStatus, Purchase } from '@/types';
 import { ValidationService as validationService } from '@/services/integrity/ValidationService';
 import { UnifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
@@ -43,6 +43,12 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
   public id = 'purchases.invoice.process';
   public name = 'معالجة فاتورة مشتريات';
   public operationType = 'PURCHASE';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'PURCHASE',
+    operation: 'CREATE',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['purchases.create', 'purchases.edit'];
 
   public tables = [
