@@ -95,6 +95,10 @@ export const DraftService = {
     if (!draft) return;
     assertDraftScope(draft, scope, 'delete');
     await db.drafts.delete(storageId);
+    const remaining = await db.drafts.get(storageId);
+    if (remaining && belongsToScope(remaining, scope)) {
+      throw new Error('DRAFT_DELETE_VERIFY_FAILED: active draft still exists after delete.');
+    }
   },
 
   hasDraft: async (id: string): Promise<boolean> => {
@@ -205,6 +209,10 @@ export const DraftService = {
     if (!draft) return;
     assertDraftScope(draft, scope, 'delete');
     await db.draft_invoices.delete(storageId);
+    const remaining = await db.draft_invoices.get(storageId);
+    if (remaining && belongsToScope(remaining, scope)) {
+      throw new Error('INVOICE_DRAFT_DELETE_VERIFY_FAILED: active invoice draft still exists after delete.');
+    }
   },
 
   hasInvoiceDraft: async (invoiceType: 'SALE' | 'PURCHASE'): Promise<boolean> => {
