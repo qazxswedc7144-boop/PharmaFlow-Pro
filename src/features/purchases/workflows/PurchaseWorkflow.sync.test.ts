@@ -113,8 +113,28 @@ describe('PurchaseWorkflow V-30B transactional sync', () => {
     expect(queueRow).toBeTruthy();
     expect(outboxRow).toBeTruthy();
     expect(queueRow.entityType).toBe('PURCHASE');
+    expect(queueRow.entityId).toBe('PUR-LOCAL-001');
     expect(outboxRow.entityType).toBe('PURCHASE');
     expect(outboxRow.operation).toBe('CREATE');
+  });
+
+  it('fails closed and rolls back when enqueue returns without both durable records', async () => {
+    const engine = DistributedSyncEngine.getInstance();
+    const ctx = context('PURCHASE-IDEM-FAIL-CLOSED-001');
+    vi.spyOn(engine, 'enqueueWithinTransaction').mockResolvedValue({
+      mutationId: 'MUTATION-WITHOUT-ROWS',
+      idempotencyKey: ctx.idempotencyKey
+    });
+
+    await expect(
+      TransactionBoundary.executeAtomic(
+        purchaseWorkflow.tables!,
+        tx => purchaseWorkflow.executeDomainSteps(postedPurchaseInput() as any, ctx as any, tx)
+      )
+    ).rejects.toThrow('PURCHASE_SYNC_DURABILITY_FAILED');
+
+    expect(await (db as any).syncQueue.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
+    expect(await (db as any).outbox.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
   });
 
   it('does not enqueue DRAFT purchases', async () => {
