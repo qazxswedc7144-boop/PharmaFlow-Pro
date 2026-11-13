@@ -67,6 +67,7 @@ jobs:
           src/database/repositories/invoice.repository.p2.test.ts
           src/services/reports/reportEngine.refresh.test.ts
           src/features/catalog/workflows/ProductApplicationWorkflow.test.ts
+          src/features/purchases/workflows/PurchaseWorkflow.sync.test.ts
           src/core/workflow/syncContract.test.ts
           src/core/workflow/workflowContext.test.ts
           src/core/integrity/executionGuard.local.test.ts
