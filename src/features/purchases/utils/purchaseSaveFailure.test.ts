@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   canResetAfterFailedPurchase,
   cleanupFailedPurchaseDrafts,
@@ -17,9 +17,9 @@ describe('purchase save failure recovery regression', () => {
       clearOptionalConfig
     });
 
-    expect(clearInvoiceDraft).toHaveBeenCalledOnce();
-    expect(clearDraft).toHaveBeenCalledOnce();
-    expect(clearOptionalConfig).toHaveBeenCalledOnce();
+    expect(clearInvoiceDraft).toHaveBeenCalledTimes(1);
+    expect(clearDraft).toHaveBeenCalledTimes(1);
+    expect(clearOptionalConfig).toHaveBeenCalledTimes(1);
     expect(result.activeDraftCleanupComplete).toBe(true);
     expect(result.optionalConfigCleanup).toMatchObject({
       status: 'rejected',
