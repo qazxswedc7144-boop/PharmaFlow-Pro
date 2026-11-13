@@ -9,7 +9,7 @@ interface AccountingState {
   journalEntries: AccountingEntry[];
   accounts: Account[];
   loadAccounting: () => Promise<void>;
-  addInvoice: (invoice: { type?: 'SALE' | 'PURCHASE'; payload?: any; options?: WorkflowInvoiceOptions; [key: string]: any }, type?: 'SALE' | 'PURCHASE') => Promise<{ success: boolean; refId: string } | any>;
+  addInvoice: (invoice: { type?: 'SALE' | 'PURCHASE'; payload?: any; options?: WorkflowInvoiceOptions; [key: string]: any }, type?: 'SALE' | 'PURCHASE') => Promise<{ success: boolean; refId: string; invoiceNumber?: string } | any>;
   addPartner: (partner: unknown, type: 'C' | 'S') => Promise<unknown>;
 }
 
@@ -50,6 +50,7 @@ export const useAccountingStore = create<AccountingState>((set) => ({
         total: rawPayload.total ?? rawPayload.subtotal ?? 0,
         id: rawPayload.id,
         invoiceNumber: rawPayload.invoiceNumber ?? rawPayload.invoice_number ?? undefined,
+        supplierInvoiceNumber: rawPayload.supplierInvoiceNumber ?? undefined,
         date: rawPayload.date || options.date,
         notes: rawPayload.notes,
         attachment: rawPayload.attachment,

@@ -60,6 +60,7 @@ export interface WorkflowPurchasePayload {
   total: number;
   id?: string;
   invoiceNumber?: string;
+  supplierInvoiceNumber?: string | null;
   date?: string;
   notes?: string;
   attachment?: string;
@@ -259,7 +260,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
   public static async processPurchase(
     payload: WorkflowPurchasePayload,
     options?: WorkflowInvoiceOptions
-  ): Promise<{ success: boolean; refId: string }> {
+  ): Promise<{ success: boolean; refId: string; invoiceNumber?: string }> {
     const transactionUuid = payload.transactionUuid || generateTransactionUuid('PURCHASE');
     payload.transactionUuid = transactionUuid;
     if (!payload.id) {
@@ -284,6 +285,7 @@ export class UnifiedBusinessWorkflowOrchestrator {
         total: payload.total,
         id: payload.id,
         invoiceNumber: payload.invoiceNumber,
+        supplierInvoiceNumber: payload.supplierInvoiceNumber,
         date: payload.date || options?.date,
         notes: payload.notes,
         attachment: payload.attachment,
@@ -308,7 +310,8 @@ export class UnifiedBusinessWorkflowOrchestrator {
 
     return {
       success: true,
-      refId: result.data!.refId
+      refId: result.data!.refId,
+      invoiceNumber: (result.data!.purchase as any)?.invoiceNumber || (result.data!.purchase as any)?.invoice_number
     };
   }
 

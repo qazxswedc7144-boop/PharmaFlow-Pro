@@ -13,6 +13,7 @@ import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { ensureActiveBranchRegistered } from '@features/branches/services/activeBranchRegistry';
 import { DistributedSyncEngine } from '@features/sync/sync.engine';
 import { generateTransactionUuid } from '@/utils/uuid';
+import { normalizeSupplierInvoiceNumber } from '../utils/purchaseInvoiceNumber';
 
 export interface PurchaseWorkflowInput {
   supplierId?: string;
@@ -20,6 +21,7 @@ export interface PurchaseWorkflowInput {
   total: number;
   id?: string;
   invoiceNumber?: string;
+  supplierInvoiceNumber?: string | null;
   date?: string;
   notes?: string;
   attachment?: string;
@@ -81,6 +83,11 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     if (input.total < 0) {
       throw new Error('إجمالي الفاتورة يجب أن يكون أكبر من أو يساوي الصفر');
     }
+
+    input.supplierInvoiceNumber = normalizeSupplierInvoiceNumber(input.supplierInvoiceNumber) || null;
+    if (!input.isReturn && !input.isEdit && !input.supplierInvoiceNumber) {
+      throw new Error('SUPPLIER_INVOICE_NUMBER_REQUIRED');
+    }
   }
 
   public async validateBusinessRules(
@@ -98,6 +105,37 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       throw new Error(
         'FAIL_CLOSED: يتطلب تنفيذ فاتورة المشتريات وجود سياق مؤسسة موثوق (Trusted Tenant Context Required).'
       );
+    }
+
+    // The system-generated invoice number is immutable after posting. Enforce this
+    // against the persisted record, not only against the read-only UI field.
+    if (input.isEdit && input.id) {
+      const existingInvoice = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
+      const existingStatus = String(
+        existingInvoice?.document_status ||
+        existingInvoice?.documentStatus ||
+        existingInvoice?.invoiceStatus ||
+        ''
+      ).trim().toUpperCase();
+      const existingInvoiceNumber = String(
+        existingInvoice?.invoiceNumber ||
+        existingInvoice?.invoice_number ||
+        existingInvoice?.invoiceId ||
+        ''
+      ).trim();
+      const requestedInvoiceNumber = String(input.invoiceNumber || '').trim();
+
+      if (
+        existingInvoice &&
+        (existingStatus === 'POSTED' || existingStatus === 'LOCKED') &&
+        requestedInvoiceNumber &&
+        requestedInvoiceNumber !== existingInvoiceNumber
+      ) {
+        throw new Error('POSTED_PURCHASE_INVOICE_NUMBER_IMMUTABLE');
+      }
+      if (existingInvoice && !requestedInvoiceNumber) {
+        input.invoiceNumber = existingInvoiceNumber;
+      }
     }
 
     // Resolve the active branch from the authenticated server context before opening
@@ -277,6 +315,11 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
     const effectiveDate = input.date || ctx.startedAt;
     const isReturn = !!input.isReturn;
+    const supplierInvoiceNumber = normalizeSupplierInvoiceNumber(input.supplierInvoiceNumber);
+    if (!isReturn && !input.isEdit && !supplierInvoiceNumber) {
+      throw new Error('SUPPLIER_INVOICE_NUMBER_REQUIRED');
+    }
+    input.supplierInvoiceNumber = supplierInvoiceNumber || null;
 
     // Strict Identity Separation: internal database id vs user-facing invoiceNumber
     const docId = input.id || generatePurchaseDocumentId();
@@ -464,6 +507,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         attachment: input.attachment,
         warehouseId: input.warehouseId,
         originalPurchaseId: input.originalPurchaseId,
+        supplierInvoiceNumber: supplierInvoiceNumber || null,
         tx
       }
     );

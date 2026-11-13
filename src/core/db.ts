@@ -1617,6 +1617,7 @@ export class PharmaFlowDB extends Dexie {
       attachment?: string;
       warehouseId?: string;
       originalPurchaseId?: string;
+      supplierInvoiceNumber?: string | null;
       tx?: any;
     }
   ) {
@@ -1664,6 +1665,7 @@ export class PharmaFlowDB extends Dexie {
       invoiceNumber: invNum,
       invoice_number: invNum,
       invoiceId: invNum, // Compatibility
+      supplierInvoiceNumber: adjustments?.supplierInvoiceNumber ?? null,
       date: docDate,
       Date: docDate, // Compatibility
       partnerId: supplierId || 'SUPP-GEN',

@@ -479,16 +479,28 @@ const existingItemIndex = items.findIndex(i =>
 </div>
           </div>
           
-          <div className="flex border-b border-slate-100 flex-row gap-[2%] px-3 py-2 bg-white">
-            <div className="basis-[25%] relative">
-              <input 
+          <div className="flex border-b border-slate-100 flex-row gap-2 px-3 py-2 bg-white">
+            <div className="flex-[1.15] min-w-0 relative">
+              <input
+                type="text"
+                value={header.supplierInvoiceNumber || ''}
+                onChange={(e) => setHeader({ ...header, supplierInvoiceNumber: e.target.value.toLocaleUpperCase('en-US') })}
+                placeholder="رقم فاتورة المورد..."
+                required={!header.isReturn && !editingInvoiceId}
+                disabled={isLocked}
+                className="w-full h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 rounded-none text-black text-right placeholder-gray-400 bg-transparent disabled:opacity-60"
+              />
+            </div>
+            <div className="flex-[0.85] min-w-0 relative">
+              <input
                 type="text"
                 inputMode="numeric"
                 ref={invNumInputRef}
-                value={header.invoice_number}
-                onChange={(e) => setHeader({...header, invoice_number: e.target.value})}
-                placeholder="رقم الفاتورة..."
-                className="w-full h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 rounded-none text-black text-right placeholder-gray-400 bg-transparent"
+                value={header.invoice_number || ''}
+                readOnly
+                placeholder="رقم النظام..."
+                aria-label="رقم الفاتورة الداخلي"
+                className="w-full h-10 border-b border-gray-300 rounded-none text-slate-500 text-right placeholder-gray-400 bg-slate-50 cursor-not-allowed"
               />
             </div>
             <div className="basis-[73%] relative flex items-center">

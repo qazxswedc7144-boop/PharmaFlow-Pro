@@ -19,6 +19,8 @@ import { db } from '@/core/db';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
 import { ValidationService } from '@/services/integrity/ValidationService';
 import { purchaseWorkflow } from './PurchaseWorkflow';
+import { salesWorkflow } from '@features/sales/workflows/SalesWorkflow';
+import { productApplicationWorkflow } from '@features/catalog/workflows/ProductApplicationWorkflow';
 import {
   getSavedPurchaseInvoiceNumber,
   getPurchaseAuditDetails
@@ -127,8 +129,9 @@ describe('Purchase invoice number split — Phase 1 (TDD)', () => {
       .toContain('PURCH-GENERATED-100');
   });
 
-  it('T7: keeps this phase scoped to purchase-only behavior', () => {
-    expect(purchaseWorkflow.operationType).toBe('PURCHASE');
+  it('T7: sales and product workflows retain their existing operation identities', () => {
+    expect(salesWorkflow.operationType).toBe('POST');
+    expect(productApplicationWorkflow.operationType).toBe('PRODUCT_SAVE');
     expect(ValidationService).toBeDefined();
   });
 });
