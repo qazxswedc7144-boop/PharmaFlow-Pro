@@ -103,15 +103,14 @@ describe('PurchaseWorkflow V-30B transactional sync', () => {
     expect(result.refId).toBe('PUR-LOCAL-001');
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(activeTransaction).toBeTruthy();
-    const transactionTables = [
-      ...(Array.isArray(activeTransaction.tables)
-        ? activeTransaction.tables.map((table: any) => table?.name ?? table)
-        : activeTransaction.tables instanceof Map
-          ? Array.from(activeTransaction.tables.keys())
-          : Object.keys(activeTransaction.tables || {})),
-      ...(Array.isArray(activeTransaction.storeNames) ? activeTransaction.storeNames : [])
-    ];
-    expect(transactionTables).toEqual(expect.arrayContaining(['syncQueue', 'outbox']));
+    const hasTransactionTable = (name: string) => Boolean(
+      activeTransaction.tables?.[name] ||
+      (activeTransaction.tables instanceof Map && activeTransaction.tables.has(name)) ||
+      (Array.isArray(activeTransaction.tables) && activeTransaction.tables.some((table: any) => table === name || table?.name === name)) ||
+      (Array.isArray(activeTransaction.storeNames) && activeTransaction.storeNames.includes(name))
+    );
+    expect(hasTransactionTable('syncQueue')).toBe(true);
+    expect(hasTransactionTable('outbox')).toBe(true);
 
     const queueRow = await (db as any).syncQueue.where('idempotencyKey').equals(ctx.idempotencyKey).first();
     const outboxRow = await (db as any).outbox.where('idempotencyKey').equals(ctx.idempotencyKey).first();
