@@ -286,6 +286,7 @@ export class SyncProcessorService {
         tenantId,
         branchId,
         userId: params.userId,
+        userRole,
         deviceId: params.deviceId,
         version,
         tx
@@ -398,6 +399,7 @@ export class SyncProcessorService {
     tenantId: string;
     branchId: string | null;
     userId: string;
+    userRole?: string;
     deviceId: string;
     version: number;
     tx: any;
