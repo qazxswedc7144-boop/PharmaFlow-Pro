@@ -113,7 +113,7 @@ describe('PurchaseWorkflow V-30B transactional sync', () => {
     expect(queueRow).toBeTruthy();
     expect(outboxRow).toBeTruthy();
     expect(queueRow.entityType).toBe('PURCHASE');
-    expect(queueRow.entityId).toBe('PUR-LOCAL-001');
+    expect(queueRow.payload.id).toBe('PUR-LOCAL-001');
     expect(outboxRow.entityType).toBe('PURCHASE');
     expect(outboxRow.operation).toBe('CREATE');
   });
