@@ -79,6 +79,7 @@ jobs:
           src/core/integrity/idempotencyRegistry.persistence.test.ts
           src/services/system/DraftService.test.ts
           src/features/purchases/utils/purchaseFailureDisposition.test.ts
+          src/features/purchases/utils/purchaseSaveFailure.test.ts
           src/features/inventory/utils/newPurchaseProduct.test.ts
           server/tests/purchase-integrity-phase2.test.ts
           server/tests/atomic-post-sale-price-policy.test.ts
