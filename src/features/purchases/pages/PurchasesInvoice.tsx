@@ -137,6 +137,7 @@ const PurchasesInvoice: React.FC<{ onNavigate?: (view: string, params?: Record<s
     itemNameInputRef,
     header, setHeader,
     isLocked,
+    editingInvoiceId,
     vTotalSum,
     filteredProducts,
     filteredSuppliers,

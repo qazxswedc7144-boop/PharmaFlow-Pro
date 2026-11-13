@@ -84,8 +84,20 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       throw new Error('إجمالي الفاتورة يجب أن يكون أكبر من أو يساوي الصفر');
     }
 
-    input.supplierInvoiceNumber = normalizeSupplierInvoiceNumber(input.supplierInvoiceNumber) || null;
-    if (!input.isReturn && !input.isEdit && !input.supplierInvoiceNumber) {
+    const finalStatus = input.invoiceStatus || 'POSTED';
+    let supplierInvoiceNumber = normalizeSupplierInvoiceNumber(input.supplierInvoiceNumber);
+    if (input.isEdit && input.id && !supplierInvoiceNumber) {
+      const existingInvoice = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
+      const existingSupplierId = String(
+        existingInvoice?.partnerId || existingInvoice?.partner_id ||
+        existingInvoice?.supplierId || existingInvoice?.supplier_id || ''
+      );
+      if (!existingSupplierId || !input.supplierId || existingSupplierId === input.supplierId) {
+        supplierInvoiceNumber = normalizeSupplierInvoiceNumber(existingInvoice?.supplierInvoiceNumber);
+      }
+    }
+    input.supplierInvoiceNumber = supplierInvoiceNumber || null;
+    if (!input.isReturn && !input.isEdit && finalStatus !== 'DRAFT' && !input.supplierInvoiceNumber) {
       throw new Error('SUPPLIER_INVOICE_NUMBER_REQUIRED');
     }
   }
@@ -316,7 +328,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     const effectiveDate = input.date || ctx.startedAt;
     const isReturn = !!input.isReturn;
     const supplierInvoiceNumber = normalizeSupplierInvoiceNumber(input.supplierInvoiceNumber);
-    if (!isReturn && !input.isEdit && !supplierInvoiceNumber) {
+    if (!isReturn && !input.isEdit && finalStatus !== 'DRAFT' && !supplierInvoiceNumber) {
       throw new Error('SUPPLIER_INVOICE_NUMBER_REQUIRED');
     }
     input.supplierInvoiceNumber = supplierInvoiceNumber || null;

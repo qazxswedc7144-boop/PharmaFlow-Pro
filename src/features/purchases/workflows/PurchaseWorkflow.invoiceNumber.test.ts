@@ -58,6 +58,7 @@ describe('Purchase invoice number split — Phase 1 (TDD)', () => {
     await db.invoices.delete('PURCHASE-INVOICE-NUMBER-LOCAL');
     await db.purchases.delete('PURCHASE-INVOICE-NUMBER-LOCAL');
     await db.invoices.delete('PURCHASE-POSTED-LOCKED');
+    await db.invoices.delete('PURCHASE-EDIT-PRESERVE-NUMBER');
   });
 
   it('T1: persists the supplier invoice number with the purchase record', async () => {
@@ -72,13 +73,13 @@ describe('Purchase invoice number split — Phase 1 (TDD)', () => {
 
   it('T2: rejects a new non-return purchase when the supplier invoice number is empty', async () => {
     await expect(
-      purchaseWorkflow.validateInput(draftInput({ supplierInvoiceNumber: '   ' }) as any)
+      purchaseWorkflow.validateInput(draftInput({ invoiceStatus: 'POSTED', supplierInvoiceNumber: '   ' }) as any)
     ).rejects.toThrow('SUPPLIER_INVOICE_NUMBER_REQUIRED');
   });
 
   it('T2b: allows a missing supplier invoice number for a purchase return', async () => {
     await expect(
-      purchaseWorkflow.validateInput(draftInput({ isReturn: true, supplierInvoiceNumber: '   ' }) as any)
+      purchaseWorkflow.validateInput(draftInput({ invoiceStatus: 'POSTED', isReturn: true, supplierInvoiceNumber: '   ' }) as any)
     ).resolves.toBeUndefined();
   });
 
@@ -90,6 +91,27 @@ describe('Purchase invoice number split — Phase 1 (TDD)', () => {
     expect(input.supplierInvoiceNumber).toBe('INV-AB-100');
     expect(result.purchase.supplierInvoiceNumber).toBe('INV-AB-100');
     await expect(db.invoices.get(result.refId)).resolves.toMatchObject({ supplierInvoiceNumber: 'INV-AB-100' });
+  });
+
+  it('T3b: preserves the stored supplier number when editing the same supplier', async () => {
+    await db.invoices.put({
+      id: 'PURCHASE-EDIT-PRESERVE-NUMBER',
+      type: 'PURCHASE',
+      tenantId: context.tenantId,
+      branchId: context.branchId,
+      partnerId: 'SUPPLIER-KEEP',
+      supplierInvoiceNumber: 'SUP-ORIGINAL-100',
+      document_status: 'DRAFT'
+    } as any);
+
+    const input = draftInput({
+      id: 'PURCHASE-EDIT-PRESERVE-NUMBER',
+      isEdit: true,
+      supplierId: 'SUPPLIER-KEEP',
+      supplierInvoiceNumber: ''
+    });
+    await purchaseWorkflow.validateInput(input as any);
+    expect(input.supplierInvoiceNumber).toBe('SUP-ORIGINAL-100');
   });
 
   it('T4: rejects changing the internal invoice number of a POSTED purchase', async () => {

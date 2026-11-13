@@ -116,22 +116,25 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     const manualInvNum = 'INV-2026-00125';
     const res = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       supplierId: supplierAId,
-      invoiceNumber: manualInvNum,
+      supplierInvoiceNumber: manualInvNum,
       items: [{ productId: productAId, quantity: 10, unitCost: 8, unitPrice: 8 } as any],
       total: 80
     });
 
     expect(res.success).toBe(true);
     const inv = await db.invoices.get(res.refId);
-    expect(inv?.invoice_number).toBe(manualInvNum);
-    expect(inv?.invoiceNumber).toBe(manualInvNum);
-    expect(inv?.id).not.toBe(manualInvNum);
+    expect(inv?.supplierInvoiceNumber).toBe(manualInvNum);
+    expect(inv?.invoiceNumber).toBeTruthy();
+    expect(inv?.invoiceNumber).not.toBe(manualInvNum);
+    expect(inv?.invoice_number).toBe(inv?.invoiceNumber);
+    expect(inv?.id).not.toBe(inv?.invoiceNumber);
   });
 
   it('P0-2: Verifies supplier balance reversal and re-application during edit', async () => {
     // 1. Create original purchase (1000)
     const createRes = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       supplierId: supplierAId,
+      supplierInvoiceNumber: 'SUP-A-1000-001',
       items: [{ productId: productAId, quantity: 100, unitCost: 10, unitPrice: 10 } as any],
       total: 1000
     });
@@ -156,6 +159,7 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     // 1. Create original purchase for Supplier A (1000)
     const createRes = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       supplierId: supplierAId,
+      supplierInvoiceNumber: 'SUP-A-1000-002',
       items: [{ productId: productAId, quantity: 100, unitCost: 10, unitPrice: 10 } as any],
       total: 1000
     });
@@ -167,6 +171,7 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       id: createRes.refId,
       supplierId: supplierBId,
+      supplierInvoiceNumber: 'SUP-B-500-001',
       items: [{ productId: productAId, quantity: 50, unitCost: 10, unitPrice: 10 } as any],
       total: 500,
       isEdit: true
@@ -190,6 +195,7 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     // This should pass validation because manualProdId is in pendingProducts
     const res = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       supplierId: supplierAId,
+      supplierInvoiceNumber: 'SUP-A-MANUAL-001',
       items: [{ productId: manualProdId, quantity: 5, unitCost: 30, unitPrice: 30 } as any],
       total: 150,
       pendingProducts
@@ -208,6 +214,7 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     const canonicalProductId = 'Manual-Product-Case';
     const result = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       supplierId: supplierAId,
+      supplierInvoiceNumber: 'SUP-A-MANUAL-002',
       items: [{
         productId: '  manual-product-case  ',
         quantity: 2,
@@ -237,6 +244,7 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     const payload = {
       transactionUuid: fixedUuid,
       supplierId: supplierAId,
+      supplierInvoiceNumber: 'SUP-A-STABLE-001',
       items: [{ productId: productAId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
       total: 100
     };
@@ -268,6 +276,7 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     try {
       await expect(UnifiedBusinessWorkflowOrchestrator.processPurchase({
         supplierId: supplierAId,
+        supplierInvoiceNumber: 'SUP-A-FAIL-001',
         items: [{ productId: productAId, quantity: 10, unitCost: 8, unitPrice: 8 } as any],
         total: 80
       })).rejects.toThrow('SIMULATED_PURCHASES_INDEX_WRITE_FAILURE');

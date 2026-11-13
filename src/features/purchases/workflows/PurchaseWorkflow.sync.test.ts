@@ -40,6 +40,7 @@ const postedPurchaseInput = (overrides: Record<string, unknown> = {}) => ({
   supplierId: 'مورد نقدي',
   isCash: true,
   invoiceNumber: 'PUR-SYNC-001',
+  supplierInvoiceNumber: 'SUP-SYNC-001',
   date: '2026-11-13T00:00:00.000Z',
   items: [{
     productId: 'SERVICE-PURCHASE-1',
