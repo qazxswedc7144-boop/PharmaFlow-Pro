@@ -61,7 +61,16 @@ export interface WorkflowHooks<TInput = any, TResult = any> {
   onRollback?: (error: Error, ctx: WorkflowContext) => Promise<void>;
 }
 
+export interface SyncContract {
+  entityType: string;
+  operation: 'CREATE' | 'UPDATE' | 'POST' | 'CANCEL' | 'ADJUST' | 'DELETE';
+  buildPayload: (result: unknown, ctx: WorkflowContext) => Record<string, unknown>;
+  shouldSync?: (result: unknown) => boolean;
+}
+
 export interface BusinessWorkflow<TInput = any, TResult = any> {
+  /** Documentation-only sync metadata in V-30A; execution routing remains unchanged. */
+  syncContract?: SyncContract;
   id: string;
   name: string;
   operationType: string;
