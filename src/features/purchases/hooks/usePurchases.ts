@@ -28,7 +28,7 @@ import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import type { IdempotencyRecord } from '@/core/integrity/types';
 import { getPurchaseDraftSnapshot } from '../utils/recoverablePurchaseDraft';
 import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOperation';
-import { canResetAfterFailedPurchase, getPurchaseSaveFailureMessage } from '../utils/purchaseSaveFailure';
+import { canResetAfterFailedPurchase, cleanupFailedPurchaseDrafts, getPurchaseSaveFailureMessage } from '../utils/purchaseSaveFailure';
 import { writeDiagnosticLog } from '@/services/system/diagnosticLogger';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
@@ -622,16 +622,38 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       }
 
       if (failedInvoiceQuarantined) {
-        // Quarantine is the durable recovery source. Attempt each active-draft
-        // cleanup independently so one failed delete cannot block the UI reset.
-        const cleanupResults = await Promise.allSettled([
-          Promise.resolve().then(() => DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId)),
-          Promise.resolve().then(() => DraftService.clearDraft(purchaseDraftKeys!.draftId)),
-          Promise.resolve().then(() => configurationService.set(purchaseDraftKeys!.configKey, null))
-        ]);
-        activeDraftCleanupComplete = cleanupResults.every(result => result.status === 'fulfilled');
+        // The verified quarantine is the durable recovery source. Only active
+        // invoice/general draft deletion is required before resetting the form.
+        const cleanupResult = await cleanupFailedPurchaseDrafts({
+          clearInvoiceDraft: () => DraftService.clearInvoiceDraft(purchaseDraftKeys!.invoiceDraftId),
+          clearDraft: () => DraftService.clearDraft(purchaseDraftKeys!.draftId),
+          // This legacy config key is not a recovery source. Remove it best-effort;
+          // its absence or a permission/registry failure must not block safe reset.
+          clearOptionalConfig: () => configurationService.remove(purchaseDraftKeys!.configKey)
+        });
+        activeDraftCleanupComplete = cleanupResult.activeDraftCleanupComplete;
+
         if (!activeDraftCleanupComplete) {
-          console.error('[usePurchases] Quarantine was saved, but one or more active draft cleanup operations failed:', cleanupResults);
+          console.error(
+            '[usePurchases] Quarantine was saved, but required active draft cleanup failed:',
+            cleanupResult.requiredCleanupResults
+          );
+        }
+
+        if (cleanupResult.optionalConfigCleanup.status === 'rejected') {
+          console.warn(
+            '[usePurchases] Optional purchase config cleanup failed; verified quarantine and required draft cleanup remain authoritative:',
+            cleanupResult.optionalConfigCleanup.reason
+          );
+          await writeDiagnosticLog(db, cleanupResult.optionalConfigCleanup.reason, {
+            operation: 'PURCHASE_OPTIONAL_CONFIG_CLEANUP',
+            tenantId,
+            context: {
+              configKey: purchaseDraftKeys!.configKey,
+              invoiceNumber: currentHeader.invoice_number,
+              operationId: failureOperationId
+            }
+          });
         }
       }
 
