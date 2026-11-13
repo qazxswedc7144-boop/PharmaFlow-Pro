@@ -116,17 +116,37 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     else process.env.ADMIN_RESET_KEY = original;
   }
 
-  it("T-2: TENANT_ADMIN is denied with 403", async () => {
+  it("rejects anonymous admin-reset requests with 401", async () => {
     const ctx = getContext();
     const response = await request(ctx, "/api/auth/admin-reset", {
       method: "POST",
-      token: ctx.tokenA,
-      headers: { "x-reset-key": "irrelevant-for-role-denial" },
       body: { userId: ctx.userAId, targetTenantId: ctx.tenantAId }
     });
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(401);
+  });
+
+  it("T-2: TENANT_ADMIN is denied with 403", async () => {
+    const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
-    expect(await prisma.user.count({ where: { id: ctx.userAId } })).toBe(1);
+    await prisma.user.update({ where: { id: ctx.userAId }, data: { role: "TENANT_ADMIN" } });
+    const tenantAdminToken = jwt.sign({
+      userId: ctx.userAId,
+      username: ctx.usernameA,
+      role: "TENANT_ADMIN",
+      tenantId: ctx.tenantAId
+    }, getJwtSecret(), { expiresIn: "5m" });
+    try {
+      const response = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: tenantAdminToken,
+        headers: { "x-reset-key": "irrelevant-for-role-denial" },
+        body: { userId: ctx.userAId, targetTenantId: ctx.tenantAId }
+      });
+      expect(response.status).toBe(403);
+      expect(await prisma.user.count({ where: { id: ctx.userAId } })).toBe(1);
+    } finally {
+      await restoreFixtureAdmin(ctx.userAId);
+    }
   });
 
   it("T-3: missing ADMIN_RESET_KEY fails closed with 503", async () => {
