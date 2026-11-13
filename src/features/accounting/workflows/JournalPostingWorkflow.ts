@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
 import { AccountingEntry, JournalLine } from '@/types';
 import { PeriodLockEngine } from '@/services/transactions/PeriodLockEngine';
@@ -27,6 +27,12 @@ export class JournalPostingWorkflow implements BusinessWorkflow<JournalPostingIn
   public id = 'accounting.journal.post';
   public name = 'ترحيل قيد محاسبي يدوي';
   public operationType = 'JOURNAL_POSTING';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'JOURNAL_ENTRY',
+    operation: 'CREATE',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['accounting.journal.create', 'accounting.post'];
   public tables = [
     'journalEntries', 'journalLines', 'accounts', 'auditLogs',
