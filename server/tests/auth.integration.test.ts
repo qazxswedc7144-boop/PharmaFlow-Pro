@@ -1,4 +1,7 @@
 import { expect, it } from "vitest";
+import jwt from "jsonwebtoken";
+import { randomUUID } from "node:crypto";
+import { getJwtSecret } from "../security/jwtSecrets.js";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
 definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) => {
@@ -90,4 +93,231 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     expect(recovered.body.data.tenantId).toBe(ctx.tenantAId);
     expect(recovered.body.contextCorrected).toBe(true);
   });
+
+
+  async function promoteFixtureUserToPlatformOwner(ctx: { userAId: string; usernameA: string; tenantAId: string }): Promise<string> {
+    const { prisma } = await import("../database/prisma.js");
+    await prisma.user.update({ where: { id: ctx.userAId }, data: { role: "PLATFORM_OWNER" } });
+    return jwt.sign({
+      userId: ctx.userAId,
+      username: ctx.usernameA,
+      role: "PLATFORM_OWNER",
+      tenantId: ctx.tenantAId
+    }, getJwtSecret(), { expiresIn: "5m" });
+  }
+
+  async function restoreFixtureAdmin(userId: string): Promise<void> {
+    const { prisma } = await import("../database/prisma.js");
+    await prisma.user.update({ where: { id: userId }, data: { role: "ADMIN" } });
+  }
+
+  function restoreResetKey(original: string | undefined): void {
+    if (original === undefined) delete process.env.ADMIN_RESET_KEY;
+    else process.env.ADMIN_RESET_KEY = original;
+  }
+
+  it("rejects anonymous admin-reset requests with 401", async () => {
+    const ctx = getContext();
+    const response = await request(ctx, "/api/auth/admin-reset", {
+      method: "POST",
+      body: { userId: ctx.userAId, targetTenantId: ctx.tenantAId }
+    });
+    expect(response.status).toBe(401);
+  });
+
+  it("T-2: TENANT_ADMIN is denied with 403", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    await prisma.user.update({ where: { id: ctx.userAId }, data: { role: "TENANT_ADMIN" } });
+    const tenantAdminToken = jwt.sign({
+      userId: ctx.userAId,
+      username: ctx.usernameA,
+      role: "TENANT_ADMIN",
+      tenantId: ctx.tenantAId
+    }, getJwtSecret(), { expiresIn: "5m" });
+    try {
+      const response = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: tenantAdminToken,
+        headers: { "x-reset-key": "irrelevant-for-role-denial" },
+        body: { userId: ctx.userAId, targetTenantId: ctx.tenantAId }
+      });
+      expect(response.status).toBe(403);
+      expect(await prisma.user.count({ where: { id: ctx.userAId } })).toBe(1);
+    } finally {
+      await restoreFixtureAdmin(ctx.userAId);
+    }
+  });
+
+  it("T-3: missing ADMIN_RESET_KEY fails closed with 503", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const originalKey = process.env.ADMIN_RESET_KEY;
+    const actorToken = await promoteFixtureUserToPlatformOwner(ctx);
+    delete process.env.ADMIN_RESET_KEY;
+    try {
+      const response = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: actorToken,
+        body: { userId: ctx.userBId, targetTenantId: ctx.tenantBId }
+      });
+      expect(response.status).toBe(503);
+      expect(await prisma.user.count({ where: { id: ctx.userBId } })).toBe(1);
+    } finally {
+      restoreResetKey(originalKey);
+      await restoreFixtureAdmin(ctx.userAId);
+    }
+  });
+
+  it("T-4: an incorrect reset key returns 401 and deletes nothing", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const originalKey = process.env.ADMIN_RESET_KEY;
+    const actorToken = await promoteFixtureUserToPlatformOwner(ctx);
+    process.env.ADMIN_RESET_KEY = "ci-admin-reset-key";
+    try {
+      const response = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: actorToken,
+        headers: { "x-reset-key": "incorrect-reset-key" },
+        body: { userId: ctx.userBId, targetTenantId: ctx.tenantBId }
+      });
+      expect(response.status).toBe(401);
+      expect(await prisma.user.count({ where: { id: ctx.userBId } })).toBe(1);
+      expect(await prisma.auditLog.count({
+        where: { userId: ctx.userAId, entity: "User", entityId: ctx.userBId }
+      })).toBe(0);
+    } finally {
+      restoreResetKey(originalKey);
+      await restoreFixtureAdmin(ctx.userAId);
+    }
+  });
+
+  it("T-5: cross-tenant reset requires the exact explicit targetTenantId", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const originalKey = process.env.ADMIN_RESET_KEY;
+    const actorToken = await promoteFixtureUserToPlatformOwner(ctx);
+    process.env.ADMIN_RESET_KEY = "ci-admin-reset-key";
+    try {
+      const missingTenant = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: actorToken,
+        headers: { "x-reset-key": "ci-admin-reset-key" },
+        body: { userId: ctx.userBId }
+      });
+      expect(missingTenant.status).toBe(400);
+      const wrongTenant = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: actorToken,
+        headers: { "x-reset-key": "ci-admin-reset-key" },
+        body: { userId: ctx.userBId, targetTenantId: ctx.tenantAId }
+      });
+      expect(wrongTenant.status).toBe(403);
+      expect(await prisma.user.count({ where: { id: ctx.userBId } })).toBe(1);
+      expect(await prisma.auditLog.count({
+        where: { userId: ctx.userAId, entity: "User", entityId: ctx.userBId }
+      })).toBe(0);
+    } finally {
+      restoreResetKey(originalKey);
+      await restoreFixtureAdmin(ctx.userAId);
+    }
+  });
+
+  it("T-6: a database failure rolls back RefreshToken deletion and leaves no AuditLog", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const originalKey = process.env.ADMIN_RESET_KEY;
+    const actorToken = await promoteFixtureUserToPlatformOwner(ctx);
+    process.env.ADMIN_RESET_KEY = "ci-admin-reset-key";
+    const refreshToken = "ci-admin-reset-rollback-" + randomUUID();
+    const safeUserId = ctx.userBId.replace(/[^0-9a-f-]/gi, "");
+    try {
+      await prisma.refreshToken.create({
+        data: { userId: ctx.userBId, token: refreshToken, expiresAt: new Date(Date.now() + 3600000) }
+      });
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS ci_fail_admin_reset_delete ON public.users");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS public.ci_fail_admin_reset_delete()");
+      await prisma.$executeRawUnsafe(
+        "CREATE OR REPLACE FUNCTION public.ci_fail_admin_reset_delete() RETURNS trigger AS $$ " +
+        "BEGIN IF OLD.id = '" + safeUserId + "' THEN RAISE EXCEPTION 'forced admin-reset regression failure'; END IF; " +
+        "RETURN OLD; END; $$ LANGUAGE plpgsql"
+      );
+      await prisma.$executeRawUnsafe(
+        "CREATE TRIGGER ci_fail_admin_reset_delete BEFORE DELETE ON public.users " +
+        "FOR EACH ROW EXECUTE FUNCTION public.ci_fail_admin_reset_delete()"
+      );
+      const response = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: actorToken,
+        headers: { "x-reset-key": "ci-admin-reset-key" },
+        body: { userId: ctx.userBId, targetTenantId: ctx.tenantBId }
+      });
+      expect(response.status).toBe(500);
+      expect(await prisma.user.count({ where: { id: ctx.userBId } })).toBe(1);
+      expect(await prisma.refreshToken.count({ where: { userId: ctx.userBId, token: refreshToken } })).toBe(1);
+      expect(await prisma.auditLog.count({
+        where: { userId: ctx.userAId, entity: "User", entityId: ctx.userBId }
+      })).toBe(0);
+    } finally {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS ci_fail_admin_reset_delete ON public.users");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS public.ci_fail_admin_reset_delete()");
+      await prisma.refreshToken.deleteMany({ where: { userId: ctx.userBId, token: refreshToken } });
+      restoreResetKey(originalKey);
+      await restoreFixtureAdmin(ctx.userAId);
+    }
+  });
+
+  it("T-1: PLATFORM_OWNER with the correct key deletes by userId and writes an AuditLog", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const originalKey = process.env.ADMIN_RESET_KEY;
+    const actorToken = await promoteFixtureUserToPlatformOwner(ctx);
+    process.env.ADMIN_RESET_KEY = "ci-admin-reset-key";
+    try {
+      await prisma.refreshToken.create({
+        data: {
+          userId: ctx.userBId,
+          token: "ci-admin-reset-" + randomUUID(),
+          expiresAt: new Date(Date.now() + 3600000)
+        }
+      });
+      const response = await request(ctx, "/api/auth/admin-reset", {
+        method: "POST",
+        token: actorToken,
+        headers: { "x-reset-key": "ci-admin-reset-key" },
+        body: { userId: ctx.userBId, targetTenantId: ctx.tenantBId }
+      });
+      expect(response.status).toBe(200);
+      expect(response.body.deletedCount).toBe(1);
+      expect(response.body.userId).toBe(ctx.userBId);
+      expect(await prisma.user.count({ where: { id: ctx.userBId } })).toBe(0);
+      expect(await prisma.refreshToken.count({ where: { userId: ctx.userBId } })).toBe(0);
+      const audit = await prisma.auditLog.findFirst({
+        where: {
+          userId: ctx.userAId,
+          action: "DELETE",
+          entity: "User",
+          entityId: ctx.userBId,
+          tenantId: ctx.tenantBId
+        },
+        orderBy: { timestamp: "desc" }
+      });
+      expect(audit).toBeTruthy();
+      expect(audit?.ipAddress).toBeTruthy();
+      expect(JSON.parse(audit!.before!)).toMatchObject({
+        userId: ctx.userBId,
+        tenantId: ctx.tenantBId
+      });
+      expect(JSON.parse(audit!.after!)).toMatchObject({
+        deleted: true,
+        targetTenantId: ctx.tenantBId,
+        actorUserId: ctx.userAId
+      });
+    } finally {
+      restoreResetKey(originalKey);
+      await restoreFixtureAdmin(ctx.userAId);
+    }
+  });
+
 });

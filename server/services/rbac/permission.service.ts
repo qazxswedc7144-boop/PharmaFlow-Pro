@@ -63,6 +63,9 @@ export const ENTERPRISE_PERMISSIONS: StandardPermission[] = [
   { key: 'reports.branch.view', module: 'reports', action: 'view', description: 'استعراض مؤشرات أداء الفروع' },
   { key: 'reports.aging.view', module: 'reports', action: 'view', description: 'متابعة تقرير أعمار الديون' },
 
+  // Restricted platform-level emergency operations
+  { key: 'system.admin_reset', module: 'system', action: 'manage', description: 'تنفيذ إعادة ضبط طارئة لحساب مسؤول المنصة' },
+
   // 6. Settings Module
   { key: 'settings.view', module: 'settings', action: 'view', description: 'عرض إعدادات النظام' },
   { key: 'settings.update', module: 'settings', action: 'edit', description: 'تعديل وضبط إعدادات الصيدلية' },

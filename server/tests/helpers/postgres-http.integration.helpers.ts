@@ -67,7 +67,7 @@ function createContext(): PostgresHttpContext {
 export async function request(
   ctx: PostgresHttpContext,
   path: string,
-  options: { method?: string; token?: string; body?: unknown; branchId?: string } = {}
+  options: { method?: string; token?: string; body?: unknown; branchId?: string; headers?: Record<string, string> } = {}
 ): Promise<{ status: number; body: any }> {
   const response = await fetch(`${ctx.baseUrl}${path}`, {
     method: options.method || "GET",
@@ -75,6 +75,7 @@ export async function request(
       ...(options.body === undefined ? {} : { "content-type": "application/json" }),
       ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
       ...(options.branchId ? { 'x-branch-id': options.branchId } : {}),
+      ...(options.headers || {}),
     },
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   });
