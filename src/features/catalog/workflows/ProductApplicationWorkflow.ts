@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { Product } from '@/types';
 import { InventoryService } from '@features/inventory/services/InventoryService';
 import { AuditService } from '@/services/system/AuditService';
@@ -21,6 +21,12 @@ export class ProductApplicationWorkflow implements BusinessWorkflow<ProductAppli
   public id = 'catalog.product.save';
   public name = 'حفظ وتسجيل الصنف الدوائي';
   public operationType = 'PRODUCT_SAVE';
+  /** Documentation-only contract. Product enqueue remains owned by executeDomainSteps. */
+  public syncContract: SyncContract = {
+    entityType: 'PRODUCT',
+    operation: 'CREATE',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   // The workflow chooses the correct capability from input.isNew in validateBusinessRules.
   public requiredPermissions: string[] = [];
   // Product + its durable sync mutation are committed together in the local Dexie transaction.
