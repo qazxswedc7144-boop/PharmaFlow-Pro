@@ -11,6 +11,7 @@ import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { configurationService } from '@/services/config/configurationService';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { ensureActiveBranchRegistered } from '@features/branches/services/activeBranchRegistry';
+import { DistributedSyncEngine } from '@features/sync/sync.engine';
 
 export interface PurchaseWorkflowInput {
   supplierId?: string;
@@ -49,6 +50,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     operation: 'CREATE',
     buildPayload: (result) => result as Record<string, unknown>
   };
+  public syncHandledInDomainTransaction = true;
   public requiredPermissions = ['purchases.create', 'purchases.edit'];
 
   public tables = [
@@ -59,7 +61,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     'journalLines', 'accounts', 'financialTransactions', 'auditLogs',
     'idempotencyKeys', 'projectionEvents', 'projectionCheckpoints',
     'accountingPeriods', 'purchases', 'settings', 'systemSettings', 'branches',
-    'idempotency_records'
+    'idempotency_records', 'syncQueue', 'outbox'
   ];
 
   public async validateInput(input: PurchaseWorkflowInput): Promise<void> {
@@ -740,10 +742,75 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       );
     }
 
-    return {
+    const result: PurchaseWorkflowResult = {
       refId,
       purchase: savedDoc
     };
+
+    // Only a newly posted purchase invoice creates a PURCHASE/CREATE sync mutation.
+    // Drafts remain local; returns and edits require separate reverse/update contracts.
+    if (finalStatus === 'POSTED' && !isReturn && !input.isEdit) {
+      if (!tx || typeof tx.table !== 'function') {
+        throw new Error(
+          'PURCHASE_SYNC_TRANSACTION_REQUIRED: Posted purchase sync must be written inside the domain transaction.'
+        );
+      }
+
+      const syncPayload = {
+        ...this.syncContract.buildPayload(result, ctx),
+        // enqueueWithinTransaction derives entityId from payload.id. Keep the
+        // V-30A nested result envelope intact while adding its canonical identity.
+        id: refId,
+        tenantId: ctx.tenantId,
+        branchId: ctx.branchId
+      };
+
+      const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
+        this.syncContract.operation,
+        syncPayload,
+        this.syncContract.entityType,
+        ctx.idempotencyKey,
+        { tenantId: ctx.tenantId, branchId: ctx.branchId }
+      );
+
+      if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
+        throw new Error(
+          'PURCHASE_SYNC_ENQUEUE_FAILED: Posted purchase was not paired with a durable sync mutation.'
+        );
+      }
+
+      const syncQueueTable = tx.table('syncQueue');
+      const outboxTable = tx.table('outbox');
+      if (!syncQueueTable || !outboxTable) {
+        throw new Error(
+          'PURCHASE_SYNC_STORES_UNAVAILABLE: syncQueue and outbox must be part of the purchase transaction.'
+        );
+      }
+
+      const [queueRow, outboxRow] = await Promise.all([
+        syncQueueTable.where('idempotencyKey').equals(ctx.idempotencyKey).first(),
+        outboxTable.where('idempotencyKey').equals(ctx.idempotencyKey).first()
+      ]);
+
+      if (
+        !queueRow ||
+        !outboxRow ||
+        queueRow.entityType !== this.syncContract.entityType ||
+        queueRow.entityId !== refId ||
+        queueRow.tenantId !== ctx.tenantId ||
+        queueRow.branchId !== ctx.branchId ||
+        outboxRow.entityType !== this.syncContract.entityType ||
+        outboxRow.operation !== this.syncContract.operation ||
+        outboxRow.tenantId !== ctx.tenantId ||
+        outboxRow.branchId !== ctx.branchId
+      ) {
+        throw new Error(
+          'PURCHASE_SYNC_DURABILITY_FAILED: Both tenant-bound syncQueue and outbox records must exist before commit.'
+        );
+      }
+    }
+
+    return result;
   }
 }
 
