@@ -72,6 +72,19 @@ describe('DraftService tenant isolation and persistence errors', () => {
     await DraftService.clearDraft(logicalId);
   });
 
+  it('verifies active invoice draft removal instead of silently accepting a no-op delete', async () => {
+    const logicalId = uniqueId();
+    await DraftService.saveInvoiceDraft(logicalId, 'PURCHASE', [{ productId: 'p-1' }], { total: 10 });
+    vi.spyOn(db.draft_invoices, 'delete').mockResolvedValue(undefined as any);
+
+    await expect(DraftService.clearInvoiceDraft(logicalId))
+      .rejects.toThrow('INVOICE_DRAFT_DELETE_VERIFY_FAILED');
+
+    vi.restoreAllMocks();
+    await DraftService.clearInvoiceDraft(logicalId);
+    expect(await DraftService.getInvoiceDraft(logicalId)).toBeUndefined();
+  });
+
   it('propagates invoice draft save and cleanup failures', async () => {
     const logicalId = uniqueId();
     vi.spyOn(db.draft_invoices, 'put').mockRejectedValueOnce(new Error('invoice draft write failed'));
