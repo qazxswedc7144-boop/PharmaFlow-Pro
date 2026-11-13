@@ -82,16 +82,30 @@ export async function writeDiagnosticLog(
     };
 
     const table = database.diagnosticLogs;
-    await Dexie.ignoreTransaction(() => database.transaction('rw', table, async () => {
-      await table.add(record);
-      const tenantRows = await table.where('tenantId').equals(tenantId).sortBy('timestamp');
-      if (tenantRows.length > RETENTION_LIMIT) {
-        const expiredIds = tenantRows
-          .slice(0, tenantRows.length - RETENTION_LIMIT)
-          .map((row: DiagnosticLogRecord) => row.id);
-        await table.bulkDelete(expiredIds);
-      }
-    }));
+    const persist = async () => {
+      await database.transaction('rw', table, async () => {
+        await table.add(record);
+        const tenantRows = await table.where('tenantId').equals(tenantId).sortBy('timestamp');
+        if (tenantRows.length > RETENTION_LIMIT) {
+          const expiredIds = tenantRows
+            .slice(0, tenantRows.length - RETENTION_LIMIT)
+            .map((row: DiagnosticLogRecord) => row.id);
+          await table.bulkDelete(expiredIds);
+        }
+      });
+    };
+
+    // Never open an independent write transaction while a business transaction
+    // is still pending: doing so can interfere with its rollback. If called
+    // inside a transaction that is about to fail, persist only after its abort.
+    const activeTransaction = Dexie.currentTransaction;
+    if (activeTransaction) {
+      activeTransaction.on('abort', () => {
+        void Dexie.ignoreTransaction(persist);
+      });
+      return;
+    }
+    await persist();
   } catch (loggingError) {
     // Deliberately swallow only the diagnostic write failure; preserve caller error.
     console.warn('[DiagnosticLogger] Could not persist diagnostic record:', loggingError);
