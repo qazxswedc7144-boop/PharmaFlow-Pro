@@ -193,6 +193,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     const persistedInvoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
     expect(persistedInvoice?.type).toBe("PURCHASE");
     expect(persistedInvoice?.documentStatus).toBe("POSTED");
+    expect(persistedInvoice?.status).toBe("CONFIRMED");
     expect(persistedInvoice?.tenantId).toBe(ctx.tenantAId);
     expect(persistedInvoice?.branchId).toBe(ctx.branchAId);
 
@@ -200,6 +201,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     expect(persistedItems).toHaveLength(1);
     expect(persistedItems[0].productId).toBe(ctx.productAId);
     expect(persistedItems[0].qty).toBe(quantity);
+    expect(Number(persistedItems[0].cost)).toBe(unitCost);
 
     const movements = await prisma.inventoryMovement.findMany({
       where: { tenantId: ctx.tenantAId, referenceId: invoiceId }
@@ -213,6 +215,14 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     });
     expect(batches).toHaveLength(1);
     expect(batches[0].stockQuantity).toBe(quantity);
+    expect(Number(batches[0].cost)).toBe(unitCost);
+
+    const journal = await prisma.journalEntry.findFirst({
+      where: { tenantId: ctx.tenantAId, sourceId: invoiceId },
+      include: { lines: true }
+    });
+    expect(journal).toBeTruthy();
+    expect(Number(journal?.debitTotal)).toBe(Number(journal?.creditTotal));
 
     const afterProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
     expect(afterProduct?.stockQuantity).toBe(beforeStock + quantity);
@@ -233,6 +243,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     expect(await prisma.invoiceItem.count({ where: { invoiceId, tenantId: ctx.tenantAId } })).toBe(1);
     expect(await prisma.inventoryMovement.count({ where: { tenantId: ctx.tenantAId, referenceId: invoiceId } })).toBe(1);
     expect(await prisma.inventoryBatch.count({ where: { tenantId: ctx.tenantAId, productId: ctx.productAId, batchNumber } })).toBe(1);
+    expect(await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId, sourceId: invoiceId } })).toBe(1);
     const replayProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
     expect(replayProduct?.stockQuantity).toBe(beforeStock + quantity);
   });
