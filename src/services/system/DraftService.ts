@@ -1,6 +1,7 @@
 import { db } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { selectRecoverablePurchaseDraft } from './recoverablePurchaseDraft';
+import { writeDiagnosticLog } from './diagnosticLogger';
 
 export interface DraftData {
   id: string;
@@ -91,13 +92,22 @@ export const DraftService = {
   clearDraft: async (id: string): Promise<void> => {
     const scope = getDraftScope();
     const storageId = scopedDraftId(id, scope);
-    const draft = await db.drafts.get(storageId);
-    if (!draft) return;
-    assertDraftScope(draft, scope, 'delete');
-    await db.drafts.delete(storageId);
-    const remaining = await db.drafts.get(storageId);
-    if (remaining && belongsToScope(remaining, scope)) {
-      throw new Error('DRAFT_DELETE_VERIFY_FAILED: active draft still exists after delete.');
+    try {
+      const draft = await db.drafts.get(storageId);
+      if (!draft) return;
+      assertDraftScope(draft, scope, 'delete');
+      await db.drafts.delete(storageId);
+      const remaining = await db.drafts.get(storageId);
+      if (remaining && belongsToScope(remaining, scope)) {
+        throw new Error('DRAFT_DELETE_VERIFY_FAILED: active draft still exists after delete.');
+      }
+    } catch (error) {
+      await writeDiagnosticLog(db, error, {
+        operation: 'DRAFT_CLEAR',
+        tenantId: scope.tenantId,
+        context: { draftId: id, storageId }
+      });
+      throw error;
     }
   },
 
@@ -205,13 +215,22 @@ export const DraftService = {
   clearInvoiceDraft: async (draftId: string): Promise<void> => {
     const scope = getDraftScope();
     const storageId = scopedDraftId(draftId, scope);
-    const draft = await db.draft_invoices.get(storageId);
-    if (!draft) return;
-    assertDraftScope(draft, scope, 'delete');
-    await db.draft_invoices.delete(storageId);
-    const remaining = await db.draft_invoices.get(storageId);
-    if (remaining && belongsToScope(remaining, scope)) {
-      throw new Error('INVOICE_DRAFT_DELETE_VERIFY_FAILED: active invoice draft still exists after delete.');
+    try {
+      const draft = await db.draft_invoices.get(storageId);
+      if (!draft) return;
+      assertDraftScope(draft, scope, 'delete');
+      await db.draft_invoices.delete(storageId);
+      const remaining = await db.draft_invoices.get(storageId);
+      if (remaining && belongsToScope(remaining, scope)) {
+        throw new Error('INVOICE_DRAFT_DELETE_VERIFY_FAILED: active invoice draft still exists after delete.');
+      }
+    } catch (error) {
+      await writeDiagnosticLog(db, error, {
+        operation: 'INVOICE_DRAFT_CLEAR',
+        tenantId: scope.tenantId,
+        context: { draftId, storageId }
+      });
+      throw error;
     }
   },
 
