@@ -474,6 +474,8 @@ export class SyncProcessorService {
       purchase.supplier_id ??
       ""
     ).trim();
+    const rawPaymentStatus = String(purchase.paymentStatus ?? purchase.payment_status ?? "").trim().toUpperCase();
+    const rawFinancialStatus = String(purchase.financialStatus ?? purchase.financial_status ?? "").trim().toUpperCase();
     const rawDate = purchase.date ?? purchase.Date;
     const invoiceDate = rawDate ? new Date(rawDate) : null;
     const totalAmount = Number(purchase.totalAmount ?? purchase.finalTotal ?? purchase.grandTotal);
@@ -514,8 +516,10 @@ export class SyncProcessorService {
       return reject("PURCHASE_BRANCH_NOT_FOUND", "The target branch does not belong to the authenticated tenant.");
     }
 
-    const cashSupplierLabels = new Set(["مورد نقدي", "CASH", "CASH_SUPPLIER"]);
-    if (!cashSupplierLabels.has(supplierId)) {
+    const cashSupplierLabels = new Set(["مورد نقدي", "CASH", "CASH_SUPPLIER", "SUPP-GEN"]);
+    const isCashPayment = rawPaymentStatus === "CASH" || rawFinancialStatus === "PAID";
+    const isCashSupplierPlaceholder = cashSupplierLabels.has(supplierId) && isCashPayment;
+    if (!isCashSupplierPlaceholder) {
       const supplier = await tx.supplier.findFirst({
         where: { id: supplierId, tenantId },
         select: { id: true }
@@ -627,8 +631,6 @@ export class SyncProcessorService {
       return reject("PURCHASE_TOTAL_MISMATCH", "Purchase item totals, discounts, tax and totalAmount are inconsistent.");
     }
 
-    const rawPaymentStatus = String(purchase.paymentStatus ?? purchase.payment_status ?? "").trim().toUpperCase();
-    const rawFinancialStatus = String(purchase.financialStatus ?? purchase.financial_status ?? "").trim().toUpperCase();
     const paidAmount = Number(purchase.paidAmount ?? purchase.paid_amount ?? 0);
     const remainingAmount = Number(purchase.remainingAmount ?? purchase.remaining_amount ?? Math.max(0, totalAmount - paidAmount));
     const paymentStatus = rawPaymentStatus === "CASH" || rawPaymentStatus === "PAID" ||
