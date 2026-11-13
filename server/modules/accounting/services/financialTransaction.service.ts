@@ -321,12 +321,13 @@ export class FinancialTransactionService {
           item.productId,
           batchNumber,
           item.qty,
-          Number(item.price),
+          Number(item.cost ?? item.price),
           item.expiryDate,
           invoice.id,
           "INVOICE",
           `توريد مشتريات - فاتورة #${invoice.invoiceNumber}`,
-          tenantId
+          tenantId,
+          invoice.branchId
         );
       }
 

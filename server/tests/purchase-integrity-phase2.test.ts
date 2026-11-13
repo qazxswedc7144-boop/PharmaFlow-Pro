@@ -17,7 +17,7 @@ describe('Purchase Phase 2 Integrity Verification', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     // This suite exercises the local Dexie workflow with an already trusted branch.
-    vi.stubGlobal('navigator', { onLine: false });
+    vi.stubGlobal('navigator', { onLine: false, userAgent: 'Vitest Purchase Test' });
 
     // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
     const userObj = {
