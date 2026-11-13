@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { db } from '@/core/db';
+import { db, dbInstance } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
 import { readDiagnosticLogs, writeDiagnosticLog } from './diagnosticLogger';
@@ -31,7 +31,8 @@ describe('DiagnosticLogger', () => {
 
     const logs = await readDiagnosticLogs(db, 'diagnostic-tenant');
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatchObject({
+    expect(logs[0]).toBeDefined();
+    expect(logs[0]!).toMatchObject({
       operation: 'PURCHASE_SAVE',
       errorName: 'TypeError',
       errorMessage: 'sample failure',
@@ -58,7 +59,7 @@ describe('DiagnosticLogger', () => {
   });
 
   it('T-DIAG-01 captures a duplicate IndexedDB key failure from savePurchase', async () => {
-    vi.spyOn(db, 'processPurchase').mockImplementation(async () => {
+    vi.spyOn(dbInstance, 'processPurchase').mockImplementation(async () => {
       const invoice = {
         id: 'DUPLICATE-PURCHASE-ID',
         tenantId: 'diagnostic-tenant',
@@ -75,7 +76,8 @@ describe('DiagnosticLogger', () => {
     ).rejects.toMatchObject({ name: 'ConstraintError' });
 
     const logs = await readDiagnosticLogs(db, 'diagnostic-tenant');
-    expect(logs[0]).toMatchObject({
+    expect(logs[0]).toBeDefined();
+    expect(logs[0]!).toMatchObject({
       operation: 'DEXIE_SAVE_PURCHASE',
       errorName: 'ConstraintError',
       tenantId: 'diagnostic-tenant',
