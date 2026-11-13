@@ -12,6 +12,7 @@ import { configurationService } from '@/services/config/configurationService';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { ensureActiveBranchRegistered } from '@features/branches/services/activeBranchRegistry';
 import { DistributedSyncEngine } from '@features/sync/sync.engine';
+import { generateTransactionUuid } from '@/utils/uuid';
 
 export interface PurchaseWorkflowInput {
   supplierId?: string;
@@ -38,6 +39,14 @@ export interface PurchaseWorkflowInput {
 export interface PurchaseWorkflowResult {
   refId: string;
   purchase: Purchase | any;
+}
+
+function generatePurchaseDocumentId(): string {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return `PUR-${globalThis.crypto.randomUUID()}`;
+  }
+  // Keep a high-entropy fallback for older webviews without randomUUID.
+  return generateTransactionUuid('PURCHASE');
 }
 
 export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput, PurchaseWorkflowResult> {
@@ -104,7 +113,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     }
 
     if (!input.id) {
-      input.id = db.generateId('PUR');
+      input.id = generatePurchaseDocumentId();
     }
 
     // Preserve existing invoiceNumber on Edit if not provided explicitly
@@ -270,7 +279,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     const isReturn = !!input.isReturn;
 
     // Strict Identity Separation: internal database id vs user-facing invoiceNumber
-    const docId = input.id || db.generateId('PUR');
+    const docId = input.id || generatePurchaseDocumentId();
     let userFacingInvoiceNumber = input.invoiceNumber ? input.invoiceNumber.trim() : '';
     if (!userFacingInvoiceNumber && input.isEdit && input.id) {
       const existing = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
