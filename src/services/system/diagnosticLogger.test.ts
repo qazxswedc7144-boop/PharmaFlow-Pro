@@ -39,8 +39,8 @@ describe('DiagnosticLogger', () => {
       tenantId: 'diagnostic-tenant',
       context: { invoiceNumber: 'PUR-TEST-1', tenantId: 'diagnostic-tenant', userId: 'diagnostic-user' }
     });
-    expect(logs[0].id).toBeTruthy();
-    expect(logs[0].timestamp).toBeTruthy();
+    expect(logs[0]!.id).toBeTruthy();
+    expect(logs[0]!.timestamp).toBeTruthy();
   });
 
   it('retains only the newest 50 records for a tenant', async () => {
