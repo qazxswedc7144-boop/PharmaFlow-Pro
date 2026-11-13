@@ -1,4 +1,4 @@
-import { BusinessWorkflow, WorkflowContext } from '@/core/workflow';
+import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
 import { JournalLine } from '@/types';
 import { AccountingEngine } from '@features/accounting/services/AccountingEngine';
@@ -22,6 +22,12 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
   public id = 'inventory.adjustment.process';
   public name = 'تسوية وتعديل المخزون';
   public operationType = 'INVENTORY_ADJUSTMENT';
+  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  public syncContract: SyncContract = {
+    entityType: 'STOCK_ADJUSTMENT',
+    operation: 'ADJUST',
+    buildPayload: (result) => result as Record<string, unknown>
+  };
   public requiredPermissions = ['inventory.adjust', 'inventory.manage'];
   public tables = [
     'inventoryTransactions', 'products', 'warehouseStock', 'inventory_layers', 'medicineBatches',
