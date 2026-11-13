@@ -46,7 +46,7 @@ function extractPrimaryKey(table: any, record: any): any {
 const SYNC_OWNED_TABLES = new Set(['syncQueue', 'sync_queue', 'outbox']);
 
 const TENANT_SCOPED_TABLES = new Set([
-  'invoices', 'products', 'customers', 'suppliers', 'journalEntries',
+  'invoices', 'products', 'customers', 'suppliers', 'journalEntries', 'diagnosticLogs',
   'accounts', 'journalLines', 'sales', 'purchases', 'drafts', 'draft_invoices',
   'syncQueue', 'sync_queue', 'outbox',
   'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
@@ -837,6 +837,7 @@ export class PharmaFlowDB extends Dexie {
 
   // Phase 3.4.6 - Enterprise Observability & Diagnostics Tables
   system_diagnostics!: Table<any>;
+  diagnosticLogs!: Table<any>;
   error_aggregates!: Table<any>;
   recovery_events!: Table<any>;
   system_health!: Table<any>;
@@ -1106,6 +1107,11 @@ export class PharmaFlowDB extends Dexie {
     this.version(40).stores({
       drafts: '&id, moduleName, updatedAt, tenantId, branchId, [tenantId+branchId]',
       draft_invoices: '&draftId, invoiceType, createdAt, updatedAt, status, tenantId, branchId, [tenantId+invoiceType], [tenantId+branchId]'
+    });
+
+    // Version 41: Tenant-scoped, bounded client diagnostic logs.
+    this.version(41).stores({
+      diagnosticLogs: '&id, tenantId, timestamp, operation, [tenantId+timestamp]'
     });
 
     // Handle structural integrity and recovery
@@ -2402,7 +2408,7 @@ export const ALL_SCHEMA_TABLE_NAMES = [
   'idempotencyKeys', 'projectionCheckpoints', 'projectionEvents', 'supplierAliases',
   'productAliases', 'supplierProductReferences', 'aliasRejections', 'aliasAuditLogs',
   'inventoryCorrectionCases', 'system_diagnostics', 'error_aggregates', 'recovery_events',
-  'system_health', 'tenantSalesPolicies', 'integrity_audit_logs', 'integrity_repair_records', 'idempotency_records'
+  'system_health', 'tenantSalesPolicies', 'integrity_audit_logs', 'integrity_repair_records', 'idempotency_records', 'diagnosticLogs'
 ];
 
 export function getDatabaseName(_tenantId?: string | null, _userId?: string | null): string {
