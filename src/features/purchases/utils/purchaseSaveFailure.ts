@@ -36,3 +36,39 @@ export function getPurchaseSaveFailureMessage(error: unknown): string | null {
   }
   return null;
 }
+
+export interface FailedPurchaseDraftCleanupTasks {
+  clearInvoiceDraft: () => Promise<void>;
+  clearDraft: () => Promise<void>;
+  clearOptionalConfig: () => Promise<void>;
+}
+
+export interface FailedPurchaseDraftCleanupResult {
+  activeDraftCleanupComplete: boolean;
+  requiredCleanupResults: PromiseSettledResult<void>[];
+  optionalConfigCleanup: PromiseSettledResult<void>;
+}
+
+/**
+ * Active invoice/general drafts are required cleanup; the legacy config key is
+ * optional because purchase recovery is sourced from DraftService quarantine.
+ */
+export async function cleanupFailedPurchaseDrafts(
+  tasks: FailedPurchaseDraftCleanupTasks
+): Promise<FailedPurchaseDraftCleanupResult> {
+  const [requiredCleanupResults, optionalCleanupResults] = await Promise.all([
+    Promise.allSettled([
+      Promise.resolve().then(tasks.clearInvoiceDraft),
+      Promise.resolve().then(tasks.clearDraft)
+    ]),
+    Promise.allSettled([
+      Promise.resolve().then(tasks.clearOptionalConfig)
+    ])
+  ]);
+
+  return {
+    activeDraftCleanupComplete: requiredCleanupResults.every(result => result.status === 'fulfilled'),
+    requiredCleanupResults,
+    optionalConfigCleanup: optionalCleanupResults[0]
+  };
+}
