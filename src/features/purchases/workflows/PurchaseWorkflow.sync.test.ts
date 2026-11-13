@@ -160,6 +160,37 @@ describe('PurchaseWorkflow V-30B transactional sync', () => {
     expect(await (db as any).outbox.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
   });
 
+  it('does not enqueue posted purchase edits through the CREATE contract', async () => {
+    await db.invoices.put({
+      id: 'PUR-EDIT-OLD-001',
+      tenantId: 'TENANT-PURCHASE-SYNC',
+      branchId: 'BRANCH-PURCHASE-SYNC',
+      invoiceNumber: 'PUR-EDIT-OLD-001',
+      type: 'PURCHASE',
+      document_status: 'DRAFT',
+      totalAmount: 100,
+      partnerId: 'مورد نقدي',
+      isReturn: false
+    } as any);
+
+    const engine = DistributedSyncEngine.getInstance();
+    const enqueue = vi.spyOn(engine, 'enqueueWithinTransaction');
+    const ctx = context('PURCHASE-IDEM-EDIT-001');
+
+    await TransactionBoundary.executeAtomic(
+      purchaseWorkflow.tables!,
+      tx => purchaseWorkflow.executeDomainSteps(
+        postedPurchaseInput({ isEdit: true, id: 'PUR-EDIT-OLD-001' }) as any,
+        ctx as any,
+        tx
+      )
+    );
+
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(await (db as any).syncQueue.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
+    expect(await (db as any).outbox.where('idempotencyKey').equals(ctx.idempotencyKey).count()).toBe(0);
+  });
+
   it('does not enqueue purchase returns through the PURCHASE create contract', async () => {
     const engine = DistributedSyncEngine.getInstance();
     const enqueue = vi.spyOn(engine, 'enqueueWithinTransaction');
