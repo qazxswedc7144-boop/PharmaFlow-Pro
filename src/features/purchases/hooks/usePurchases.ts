@@ -28,6 +28,7 @@ import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import type { IdempotencyRecord } from '@/core/integrity/types';
 import { getPurchaseDraftSnapshot } from '../utils/recoverablePurchaseDraft';
 import { cleanupFailedPurchaseOperation } from '../utils/cleanupFailedPurchaseOperation';
+import { canResetAfterFailedPurchase, getPurchaseSaveFailureMessage } from '../utils/purchaseSaveFailure';
 
 const DRAFT_KEY = 'pharmaflow_purchase_draft';
 
@@ -627,7 +628,11 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       // A persisted quarantine permits UI reset even if the stale active-draft
       // cleanup failed. However, if operation artifacts could not be isolated,
       // retain the form and operation key to prevent an unsafe retry.
-      const failedInvoiceIsolated = failedInvoiceQuarantined && failedOperationArtifactsCleaned;
+      const failedInvoiceIsolated = canResetAfterFailedPurchase({
+        quarantinePersisted: failedInvoiceQuarantined,
+        operationArtifactsCleaned: failedOperationArtifactsCleaned,
+        activeDraftCleanupComplete
+      });
 
       if (failedInvoiceIsolated) {
         currentOperationRef.current = null;
@@ -646,13 +651,13 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         failedInvoiceIsolated
           ? activeDraftCleanupComplete
             ? '❌ تعذر حفظ فاتورة المشتريات. تم عزل بيانات المحاولة الفاشلة وتنظيف المسودة النشطة.'
-            : 'تعذر حفظ الفاتورة. تم حفظ نسخة العزل وإعادة ضبط الواجهة، لكن بقيت مسودة نشطة قديمة وسيتم تفضيل نسخة العزل عند الاسترداد.'
+            : 'تعذر حفظ الفاتورة. تم حفظ نسخة العزل، لكن تعذر تنظيف المسودة النشطة؛ أبقينا بيانات الفاتورة ومفتاح العملية كما هما لمنع فقدانها أو إنشاء مستند مكرر.'
           : failedInvoiceQuarantined
             ? 'تم حفظ نسخة العزل، لكن تعذر تنظيف آثار العملية؛ بقيت بيانات النموذج لمنع إعادة المحاولة غير الآمنة.'
             : 'تعذر حفظ الفاتورة وفشل حفظ نسخة العزل؛ بقيت البيانات الحالية محفوظة للمحاولة الآمنة.',
         'error'
       );
-      addToast(normalized.arabicMessage, 'error');
+      addToast(getPurchaseSaveFailureMessage(error) || normalized.arabicMessage, 'error');
     } finally { isSavingRef.current = false; setIsSaving(false); }
   }, [header, items, aiParsedData, suppliers, vTotalSum, editingInvoiceId, currency, addInvoice, addToast, refreshGlobal, onNavigate, showNotification, savePhase]);
 
