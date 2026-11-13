@@ -21,7 +21,10 @@ export function canResetAfterFailedPurchase(
  * ErrorManager's generic ERR_DUPLICATE_DOCUMENT Arabic message.
  */
 export function getPurchaseSaveFailureMessage(error: unknown): string | null {
-  const raw = error instanceof Error ? error.message : String(error ?? '');
+  const raw = [
+    error instanceof Error ? error.message : String(error ?? ''),
+    (error as any)?.name || ''
+  ].join(' ');
   if (/DUPLICATE_INVOICE_NUMBER/i.test(raw)) {
     return 'رقم فاتورة المشتريات مستخدم مسبقاً في هذه المؤسسة. تحقق من رقم الفاتورة قبل إعادة الحفظ.';
   }
