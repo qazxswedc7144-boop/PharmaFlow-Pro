@@ -40,7 +40,8 @@ describe('purchase save failure recovery regression', () => {
     });
 
     expect(result.activeDraftCleanupComplete).toBe(false);
-    expect(result.requiredCleanupResults[0].status).toBe('rejected');
+    expect(result.requiredCleanupResults).toHaveLength(2);
+    expect(result.requiredCleanupResults[0]?.status).toBe('rejected');
     expect(canResetAfterFailedPurchase({
       quarantinePersisted: true,
       operationArtifactsCleaned: true,
