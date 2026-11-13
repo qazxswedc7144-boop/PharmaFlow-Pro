@@ -796,13 +796,15 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         !queueRow ||
         !outboxRow ||
         queueRow.entityType !== this.syncContract.entityType ||
-        queueRow.entityId !== refId ||
+        queueRow.payload?.id !== refId ||
+        queueRow.operationType !== this.syncContract.operation ||
         queueRow.tenantId !== ctx.tenantId ||
         queueRow.branchId !== ctx.branchId ||
         outboxRow.entityType !== this.syncContract.entityType ||
         outboxRow.operation !== this.syncContract.operation ||
         outboxRow.tenantId !== ctx.tenantId ||
-        outboxRow.branchId !== ctx.branchId
+        outboxRow.branchId !== ctx.branchId ||
+        outboxRow.payload?.id !== refId
       ) {
         throw new Error(
           'PURCHASE_SYNC_DURABILITY_FAILED: Both tenant-bound syncQueue and outbox records must exist before commit.'
