@@ -13,7 +13,7 @@ describe('DiagnosticLogger', () => {
       'diagnostic-access-token',
       'diagnostic-refresh-token'
     );
-    await (db as any).diagnosticLogs.clear();
+    await (db as any).diagnosticLogs.where('tenantId').equals('diagnostic-tenant').delete();
   });
 
   afterEach(() => {
