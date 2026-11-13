@@ -59,7 +59,7 @@ describe('DiagnosticLogger', () => {
   });
 
   it('T-DIAG-01 captures a duplicate IndexedDB key failure from savePurchase', async () => {
-    vi.spyOn(dbInstance, 'processPurchase').mockImplementation(async () => {
+    const processPurchase = vi.spyOn(dbInstance, 'processPurchase').mockImplementation(async () => {
       const invoice = {
         id: 'DUPLICATE-PURCHASE-ID',
         tenantId: 'diagnostic-tenant',
@@ -67,13 +67,17 @@ describe('DiagnosticLogger', () => {
         type: 'PURCHASE'
       };
       await db.invoices.add(invoice as any);
-      await db.invoices.add(invoice as any);
       return invoice;
     });
 
-    await expect(
-      InvoiceRepository.savePurchase('supplier-1', [], 0, 'DUPLICATE-PURCHASE-ID', false, undefined, 'POSTED', 0, 'LOW', 'PUR-DUP-1')
-    ).rejects.toMatchObject({ name: 'ConstraintError' });
+    const samePurchaseArgs = [
+      'supplier-1', [], 0, 'DUPLICATE-PURCHASE-ID', false, undefined,
+      'POSTED', 0, 'LOW', 'PUR-DUP-1'
+    ] as any[];
+    await InvoiceRepository.savePurchase(...samePurchaseArgs);
+    await expect(InvoiceRepository.savePurchase(...samePurchaseArgs))
+      .rejects.toMatchObject({ name: 'ConstraintError' });
+    expect(processPurchase).toHaveBeenCalledTimes(2);
 
     const logs = await readDiagnosticLogs(db, 'diagnostic-tenant');
     expect(logs[0]).toBeDefined();
