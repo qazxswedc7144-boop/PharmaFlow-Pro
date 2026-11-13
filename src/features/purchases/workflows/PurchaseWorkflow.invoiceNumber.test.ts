@@ -16,8 +16,6 @@ vi.mock('@/services/auth/tokenProvider', () => ({
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/core/db';
-import { InvoiceRepository } from '@/database/repositories/invoice.repository';
-import { ValidationService } from '@/services/integrity/ValidationService';
 import { purchaseWorkflow } from './PurchaseWorkflow';
 import { salesWorkflow } from '@features/sales/workflows/SalesWorkflow';
 import { productApplicationWorkflow } from '@features/catalog/workflows/ProductApplicationWorkflow';
@@ -53,27 +51,23 @@ const draftInput = (overrides: Record<string, unknown> = {}) => ({
 describe('Purchase invoice number split — Phase 1 (TDD)', () => {
   beforeEach(async () => {
     await db.open();
-    vi.spyOn(InvoiceRepository, 'savePurchase').mockResolvedValue({
-      id: 'PURCHASE-INVOICE-NUMBER-LOCAL',
-      invoiceNumber: 'PURCH-GENERATED-100',
-      totalAmount: 100,
-      document_status: 'DRAFT'
-    } as any);
   });
 
   afterEach(async () => {
     vi.restoreAllMocks();
-    await db.invoices.clear();
-    await db.purchases.clear();
+    await db.invoices.delete('PURCHASE-INVOICE-NUMBER-LOCAL');
+    await db.purchases.delete('PURCHASE-INVOICE-NUMBER-LOCAL');
+    await db.invoices.delete('PURCHASE-POSTED-LOCKED');
   });
 
   it('T1: persists the supplier invoice number with the purchase record', async () => {
-    const input = draftInput({ supplierInvoiceNumber: 'SUP-INV-100' });
+    const input = draftInput({ id: 'PURCHASE-INVOICE-NUMBER-LOCAL', supplierInvoiceNumber: 'SUP-INV-100' });
     await purchaseWorkflow.validateInput(input as any);
-    await purchaseWorkflow.executeDomainSteps(input as any, context as any);
+    const result = await purchaseWorkflow.executeDomainSteps(input as any, context as any);
 
-    const saveArgs = (InvoiceRepository.savePurchase as any).mock.calls[0];
-    expect(saveArgs[16]).toMatchObject({ supplierInvoiceNumber: 'SUP-INV-100' });
+    expect(result.purchase.supplierInvoiceNumber).toBe('SUP-INV-100');
+    await expect(db.invoices.get(result.refId)).resolves.toMatchObject({ supplierInvoiceNumber: 'SUP-INV-100' });
+    await expect(db.purchases.get(result.refId)).resolves.toMatchObject({ supplierInvoiceNumber: 'SUP-INV-100' });
   });
 
   it('T2: rejects a new non-return purchase when the supplier invoice number is empty', async () => {
@@ -82,14 +76,20 @@ describe('Purchase invoice number split — Phase 1 (TDD)', () => {
     ).rejects.toThrow('SUPPLIER_INVOICE_NUMBER_REQUIRED');
   });
 
+  it('T2b: allows a missing supplier invoice number for a purchase return', async () => {
+    await expect(
+      purchaseWorkflow.validateInput(draftInput({ isReturn: true, supplierInvoiceNumber: '   ' }) as any)
+    ).resolves.toBeUndefined();
+  });
+
   it('T3: trims and uppercases the supplier invoice number before persistence', async () => {
-    const input = draftInput({ supplierInvoiceNumber: '  inv-ab-100  ' });
+    const input = draftInput({ id: 'PURCHASE-INVOICE-NUMBER-LOCAL', supplierInvoiceNumber: '  inv-ab-100  ' });
     await purchaseWorkflow.validateInput(input as any);
-    await purchaseWorkflow.executeDomainSteps(input as any, context as any);
+    const result = await purchaseWorkflow.executeDomainSteps(input as any, context as any);
 
     expect(input.supplierInvoiceNumber).toBe('INV-AB-100');
-    const saveArgs = (InvoiceRepository.savePurchase as any).mock.calls[0];
-    expect(saveArgs[16]).toMatchObject({ supplierInvoiceNumber: 'INV-AB-100' });
+    expect(result.purchase.supplierInvoiceNumber).toBe('INV-AB-100');
+    await expect(db.invoices.get(result.refId)).resolves.toMatchObject({ supplierInvoiceNumber: 'INV-AB-100' });
   });
 
   it('T4: rejects changing the internal invoice number of a POSTED purchase', async () => {
@@ -132,6 +132,5 @@ describe('Purchase invoice number split — Phase 1 (TDD)', () => {
   it('T7: sales and product workflows retain their existing operation identities', () => {
     expect(salesWorkflow.operationType).toBe('POST');
     expect(productApplicationWorkflow.operationType).toBe('PRODUCT_SAVE');
-    expect(ValidationService).toBeDefined();
   });
 });

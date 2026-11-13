@@ -40,6 +40,8 @@ export interface SalesInvoiceItem extends DomainEntity {
 export interface SalesInvoice extends DomainEntity {
   id: string;
   invoiceNumber?: string;
+  /** Shared local Invoice-table field; populated only by purchase documents. */
+  supplierInvoiceNumber?: string | null;
   date: string;
   customerId?: string;
   customerName?: string;

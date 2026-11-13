@@ -503,7 +503,7 @@ const existingItemIndex = items.findIndex(i =>
                 className="w-full h-10 border-b border-gray-300 rounded-none text-slate-500 text-right placeholder-gray-400 bg-slate-50 cursor-not-allowed"
               />
             </div>
-            <div className="basis-[73%] relative flex items-center">
+            <div className="flex-[1.5] min-w-0 relative flex items-center">
               <textarea 
                 placeholder="ملاحظات الفاتورة..."
                 value={header.notes || ''}
