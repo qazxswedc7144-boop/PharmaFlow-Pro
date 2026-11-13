@@ -167,7 +167,8 @@ export class FifoService {
     referenceId: string,
     referenceType: string,
     reason: string | undefined,
-    expectedTenantId: string
+    expectedTenantId: string,
+    branchId?: string | null
   ): Promise<void> {
     if (!expectedTenantId || !expectedTenantId.trim()) {
       throw new Error("TRUSTED_TENANT_CONTEXT_REQUIRED: Expected tenantId is mandatory for stock addition.");
@@ -247,6 +248,7 @@ export class FifoService {
         type: "STOCK_IN",
         referenceId,
         referenceType,
+        branchId: branchId || null,
         reason: reason || "Batch Procurement Addition",
         previousStock: prevProductStock,
         currentStock: prevProductStock + qty
