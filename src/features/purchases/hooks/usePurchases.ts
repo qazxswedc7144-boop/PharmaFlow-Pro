@@ -293,13 +293,14 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const legacyNumberIsInternal =
         /^PURCH-/i.test(legacyInvoiceNumber) ||
         /^(PUR|RET)-\d+$/i.test(legacyInvoiceNumber);
-      setHeader({
+      setHeader(prev => ({
+        ...prev,
         ...restoredHeader,
         invoice_number: legacyNumberIsInternal ? legacyInvoiceNumber : '',
         supplierInvoiceNumber: restoredHeader.supplierInvoiceNumber !== undefined
           ? String(restoredHeader.supplierInvoiceNumber || '')
           : legacyNumberIsInternal ? '' : legacyInvoiceNumber
-      });
+      }));
     }
     setItems(restoredItems as any);
     setAdjData(snapshot.adjData as any);
