@@ -58,7 +58,15 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
   public syncContract: SyncContract = {
     entityType: 'PURCHASE',
     operation: 'CREATE',
-    buildPayload: (result) => result as Record<string, unknown>
+    // Phase 1 supplier numbers are local-only until the Prisma/sync contract phase.
+    // Keep the current server payload shape compatible with the existing strict schema.
+    buildPayload: (result) => {
+      const payload = result as PurchaseWorkflowResult;
+      if (!payload?.purchase) return result as Record<string, unknown>;
+      const syncedPurchase = { ...(payload.purchase as any) };
+      delete syncedPurchase.supplierInvoiceNumber;
+      return { ...payload, purchase: syncedPurchase } as Record<string, unknown>;
+    }
   };
   public syncHandledInDomainTransaction = true;
   public requiredPermissions = ['purchases.create', 'purchases.edit'];
