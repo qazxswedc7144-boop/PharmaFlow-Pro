@@ -301,7 +301,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
     let supplierInvoiceNumber = String(input.supplierInvoiceNumber ?? '').trim().toUpperCase();
     if (!supplierInvoiceNumber && input.isEdit) {
-      supplierInvoiceNumber = String(existingPurchase?.supplierInvoiceNumber || '').trim().toUpperCase();
+      supplierInvoiceNumber = String((existingPurchase as any)?.supplierInvoiceNumber || '').trim().toUpperCase();
     }
     if (!supplierInvoiceNumber) {
       supplierInvoiceNumber = await db.generateAutoSupplierNumber(isReturn, ctx.tenantId);
