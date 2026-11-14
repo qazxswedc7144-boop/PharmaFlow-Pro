@@ -221,7 +221,7 @@ describe('PurchaseWorkflow Phase 1 invoice numbering (TDD)', () => {
         invoiceNumber: 'PUR-1',
         supplierInvoiceNumber: 'P-0001'
       }
-    } as any) as any;
+    } as any, {} as any) as any;
 
     expect(payload.purchase.invoiceNumber).toBe('PUR-1');
     expect(payload.purchase.supplierInvoiceNumber).toBeUndefined();
