@@ -20,6 +20,7 @@ export interface PurchaseWorkflowInput {
   total: number;
   id?: string;
   invoiceNumber?: string;
+  supplierInvoiceNumber?: string;
   date?: string;
   notes?: string;
   attachment?: string;
@@ -57,7 +58,15 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
   public syncContract: SyncContract = {
     entityType: 'PURCHASE',
     operation: 'CREATE',
-    buildPayload: (result) => result as Record<string, unknown>
+    // Phase 1 supplier numbers are local-only until the Prisma/sync contract phase.
+    // Keep the current server payload shape compatible with the existing strict schema.
+    buildPayload: (result) => {
+      const payload = result as PurchaseWorkflowResult;
+      if (!payload?.purchase) return result as Record<string, unknown>;
+      const syncedPurchase = { ...(payload.purchase as any) };
+      delete syncedPurchase.supplierInvoiceNumber;
+      return { ...payload, purchase: syncedPurchase } as Record<string, unknown>;
+    }
   };
   public syncHandledInDomainTransaction = true;
   public requiredPermissions = ['purchases.create', 'purchases.edit'];
@@ -278,16 +287,36 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     const effectiveDate = input.date || ctx.startedAt;
     const isReturn = !!input.isReturn;
 
-    // Strict Identity Separation: internal database id vs user-facing invoiceNumber
+    // The internal invoice number is system-owned and generated locally per tenant.
+    // Edits preserve the persisted historical number; legacy PURCH-* values remain untouched.
     const docId = input.id || generatePurchaseDocumentId();
-    let userFacingInvoiceNumber = input.invoiceNumber ? input.invoiceNumber.trim() : '';
-    if (!userFacingInvoiceNumber && input.isEdit && input.id) {
-      const existing = (await db.invoices.get(input.id)) || (await db.purchases.get(input.id));
-      userFacingInvoiceNumber = existing?.invoiceNumber || existing?.invoice_number || existing?.invoiceId || '';
-    }
+    const existingPurchase = input.isEdit && input.id
+      ? (await db.invoices.get(input.id)) || (await db.purchases.get(input.id))
+      : undefined;
+
+    let userFacingInvoiceNumber = input.isEdit
+      ? String(
+          existingPurchase?.invoiceNumber ||
+          existingPurchase?.invoice_number ||
+          input.invoiceNumber ||
+          ''
+        ).trim()
+      : '';
+
     if (!userFacingInvoiceNumber) {
-      userFacingInvoiceNumber = db.generateId('PURCH');
+      userFacingInvoiceNumber = await db.generateInternalInvoiceNumber(isReturn, ctx.tenantId);
     }
+
+    let supplierInvoiceNumber = String(input.supplierInvoiceNumber ?? '').trim().toUpperCase();
+    if (!supplierInvoiceNumber) {
+      supplierInvoiceNumber = await db.generateAutoSupplierNumber(isReturn, ctx.tenantId);
+    }
+
+    // Item parent references must use the generated internal number, never the supplier's number.
+    const purchaseItems = (input.items || []).map(item => ({
+      ...item,
+      parent_id: userFacingInvoiceNumber
+    }));
 
     // 0. Atomic Manual Product Creation
     if (input.pendingProducts && input.pendingProducts.length > 0) {
@@ -441,7 +470,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
     const savedDoc = await InvoiceRepository.savePurchase(
       input.supplierId!,
-      input.items,
+      purchaseItems,
       input.total,
       docId,
       input.isCash || false,
@@ -464,6 +493,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         attachment: input.attachment,
         warehouseId: input.warehouseId,
         originalPurchaseId: input.originalPurchaseId,
+        supplierInvoiceNumber,
         tx
       }
     );
@@ -490,7 +520,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         'WH-MAIN';
 
       // 2. Extract Inventory Items
-      const inventoryItems = (input.items || [])
+      const inventoryItems = (purchaseItems || [])
         .filter(item => {
           const productId =
             item.productId || (item as any).product_id;

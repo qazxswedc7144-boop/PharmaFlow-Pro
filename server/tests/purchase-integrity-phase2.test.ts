@@ -116,16 +116,19 @@ describe('Purchase Phase 2 Integrity Verification', () => {
     const manualInvNum = 'INV-2026-00125';
     const res = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       supplierId: supplierAId,
-      invoiceNumber: manualInvNum,
+      supplierInvoiceNumber: manualInvNum,
       items: [{ productId: productAId, quantity: 10, unitCost: 8, unitPrice: 8 } as any],
       total: 80
     });
 
     expect(res.success).toBe(true);
+    expect(res.invoiceNumber).toBe('PUR-1');
+    expect(res.supplierInvoiceNumber).toBe(manualInvNum);
     const inv = await db.invoices.get(res.refId);
-    expect(inv?.invoice_number).toBe(manualInvNum);
-    expect(inv?.invoiceNumber).toBe(manualInvNum);
-    expect(inv?.id).not.toBe(manualInvNum);
+    expect(inv?.invoice_number).toBe('PUR-1');
+    expect(inv?.invoiceNumber).toBe('PUR-1');
+    expect(inv?.supplierInvoiceNumber).toBe(manualInvNum);
+    expect(inv?.id).not.toBe('PUR-1');
   });
 
   it('P0-2: Verifies supplier balance reversal and re-application during edit', async () => {

@@ -1365,6 +1365,63 @@ export class PharmaFlowDB extends Dexie {
     return `${prefix}-${timestamp}-${random}`;
   }
 
+  private async getTenantPurchaseNumberRecords(tenantId: string): Promise<any[]> {
+    const normalizedTenantId = String(tenantId || '').trim();
+    const activeTenantId = String(getCurrentUserSession()?.tenantId || '').trim();
+    if (!normalizedTenantId || activeTenantId !== normalizedTenantId) {
+      throw new Error('PURCHASE_NUMBER_TENANT_MISMATCH: trusted active tenant is required.');
+    }
+
+    const [invoices, purchases] = await Promise.all([
+      this.invoices.where('tenantId').equals(normalizedTenantId).toArray(),
+      this.purchases.where('tenantId').equals(normalizedTenantId).toArray()
+    ]);
+
+    return [...invoices, ...purchases];
+  }
+
+  async generateInternalInvoiceNumber(isReturn: boolean, tenantId: string): Promise<string> {
+    const prefix = isReturn ? 'RET' : 'PUR';
+    const pattern = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+    const records = await this.getTenantPurchaseNumberRecords(tenantId);
+    let highest = 0n;
+
+    for (const record of records) {
+      const candidates = [record?.invoiceNumber, record?.invoice_number, record?.invoiceId];
+      for (const candidate of candidates) {
+        const match = typeof candidate === 'string' ? candidate.trim().match(pattern) : null;
+        if (match) {
+          const sequence = BigInt(match[1]!);
+          if (sequence > highest) highest = sequence;
+        }
+      }
+    }
+
+    return `${prefix}-${highest + 1n}`;
+  }
+
+  async generateAutoSupplierNumber(isReturn: boolean, tenantId: string): Promise<string> {
+    const prefix = isReturn ? 'R' : 'P';
+    const pattern = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+    const records = await this.getTenantPurchaseNumberRecords(tenantId);
+    let highest = 0n;
+
+    for (const record of records) {
+      const recordIsReturn = record?.isReturn === true || record?.type === 'RETURN_PURCHASE';
+      if (recordIsReturn !== isReturn) continue;
+      const candidates = [record?.supplierInvoiceNumber, record?.supplier_invoice_number];
+      for (const candidate of candidates) {
+        const match = typeof candidate === 'string' ? candidate.trim().match(pattern) : null;
+        if (match) {
+          const sequence = BigInt(match[1]!);
+          if (sequence > highest) highest = sequence;
+        }
+      }
+    }
+
+    return `${prefix}-${String(highest + 1n).padStart(4, '0')}`;
+  }
+
   async emergencyReset() {
     console.error("🛑 PERFORMING EMERGENCY DATABASE RESET...");
     await this.delete();
@@ -1617,6 +1674,7 @@ export class PharmaFlowDB extends Dexie {
       attachment?: string;
       warehouseId?: string;
       originalPurchaseId?: string;
+      supplierInvoiceNumber?: string;
       tx?: any;
     }
   ) {
@@ -1669,7 +1727,7 @@ export class PharmaFlowDB extends Dexie {
       partnerId: supplierId || 'SUPP-GEN',
       partner_id: supplierId || 'SUPP-GEN',
       partnerName: 'Supplier',
-      type: 'PURCHASE',
+      type: isReturn ? 'RETURN_PURCHASE' : 'PURCHASE',
       subtotal: subtotal,
       discountPercent: discountPercent,
       discount: discountAmount,
@@ -1696,6 +1754,7 @@ export class PharmaFlowDB extends Dexie {
       items: items || [],
       isReturn: !!isReturn,
       originalPurchaseId: adjustments?.originalPurchaseId,
+      supplierInvoiceNumber: adjustments?.supplierInvoiceNumber,
       warehouseId: adjustments?.warehouseId,
       notes: adjustments?.notes || (refId ? `Ref: ${refId}` : `Ref: ${invNum}`),
       attachment: adjustments?.attachment || _attachment,
