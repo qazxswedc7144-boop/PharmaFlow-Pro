@@ -557,7 +557,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
         configurationService.set(purchaseDraftKeys!.configKey, null).catch(() => {});
         setHasUnsavedAI(false);
         await runPostCommitTask('audit-log', () =>
-          auditLogService.log({ table: 'purchases', action: 'PURCHASE', entityId: editingInvoiceId || res.refId || savedInvoiceNumber, newData: { items: itemsForSave, total: currentTotal, invoiceNumber: savedInvoiceNumber, supplierInvoiceNumber: savedSupplierInvoiceNumber }, details: `Purchase ${currentHeader.isReturn ? 'Return' : ''}: ${savedInvoiceNumber}` })
+          auditLogService.log({ table: 'purchases', action: 'PURCHASE', entityId: editingInvoiceId || savedInvoiceNumber, newData: { items: itemsForSave, total: currentTotal, invoiceNumber: savedInvoiceNumber, supplierInvoiceNumber: savedSupplierInvoiceNumber }, details: `Purchase ${currentHeader.isReturn ? 'Return' : ''}: ${savedInvoiceNumber}` })
         );
         const supplier = suppliers.find(s => s.id === header.supplier_id);
         const supplierName = supplier ? supplier.Supplier_Name : 'مورد غير محدد';
