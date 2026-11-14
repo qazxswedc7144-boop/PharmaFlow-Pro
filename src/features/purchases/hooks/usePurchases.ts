@@ -287,7 +287,20 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       row_order: item.row_order || idx + 1,
       expiryDate: normalizeToISODate(item.expiryDate || item.ExpiryDate || item.expiry_date || item.expirationDate || '')
     }));
-    if (snapshot.header) setHeader(snapshot.header as any);
+    if (snapshot.header) {
+      const restoredHeader = snapshot.header as Record<string, any>;
+      const legacyInvoiceNumber = String(restoredHeader.invoice_number || '').trim();
+      const legacyNumberIsInternal =
+        /^PURCH-/i.test(legacyInvoiceNumber) ||
+        /^(PUR|RET)-\\d+$/i.test(legacyInvoiceNumber);
+      setHeader({
+        ...restoredHeader,
+        invoice_number: legacyNumberIsInternal ? legacyInvoiceNumber : '',
+        supplierInvoiceNumber: restoredHeader.supplierInvoiceNumber !== undefined
+          ? String(restoredHeader.supplierInvoiceNumber || '')
+          : legacyNumberIsInternal ? '' : legacyInvoiceNumber
+      });
+    }
     setItems(restoredItems as any);
     setAdjData(snapshot.adjData as any);
     pendingProductsRef.current = Array.isArray(snapshot.pendingProducts)
