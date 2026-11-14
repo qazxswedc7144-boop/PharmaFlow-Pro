@@ -15,6 +15,7 @@ export interface PurchaseInvoice extends DomainEntity {
   id: string;
   purchaseId?: string;
   invoiceNumber?: string;
+  supplierInvoiceNumber?: string;
   date?: string;
   supplierId?: string;
   supplierName?: string;

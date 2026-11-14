@@ -50,6 +50,7 @@ export const useAccountingStore = create<AccountingState>((set) => ({
         total: rawPayload.total ?? rawPayload.subtotal ?? 0,
         id: rawPayload.id,
         invoiceNumber: rawPayload.invoiceNumber ?? rawPayload.invoice_number ?? undefined,
+        supplierInvoiceNumber: rawPayload.supplierInvoiceNumber,
         date: rawPayload.date || options.date,
         notes: rawPayload.notes,
         attachment: rawPayload.attachment,

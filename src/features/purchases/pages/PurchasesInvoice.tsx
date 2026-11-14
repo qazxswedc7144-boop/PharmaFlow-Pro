@@ -479,19 +479,32 @@ const existingItemIndex = items.findIndex(i =>
 </div>
           </div>
           
-          <div className="flex border-b border-slate-100 flex-row gap-[2%] px-3 py-2 bg-white">
-            <div className="basis-[25%] relative">
-              <input 
+          <div className="grid grid-cols-[0.85fr_1.15fr_1.5fr] gap-2 border-b border-slate-100 px-3 py-2 bg-white">
+            <div className="relative min-w-0">
+              <input
                 type="text"
                 inputMode="numeric"
                 ref={invNumInputRef}
+                name="invoiceNumber"
                 value={header.invoice_number}
-                onChange={(e) => setHeader({...header, invoice_number: e.target.value})}
-                placeholder="رقم الفاتورة..."
+                readOnly
+                placeholder="يُولّد تلقائياً"
+                className="w-full h-10 border-b border-gray-400 focus:outline-none rounded-none text-slate-600 text-right placeholder-gray-400 bg-transparent"
+              />
+            </div>
+            <div className="relative min-w-0">
+              <input
+                type="text"
+                inputMode="numeric"
+                name="supplierInvoiceNumber"
+                value={header.supplierInvoiceNumber}
+                onChange={(e) => setHeader({ ...header, supplierInvoiceNumber: e.target.value })}
+                placeholder="اتركه فارغاً للتوليد التلقائي (P-0001 / R-0001)"
+                title="رقم فاتورة المورد — اتركه فارغاً للتوليد التلقائي"
                 className="w-full h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 rounded-none text-black text-right placeholder-gray-400 bg-transparent"
               />
             </div>
-            <div className="basis-[73%] relative flex items-center">
+            <div className="relative min-w-0 flex items-center">
               <textarea 
                 placeholder="ملاحظات الفاتورة..."
                 value={header.notes || ''}
@@ -872,7 +885,7 @@ const existingItemIndex = items.findIndex(i =>
         {isConfirmSaveOpen && (
           <UnifiedModal
             saveFunction={handlePost}
-            requiredFields={['supplier_id', 'invoice_number']}
+            requiredFields={['supplier_id']}
             formData={header}
             setFormData={setHeader}
             onClose={() => setIsConfirmSaveOpen(false)}
