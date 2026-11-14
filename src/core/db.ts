@@ -1391,7 +1391,7 @@ export class PharmaFlowDB extends Dexie {
       for (const candidate of candidates) {
         const match = typeof candidate === 'string' ? candidate.trim().match(pattern) : null;
         if (match) {
-          const sequence = BigInt(match[1]);
+          const sequence = BigInt(match[1]!);
           if (sequence > highest) highest = sequence;
         }
       }
@@ -1407,11 +1407,13 @@ export class PharmaFlowDB extends Dexie {
     let highest = 0n;
 
     for (const record of records) {
+      const recordIsReturn = record?.isReturn === true || record?.type === 'RETURN_PURCHASE';
+      if (recordIsReturn !== isReturn) continue;
       const candidates = [record?.supplierInvoiceNumber, record?.supplier_invoice_number];
       for (const candidate of candidates) {
         const match = typeof candidate === 'string' ? candidate.trim().match(pattern) : null;
         if (match) {
-          const sequence = BigInt(match[1]);
+          const sequence = BigInt(match[1]!);
           if (sequence > highest) highest = sequence;
         }
       }
