@@ -173,19 +173,6 @@ describe('PurchaseWorkflow Phase 1 invoice numbering (TDD)', () => {
     expect(result.isReturn).toBe(true);
   });
 
-  it('T11: keeps the Phase 1 supplier number out of the pre-Phase-2 sync payload', () => {
-    const payload = purchaseWorkflow.syncContract.buildPayload({
-      refId: 'PUR-NUMBERING-SYNC-001',
-      purchase: {
-        invoiceNumber: 'PUR-1',
-        supplierInvoiceNumber: 'P-0001'
-      }
-    } as any) as any;
-
-    expect(payload.purchase.invoiceNumber).toBe('PUR-1');
-    expect(payload.purchase.supplierInvoiceNumber).toBeUndefined();
-  });
-
   it('T10: leaves sales numbering and product records unchanged', async () => {
     const product = {
       id: 'PRODUCT-NUMBERING-REGRESSION',
@@ -226,4 +213,18 @@ describe('PurchaseWorkflow Phase 1 invoice numbering (TDD)', () => {
     expect(sale.type).toBe('SALE');
     expect((await db.products.get(product.id))?.stock).toBe(7);
   });
+
+  it('T11: keeps the Phase 1 supplier number out of the pre-Phase-2 sync payload', () => {
+    const payload = purchaseWorkflow.syncContract.buildPayload({
+      refId: 'PUR-NUMBERING-SYNC-001',
+      purchase: {
+        invoiceNumber: 'PUR-1',
+        supplierInvoiceNumber: 'P-0001'
+      }
+    } as any) as any;
+
+    expect(payload.purchase.invoiceNumber).toBe('PUR-1');
+    expect(payload.purchase.supplierInvoiceNumber).toBeUndefined();
+  });
+
 });
