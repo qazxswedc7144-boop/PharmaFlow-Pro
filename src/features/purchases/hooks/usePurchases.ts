@@ -292,7 +292,7 @@ export function usePurchases(onNavigate?: (view: string, params?: Record<string,
       const legacyInvoiceNumber = String(restoredHeader.invoice_number || '').trim();
       const legacyNumberIsInternal =
         /^PURCH-/i.test(legacyInvoiceNumber) ||
-        /^(PUR|RET)-\\d+$/i.test(legacyInvoiceNumber);
+        /^(PUR|RET)-\d+$/i.test(legacyInvoiceNumber);
       setHeader({
         ...restoredHeader,
         invoice_number: legacyNumberIsInternal ? legacyInvoiceNumber : '',
