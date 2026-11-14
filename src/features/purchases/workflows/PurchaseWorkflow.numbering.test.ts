@@ -121,7 +121,7 @@ describe('PurchaseWorkflow Phase 1 invoice numbering (TDD)', () => {
   });
 
   it('T6: pads the first ten generated purchase supplier numbers to four digits', async () => {
-    const results = [];
+    const results: Array<{ purchase: any }> = [];
     for (let index = 0; index < 10; index += 1) {
       results.push(await executePurchase({ supplierInvoiceNumber: '' }));
     }
