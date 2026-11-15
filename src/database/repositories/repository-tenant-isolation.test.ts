@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/core/db';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 import { AccountingRepository } from './AccountingRepository';
 import { FinancialTransactionRepository } from './FinancialTransactionRepository';
 import { SupplierRepository } from './SupplierRepository';
@@ -23,18 +24,33 @@ const ids = {
   customerUndefined: 'repo-isolation-customer-undefined'
 };
 
+const setSession = (tenantId: string, branchId: string) => {
+  TokenProvider.setSession(
+    { id: `repo-isolation-user-${tenantId}`, tenantId, branchId } as any,
+    `repo-isolation-token-${tenantId}`,
+    { tenantId, branchId }
+  );
+};
+
 describe('Dexie repository tenant isolation and null-safe search', () => {
   beforeEach(async () => {
     await db.open();
+    setSession(tenantA, branchA);
   });
 
   afterEach(async () => {
-    await Promise.all([
-      ...Object.values(ids).map(id => db.journalEntries.delete(id).catch(() => undefined)),
-      ...Object.values(ids).map(id => db.financialTransactions.delete(id).catch(() => undefined)),
-      ...Object.values(ids).map(id => db.suppliers.delete(id).catch(() => undefined)),
-      ...Object.values(ids).map(id => db.customers.delete(id).catch(() => undefined))
-    ]);
+    setSession(tenantA, branchA);
+    await db.journalEntries.where('sourceId').equals(sourceId).delete().catch(() => undefined);
+    await db.financialTransactions.where('Reference_ID').equals(referenceId).delete().catch(() => undefined);
+    for (const id of Object.values(ids)) {
+      await db.suppliers.delete(id).catch(() => undefined);
+      await db.customers.delete(id).catch(() => undefined);
+    }
+
+    setSession(tenantB, branchA);
+    await db.journalEntries.where('sourceId').equals(sourceId).delete().catch(() => undefined);
+    await db.financialTransactions.where('Reference_ID').equals(referenceId).delete().catch(() => undefined);
+    TokenProvider.clearSession();
   });
 
   it('fails closed when deleting journal entries without a tenant context', async () => {
@@ -44,15 +60,25 @@ describe('Dexie repository tenant isolation and null-safe search', () => {
   });
 
   it('deletes source journal entries only within the supplied tenant', async () => {
-    await db.journalEntries.bulkPut([
-      { id: ids.journalA, sourceId, tenantId: tenantA, branchId: branchA, lines: [] },
-      { id: ids.journalB, sourceId, tenantId: tenantB, branchId: branchA, lines: [] }
-    ] as any);
+    await db.journalEntries.put({
+      id: ids.journalA, sourceId, tenantId: tenantA, branchId: branchA, lines: []
+    } as any);
+    setSession(tenantB, branchA);
+    await db.journalEntries.put({
+      id: ids.journalB, sourceId, tenantId: tenantB, branchId: branchA, lines: []
+    } as any);
 
+    setSession(tenantA, branchA);
     await AccountingRepository.deleteEntriesBySource(sourceId, tenantA);
 
     await expect(db.journalEntries.get(ids.journalA)).resolves.toBeUndefined();
     await expect(db.journalEntries.get(ids.journalB)).resolves.toMatchObject({ tenantId: tenantB });
+  });
+
+  it('fails closed when looking up financial transactions without tenant context', async () => {
+    await expect(
+      FinancialTransactionRepository.getByReference(referenceId, undefined as unknown as string)
+    ).rejects.toThrow('FAIL_CLOSED');
   });
 
   it('fails closed when reversing financial transactions without tenant context', async () => {
@@ -76,21 +102,22 @@ describe('Dexie repository tenant isolation and null-safe search', () => {
   });
 
   it('reverses only financial transactions matching tenant and branch', async () => {
-    await db.financialTransactions.bulkPut([
-      {
-        id: ids.financialA, Transaction_ID: ids.financialA, Reference_ID: referenceId,
-        tenantId: tenantA, branchId: branchA, Direction: 'Debit', isDeleted: false
-      },
-      {
-        id: ids.financialOtherTenant, Transaction_ID: ids.financialOtherTenant, Reference_ID: referenceId,
-        tenantId: tenantB, branchId: branchA, Direction: 'Debit', isDeleted: false
-      },
-      {
-        id: ids.financialOtherBranch, Transaction_ID: ids.financialOtherBranch, Reference_ID: referenceId,
-        tenantId: tenantA, branchId: branchB, Direction: 'Debit', isDeleted: false
-      }
-    ] as any);
+    await db.financialTransactions.put({
+      id: ids.financialA, Transaction_ID: ids.financialA, Reference_ID: referenceId,
+      tenantId: tenantA, branchId: branchA, Direction: 'Debit', isDeleted: false
+    } as any);
+    setSession(tenantB, branchA);
+    await db.financialTransactions.put({
+      id: ids.financialOtherTenant, Transaction_ID: ids.financialOtherTenant, Reference_ID: referenceId,
+      tenantId: tenantB, branchId: branchA, Direction: 'Debit', isDeleted: false
+    } as any);
+    setSession(tenantA, branchB);
+    await db.financialTransactions.put({
+      id: ids.financialOtherBranch, Transaction_ID: ids.financialOtherBranch, Reference_ID: referenceId,
+      tenantId: tenantA, branchId: branchB, Direction: 'Debit', isDeleted: false
+    } as any);
 
+    setSession(tenantA, branchA);
     await FinancialTransactionRepository.reverseTransactions(referenceId, tenantA, branchA);
 
     await expect(db.financialTransactions.get(ids.financialA)).resolves.toMatchObject({ isDeleted: true });
@@ -99,17 +126,17 @@ describe('Dexie repository tenant isolation and null-safe search', () => {
   });
 
   it('cancels only financial transactions matching tenant and branch', async () => {
-    await db.financialTransactions.bulkPut([
-      {
-        id: ids.financialA, Transaction_ID: ids.financialA, Reference_ID: referenceId,
-        tenantId: tenantA, branchId: branchA, Direction: 'Debit', isDeleted: false
-      },
-      {
-        id: ids.financialOtherTenant, Transaction_ID: ids.financialOtherTenant, Reference_ID: referenceId,
-        tenantId: tenantB, branchId: branchA, Direction: 'Debit', isDeleted: false
-      }
-    ] as any);
+    await db.financialTransactions.put({
+      id: ids.financialA, Transaction_ID: ids.financialA, Reference_ID: referenceId,
+      tenantId: tenantA, branchId: branchA, Direction: 'Debit', isDeleted: false
+    } as any);
+    setSession(tenantB, branchA);
+    await db.financialTransactions.put({
+      id: ids.financialOtherTenant, Transaction_ID: ids.financialOtherTenant, Reference_ID: referenceId,
+      tenantId: tenantB, branchId: branchA, Direction: 'Debit', isDeleted: false
+    } as any);
 
+    setSession(tenantA, branchA);
     await FinancialTransactionRepository.cancelTransaction(referenceId, tenantA, branchA);
 
     await expect(db.financialTransactions.get(ids.financialA)).resolves.toMatchObject({ isDeleted: true });
