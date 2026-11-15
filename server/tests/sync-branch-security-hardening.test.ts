@@ -161,6 +161,37 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
     }));
   });
 
+  it.each(["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"])(
+    "Scenario 4B: %s cannot bypass a missing per-operation permission",
+    async (role) => {
+      const { AuthorizationService } = await import("../services/rbac/authorization.service.js");
+      (AuthorizationService.getUserEffectivePermissions as any).mockResolvedValue(new Set());
+      (prisma.branch.findFirst as any).mockResolvedValue({ id: branchId });
+      (prisma.branchUser.findFirst as any).mockResolvedValue({ id: "membership-1" });
+
+      const response = await SyncProcessorService.processBatch({
+        envelope: {
+          ...defaultEnvelope,
+          mutations: [{
+            id: "mutation-no-permission",
+            entity: "INVOICE",
+            entityId: "invoice-no-permission",
+            operation: "CREATE",
+            payload: {},
+            idempotencyKey: "idem-no-permission",
+            version: 1
+          }]
+        },
+        authenticatedTenantId: tenantId,
+        authenticatedUserId: userId,
+        authenticatedUserRole: role
+      });
+
+      expect(response.results[0]?.status).toBe("UNAUTHORIZED");
+      expect(response.results[0]?.errorCode).toBe("PERMISSION_DENIED");
+    }
+  );
+
   it("Scenario 5: Tenant-wide sync requires explicit sync.all_branches permission", async () => {
     const envelope = { ...defaultEnvelope, branchId: null };
     const { AuthorizationService } = await import("../services/rbac/authorization.service.js");
