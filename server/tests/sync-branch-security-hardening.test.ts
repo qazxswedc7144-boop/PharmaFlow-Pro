@@ -83,8 +83,12 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
     mutations: [],
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { AuthorizationService } = await import("../services/rbac/authorization.service.js");
+    (AuthorizationService.getUserEffectivePermissions as any).mockResolvedValue(
+      new Set(["sales.invoice.create", "inventory.product.create", "inventory.product.update"])
+    );
     (SyncConflictService.evaluateConflict as any).mockReturnValue({ hasConflict: false });
     (SyncIdempotencyService.check as any).mockResolvedValue({ isDuplicate: false });
   });
