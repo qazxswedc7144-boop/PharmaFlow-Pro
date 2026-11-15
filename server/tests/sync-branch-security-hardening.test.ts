@@ -86,6 +86,8 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const { AuthorizationService } = await import("../services/rbac/authorization.service.js");
+    const { PermissionService } = await import("../services/rbac/permission.service.js");
+    PermissionService.clearAllCache();
     (AuthorizationService.getUserEffectivePermissions as any).mockResolvedValue(
       new Set(["sales.invoice.create", "inventory.product.create", "inventory.product.update"])
     );
@@ -128,7 +130,7 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
     });
 
     expect(response.success).toBe(false);
-    expect(response.errorCode).toBe("BRANCH_ACCESS_DENIED");
+    expect(response.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
     expect(response.error).toContain("غير مصرح لك بالوصول");
   });
 
