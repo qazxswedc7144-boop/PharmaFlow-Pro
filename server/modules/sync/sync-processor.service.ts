@@ -394,6 +394,28 @@ export class SyncProcessorService {
 
     if (operation === "DELETE") {
       if (!existingAny) return { id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "ENTITY_NOT_FOUND", message: "السجل المطلوب حذفه غير موجود." };
+
+      const protectedDeleteEntities = new Set([
+        "INVOICE", "SALE", "VOUCHER", "PAYMENT", "JOURNAL_ENTRY", "INVENTORY_MOVEMENT", "STOCK_ADJUSTMENT"
+      ]);
+      const documentStates = [existingAny.documentStatus, existingAny.status, existingAny.state]
+        .filter((value) => typeof value === "string")
+        .map((value) => value.toUpperCase());
+
+      if (protectedDeleteEntities.has(upperEntity) &&
+          documentStates.some((state) => state === "POSTED" || state === "CONFIRMED")) {
+        // Posted financial/inventory records must be corrected through the approved
+        // reversal or cancellation workflows; direct sync deletion destroys the audit trail.
+        return {
+          id: mutationId,
+          mutationId,
+          status: "REJECTED",
+          success: false,
+          errorCode: "DELETION_OF_POSTED_DOCUMENT_FORBIDDEN",
+          message: "لا يمكن حذف مستند مرحّل أو مؤكد عبر المزامنة. استخدم مسار العكس أو الإلغاء المعتمد."
+        };
+      }
+
       await model.delete({ where: { id: entityId, tenantId } });
       return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString() };
     }
