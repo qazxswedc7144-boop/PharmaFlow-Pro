@@ -48,7 +48,7 @@ vi.mock("../modules/sync/sync-audit.service.js", () => ({
 
 vi.mock("../services/rbac/authorization.service.js", () => ({
   AuthorizationService: {
-    getUserEffectivePermissions: vi.fn(async () => new Set(["sales.invoice.create"])),
+    getUserEffectivePermissions: vi.fn(async () => new Set(["sales.invoice.create", "inventory.product.create", "inventory.product.update"])),
   },
 }));
 
@@ -216,7 +216,7 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
   it("Scenario 9: A per-mutation CONFLICT makes the aggregate batch unsuccessful", async () => {
     const envelope = {
       ...defaultEnvelope,
-      branchId: null,
+      branchId,
       mutations: [{
         id: "mutation-conflict-1",
         entity: "PRODUCT",
@@ -227,6 +227,8 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
         version: 1,
       }],
     };
+    (prisma.branch.findFirst as any).mockResolvedValue({ id: branchId });
+    (prisma.branchUser.findFirst as any).mockResolvedValue({ id: "membership-1" });
     (prisma.product.findFirst as any).mockResolvedValue({
       id: "product-1",
       tenantId,
@@ -257,7 +259,7 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
   it("Scenario 10: An idempotent DUPLICATE remains a successful batch result", async () => {
     const envelope = {
       ...defaultEnvelope,
-      branchId: null,
+      branchId,
       mutations: [{
         id: "mutation-duplicate-1",
         entity: "PRODUCT",
@@ -268,6 +270,8 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
         version: 1,
       }],
     };
+    (prisma.branch.findFirst as any).mockResolvedValue({ id: branchId });
+    (prisma.branchUser.findFirst as any).mockResolvedValue({ id: "membership-1" });
     (SyncIdempotencyService.check as any).mockResolvedValue({
       isDuplicate: true,
       previousResult: { status: "SUCCESS", success: true },
