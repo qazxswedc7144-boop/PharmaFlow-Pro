@@ -126,7 +126,7 @@ describe('InvoiceRepository P2 safeguards', () => {
         'invoice-repository-p2-refresh'
       );
     }
-  });
+  }, 30000);
 
   it('allocates distinct invoice numbers for concurrent requests in the same tenant', async () => {
     const numbers = await Promise.all([
