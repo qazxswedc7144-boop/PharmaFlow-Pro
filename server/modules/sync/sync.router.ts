@@ -168,7 +168,17 @@ if (!authenticatedUserId) {
       success: response.success
     });
 
-    res.status(response.success ? 200 : 400).json(response);
+    const forbiddenResultCodes = new Set([
+      "BRANCH_MEMBERSHIP_REQUIRED",
+      "DELETION_OF_POSTED_DOCUMENT_FORBIDDEN",
+      "PERMISSION_DENIED"
+    ]);
+    const hasForbiddenResult =
+      forbiddenResultCodes.has(response.errorCode || "") ||
+      response.results.some((result) => forbiddenResultCodes.has(result.errorCode || "")) ||
+      response.summary.unauthorized.length > 0;
+
+    res.status(response.success ? 200 : hasForbiddenResult ? 403 : 400).json(response);
   } catch (error: any) {
     const durationMs = Date.now() - startTime;
     SyncMetricsService.recordPushMetrics({
