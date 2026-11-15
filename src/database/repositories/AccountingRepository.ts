@@ -298,12 +298,18 @@ export const AccountingRepository = {
   },
 
   deleteEntriesBySource: async (
-    sourceId: string
+    sourceId: string,
+    tenantId: string
   ) => {
+    if (!tenantId || tenantId === 'default') {
+      throw new Error('FAIL_CLOSED: Tenant context required for deletion');
+    }
+
     const entries =
       await db.journalEntries
         .where('sourceId')
         .equals(sourceId)
+        .and((entry: any) => entry.tenantId === tenantId)
         .toArray();
 
     if (entries) {
