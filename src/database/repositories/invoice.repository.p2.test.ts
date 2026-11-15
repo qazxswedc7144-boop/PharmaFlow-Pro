@@ -87,6 +87,44 @@ describe('InvoiceRepository P2 safeguards', () => {
     await expect(InvoiceRepository.generateInvoiceNumber('PURCHASE')).resolves.toBe('PUR-3043');
   });
 
+  it('allows the event loop to run during a 10,000-invoice first-use backfill', async () => {
+    const largeTenantId = 'invoice-repository-p2-large-tenant';
+    TokenProvider.setSession(
+      { id: 'invoice-repository-p2-user', tenantId: largeTenantId, branchId } as any,
+      'invoice-repository-p2-access',
+      'invoice-repository-p2-refresh'
+    );
+
+    await db.sales.bulkPut(Array.from({ length: 10_000 }, (_, index) => ({
+      id: `P2-LARGE-SALE-${index}`,
+      SaleID: `INV-${1001 + index}`,
+      tenantId: largeTenantId,
+      branchId
+    })) as any);
+
+    let backfillCompleted = false;
+    let timerRanDuringBackfill = false;
+    const eventLoopProbe = new Promise<void>(resolve => {
+      setTimeout(() => {
+        timerRanDuringBackfill = !backfillCompleted;
+        resolve();
+      }, 0);
+    });
+
+    await expect(InvoiceRepository.generateInvoiceNumber('SALE')).resolves.toBe('INV-11001');
+    backfillCompleted = true;
+    await eventLoopProbe;
+
+    expect(timerRanDuringBackfill).toBe(true);
+    await db.sales.where('tenantId').equals(largeTenantId).delete();
+    await db.invoiceCounters.delete(`${largeTenantId}::invoice-number::SALE`);
+    TokenProvider.setSession(
+      { id: 'invoice-repository-p2-user', tenantId, branchId } as any,
+      'invoice-repository-p2-access',
+      'invoice-repository-p2-refresh'
+    );
+  });
+
   it('allocates distinct invoice numbers for concurrent requests in the same tenant', async () => {
     const numbers = await Promise.all([
       InvoiceRepository.generateInvoiceNumber('SALE'),
