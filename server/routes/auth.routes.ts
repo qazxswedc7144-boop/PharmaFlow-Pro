@@ -281,19 +281,19 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
       });
     }
 
-    const validRoles = Object.values(Role);
-    if (!role || !validRoles.includes(role as Role)) {
-      return res.status(400).json({
-        error: "INVALID_INPUT",
-        message: `Role is required and must be one of: ${validRoles.join(", ")}.`
-      });
-    }
-
     if (req.user?.role === Role.ADMIN &&
         ["PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"].includes(String(role).toUpperCase())) {
       return res.status(403).json({
         error: "PRIVILEGE_ESCALATION_FORBIDDEN",
         message: "ADMIN users cannot create platform or tenant administrator accounts."
+      });
+    }
+
+    const validRoles = Object.values(Role);
+    if (!role || !validRoles.includes(role as Role)) {
+      return res.status(400).json({
+        error: "INVALID_INPUT",
+        message: `Role is required and must be one of: ${validRoles.join(", ")}.`
       });
     }
 
