@@ -12,10 +12,13 @@ export const SupplierRepository = {
   },
 
   searchSuppliers: async (term: string): Promise<any[]> => {
+    const normalizedTerm = term.toLowerCase();
     return await db.suppliers
-      .filter((c: any) => 
-        (c.Supplier_Name.toLowerCase().includes(term.toLowerCase()) || 
-         c.Supplier_ID.toLowerCase().includes(term.toLowerCase())) &&
+      .filter((c: any) =>
+        (
+          c.Supplier_Name?.toLowerCase()?.includes(normalizedTerm) ||
+          c.Supplier_ID?.toLowerCase()?.includes(normalizedTerm)
+        ) &&
         c.Is_Active !== false
       )
       .limit(10)
@@ -23,10 +26,15 @@ export const SupplierRepository = {
   },
 
   searchCustomers: async (term: string): Promise<any[]> => {
+    const normalizedTerm = term.toLowerCase();
     return await db.customers
-      .filter((c: any) => 
-        (c.Supplier_Name.toLowerCase().includes(term.toLowerCase()) || 
-         c.Supplier_ID.toLowerCase().includes(term.toLowerCase())) &&
+      .filter((c: any) =>
+        (
+          c.Customer_Name?.toLowerCase()?.includes(normalizedTerm) ||
+          c.Customer_ID?.toLowerCase()?.includes(normalizedTerm) ||
+          c.Supplier_Name?.toLowerCase()?.includes(normalizedTerm) ||
+          c.Supplier_ID?.toLowerCase()?.includes(normalizedTerm)
+        ) &&
         c.Is_Active !== false
       )
       .limit(10)
