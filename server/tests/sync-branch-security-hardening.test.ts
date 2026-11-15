@@ -213,7 +213,9 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
     expect(response.success).toBe(true);
   });
 
-  it("Scenario 6: Non-privileged user syncs at tenant level (null branch) -> FAIL (BRANCH_REQUIRED or ACCESS_DENIED)", async () => {
+  it("Scenario 6: Non-privileged user syncs at tenant level without sync.all_branches -> FAIL", async () => {
+    const { AuthorizationService } = await import("../services/rbac/authorization.service.js");
+    (AuthorizationService.getUserEffectivePermissions as any).mockResolvedValue(new Set());
     const envelope = { ...defaultEnvelope, branchId: null };
     
     // Simulate user has branch assignments
@@ -251,6 +253,8 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
 
 
   it("Scenario 9: A per-mutation CONFLICT makes the aggregate batch unsuccessful", async () => {
+    const { AuthorizationService } = await import("../services/rbac/authorization.service.js");
+    (AuthorizationService.getUserEffectivePermissions as any).mockResolvedValue(new Set(["inventory.product.update"]));
     const envelope = {
       ...defaultEnvelope,
       branchId,
@@ -294,6 +298,8 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
   });
 
   it("Scenario 10: An idempotent DUPLICATE remains a successful batch result", async () => {
+    const { AuthorizationService } = await import("../services/rbac/authorization.service.js");
+    (AuthorizationService.getUserEffectivePermissions as any).mockResolvedValue(new Set(["inventory.product.create"]));
     const envelope = {
       ...defaultEnvelope,
       branchId,
