@@ -19,7 +19,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — /api/auth/register security", 
       }
     });
 
-    expect(response.status).toBe(403);
+    expect(response.status, JSON.stringify(response.body)).toBe(403);
     expect(response.body.error).toBe("PRIVILEGE_ESCALATION_FORBIDDEN");
     expect(await prisma.user.findUnique({ where: { username } })).toBeNull();
   });
@@ -41,7 +41,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — /api/auth/register security", 
       }
     });
 
-    expect(response.status).toBe(201);
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
     const created = await prisma.user.findUnique({ where: { username } });
     expect(created).toBeTruthy();
     expect(await prisma.tenantUser.findFirst({
@@ -72,7 +72,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — /api/auth/register security", 
       }
     });
 
-    expect(response.status).toBe(400);
+    expect(response.status, JSON.stringify(response.body)).toBe(400);
     expect(await prisma.user.findUnique({ where: { username } })).toBeNull();
   });
 });
