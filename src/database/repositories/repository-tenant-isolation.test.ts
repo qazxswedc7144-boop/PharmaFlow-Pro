@@ -72,6 +72,7 @@ describe('Dexie repository tenant isolation and null-safe search', () => {
     await AccountingRepository.deleteEntriesBySource(sourceId, tenantA);
 
     await expect(db.journalEntries.get(ids.journalA)).resolves.toBeUndefined();
+    setSession(tenantB, branchA);
     await expect(db.journalEntries.get(ids.journalB)).resolves.toMatchObject({ tenantId: tenantB });
   });
 
@@ -121,7 +122,9 @@ describe('Dexie repository tenant isolation and null-safe search', () => {
     await FinancialTransactionRepository.reverseTransactions(referenceId, tenantA, branchA);
 
     await expect(db.financialTransactions.get(ids.financialA)).resolves.toMatchObject({ isDeleted: true });
+    setSession(tenantB, branchA);
     await expect(db.financialTransactions.get(ids.financialOtherTenant)).resolves.toMatchObject({ isDeleted: false });
+    setSession(tenantA, branchB);
     await expect(db.financialTransactions.get(ids.financialOtherBranch)).resolves.toMatchObject({ isDeleted: false });
   });
 
@@ -140,6 +143,7 @@ describe('Dexie repository tenant isolation and null-safe search', () => {
     await FinancialTransactionRepository.cancelTransaction(referenceId, tenantA, branchA);
 
     await expect(db.financialTransactions.get(ids.financialA)).resolves.toMatchObject({ isDeleted: true });
+    setSession(tenantB, branchA);
     await expect(db.financialTransactions.get(ids.financialOtherTenant)).resolves.toMatchObject({ isDeleted: false });
   });
 
