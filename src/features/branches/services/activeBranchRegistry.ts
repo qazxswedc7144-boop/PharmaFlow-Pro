@@ -43,7 +43,7 @@ export async function ensureActiveBranchRegistered(
   expected: ActiveBranchContext
 ): Promise<any> {
   if (!expected.tenantId) {
-    throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: Tenant is required.');
+    throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: لم يكتمل تحميل سياق المؤسسة. انتظر جاهزية الجلسة ثم أعد المحاولة.');
   }
 
   const expectedBranchId = String(expected.branchId || '').trim();
@@ -67,7 +67,7 @@ export async function ensureActiveBranchRegistered(
   // this user. Offline posting may use only a previously trusted local record.
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     if (trustedLocalBranch) return trustedLocalBranch;
-    throw new Error('BRANCH_CONTEXT_UNAVAILABLE_OFFLINE: No trusted local branch is registered for this tenant.');
+    throw new Error('BRANCH_CONTEXT_UNAVAILABLE_OFFLINE: لا يمكن إتمام العملية دون اتصال لأن الفرع النشط غير محفوظ محلياً كسياق موثوق. اتصل بالإنترنت لمزامنة بيانات الفرع ثم أعد المحاولة.');
   }
 
   const response = await unifiedTransport.get<any>('/api/auth/branch-context');
