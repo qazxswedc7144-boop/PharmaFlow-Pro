@@ -199,6 +199,11 @@ jobs:
         env:
           NODE_OPTIONS: "--max-old-space-size=5120"
 
+      - name: Run PostgreSQL HTTP Auth Register security integration tests
+        run: npx vitest run server/tests/auth-register-security.integration.test.ts --reporter=verbose --maxWorkers=1
+        env:
+          NODE_OPTIONS: "--max-old-space-size=5120"
+
       - name: Run PostgreSQL HTTP Sync integration tests
         if: always()
         run: npx vitest run server/tests/sync.integration.test.ts --reporter=verbose --maxWorkers=1

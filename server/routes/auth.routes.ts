@@ -255,7 +255,16 @@ authRouter.post("/bootstrap", async (req: Request, res: Response) => {
  */
 authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { username, password, role, branchId, tenantId } = req.body;
+    const { username, password, role, branchId } = req.body;
+    // The authenticated token is the sole source of tenant authority.
+    const targetTenantId = req.user?.tenantId;
+
+    if (!targetTenantId) {
+      return res.status(403).json({
+        error: "TRUSTED_TENANT_CONTEXT_REQUIRED",
+        message: "A trusted tenant context is required to register users."
+      });
+    }
 
     // 1. Validate inputs
     if (!username || typeof username !== "string" || username.trim().length < 3) {
@@ -269,6 +278,14 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
       return res.status(400).json({
         error: "INVALID_INPUT",
         message: "Password is required and must be at least 6 characters."
+      });
+    }
+
+    if (req.user?.role === Role.ADMIN &&
+        ["PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"].includes(String(role).toUpperCase())) {
+      return res.status(403).json({
+        error: "PRIVILEGE_ESCALATION_FORBIDDEN",
+        message: "ADMIN users cannot create platform or tenant administrator accounts."
       });
     }
 
@@ -287,14 +304,7 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
       });
     }
 
-    if (!tenantId || typeof tenantId !== "string" || tenantId.trim() === "") {
-      return res.status(400).json({
-        error: "INVALID_INPUT",
-        message: "Tenant ID is required and must be a non-empty string."
-      });
-    }
-
-    // 2. Database validation: verify unique user, existing tenant and existing branch
+    // 2. Verify uniqueness and ensure the branch belongs to the authenticated tenant.
     const existingUser = await prisma.user.findUnique({
       where: { username: username.trim() }
     });
@@ -305,23 +315,13 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
       });
     }
 
-    const tenantExists = await prisma.tenant.findUnique({
-      where: { id: tenantId }
-    });
-    if (!tenantExists) {
-      return res.status(400).json({
-        error: "TENANT_NOT_FOUND",
-        message: "The specified Tenant ID does not exist."
-      });
-    }
-
-    const branchExists = await prisma.branch.findUnique({
-      where: { id: branchId }
+    const branchExists = await prisma.branch.findFirst({
+      where: { id: branchId, tenantId: targetTenantId }
     });
     if (!branchExists) {
       return res.status(400).json({
         error: "BRANCH_NOT_FOUND",
-        message: "The specified Branch ID does not exist."
+        message: "The specified Branch ID does not exist in the authenticated tenant."
       });
     }
 
@@ -345,19 +345,17 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
         }
       });
 
-      // Link User with the Tenant
       await tx.tenantUser.create({
         data: {
-          tenantId,
+          tenantId: targetTenantId,
           userId: newUser.id,
           role: "STAFF"
         }
       });
 
-      // Link User with the default Branch
       await tx.branchUser.create({
         data: {
-          tenantId,
+          tenantId: targetTenantId,
           branchId,
           userId: newUser.id,
           isDefault: true
@@ -367,11 +365,11 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
       return newUser;
     });
 
-    // 5. Audit log All User Creations
+    // 5. Audit log all user creations using the trusted tenant context.
     await prisma.auditLog.create({
       data: {
         userId: req.user?.userId || user.id,
-        action: "USER_CREATE",
+        action: "USER_REGISTER",
         entity: "User",
         entityId: user.id,
         before: null,
@@ -379,7 +377,7 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
           id: user.id,
           username: user.username,
           role: user.role,
-          tenantId,
+          tenantId: targetTenantId,
           branchId,
           createdBy: req.user?.username || "SYSTEM"
         }),
