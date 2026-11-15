@@ -143,10 +143,9 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
     expect(response.errorCode).toBe("BRANCH_NOT_IN_TENANT");
   });
 
-  it("Scenario 4: Privileged user (TENANT_ADMIN) syncs for ANY branch in their tenant -> PASS", async () => {
-    // Branch exists in tenant
+  it("Scenario 4: TENANT_ADMIN without branchUser membership is rejected", async () => {
     (prisma.branch.findFirst as any).mockResolvedValue({ id: branchId });
-    // Note: No branch membership check should happen for privileged roles
+    (prisma.branchUser.findFirst as any).mockResolvedValue(null);
 
     const response = await SyncProcessorService.processBatch({
       envelope: defaultEnvelope,
@@ -155,13 +154,18 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
       authenticatedUserRole: "TENANT_ADMIN",
     });
 
-    expect(response.success).toBe(true);
-    expect(prisma.branchUser.findFirst).not.toHaveBeenCalled();
+    expect(response.success).toBe(false);
+    expect(response.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
+    expect(prisma.branchUser.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId, branchId, tenantId }
+    }));
   });
 
-  it("Scenario 5: Privileged user (TENANT_ADMIN) syncs at tenant level (null branch) -> PASS", async () => {
+  it("Scenario 5: Tenant-wide sync requires explicit sync.all_branches permission", async () => {
     const envelope = { ...defaultEnvelope, branchId: null };
-    
+    const { AuthorizationService } = await import("../../services/rbac/authorization.service.js");
+    (AuthorizationService.getUserEffectivePermissions as any).mockResolvedValue(new Set(["sync.all_branches"]));
+
     const response = await SyncProcessorService.processBatch({
       envelope,
       authenticatedTenantId: tenantId,
@@ -187,7 +191,7 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
     });
 
     expect(response.success).toBe(false);
-    expect(response.errorCode).toBe("BRANCH_REQUIRED");
+    expect(response.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
   });
 
   it("Scenario 7: DB Failure during branch verification -> FAIL (Fail-Closed)", async () => {
@@ -284,7 +288,7 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
     expect(prisma.product.create).not.toHaveBeenCalled();
   });
 
-  it("Scenario 8: User member of branch via UserRole assignment -> PASS", async () => {
+  it("Scenario 8: UserRole assignment alone does not replace branchUser membership", async () => {
      // Branch exists in tenant
     (prisma.branch.findFirst as any).mockResolvedValue({ id: branchId });
     // User is NOT in branchUser
@@ -299,6 +303,7 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
       authenticatedUserRole: "CASHIER",
     });
 
-    expect(response.success).toBe(true);
+    expect(response.success).toBe(false);
+    expect(response.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
   });
 });
