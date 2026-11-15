@@ -2,7 +2,9 @@ import { expect, it } from "vitest";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
 definePostgresHttpSuite("Real PostgreSQL HTTP — /api/auth/register security", (getContext) => {
-  it("rejects ADMIN privilege escalation to PLATFORM_OWNER without creating a user", async () => {
+  it.each(["PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"])(
+    "rejects ADMIN privilege escalation to %s without creating a user",
+    async (elevatedRole) => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
     const username = `ci_escalate_${ctx.suffix}`;
@@ -13,7 +15,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — /api/auth/register security", 
       body: {
         username,
         password: "Register-Test-Password-2026!",
-        role: "PLATFORM_OWNER",
+        role: elevatedRole,
         tenantId: ctx.tenantAId,
         branchId: ctx.branchAId
       }
@@ -22,7 +24,8 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — /api/auth/register security", 
     expect(response.status, JSON.stringify(response.body)).toBe(403);
     expect(response.body.error).toBe("PRIVILEGE_ESCALATION_FORBIDDEN");
     expect(await prisma.user.findUnique({ where: { username } })).toBeNull();
-  });
+    }
+  );
 
   it("ignores a client-supplied tenantId and creates the user only in the ADMIN's tenant", async () => {
     const ctx = getContext();
