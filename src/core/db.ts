@@ -46,7 +46,7 @@ function extractPrimaryKey(table: any, record: any): any {
 const SYNC_OWNED_TABLES = new Set(['syncQueue', 'sync_queue', 'outbox']);
 
 const TENANT_SCOPED_TABLES = new Set([
-  'invoices', 'products', 'customers', 'suppliers', 'journalEntries', 'diagnosticLogs',
+  'invoices', 'invoiceCounters', 'products', 'customers', 'suppliers', 'journalEntries', 'diagnosticLogs',
   'accounts', 'journalLines', 'sales', 'purchases', 'drafts', 'draft_invoices',
   'syncQueue', 'sync_queue', 'outbox',
   'branchTransfers', 'branchInventory', 'inventoryCorrectionCases',
@@ -723,6 +723,7 @@ export class PharmaFlowDB extends Dexie {
   // Strongly typed tables
   products!: Table<Product>;
   invoices!: Table<UnifiedInvoice>;
+  invoiceCounters!: Table<any, string>;
   invoiceItems!: Table<InvoiceItem>;
   accounts!: Table<Account>;
   journalEntries!: Table<AccountingEntry>;
@@ -1112,6 +1113,12 @@ export class PharmaFlowDB extends Dexie {
     // Version 41: Tenant-scoped, bounded client diagnostic logs.
     this.version(41).stores({
       diagnosticLogs: '&id, tenantId, timestamp, operation, [tenantId+timestamp]'
+    });
+
+    // Version 42: Tenant-scoped atomic invoice number counters.
+    // Counters are initialized from each tenant's existing invoices on first use.
+    this.version(42).stores({
+      invoiceCounters: '&id, tenantId, scope, [tenantId+scope]'
     });
 
     // Handle structural integrity and recovery
