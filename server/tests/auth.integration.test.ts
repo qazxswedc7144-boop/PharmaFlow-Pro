@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import jwt from "jsonwebtoken";
 import { createHash, randomUUID } from "node:crypto";
 import { AuthService } from "../../apps/api/src/modules/auth/auth.service.js";
-import { getJwtSecret, getJwtRefreshSecret } from "../security/jwtSecrets.js";
+import { getJwtSecret } from "../security/jwtSecrets.js";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
 definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) => {
