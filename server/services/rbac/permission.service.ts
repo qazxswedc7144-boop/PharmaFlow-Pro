@@ -89,6 +89,7 @@ export const ENTERPRISE_PERMISSIONS: StandardPermission[] = [
   { key: 'sync.view', module: 'sync', action: 'view', description: 'مراقبة حالة المزامنة اللامركزية' },
   { key: 'sync.trigger', module: 'sync', action: 'manage', description: 'بدء مزامنة فورية قسرية' },
   { key: 'sync.configure', module: 'sync', action: 'edit', description: 'ضبط معلمات المزامنة والتكرار' },
+  { key: 'sync.all_branches', module: 'sync', action: 'manage', description: 'السماح بالمزامنة على مستوى جميع فروع المنشأة' },
   { key: 'api.access', module: 'api', action: 'view', description: 'استخدام واجهات التكامل البرمجية والذكاء الاصطناعي' },
   { key: 'api.keys.manage', module: 'api', action: 'manage', description: 'توليد وإلغاء مفاتيح الربط البرمجي' },
 
@@ -137,7 +138,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<string, string[]> = {
     'settings.view', 'settings.update', 'settings.backup.manage', 'settings.security.view', 'settings.audit.view',
     'users.view', 'users.create', 'users.update', 'users.delete', 'users.roles.manage', 'users.permissions.override',
     'organization.view', 'organization.manage', 'branches.view', 'branches.manage',
-    'sync.view', 'sync.trigger', 'sync.configure', 'api.access', 'api.keys.manage'
+    'sync.view', 'sync.trigger', 'sync.configure', 'sync.all_branches', 'api.access', 'api.keys.manage'
   ],
   ADMIN: [
     'sales.invoice.view', 'sales.invoice.create', 'sales.invoice.update', 'sales.invoice.delete', 'sales.invoice.approve', 'sales.invoice.export', 'sales.refund', 'sales.pos.access', 'sales.price.override',
