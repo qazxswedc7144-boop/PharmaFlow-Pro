@@ -74,7 +74,8 @@ export class SyncProcessorService {
       "SETTINGS:DELETE": "settings.update",
       "DEVICE:CREATE": "sync.configure",
       "DEVICE:UPDATE": "sync.configure",
-      "DEVICE:DELETE": "sync.configure";
+      "DEVICE:DELETE": "sync.configure"
+  };
 
   static async processBatch(params: {
     envelope: SyncEnvelope;
