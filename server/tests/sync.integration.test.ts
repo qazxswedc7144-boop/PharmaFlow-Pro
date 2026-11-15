@@ -318,6 +318,52 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     expect(response.body.results[0]?.errorCode).toBe("UNKNOWN_SYNC_OPERATION");
   });
 
+  it("rejects known but unsupported entity operations with HTTP 400", async () => {
+    const ctx = getContext();
+    const { DeviceService } = await import("../modules/sync/device.service.js");
+    const deviceId = `ci-v30s-unsupported-ops-${ctx.suffix}`;
+    await DeviceService.registerDevice({
+      deviceId, deviceName: "V30S Unsupported Operations Test", tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId, userId: ctx.userAId, appVersion: "ci", schemaVersion: 1
+    });
+
+    const unsupportedOperations = [
+      ["INVOICE", "CANCEL"],
+      ["PURCHASE", "POST"],
+      ["JOURNAL_ENTRY", "POST"],
+      ["VOUCHER", "POST"],
+      ["VOUCHER", "CANCEL"],
+      ["BRANCH_TRANSFER", "POST"],
+      ["STOCK_ADJUSTMENT", "POST"]
+    ] as const;
+
+    const response = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        deviceId,
+        branchId: ctx.branchAId,
+        schemaVersion: 1,
+        mutations: unsupportedOperations.map(([entity, operation]) => ({
+          id: randomUUID(),
+          entity,
+          entityId: randomUUID(),
+          operation,
+          payload: {},
+          idempotencyKey: randomUUID(),
+          version: 1
+        }))
+      }
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.results).toHaveLength(unsupportedOperations.length);
+    for (const result of response.body.results) {
+      expect(result.status).toBe("REJECTED");
+      expect(result.errorCode).toBe("UNKNOWN_SYNC_OPERATION");
+    }
+  });
+
   it("rejects DELETE of a POSTED invoice through sync", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
