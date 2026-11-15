@@ -475,10 +475,10 @@ export const accountingService = {
     const branchId = currentUser?.branchId;
 
     if (!tenantId || ['default', 'default-tenant', 'tenant-default', 'main'].includes(tenantId)) {
-      throw new Error('FAIL_CLOSED: Voucher deletion requires a valid tenant context.');
+      throw new Error('FAIL_CLOSED: لا يمكن حذف السند قبل اكتمال تحميل سياق المؤسسة وتسجيل الدخول. أعد المحاولة بعد جاهزية الجلسة.');
     }
     if (!branchId || ['main', 'default', 'default-branch', 'BRH-DEFAULT'].includes(branchId)) {
-      throw new Error('FAIL_CLOSED: Voucher deletion requires a valid branch context.');
+      throw new Error('FAIL_CLOSED: لا يمكن حذف السند قبل تأكيد الفرع النشط. تحقق من اتصالك وسياق الفرع ثم أعد المحاولة.');
     }
 
     // PHASE 3 — AUTO BACKUP RULES
