@@ -23,6 +23,59 @@ const KNOWN_ENTITIES = new Set([
 ]);
 
 export class SyncProcessorService {
+  private static readonly PERMISSION_BY_ENTITY_OPERATION: Record<string, string> = {
+      "INVOICE:CREATE": "sales.invoice.create",
+      "INVOICE:UPDATE": "sales.invoice.update",
+      "INVOICE:POST": "sales.invoice.approve",
+      "INVOICE:DELETE": "sales.invoice.delete",
+      "SALE:CREATE": "sales.invoice.create",
+      "SALE:UPDATE": "sales.invoice.update",
+      "SALE:POST": "sales.invoice.approve",
+      "SALE:DELETE": "sales.invoice.delete",
+      "PURCHASE:CREATE": "purchases.invoice.create",
+      "PRODUCT:CREATE": "inventory.product.create",
+      "PRODUCT:UPDATE": "inventory.product.update",
+      "PRODUCT:DELETE": "inventory.product.delete",
+      "PAYMENT:CREATE": "accounting.voucher.create",
+      "PAYMENT:UPDATE": "accounting.voucher.create",
+      "PAYMENT:DELETE": "accounting.voucher.create",
+      "VOUCHER:CREATE": "accounting.voucher.create",
+      "VOUCHER:UPDATE": "accounting.voucher.create",
+      "VOUCHER:DELETE": "accounting.voucher.create",
+      "JOURNAL_ENTRY:CREATE": "accounting.journal.create",
+      "JOURNAL_ENTRY:UPDATE": "accounting.journal.post",
+      "JOURNAL_ENTRY:DELETE": "accounting.journal.post",
+      "INVENTORY_BATCH:CREATE": "inventory.batch.manage",
+      "INVENTORY_BATCH:UPDATE": "inventory.batch.manage",
+      "INVENTORY_BATCH:DELETE": "inventory.batch.manage",
+      "INVENTORY_MOVEMENT:CREATE": "inventory.adjust",
+      "INVENTORY_MOVEMENT:UPDATE": "inventory.adjust",
+      "INVENTORY_MOVEMENT:DELETE": "inventory.adjust",
+      "STOCK_ADJUSTMENT:CREATE": "inventory.adjust",
+      "STOCK_ADJUSTMENT:UPDATE": "inventory.adjust",
+      "STOCK_ADJUSTMENT:DELETE": "inventory.adjust",
+      "BRANCH_TRANSFER:CREATE": "inventory.transfer.create",
+      "BRANCH_TRANSFER:UPDATE": "inventory.transfer.approve",
+      "BRANCH_TRANSFER:DELETE": "inventory.transfer.approve",
+      "STOCK_TRANSFER:CREATE": "inventory.transfer.create",
+      "STOCK_TRANSFER:UPDATE": "inventory.transfer.approve",
+      "STOCK_TRANSFER:DELETE": "inventory.transfer.approve",
+      "TRANSFER:CREATE": "inventory.transfer.create",
+      "TRANSFER:UPDATE": "inventory.transfer.approve",
+      "TRANSFER:DELETE": "inventory.transfer.approve",
+      "CUSTOMER:CREATE": "sales.invoice.create",
+      "CUSTOMER:UPDATE": "sales.invoice.update",
+      "CUSTOMER:DELETE": "sales.invoice.delete",
+      "SUPPLIER:CREATE": "purchases.invoice.create",
+      "SUPPLIER:UPDATE": "purchases.invoice.update",
+      "SUPPLIER:DELETE": "purchases.invoice.delete",
+      "SETTINGS:CREATE": "settings.update",
+      "SETTINGS:UPDATE": "settings.update",
+      "SETTINGS:DELETE": "settings.update",
+      "DEVICE:CREATE": "sync.configure",
+      "DEVICE:UPDATE": "sync.configure",
+      "DEVICE:DELETE": "sync.configure";
+
   static async processBatch(params: {
     envelope: SyncEnvelope;
     authenticatedTenantId: string;
@@ -248,64 +301,8 @@ export class SyncProcessorService {
   }
 
   private static getRequiredPermission(entity: string, operation: string): string {
-    // Explicit allowlist: every supported entity/operation pair has its own RBAC key.
-    // Any pair omitted here is rejected; there is no generic mutation permission fallback.
-    const permissionByEntityOperation: Record<string, string> = {
-      "INVOICE:CREATE": "sales.invoice.create",
-      "INVOICE:UPDATE": "sales.invoice.update",
-      "INVOICE:POST": "sales.invoice.approve",
-      "INVOICE:DELETE": "sales.invoice.delete",
-      "SALE:CREATE": "sales.invoice.create",
-      "SALE:UPDATE": "sales.invoice.update",
-      "SALE:POST": "sales.invoice.approve",
-      "SALE:DELETE": "sales.invoice.delete",
-      "PURCHASE:CREATE": "purchases.invoice.create",
-      "PRODUCT:CREATE": "inventory.product.create",
-      "PRODUCT:UPDATE": "inventory.product.update",
-      "PRODUCT:DELETE": "inventory.product.delete",
-      "PAYMENT:CREATE": "accounting.voucher.create",
-      "PAYMENT:UPDATE": "accounting.voucher.create",
-      "PAYMENT:DELETE": "accounting.voucher.create",
-      "VOUCHER:CREATE": "accounting.voucher.create",
-      "VOUCHER:UPDATE": "accounting.voucher.create",
-      "VOUCHER:DELETE": "accounting.voucher.create",
-      "JOURNAL_ENTRY:CREATE": "accounting.journal.create",
-      "JOURNAL_ENTRY:UPDATE": "accounting.journal.post",
-      "JOURNAL_ENTRY:DELETE": "accounting.journal.post",
-      "INVENTORY_BATCH:CREATE": "inventory.batch.manage",
-      "INVENTORY_BATCH:UPDATE": "inventory.batch.manage",
-      "INVENTORY_BATCH:DELETE": "inventory.batch.manage",
-      "INVENTORY_MOVEMENT:CREATE": "inventory.adjust",
-      "INVENTORY_MOVEMENT:UPDATE": "inventory.adjust",
-      "INVENTORY_MOVEMENT:DELETE": "inventory.adjust",
-      "STOCK_ADJUSTMENT:CREATE": "inventory.adjust",
-      "STOCK_ADJUSTMENT:UPDATE": "inventory.adjust",
-      "STOCK_ADJUSTMENT:DELETE": "inventory.adjust",
-      "BRANCH_TRANSFER:CREATE": "inventory.transfer.create",
-      "BRANCH_TRANSFER:UPDATE": "inventory.transfer.approve",
-      "BRANCH_TRANSFER:DELETE": "inventory.transfer.approve",
-      "STOCK_TRANSFER:CREATE": "inventory.transfer.create",
-      "STOCK_TRANSFER:UPDATE": "inventory.transfer.approve",
-      "STOCK_TRANSFER:DELETE": "inventory.transfer.approve",
-      "TRANSFER:CREATE": "inventory.transfer.create",
-      "TRANSFER:UPDATE": "inventory.transfer.approve",
-      "TRANSFER:DELETE": "inventory.transfer.approve",
-      "CUSTOMER:CREATE": "sales.invoice.create",
-      "CUSTOMER:UPDATE": "sales.invoice.update",
-      "CUSTOMER:DELETE": "sales.invoice.delete",
-      "SUPPLIER:CREATE": "purchases.invoice.create",
-      "SUPPLIER:UPDATE": "purchases.invoice.update",
-      "SUPPLIER:DELETE": "purchases.invoice.delete",
-      "SETTINGS:CREATE": "settings.update",
-      "SETTINGS:UPDATE": "settings.update",
-      "SETTINGS:DELETE": "settings.update",
-      "DEVICE:CREATE": "sync.configure",
-      "DEVICE:UPDATE": "sync.configure",
-      "DEVICE:DELETE": "sync.configure"
-    };
-
     const key = `${entity.toUpperCase()}:${operation.toUpperCase()}`;
-    const requiredPermission = permissionByEntityOperation[key];
+    const requiredPermission = this.PERMISSION_BY_ENTITY_OPERATION[key];
     if (!requiredPermission) {
       throw new Error("UNKNOWN_SYNC_OPERATION");
     }
