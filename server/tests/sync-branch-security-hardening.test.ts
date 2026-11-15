@@ -131,7 +131,7 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
 
     expect(response.success).toBe(false);
     expect(response.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
-    expect(response.error).toContain("غير مصرح لك بالوصول");
+    expect(response.error).toContain("دون عضوية فرعية صريحة");
   });
 
   it("Scenario 3: Cross-tenant branch (Branch exists but in another tenant) -> FAIL (BRANCH_NOT_IN_TENANT)", async () => {
