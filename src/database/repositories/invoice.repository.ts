@@ -134,43 +134,28 @@ export const InvoiceRepository = {
       ? ['SaleID', 'saleId', 'invoice_number', 'invoiceNumber', 'invoiceId']
       : ['invoiceId', 'purchase_id', 'purchaseId', 'invoice_number', 'invoiceNumber'];
     const legacyTable = type === 'SALE' ? db.sales : db.purchases;
+    const BACKFILL_BATCH_SIZE = 1000;
 
-    // IndexedDB read-write transactions serialize counter allocation across tabs.
-    return db.transaction('rw', db.invoiceCounters, db.sales, db.purchases, db.invoices, async () => {
-      const existingCounter = await db.invoiceCounters.get(counterId);
-      let nextSequence: number;
+    // Keep the write transaction short. Concurrent first-use callers may scan
+    // simultaneously, but the final counter reservation is serialized by IDB.
+    const reserveSequence = async (initialHighest?: number): Promise<number | null> =>
+      db.transaction('rw', db.invoiceCounters, async () => {
+        const existingCounter = await db.invoiceCounters.get(counterId);
+        if (existingCounter) {
+          const lastIssued = Number(existingCounter.lastIssued);
+          const nextSequence = Number.isSafeInteger(lastIssued) && lastIssued >= 1000
+            ? lastIssued + 1
+            : 1001;
+          await db.invoiceCounters.update(counterId, {
+            lastIssued: nextSequence,
+            updatedAt: new Date().toISOString()
+          });
+          return nextSequence;
+        }
 
-      if (existingCounter) {
-        const lastIssued = Number(existingCounter.lastIssued);
-        nextSequence = Number.isSafeInteger(lastIssued) && lastIssued >= 1000
-          ? lastIssued + 1
-          : 1001;
-        await db.invoiceCounters.update(counterId, {
-          lastIssued: nextSequence,
-          updatedAt: new Date().toISOString()
-        });
-      } else {
-        // One-time tenant-scoped backfill preserves legacy invoice numbering.
-        // Subsequent calls use the O(1) counter path and never scan invoice tables.
-        // Cursor iteration keeps memory bounded: never materialize a tenant's
-        // complete invoice history into arrays during the one-time counter backfill.
-        let highestSequence = 1000;
-        const inspectRecord = (record: any) => {
-          for (const field of numberFields) {
-            const sequence = getInvoiceSequence(record?.[field], type);
-            if (sequence !== null && sequence > highestSequence) highestSequence = sequence;
-          }
-        };
+        if (initialHighest === undefined) return null;
 
-        await Promise.all([
-          legacyTable.where('tenantId').equals(tenantId).each(inspectRecord),
-          db.invoices
-            .where('tenantId')
-            .equals(tenantId)
-            .filter((record: any) => matchesInvoiceType(record, type))
-            .each(inspectRecord)
-        ]);
-        nextSequence = highestSequence + 1;
+        const nextSequence = initialHighest + 1;
         await db.invoiceCounters.add({
           id: counterId,
           tenantId,
@@ -179,10 +164,61 @@ export const InvoiceRepository = {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
-      }
+        return nextSequence;
+      });
 
-      return `${prefix}-${nextSequence}`;
-    });
+    // Fast path: normal allocations touch only the small counter store.
+    const alreadyReserved = await reserveSequence();
+    if (alreadyReserved !== null) return `${prefix}-${alreadyReserved}`;
+
+    // First-use backfill is deliberately outside a write transaction. Read a
+    // bounded page, process it, then yield to the browser event loop before the
+    // next page so a large tenant history cannot monopolize the UI thread.
+    let highestSequence = 1000;
+    const inspectRecord = (record: any) => {
+      for (const field of numberFields) {
+        const sequence = getInvoiceSequence(record?.[field], type);
+        if (sequence !== null && sequence > highestSequence) highestSequence = sequence;
+      }
+    };
+
+    const scanTenantInvoices = async (table: any, filter?: (record: any) => boolean) => {
+      let offset = 0;
+      while (true) {
+        const batch = await table
+          .where('tenantId')
+          .equals(tenantId)
+          .offset(offset)
+          .limit(BACKFILL_BATCH_SIZE)
+          .toArray();
+
+        if (batch.length === 0) break;
+        for (const record of batch) {
+          if (!filter || filter(record)) inspectRecord(record);
+        }
+
+        offset += batch.length;
+        if (batch.length === BACKFILL_BATCH_SIZE) {
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+        } else {
+          break;
+        }
+      }
+    };
+
+    await Promise.all([
+      scanTenantInvoices(legacyTable),
+      scanTenantInvoices(db.invoices, (record: any) => matchesInvoiceType(record, type))
+    ]);
+
+    // Re-check under the write lock: another tab may have completed first-use
+    // backfill while this tab was scanning. It then receives the next number.
+    const reservedAfterBackfill = await reserveSequence(highestSequence);
+    if (reservedAfterBackfill === null) {
+      throw new Error('INVOICE_COUNTER_RESERVATION_FAILED');
+    }
+
+    return `${prefix}-${reservedAfterBackfill}`;
   },
 
   isNumberDuplicate: async (num: string, type: 'SALE' | 'PURCHASE', excludeId?: string | null): Promise<boolean> => {
