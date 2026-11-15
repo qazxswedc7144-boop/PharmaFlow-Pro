@@ -153,10 +153,8 @@ export const InvoiceRepository = {
         // One-time tenant-scoped backfill preserves legacy invoice numbering.
         // Subsequent calls use the O(1) counter path and never scan invoice tables.
         const [legacyRecords, unifiedRecords] = await Promise.all([
-          legacyTable.filter((record: any) => record?.tenantId === tenantId).toArray(),
-          db.invoices.filter((record: any) =>
-            record?.tenantId === tenantId && matchesInvoiceType(record, type)
-          ).toArray()
+          legacyTable.where('tenantId').equals(tenantId).toArray(),
+          db.invoices.where('tenantId').equals(tenantId).filter((record: any) => matchesInvoiceType(record, type)).toArray()
         ]);
         const highestSequence = [...legacyRecords, ...unifiedRecords].reduce((highest, record: any) => {
           for (const field of numberFields) {
