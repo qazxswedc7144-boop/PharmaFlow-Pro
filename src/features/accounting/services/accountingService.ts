@@ -469,7 +469,18 @@ export const accountingService = {
 
   deleteVoucher: async (voucherId: string) => {
     authService.assertPermission('DELETE_VOUCHER', 'حذف سند مالي');
-    
+
+    const currentUser = authService.getCurrentUser();
+    const tenantId = currentUser?.tenantId;
+    const branchId = currentUser?.branchId;
+
+    if (!tenantId || ['default', 'default-tenant', 'tenant-default', 'main'].includes(tenantId)) {
+      throw new Error('FAIL_CLOSED: لا يمكن حذف السند قبل اكتمال تحميل سياق المؤسسة وتسجيل الدخول. أعد المحاولة بعد جاهزية الجلسة.');
+    }
+    if (!branchId || ['main', 'default', 'default-branch', 'BRH-DEFAULT'].includes(branchId)) {
+      throw new Error('FAIL_CLOSED: لا يمكن حذف السند قبل تأكيد الفرع النشط. تحقق من اتصالك وسياق الفرع ثم أعد المحاولة.');
+    }
+
     // PHASE 3 — AUTO BACKUP RULES
     await BackupService.createBackup(`Auto Backup before Delete Voucher #${voucherId}`, 'PRE_VOUCHER_DELETE', true);
 
@@ -500,7 +511,7 @@ export const accountingService = {
           }
         } else {
           // If no settlements, try to find from Financial Transactions
-          const ftxs = await FinancialTransactionRepository.getByReference(voucherId);
+          const ftxs = await FinancialTransactionRepository.getByReference(voucherId, tenantId, branchId);
           if (ftxs.length > 0) {
             // We need the partner ID, but Entity_Name might be the name.
             // In this system, sometimes Entity_Name is used as ID or we can find by name.
@@ -520,7 +531,7 @@ export const accountingService = {
       }
 
       // 5. Delete Financial Transaction
-      await FinancialTransactionRepository.cancelTransaction(voucherId);
+      await FinancialTransactionRepository.cancelTransaction(voucherId, tenantId, branchId);
 
       // 6. Delete Links and Settlements
       const links = await VoucherInvoiceLinkRepository.getByVoucher(voucherId);

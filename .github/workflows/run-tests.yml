@@ -2,7 +2,7 @@ name: Run Tests
 
 on:
   push:
-    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1 ]
+    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/frontend-dexie-repository-tenant-isolation ]
   pull_request:
     branches: [ main, fix/sync-outbox-ownership-phase3 ]
   workflow_dispatch:
@@ -66,6 +66,7 @@ jobs:
           src/features/sales/components/productLookup.test.ts
           src/features/sales/utils/saleStockAvailability.test.ts
           src/database/repositories/invoice.repository.p2.test.ts
+          src/database/repositories/repository-tenant-isolation.test.ts
           src/services/reports/reportEngine.refresh.test.ts
           src/features/catalog/workflows/ProductApplicationWorkflow.test.ts
           src/features/purchases/workflows/PurchaseWorkflow.sync.test.ts

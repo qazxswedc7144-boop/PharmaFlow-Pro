@@ -34,6 +34,8 @@ describe('InvoiceRepository P2 safeguards', () => {
   });
 
   afterEach(async () => {
+    await db.invoiceCounters.delete(`${tenantId}::invoice-number::SALE`).catch(() => undefined);
+    await db.invoiceCounters.delete(`${tenantId}::invoice-number::PURCHASE`).catch(() => undefined);
     for (const id of Object.values(ids)) {
       await db.sales.delete(id).catch(() => undefined);
       await db.purchases.delete(id).catch(() => undefined);
@@ -83,6 +85,89 @@ describe('InvoiceRepository P2 safeguards', () => {
 
     await expect(InvoiceRepository.generateInvoiceNumber('SALE')).resolves.toBe('INV-1301');
     await expect(InvoiceRepository.generateInvoiceNumber('PURCHASE')).resolves.toBe('PUR-3043');
+  });
+
+  it('allows the event loop to run during a 10,000-invoice first-use backfill', async () => {
+    const largeTenantId = 'invoice-repository-p2-large-tenant';
+    const counterId = `${largeTenantId}::invoice-number::SALE`;
+    TokenProvider.setSession(
+      { id: 'invoice-repository-p2-user', tenantId: largeTenantId, branchId } as any,
+      'invoice-repository-p2-access',
+      'invoice-repository-p2-refresh'
+    );
+
+    const nativeDb = (db as any).backendDB() as IDBDatabase;
+    const deleteFixture = async () => {
+      await new Promise<void>((resolve, reject) => {
+        const tx = nativeDb.transaction(['sales'], 'readwrite');
+        const request = tx.objectStore('sales')
+          .index('tenantId')
+          .openCursor(IDBKeyRange.only(largeTenantId));
+
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) return;
+          cursor.delete();
+          cursor.continue();
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Large invoice fixture cleanup aborted'));
+      });
+    };
+
+    try {
+      // Seed persisted historical rows through native IndexedDB so this
+      // performance test measures repository backfill, not per-row app hooks.
+      await new Promise<void>((resolve, reject) => {
+        const tx = nativeDb.transaction(['sales'], 'readwrite');
+        const store = tx.objectStore('sales');
+        for (let index = 0; index < 10_000; index += 1) {
+          store.put({
+            id: `P2-LARGE-SALE-${index.toString().padStart(5, '0')}`,
+            SaleID: `INV-${1001 + index}`,
+            tenantId: largeTenantId,
+            branchId
+          });
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Large invoice fixture seed aborted'));
+      });
+
+      let backfillCompleted = false;
+      let timerRanDuringBackfill = false;
+      const eventLoopProbe = new Promise<void>(resolve => {
+        setTimeout(() => {
+          timerRanDuringBackfill = !backfillCompleted;
+          resolve();
+        }, 0);
+      });
+
+      await expect(InvoiceRepository.generateInvoiceNumber('SALE')).resolves.toBe('INV-11001');
+      backfillCompleted = true;
+      await eventLoopProbe;
+
+      expect(timerRanDuringBackfill).toBe(true);
+    } finally {
+      await deleteFixture();
+      await db.invoiceCounters.delete(counterId);
+      TokenProvider.setSession(
+        { id: 'invoice-repository-p2-user', tenantId, branchId } as any,
+        'invoice-repository-p2-access',
+        'invoice-repository-p2-refresh'
+      );
+    }
+  }, 60000);
+
+  it('allocates distinct invoice numbers for concurrent requests in the same tenant', async () => {
+    const numbers = await Promise.all([
+      InvoiceRepository.generateInvoiceNumber('SALE'),
+      InvoiceRepository.generateInvoiceNumber('SALE')
+    ]);
+
+    expect(new Set(numbers).size).toBe(2);
+    expect(numbers.sort()).toEqual(['INV-1001', 'INV-1002']);
   });
 
   it('returns recent invoices newest first across sales and purchases', async () => {

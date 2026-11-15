@@ -1,4 +1,5 @@
 
+import Dexie from 'dexie';
 import { db, getCurrentUserSession } from '@/core/db';
 import { Sale, Purchase } from '@/types';
 import { writeDiagnosticLog } from '@/services/system/diagnosticLogger';
@@ -123,24 +124,112 @@ export const InvoiceRepository = {
 
   generateInvoiceNumber: async (type: 'SALE' | 'PURCHASE' = 'SALE'): Promise<string> => {
     const prefix = type === 'SALE' ? 'INV' : 'PUR';
-    const [legacyRecords, unifiedRecords] = await Promise.all([
-      db[type === 'SALE' ? 'sales' : 'purchases'].toArray(),
-      db.invoices.where('type').equals(type).toArray()
-    ]);
-    const records = [...legacyRecords, ...unifiedRecords];
+    const session = getCurrentUserSession();
+    const tenantId = String(session.tenantId || '').trim();
+    if (!tenantId || ['default', 'default-tenant', 'tenant-default'].includes(tenantId)) {
+      throw new Error('FAIL_CLOSED: لا يمكن إنشاء رقم فاتورة قبل اكتمال سياق المؤسسة الموثوق.');
+    }
+
+    const counterId = `${tenantId}::invoice-number::${type}`;
     const numberFields = type === 'SALE'
       ? ['SaleID', 'saleId', 'invoice_number', 'invoiceNumber', 'invoiceId']
       : ['invoiceId', 'purchase_id', 'purchaseId', 'invoice_number', 'invoiceNumber'];
+    const legacyTable = type === 'SALE' ? db.sales : db.purchases;
+    const BACKFILL_BATCH_SIZE = 1000;
 
-    const highestSequence = records.reduce((highest, record: any) => {
+    // Keep the write transaction short. Concurrent first-use callers may scan
+    // simultaneously, but the final counter reservation is serialized by IDB.
+    const reserveSequence = async (initialHighest?: number): Promise<number | null> =>
+      db.transaction('rw', db.invoiceCounters, async () => {
+        const existingCounter = await db.invoiceCounters.get(counterId);
+        if (existingCounter) {
+          const lastIssued = Number(existingCounter.lastIssued);
+          const nextSequence = Number.isSafeInteger(lastIssued) && lastIssued >= 1000
+            ? lastIssued + 1
+            : 1001;
+          await db.invoiceCounters.update(counterId, {
+            lastIssued: nextSequence,
+            updatedAt: new Date().toISOString()
+          });
+          return nextSequence;
+        }
+
+        if (initialHighest === undefined) return null;
+
+        const nextSequence = initialHighest + 1;
+        await db.invoiceCounters.add({
+          id: counterId,
+          tenantId,
+          scope: type,
+          lastIssued: nextSequence,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        return nextSequence;
+      });
+
+    // Fast path: normal allocations touch only the small counter store.
+    const alreadyReserved = await reserveSequence();
+    if (alreadyReserved !== null) return `${prefix}-${alreadyReserved}`;
+
+    // First-use backfill is deliberately outside a write transaction. Read a
+    // bounded page, process it, then yield to the browser event loop before the
+    // next page so a large tenant history cannot monopolize the UI thread.
+    let highestSequence = 1000;
+    const inspectRecord = (record: any) => {
       for (const field of numberFields) {
         const sequence = getInvoiceSequence(record?.[field], type);
-        if (sequence !== null && sequence > highest) highest = sequence;
+        if (sequence !== null && sequence > highestSequence) highestSequence = sequence;
       }
-      return highest;
-    }, 1000);
+    };
 
-    return `${prefix}-${highestSequence + 1}`;
+    const scanTenantInvoices = async (table: any, filter?: (record: any) => boolean) => {
+      let lastId: string | undefined;
+
+      while (true) {
+        // Keyset pagination over the existing [tenantId+id] compound index.
+        // This avoids increasingly expensive OFFSET scans as the history grows.
+        const range = lastId === undefined
+          ? table.where('[tenantId+id]').between(
+              [tenantId, Dexie.minKey],
+              [tenantId, Dexie.maxKey]
+            )
+          : table.where('[tenantId+id]').between(
+              [tenantId, lastId],
+              [tenantId, Dexie.maxKey],
+              false,
+              true
+            );
+
+        const batch = await range.limit(BACKFILL_BATCH_SIZE).toArray();
+        if (batch.length === 0) break;
+
+        for (const record of batch) {
+          if (!filter || filter(record)) inspectRecord(record);
+        }
+
+        lastId = String(batch[batch.length - 1].id);
+        if (batch.length < BACKFILL_BATCH_SIZE) break;
+
+        // Yield a macrotask between bounded pages so the browser can paint and
+        // process input while a large first-use history is being inspected.
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+      }
+    };
+
+    await Promise.all([
+      scanTenantInvoices(legacyTable),
+      scanTenantInvoices(db.invoices, (record: any) => matchesInvoiceType(record, type))
+    ]);
+
+    // Re-check under the write lock: another tab may have completed first-use
+    // backfill while this tab was scanning. It then receives the next number.
+    const reservedAfterBackfill = await reserveSequence(highestSequence);
+    if (reservedAfterBackfill === null) {
+      throw new Error('INVOICE_COUNTER_RESERVATION_FAILED');
+    }
+
+    return `${prefix}-${reservedAfterBackfill}`;
   },
 
   isNumberDuplicate: async (num: string, type: 'SALE' | 'PURCHASE', excludeId?: string | null): Promise<boolean> => {

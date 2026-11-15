@@ -97,6 +97,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   const noteInputRef = useRef<HTMLInputElement>(null);
   const categoryInputRef = useRef<HTMLSelectElement>(null);
 
+  const [isGeneratingInvoiceNumber, setIsGeneratingInvoiceNumber] = useState(false);
+
   const [header, setHeader] = useState({ 
     invoice_number: '', customer_id: '', payment_method: 'Cash',
     status: 'DRAFT' as InvoiceStatus, payment_status: 'Unpaid' as PaymentStatus,
@@ -105,6 +107,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   });
 
   const resetInvoiceState = useCallback(async () => {
+    setIsGeneratingInvoiceNumber(true);
     try {
       const nextNum = await InvoiceRepository.generateInvoiceNumber();
       setHeader({
@@ -125,6 +128,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
       setEditingInvoiceId(null);
     } catch (e) {
       console.error("resetInvoiceState failed:", e);
+    } finally {
+      setIsGeneratingInvoiceNumber(false);
     }
   }, [setEditingInvoiceId]);
 
@@ -680,6 +685,10 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   }, [isLocked]);
 
   const handlePost = useCallback(async () => {
+    if (isGeneratingInvoiceNumber) {
+      addToast('يرجى الانتظار حتى يكتمل تجهيز رقم الفاتورة.', 'info');
+      return;
+    }
     if (savePhase === 'saving') return;
     if (items.length === 0 || isLocked || isDuplicate || !salesPolicy || !pricingState.result || pricingState.error) {
       addToast('تعذر الحفظ: سياسة التسعير أو سعر أحد الأصناف غير متاح.', 'error');
@@ -792,7 +801,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     } finally {
       setIsSaving(false);
     }
-  }, [items, isLocked, isDuplicate, savePhase, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification, salesPolicy, pricingState]);
+  }, [items, isLocked, isDuplicate, savePhase, isGeneratingInvoiceNumber, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification, salesPolicy, pricingState]);
 
   const getStatusLabel = (status: string) => {
     switch(status) {
@@ -821,6 +830,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     searchTerm, setSearchTerm,
     isAutoSaving,
     isSaving,
+    isGeneratingInvoiceNumber,
     isAdding,
     isDuplicate,
     hasDependencies,

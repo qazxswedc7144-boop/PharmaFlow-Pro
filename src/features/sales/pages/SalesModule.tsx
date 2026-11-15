@@ -61,6 +61,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
     header, setHeader,
     isLocked,
     isSaving,
+    isGeneratingInvoiceNumber,
     vTotalSum,
     filteredProducts,
     selectProduct,
@@ -301,10 +302,17 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
                <input 
                 type="text"
                 value={header.invoice_number ?? ''}
+                disabled={isGeneratingInvoiceNumber}
                 onChange={(e) => setHeader({...header, invoice_number: e.target.value})}
                 placeholder="رقم الفاتورة..."
                 className="w-full h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 rounded-none text-black text-right placeholder-gray-400 bg-transparent"
               />
+              {isGeneratingInvoiceNumber && (
+                <p role="status" aria-live="polite" className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-700" />
+                  جاري تجهيز رقم الفاتورة...
+                </p>
+              )}
             </div>
             <div className="basis-[73%] relative flex items-center">
               <textarea 
@@ -478,7 +486,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
           <button 
             type="button"
             onClick={() => setIsConfirmSaveOpen(true)} 
-            disabled={items.length === 0 || isLocked || isDuplicate || isSaving || isRecovery || isSalesPolicyLoading || !salesPolicy || !!pricingError} 
+            disabled={items.length === 0 || isLocked || isDuplicate || isSaving || isGeneratingInvoiceNumber || isRecovery || isSalesPolicyLoading || !salesPolicy || !!pricingError} 
             className={`flex-[2] h-11 rounded-xl font-black text-[11px] text-white shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 ${isLocked || isDuplicate || isRecovery ? 'bg-red-500 shadow-red-900/20' : 'bg-[#1E4D4D] shadow-emerald-900/20'} disabled:opacity-50`}
           >
             {isSaving ? (

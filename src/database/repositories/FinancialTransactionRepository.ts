@@ -17,19 +17,25 @@ export const FinancialTransactionRepository = {
     return await db.financialTransactions.get(id);
   },
 
-  getByReference: async (refId: string, tx?: any, tenantId?: string, branchId?: string): Promise<FinancialTransaction[]> => {
+  getByReference: async (refId: string, tenantId: string, branchId?: string, tx?: any): Promise<FinancialTransaction[]> => {
     if (!refId) return [];
-    const table = tx?.financialTransactions ?? db.financialTransactions;
-    let query = table.where('Reference_ID').equals(refId);
-    
-    if (tenantId) {
-      query = query.and(t => t.tenantId === tenantId);
+    if (!tenantId || ['default', 'default-tenant', 'tenant-default', 'main'].includes(tenantId)) {
+      throw new Error('FAIL_CLOSED: Tenant context required for financial transaction lookup');
     }
-    
+    if (branchId && ['main', 'default', 'default-branch', 'BRH-DEFAULT'].includes(branchId)) {
+      throw new Error('FAIL_CLOSED: Valid branch context required for financial transaction lookup');
+    }
+
+    const table = tx?.financialTransactions ?? db.financialTransactions;
+    let query = table
+      .where('Reference_ID')
+      .equals(refId)
+      .and(t => t.tenantId === tenantId);
+
     if (branchId) {
       query = query.and(t => t.branchId === branchId);
     }
-    
+
     return await query.toArray();
   },
 
@@ -94,9 +100,16 @@ export const FinancialTransactionRepository = {
   /**
    * إبطال/عكس الحركات المالية المرتبطة بمرجع معين (Non-Destructive Reversal)
    */
-  reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string, tenantId?: string, branchId?: string): Promise<void> => {
+  reverseTransactions: async (refId: string, tenantId: string, branchId: string, tx?: any, idempotencyKey?: string): Promise<void> => {
+    if (!tenantId || ['default', 'default-tenant', 'tenant-default', 'main'].includes(tenantId)) {
+      throw new Error('FAIL_CLOSED: Tenant context required for financial transaction reversal');
+    }
+    if (!branchId || ['main', 'default', 'default-branch', 'BRH-DEFAULT'].includes(branchId)) {
+      throw new Error('FAIL_CLOSED: Branch context required for financial transaction reversal');
+    }
+
     const table = tx?.financialTransactions ?? db.financialTransactions;
-    const transactions = await FinancialTransactionRepository.getByReference(refId, tx, tenantId, branchId);
+    const transactions = await FinancialTransactionRepository.getByReference(refId, tenantId, branchId, tx);
     const now = new Date().toISOString();
     
     // Target ONLY active transactions that haven't been reversed yet
@@ -143,9 +156,16 @@ export const FinancialTransactionRepository = {
   /**
    * حذف أو إلغاء حركة (Logical Delete)
    */
-  cancelTransaction: async (refId: string, tx?: any): Promise<void> => {
+  cancelTransaction: async (refId: string, tenantId: string, branchId: string, tx?: any): Promise<void> => {
+    if (!tenantId || ['default', 'default-tenant', 'tenant-default', 'main'].includes(tenantId)) {
+      throw new Error('FAIL_CLOSED: Tenant context required for financial transaction cancellation');
+    }
+    if (!branchId || ['main', 'default', 'default-branch', 'BRH-DEFAULT'].includes(branchId)) {
+      throw new Error('FAIL_CLOSED: Branch context required for financial transaction cancellation');
+    }
+
     const table = tx?.financialTransactions ?? db.financialTransactions;
-    const transactions = await FinancialTransactionRepository.getByReference(refId, tx);
+    const transactions = await FinancialTransactionRepository.getByReference(refId, tenantId, branchId, tx);
     const now = new Date().toISOString();
     for (const trx of transactions) {
       if (trx.isDeleted) continue;

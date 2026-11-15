@@ -1,6 +1,6 @@
 // apps/api/src/modules/auth/auth.service.ts
 import bcrypt from "bcryptjs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { Role } from "@prisma/client";
@@ -53,7 +53,8 @@ export class AuthService {
         userId: finalUserId, 
         username: user.username, 
         role: user.role,
-        tenantId: user.tenantId
+        tenantId: user.tenantId,
+        jti: randomUUID()
       },
       getJwtSecret(),
       { expiresIn: ACCESS_TOKEN_EXPIRY_STR, algorithm: "HS256" }
@@ -69,7 +70,7 @@ export class AuthService {
     if (!finalUserId) throw new Error("USER_ID_REQUIRED: Cannot generate refresh token without user ID.");
 
     return jwt.sign(
-      { userId: finalUserId, tenantId: user.tenantId }, 
+      { userId: finalUserId, tenantId: user.tenantId, jti: randomUUID() }, 
       getJwtRefreshSecret(),
       { expiresIn: REFRESH_TOKEN_EXPIRY_STR, algorithm: "HS256" }
     );
@@ -123,6 +124,40 @@ export class AuthService {
         token: this.hashRefreshToken(token),
         expiresAt
       }
+    });
+  }
+
+  /**
+   * Atomically consumes one active refresh token and persists its replacement.
+   * The conditional update makes concurrent/replayed refresh requests single-use.
+   */
+  static async rotateRefreshToken(userId: string, oldToken: string, newToken: string) {
+    const oldTokenHash = this.hashRefreshToken(oldToken);
+    const newTokenHash = this.hashRefreshToken(newToken);
+    if (oldTokenHash === newTokenHash) {
+      throw new Error("REFRESH_TOKEN_COLLISION: Replacement token must be unique.");
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + REFRESH_TOKEN_EXPIRY_MS);
+    return prisma.$transaction(async (tx) => {
+      const consumed = await tx.refreshToken.updateMany({
+        where: {
+          token: oldTokenHash,
+          userId,
+          revoked: false,
+          expiresAt: { gt: now }
+        },
+        data: { revoked: true }
+      });
+
+      if (consumed.count !== 1) {
+        throw new Error("REFRESH_TOKEN_REPLAYED: Token is no longer active.");
+      }
+
+      return tx.refreshToken.create({
+        data: { userId, token: newTokenHash, expiresAt }
+      });
     });
   }
 
