@@ -1,5 +1,6 @@
 // apps/api/src/modules/auth/auth.service.ts
 import bcrypt from "bcryptjs";
+import { createHash } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { Role } from "@prisma/client";
@@ -89,6 +90,13 @@ export class AuthService {
   }
 
   /**
+   * Returns the one-way SHA-256 digest used for V1 refresh-token persistence.
+   */
+  static hashRefreshToken(token: string): string {
+    return createHash("sha256").update(token).digest("hex");
+  }
+
+  /**
    * Generates or retrieves active server-side sessions.
    */
   static async createSession(userId: string, token: string, ip?: string, agent?: string) {
@@ -112,7 +120,7 @@ export class AuthService {
     return prisma.refreshToken.create({
       data: {
         userId,
-        token,
+        token: this.hashRefreshToken(token),
         expiresAt
       }
     });
@@ -137,7 +145,7 @@ export class AuthService {
   static async revokeRefreshToken(token: string) {
     try {
       await prisma.refreshToken.update({
-        where: { token },
+        where: { token: this.hashRefreshToken(token) },
         data: { revoked: true }
       });
     } catch (e: any) {
