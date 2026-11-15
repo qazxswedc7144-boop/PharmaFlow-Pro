@@ -53,7 +53,8 @@ export class AuthService {
         userId: finalUserId, 
         username: user.username, 
         role: user.role,
-        tenantId: user.tenantId
+        tenantId: user.tenantId,
+        jti: randomUUID()
       },
       getJwtSecret(),
       { expiresIn: ACCESS_TOKEN_EXPIRY_STR, algorithm: "HS256" }
