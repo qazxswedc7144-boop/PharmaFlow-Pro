@@ -65,4 +65,27 @@ describe("production JWT secret configuration", () => {
     expect(getJwtSecret()).toBe("access-secret-with-strong-randomness-0123456789");
     expect(getJwtRefreshSecret()).toBe("refresh-secret-with-strong-randomness-9876543210");
   });
+
+  it("fails application startup with the required fatal error when production JWT secrets are missing", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", "");
+    vi.stubEnv("JWT_REFRESH_SECRET", "");
+    const { assertProductionJwtSecrets } = await import("../security/productionJwtStartup.js");
+
+    expect(() => assertProductionJwtSecrets()).toThrow(
+      new Error("FATAL: Missing or invalid JWT secrets in production")
+    );
+  });
+
+  it("fails application startup when either production JWT secret is shorter than 32 bytes", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("JWT_SECRET", "short-access-secret");
+    vi.stubEnv("JWT_REFRESH_SECRET", "refresh-secret-that-is-long-enough-123456");
+    const { assertProductionJwtSecrets } = await import("../security/productionJwtStartup.js");
+
+    expect(() => assertProductionJwtSecrets()).toThrow(
+      new Error("FATAL: Missing or invalid JWT secrets in production")
+    );
+  });
+
 });
