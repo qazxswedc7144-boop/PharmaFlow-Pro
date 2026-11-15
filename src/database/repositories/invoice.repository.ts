@@ -123,24 +123,61 @@ export const InvoiceRepository = {
 
   generateInvoiceNumber: async (type: 'SALE' | 'PURCHASE' = 'SALE'): Promise<string> => {
     const prefix = type === 'SALE' ? 'INV' : 'PUR';
-    const [legacyRecords, unifiedRecords] = await Promise.all([
-      db[type === 'SALE' ? 'sales' : 'purchases'].toArray(),
-      db.invoices.where('type').equals(type).toArray()
-    ]);
-    const records = [...legacyRecords, ...unifiedRecords];
+    const session = getCurrentUserSession();
+    const tenantId = String(session.tenantId || '').trim();
+    if (!tenantId || ['default', 'default-tenant', 'tenant-default'].includes(tenantId)) {
+      throw new Error('FAIL_CLOSED: لا يمكن إنشاء رقم فاتورة قبل اكتمال سياق المؤسسة الموثوق.');
+    }
+
+    const counterId = `${tenantId}::invoice-number::${type}`;
     const numberFields = type === 'SALE'
       ? ['SaleID', 'saleId', 'invoice_number', 'invoiceNumber', 'invoiceId']
       : ['invoiceId', 'purchase_id', 'purchaseId', 'invoice_number', 'invoiceNumber'];
+    const legacyTable = type === 'SALE' ? db.sales : db.purchases;
 
-    const highestSequence = records.reduce((highest, record: any) => {
-      for (const field of numberFields) {
-        const sequence = getInvoiceSequence(record?.[field], type);
-        if (sequence !== null && sequence > highest) highest = sequence;
+    // IndexedDB read-write transactions serialize counter allocation across tabs.
+    return db.transaction('rw', db.invoiceCounters, db.sales, db.purchases, db.invoices, async () => {
+      const existingCounter = await db.invoiceCounters.get(counterId);
+      let nextSequence: number;
+
+      if (existingCounter) {
+        const lastIssued = Number(existingCounter.lastIssued);
+        nextSequence = Number.isSafeInteger(lastIssued) && lastIssued >= 1000
+          ? lastIssued + 1
+          : 1001;
+        await db.invoiceCounters.update(counterId, {
+          lastIssued: nextSequence,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        // One-time tenant-scoped backfill preserves legacy invoice numbering.
+        // Subsequent calls use the O(1) counter path and never scan invoice tables.
+        const [legacyRecords, unifiedRecords] = await Promise.all([
+          legacyTable.filter((record: any) => record?.tenantId === tenantId).toArray(),
+          db.invoices.filter((record: any) =>
+            record?.tenantId === tenantId && matchesInvoiceType(record, type)
+          ).toArray()
+        ]);
+        const highestSequence = [...legacyRecords, ...unifiedRecords].reduce((highest, record: any) => {
+          for (const field of numberFields) {
+            const sequence = getInvoiceSequence(record?.[field], type);
+            if (sequence !== null && sequence > highest) highest = sequence;
+          }
+          return highest;
+        }, 1000);
+        nextSequence = highestSequence + 1;
+        await db.invoiceCounters.add({
+          id: counterId,
+          tenantId,
+          scope: type,
+          lastIssued: nextSequence,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
       }
-      return highest;
-    }, 1000);
 
-    return `${prefix}-${highestSequence + 1}`;
+      return `${prefix}-${nextSequence}`;
+    });
   },
 
   isNumberDuplicate: async (num: string, type: 'SALE' | 'PURCHASE', excludeId?: string | null): Promise<boolean> => {
