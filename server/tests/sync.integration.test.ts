@@ -254,4 +254,82 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     expect(replayProduct?.stockQuantity).toBe(beforeStock + quantity);
   });
 
+
+  it("rejects TENANT_ADMIN sync to a branch without branchUser membership", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const { DeviceService } = await import("../modules/sync/device.service.js");
+    const { SyncProcessorService } = await import("../modules/sync/sync-processor.service.js");
+    const deviceId = `ci-v30s-membership-${ctx.suffix}`;
+    const unassignedBranch = await prisma.branch.create({
+      data: { tenantId: ctx.tenantAId, code: `V30S-${ctx.suffix}`, name: "V30S Unassigned Branch", isActive: true }
+    });
+    await DeviceService.registerDevice({
+      deviceId, deviceName: "V30S Membership Test", tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId, userId: ctx.userAId, appVersion: "ci", schemaVersion: 1
+    });
+    const response = await SyncProcessorService.processBatch({
+      envelope: { tenantId: ctx.tenantAId, branchId: unassignedBranch.id, deviceId, schemaVersion: 1, mutations: [] } as any,
+      authenticatedTenantId: ctx.tenantAId, authenticatedUserId: ctx.userAId, authenticatedUserRole: "TENANT_ADMIN"
+    });
+    expect(response.success).toBe(false);
+    expect(response.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
+  });
+
+  it("rejects an unknown DEVICE operation with UNKNOWN_SYNC_OPERATION", async () => {
+    const ctx = getContext();
+    const { DeviceService } = await import("../modules/sync/device.service.js");
+    const { SyncProcessorService } = await import("../modules/sync/sync-processor.service.js");
+    const deviceId = `ci-v30s-operation-${ctx.suffix}`;
+    await DeviceService.registerDevice({
+      deviceId, deviceName: "V30S Operation Test", tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId, userId: ctx.userAId, appVersion: "ci", schemaVersion: 1
+    });
+    const response = await SyncProcessorService.processBatch({
+      envelope: {
+        tenantId: ctx.tenantAId, branchId: ctx.branchAId, deviceId, schemaVersion: 1,
+        mutations: [{
+          id: randomUUID(), entity: "DEVICE", entityId: randomUUID(), operation: "NUKE",
+          payload: {}, idempotencyKey: randomUUID(), version: 1
+        }]
+      } as any,
+      authenticatedTenantId: ctx.tenantAId, authenticatedUserId: ctx.userAId, authenticatedUserRole: "ADMIN"
+    });
+    expect(response.results[0]?.status).toBe("REJECTED");
+    expect(response.results[0]?.errorCode).toBe("UNKNOWN_SYNC_OPERATION");
+  });
+
+  it("rejects DELETE of a POSTED invoice through sync", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const { DeviceService } = await import("../modules/sync/device.service.js");
+    const { SyncProcessorService } = await import("../modules/sync/sync-processor.service.js");
+    const deviceId = `ci-v30s-delete-posted-${ctx.suffix}`;
+    const invoiceId = randomUUID();
+    await prisma.invoice.create({
+      data: {
+        id: invoiceId, tenantId: ctx.tenantAId, branchId: ctx.branchAId,
+        invoiceNumber: `V30S-POSTED-${ctx.suffix}`, type: "SALE",
+        status: "POSTED", documentStatus: "POSTED", totalAmount: 100
+      }
+    });
+    await DeviceService.registerDevice({
+      deviceId, deviceName: "V30S Posted Delete Test", tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId, userId: ctx.userAId, appVersion: "ci", schemaVersion: 1
+    });
+    const response = await SyncProcessorService.processBatch({
+      envelope: {
+        tenantId: ctx.tenantAId, branchId: ctx.branchAId, deviceId, schemaVersion: 1,
+        mutations: [{
+          id: randomUUID(), entity: "INVOICE", entityId: invoiceId, operation: "DELETE",
+          payload: {}, idempotencyKey: randomUUID(), version: 1
+        }]
+      } as any,
+      authenticatedTenantId: ctx.tenantAId, authenticatedUserId: ctx.userAId, authenticatedUserRole: "ADMIN"
+    });
+    expect(response.results[0]?.status).toBe("REJECTED");
+    expect(response.results[0]?.errorCode).toBe("DELETION_OF_POSTED_DOCUMENT_FORBIDDEN");
+    expect(await prisma.invoice.findUnique({ where: { id: invoiceId } })).toBeTruthy();
+  });
+
 }, { includeSyncRoutes: true });
