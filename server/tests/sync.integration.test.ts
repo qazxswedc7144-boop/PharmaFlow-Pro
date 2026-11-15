@@ -267,30 +267,27 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
       deviceId, deviceName: "V30S Membership Test", tenantId: ctx.tenantAId,
       branchId: ctx.branchAId, userId: ctx.userAId, appVersion: "ci", schemaVersion: 1
     });
-    const { PermissionService } = await import("../services/rbac/permission.service.js");
-    await prisma.user.update({ where: { id: ctx.userAId }, data: { role: "TENANT_ADMIN" } });
-    PermissionService.clearAllCache();
-    let response: { status: number; body: any };
-    try {
-      const login = await request(ctx, "/api/v1/auth/login", {
-        method: "POST",
-        body: { username: ctx.usernameA, password: "Ci-Only-Password-2026!" }
-      });
-      expect(login.status, JSON.stringify(login.body)).toBe(200);
-      response = await request(ctx, "/api/v1/sync/push", {
-        method: "POST",
-        token: login.body.accessToken,
-        body: {
-          deviceId,
-          branchId: unassignedBranch.id,
-          schemaVersion: 1,
-          mutations: []
-        }
-      });
-    } finally {
-      await prisma.user.update({ where: { id: ctx.userAId }, data: { role: "ADMIN" } });
-      PermissionService.clearAllCache();
-    }
+    const jwt = (await import("jsonwebtoken")).default;
+    const { getJwtSecret } = await import("../security/jwtSecrets.js");
+    const tenantAdminToken = jwt.sign({
+      userId: ctx.userAId,
+      username: ctx.usernameA,
+      role: "TENANT_ADMIN",
+      tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId,
+      jti: randomUUID()
+    }, getJwtSecret(), { algorithm: "HS256", expiresIn: "4h" });
+
+    const response = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: tenantAdminToken,
+      body: {
+        deviceId,
+        branchId: unassignedBranch.id,
+        schemaVersion: 1,
+        mutations: []
+      }
+    });
     expect(response.status).toBe(403);
     expect(response.body.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
   });
