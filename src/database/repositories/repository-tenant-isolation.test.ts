@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { AccountingRepository } from './AccountingRepository';
 import { FinancialTransactionRepository } from './FinancialTransactionRepository';
 import { SupplierRepository } from './SupplierRepository';
+import { ensureActiveBranchRegistered } from '@/features/branches/services/activeBranchRegistry';
 
 const tenantA = 'repo-isolation-tenant-a';
 const tenantB = 'repo-isolation-tenant-b';
@@ -39,6 +40,7 @@ describe('Dexie repository tenant isolation and null-safe search', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllGlobals();
     setSession(tenantA, branchA);
     await db.journalEntries.where('sourceId').equals(sourceId).delete().catch(() => undefined);
     await db.financialTransactions.where('Reference_ID').equals(referenceId).delete().catch(() => undefined);
@@ -51,6 +53,15 @@ describe('Dexie repository tenant isolation and null-safe search', () => {
     await db.journalEntries.where('sourceId').equals(sourceId).delete().catch(() => undefined);
     await db.financialTransactions.where('Reference_ID').equals(referenceId).delete().catch(() => undefined);
     TokenProvider.clearSession();
+  });
+
+  it('returns a controlled offline error when the authenticated branch is not trusted locally', async () => {
+    vi.stubGlobal('navigator', { onLine: false });
+
+    await expect(ensureActiveBranchRegistered({
+      tenantId: tenantA,
+      branchId: 'repo-isolation-branch-not-cached'
+    })).rejects.toThrow('BRANCH_CONTEXT_UNAVAILABLE_OFFLINE');
   });
 
   it('fails closed when deleting journal entries without a tenant context', async () => {
