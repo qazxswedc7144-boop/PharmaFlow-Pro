@@ -310,7 +310,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
       data: {
         id: invoiceId, tenantId: ctx.tenantAId, branchId: ctx.branchAId,
         invoiceNumber: `V30S-POSTED-${ctx.suffix}`, type: "SALE",
-        status: "POSTED", documentStatus: "POSTED", totalAmount: 100
+        status: "CONFIRMED", documentStatus: "POSTED", totalAmount: 100
       }
     });
     await DeviceService.registerDevice({
