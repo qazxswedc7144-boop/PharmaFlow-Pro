@@ -369,7 +369,7 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
     await prisma.auditLog.create({
       data: {
         userId: req.user?.userId || user.id,
-        action: "USER_CREATE",
+        action: "USER_REGISTER",
         entity: "User",
         entityId: user.id,
         before: null,
