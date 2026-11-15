@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import jwt from "jsonwebtoken";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { AuthService } from "../../apps/api/src/modules/auth/auth.service.js";
 import { getJwtSecret } from "../security/jwtSecrets.js";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
@@ -318,6 +319,42 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
       restoreResetKey(originalKey);
       await restoreFixtureAdmin(ctx.userAId);
     }
+  });
+
+
+  it("stores V1 refresh tokens only as SHA-256 hashes and rotates using the submitted raw token", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const rawRefreshToken = AuthService.generateRefreshToken({
+      userId: ctx.userAId,
+      tenantId: ctx.tenantAId
+    });
+    const tokenHash = createHash("sha256").update(rawRefreshToken).digest("hex");
+
+    await AuthService.createRefreshTokenRecord(ctx.userAId, rawRefreshToken);
+
+    expect(await prisma.refreshToken.findUnique({ where: { token: rawRefreshToken } })).toBeNull();
+    expect(await prisma.refreshToken.findUnique({ where: { token: tokenHash } })).toMatchObject({
+      userId: ctx.userAId,
+      token: tokenHash,
+      revoked: false
+    });
+
+    const response = await request(ctx, "/api/v1/auth/refresh", {
+      method: "POST",
+      body: { refreshToken: rawRefreshToken }
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.refreshToken).toBeTruthy();
+
+    const rotatedHash = createHash("sha256").update(response.body.refreshToken).digest("hex");
+    expect(await prisma.refreshToken.findUnique({ where: { token: tokenHash } })).toMatchObject({ revoked: true });
+    expect(await prisma.refreshToken.findUnique({ where: { token: response.body.refreshToken } })).toBeNull();
+    expect(await prisma.refreshToken.findUnique({ where: { token: rotatedHash } })).toMatchObject({
+      userId: ctx.userAId,
+      token: rotatedHash,
+      revoked: false
+    });
   });
 
 });
