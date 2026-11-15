@@ -54,6 +54,7 @@ jobs:
           server/tests/sync-engine-phase6-e2e.test.ts
           server/tests/jwt-secrets.test.ts
           server/tests/login-attempt-guard.test.ts
+          server/tests/middleware-fail-closed.test.ts
           server/tests/sales-server-price-validation.test.ts
           server/tests/sales-pricing.service.test.ts
           src/features/accounting/services/AccountingEngine.sales-tax.test.ts

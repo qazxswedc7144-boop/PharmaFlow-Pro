@@ -23,7 +23,7 @@ const isDevLocalTokenAllowed = () => {
  */
 export async function tenantContextMiddleware(
   req: Request,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> {
   const scopedReq = req as TenantScopedRequest;
@@ -90,55 +90,58 @@ export async function tenantContextMiddleware(
     }
   }
 
-  // Multi-tenant isolation: No default fallback in production.
+  // Fail closed: a tenant context must be present and verified against the database.
   const finalTenantId = extractedTenantId;
-  
-  if (!finalTenantId && process.env.NODE_ENV === 'production') {
-    throw new Error('TRUSTED_TENANT_CONTEXT_REQUIRED: Tenant identification missing from request.');
+  if (!finalTenantId) {
+    res.status(503).json({ error: "TENANT_UNAVAILABLE" });
+    return;
   }
 
-  // 2. Validate tenant & subscription in database (graceful offline fallback)
-  let tenantName = "PharmaFlow Enterprise";
-  let isActive = true;
-  let subscriptionPlan = "ENTERPRISE";
+  let tenantRecord: any;
+  try {
+    if (!prisma.isConnected || !prisma.isConnected()) {
+      throw new Error("TENANT_DATABASE_DISCONNECTED");
+    }
 
-  if (prisma.isConnected && prisma.isConnected() && finalTenantId !== "default-tenant") {
-    try {
-      const tenantRecord = await prisma.tenant.findUnique({
-        where: { id: finalTenantId },
-        include: {
-          subscriptions: {
-            where: { isActive: true },
-            include: { plan: true },
-            orderBy: { endDate: "desc" }
-          }
-        }
-      }).catch(() => null);
-
-      if (tenantRecord) {
-        tenantName = tenantRecord.name;
-        isActive = tenantRecord.isActive;
-
-        if (tenantRecord.subscriptions && tenantRecord.subscriptions.length > 0) {
-          const activeSub = tenantRecord.subscriptions[0];
-          subscriptionPlan = activeSub.plan?.code || "ENTERPRISE";
-          
-          // Check if subscription has expired
-          if (activeSub.endDate && new Date(activeSub.endDate).getTime() < Date.now()) {
-            // Check grace period (3 days)
-            const graceExpiry = new Date(activeSub.endDate).getTime() + (3 * 24 * 60 * 60 * 1000);
-            if (Date.now() > graceExpiry) {
-              isActive = false;
-            }
-          }
+    tenantRecord = await prisma.tenant.findUnique({
+      where: { id: finalTenantId },
+      include: {
+        subscriptions: {
+          where: { isActive: true },
+          include: { plan: true },
+          orderBy: { endDate: "desc" }
         }
       }
-    } catch {
-      // Offline fallback
+    });
+  } catch {
+    res.status(503).json({ error: "TENANT_UNAVAILABLE" });
+    return;
+  }
+
+  if (!tenantRecord) {
+    res.status(503).json({ error: "TENANT_UNAVAILABLE" });
+    return;
+  }
+
+  let tenantName = tenantRecord.name;
+  let isActive = tenantRecord.isActive;
+  let subscriptionPlan = "ENTERPRISE";
+
+  if (tenantRecord.subscriptions && tenantRecord.subscriptions.length > 0) {
+    const activeSub = tenantRecord.subscriptions[0];
+    subscriptionPlan = activeSub.plan?.code || "ENTERPRISE";
+
+    // Check if subscription has expired, preserving the existing 3-day grace period.
+    if (activeSub.endDate && new Date(activeSub.endDate).getTime() < Date.now()) {
+      const graceExpiry = new Date(activeSub.endDate).getTime() + (3 * 24 * 60 * 60 * 1000);
+      if (Date.now() > graceExpiry) {
+        isActive = false;
+      }
     }
   }
 
-  const safeTenantId = finalTenantId || 'default-tenant';
+  const safeTenantId = finalTenantId;
+
   const context: TenantContext = {
     tenantId: safeTenantId,
     tenantName,

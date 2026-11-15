@@ -44,8 +44,7 @@ export async function subscriptionGuard(req: AuthenticatedRequest, res: Response
   }
 
   if (!tenantId) {
-    // If there is no tenant (e.g., non-SaaS fallback), bypass
-    return next();
+    return res.status(503).json({ error: "SUBSCRIPTION_UNAVAILABLE" });
   }
 
   try {
@@ -61,8 +60,9 @@ export async function subscriptionGuard(req: AuthenticatedRequest, res: Response
     }
   } catch (err: any) {
     console.error(`[Subscription Guard] Verification failure for tenant ${tenantId}:`, err);
+    return res.status(503).json({ error: "SUBSCRIPTION_UNAVAILABLE" });
   }
 
-  next();
+  return next();
 }
 
