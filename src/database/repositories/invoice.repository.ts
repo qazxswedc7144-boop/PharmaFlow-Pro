@@ -1,4 +1,5 @@
 
+import Dexie from 'dexie';
 import { db, getCurrentUserSession } from '@/core/db';
 import { Sale, Purchase } from '@/types';
 import { writeDiagnosticLog } from '@/services/system/diagnosticLogger';
@@ -183,26 +184,36 @@ export const InvoiceRepository = {
     };
 
     const scanTenantInvoices = async (table: any, filter?: (record: any) => boolean) => {
-      let offset = 0;
-      while (true) {
-        const batch = await table
-          .where('tenantId')
-          .equals(tenantId)
-          .offset(offset)
-          .limit(BACKFILL_BATCH_SIZE)
-          .toArray();
+      let lastId: string | undefined;
 
+      while (true) {
+        // Keyset pagination over the existing [tenantId+id] compound index.
+        // This avoids increasingly expensive OFFSET scans as the history grows.
+        const range = lastId === undefined
+          ? table.where('[tenantId+id]').between(
+              [tenantId, Dexie.minKey],
+              [tenantId, Dexie.maxKey]
+            )
+          : table.where('[tenantId+id]').between(
+              [tenantId, lastId],
+              [tenantId, Dexie.maxKey],
+              false,
+              true
+            );
+
+        const batch = await range.limit(BACKFILL_BATCH_SIZE).toArray();
         if (batch.length === 0) break;
+
         for (const record of batch) {
           if (!filter || filter(record)) inspectRecord(record);
         }
 
-        offset += batch.length;
-        if (batch.length === BACKFILL_BATCH_SIZE) {
-          await new Promise<void>(resolve => setTimeout(resolve, 0));
-        } else {
-          break;
-        }
+        lastId = String(batch[batch.length - 1].id);
+        if (batch.length < BACKFILL_BATCH_SIZE) break;
+
+        // Yield a macrotask between bounded pages so the browser can paint and
+        // process input while a large first-use history is being inspected.
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
       }
     };
 
