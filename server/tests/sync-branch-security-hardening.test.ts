@@ -46,7 +46,7 @@ vi.mock("../modules/sync/sync-audit.service.js", () => ({
   },
 }));
 
-vi.mock("../../services/rbac/authorization.service.js", () => ({
+vi.mock("../services/rbac/authorization.service.js", () => ({
   AuthorizationService: {
     getUserEffectivePermissions: vi.fn(async () => new Set(["sales.invoice.create"])),
   },
@@ -163,7 +163,7 @@ describe("Sync Branch Security Hardening Regression Tests", () => {
 
   it("Scenario 5: Tenant-wide sync requires explicit sync.all_branches permission", async () => {
     const envelope = { ...defaultEnvelope, branchId: null };
-    const { AuthorizationService } = await import("../../services/rbac/authorization.service.js");
+    const { AuthorizationService } = await import("../services/rbac/authorization.service.js");
     (AuthorizationService.getUserEffectivePermissions as any).mockResolvedValue(new Set(["sync.all_branches"]));
 
     const response = await SyncProcessorService.processBatch({
