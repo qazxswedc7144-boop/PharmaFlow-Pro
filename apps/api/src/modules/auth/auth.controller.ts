@@ -121,7 +121,7 @@ export class AuthController {
         where: { token: AuthService.hashRefreshToken(refreshToken) }
       });
 
-      if (!record || record.revoked || record.expiresAt < new Date()) {
+      if (!record || record.userId !== decoded.userId || record.revoked || record.expiresAt < new Date()) {
         return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "رمز التحديث تالف أو ملغى أو منتهي الصلاحية." });
       }
 
@@ -152,10 +152,9 @@ export class AuthController {
 
       const newAccessToken = AuthService.generateAccessToken(tokenPayload);
       
-      // ✅ Refresh Token Rotation (إصلاح أمني: إلغاء القديم وإصدار جديد)
-      await AuthService.revokeRefreshToken(refreshToken);
+      // Refresh token consumption and replacement are one atomic, single-use operation.
       const newRefreshToken = AuthService.generateRefreshToken(tokenPayload);
-      await AuthService.createRefreshTokenRecord(user.id, newRefreshToken);
+      await AuthService.rotateRefreshToken(user.id, refreshToken, newRefreshToken);
       await AuthService.createSession(user.id, newAccessToken, req.ip, req.headers["user-agent"]);
 
       return res.json({
