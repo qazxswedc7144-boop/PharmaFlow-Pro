@@ -10,7 +10,8 @@ type CleanupCounts = {
 /**
  * Deletes only expired authentication rows, in small independently committed
  * batches. SKIP LOCKED allows overlapping invocations without waiting on rows
- * already being processed by another worker.
+ * already being processed by another worker. Revoked tokens are retained until
+ * their expiresAt timestamp passes; this job never removes still-valid tokens.
  */
 async function deleteExpiredSessionsBatch(): Promise<number> {
   return prisma.$executeRaw`
