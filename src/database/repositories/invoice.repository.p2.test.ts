@@ -34,6 +34,8 @@ describe('InvoiceRepository P2 safeguards', () => {
   });
 
   afterEach(async () => {
+    await db.invoiceCounters.delete(`${tenantId}::invoice-number::SALE`).catch(() => undefined);
+    await db.invoiceCounters.delete(`${tenantId}::invoice-number::PURCHASE`).catch(() => undefined);
     for (const id of Object.values(ids)) {
       await db.sales.delete(id).catch(() => undefined);
       await db.purchases.delete(id).catch(() => undefined);
@@ -83,6 +85,16 @@ describe('InvoiceRepository P2 safeguards', () => {
 
     await expect(InvoiceRepository.generateInvoiceNumber('SALE')).resolves.toBe('INV-1301');
     await expect(InvoiceRepository.generateInvoiceNumber('PURCHASE')).resolves.toBe('PUR-3043');
+  });
+
+  it('allocates distinct invoice numbers for concurrent requests in the same tenant', async () => {
+    const numbers = await Promise.all([
+      InvoiceRepository.generateInvoiceNumber('SALE'),
+      InvoiceRepository.generateInvoiceNumber('SALE')
+    ]);
+
+    expect(new Set(numbers).size).toBe(2);
+    expect(numbers.sort()).toEqual(['INV-1001', 'INV-1002']);
   });
 
   it('returns recent invoices newest first across sales and purchases', async () => {
