@@ -451,7 +451,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         }
 
         // Reverse Financial Transactions
-        await FinancialTransactionRepository.reverseTransactions(input.id, tx, ctx.idempotencyKey, ctx.tenantId, ctx.branchId);
+        await FinancialTransactionRepository.reverseTransactions(input.id, ctx.tenantId, ctx.branchId, tx, ctx.idempotencyKey);
 
         // Reverse Accounting Effect
         await accountingEngine.postInvoice(
