@@ -394,6 +394,7 @@ authRouter.post("/register", authenticateToken, requireRoles([Role.ADMIN]), asyn
   }
 });
 
+/**
  * POST /api/auth/login
  * Standard user authenticate credentials with audit tracking
  */
