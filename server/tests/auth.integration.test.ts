@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import jwt from "jsonwebtoken";
 import { createHash, randomUUID } from "node:crypto";
 import { AuthService } from "../../apps/api/src/modules/auth/auth.service.js";
-import { getJwtSecret } from "../security/jwtSecrets.js";
+import { getJwtSecret, getJwtRefreshSecret } from "../security/jwtSecrets.js";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
 definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) => {
@@ -325,10 +325,11 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
   it("stores V1 refresh tokens only as SHA-256 hashes and rotates using the submitted raw token", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
-    const rawRefreshToken = AuthService.generateRefreshToken({
-      userId: ctx.userAId,
-      tenantId: ctx.tenantAId
-    });
+    const rawRefreshToken = jwt.sign(
+      { userId: ctx.userAId, tenantId: ctx.tenantAId, jti: randomUUID() },
+      getJwtRefreshSecret(),
+      { expiresIn: "7d", algorithm: "HS256" }
+    );
     const tokenHash = createHash("sha256").update(rawRefreshToken).digest("hex");
 
     await AuthService.createRefreshTokenRecord(ctx.userAId, rawRefreshToken);
