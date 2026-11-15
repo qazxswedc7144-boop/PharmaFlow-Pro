@@ -57,8 +57,25 @@ export class SyncProcessorService {
     const tenantId = authenticatedTenantId;
     const targetBranchId = envelope.branchId || null;
 
-    // 🚨 SECURITY FIX: PHARMACIST_IN_CHARGE removed from branch bypass
-    const isPrivileged = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"].includes((authenticatedUserRole || "").toUpperCase());
+    let effectivePermissions = new Set<string>();
+    try {
+      effectivePermissions = await AuthorizationService.getUserEffectivePermissions(
+        tenantId,
+        authenticatedUserId,
+        authenticatedUserRole
+      );
+    } catch (err: any) {
+      console.error(`[SyncProcessor] Failed to fetch permissions for user ${authenticatedUserId}:`, err);
+      await SyncAuditService.logEvent({
+        tenantId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+        operation: "PERMISSION_DENIED", result: "FAILURE", error: err.message
+      });
+      return this.buildRejectResponse(
+        "PERMISSION_FETCH_FAILED",
+        "تعذر التحقق من صلاحيات المستخدم. تم رفض الطلب للأمان.",
+        tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary
+      );
+    }
 
     try {
       if (targetBranchId) {
@@ -81,53 +98,35 @@ export class SyncProcessorService {
           );
         }
 
-        if (!isPrivileged) {
-          const [hasBranchMembership, hasBranchRoleAssignment] = await Promise.all([
-            prisma.branchUser.findFirst({
-              where: { userId: authenticatedUserId, branchId: targetBranchId, tenantId },
-              select: { id: true }
-            }),
-            prisma.userRole.findFirst({
-              where: { userId: authenticatedUserId, branchId: targetBranchId, tenantId },
-              select: { id: true }
-            })
-          ]);
+        const branchMembership = await prisma.branchUser.findFirst({
+          where: { userId: authenticatedUserId, branchId: targetBranchId, tenantId },
+          select: { id: true }
+        });
 
-          if (!hasBranchMembership && !hasBranchRoleAssignment) {
-            await SyncAuditService.logEvent({
-              tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId,
-              operation: "PERMISSION_DENIED", result: "FAILURE",
-              error: "User attempted to sync a branch without membership or explicit role assignment",
-              metadata: { requestedBranch: targetBranchId }
-            });
-            return this.buildRejectResponse(
-              "BRANCH_ACCESS_DENIED",
-              `غير مصرح لك بالوصول إلى بيانات الفرع [${targetBranchId}]. يرجى التواصل مع الإدارة.`,
-              tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary
-            );
-          }
-        }
-      } else {
-        if (!isPrivileged) {
-          const [userBranchesCount, userBranchRolesCount] = await Promise.all([
-            prisma.branchUser.count({ where: { userId: authenticatedUserId, tenantId } }),
-            prisma.userRole.count({ where: { userId: authenticatedUserId, tenantId, NOT: { branchId: null } } })
-          ]);
-
-          if (userBranchesCount > 0 || userBranchRolesCount > 0) {
-            return this.buildRejectResponse(
-              "BRANCH_REQUIRED",
-              "يجب تحديد معرف الفرع للمزامنة (أنت مقيد بصلاحيات فروع محددة).",
-              tenantId, null, serverTimestamp, envelope.mutations, summary
-            );
-          }
-
+        if (!branchMembership) {
+          await SyncAuditService.logEvent({
+            tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+            operation: "PERMISSION_DENIED", result: "FAILURE",
+            error: "User attempted to sync a branch without branchUser membership",
+            metadata: { requestedBranch: targetBranchId, requiredPermission: "branch.membership" }
+          });
           return this.buildRejectResponse(
-            "BRANCH_ACCESS_DENIED",
-            "غير مصرح بإجراء مزامنة على مستوى المنشأة.",
-            tenantId, null, serverTimestamp, envelope.mutations, summary
+            "BRANCH_MEMBERSHIP_REQUIRED",
+            "لا يمكن مزامنة بيانات هذا الفرع دون عضوية فرعية صريحة.",
+            tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary
           );
         }
+      } else if (!effectivePermissions.has("sync.all_branches")) {
+        await SyncAuditService.logEvent({
+          tenantId, userId: authenticatedUserId, deviceId: envelope.deviceId,
+          operation: "PERMISSION_DENIED", result: "FAILURE",
+          error: "Tenant-wide sync requires the explicit sync.all_branches permission"
+        });
+        return this.buildRejectResponse(
+          "BRANCH_MEMBERSHIP_REQUIRED",
+          "المزامنة على مستوى المنشأة تتطلب الصلاحية الصريحة sync.all_branches.",
+          tenantId, null, serverTimestamp, envelope.mutations, summary
+        );
       }
     } catch (err: any) {
       console.error(`[SyncProcessor] Branch verification failed:`, err);
@@ -135,7 +134,11 @@ export class SyncProcessorService {
         tenantId, branchId: targetBranchId, userId: authenticatedUserId, deviceId: envelope.deviceId,
         operation: "SYNC_REJECTED", result: "FAILURE", error: err.message
       });
-      return this.buildRejectResponse("SECURITY_VERIFICATION_FAILED", "فشل التحقق من صلاحيات الوصول. تم رفض الطلب للأمان.", tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
+      return this.buildRejectResponse(
+        "SECURITY_VERIFICATION_FAILED",
+        "فشل التحقق من صلاحيات الوصول. تم رفض الطلب للأمان.",
+        tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary
+      );
     }
 
     const deviceVerification = await DeviceService.verifyDevice(tenantId, envelope.deviceId);
@@ -144,18 +147,6 @@ export class SyncProcessorService {
     }
 
     DeviceService.touchDevice(tenantId, envelope.deviceId);
-
-    let effectivePermissions = new Set<string>();
-    try {
-      effectivePermissions = await AuthorizationService.getUserEffectivePermissions(tenantId, authenticatedUserId, authenticatedUserRole);
-    } catch (err: any) {
-      console.error(`[SyncProcessor] Failed to fetch permissions for user ${authenticatedUserId}:`, err);
-      await SyncAuditService.logEvent({
-        tenantId, userId: authenticatedUserId, deviceId: envelope.deviceId,
-        operation: "PERMISSION_DENIED", result: "FAILURE", error: err.message
-      });
-      return this.buildRejectResponse("PERMISSION_FETCH_FAILED", "تعذر التحقق من صلاحيات المستخدم. تم رفض الطلب للأمان.", tenantId, targetBranchId, serverTimestamp, envelope.mutations, summary);
-    }
 
     const mutations = Array.isArray(envelope.mutations) ? envelope.mutations : [];
 
@@ -174,10 +165,25 @@ export class SyncProcessorService {
         continue;
       }
 
-      const requiredPermission = this.getRequiredPermission(entity, operation);
-      const isPrivilegedForOp = ["ADMIN", "PLATFORM_OWNER", "TENANT_ADMIN", "SUPER_ADMIN"].includes((authenticatedUserRole || "").toUpperCase());
-      if (requiredPermission && !isPrivilegedForOp && !effectivePermissions.has(requiredPermission)) {
-        results.push({ id: mutationId, mutationId, status: "UNAUTHORIZED", success: false, errorCode: "PERMISSION_DENIED", message: "Unauthorized" });
+      let requiredPermission: string;
+      try {
+        requiredPermission = this.getRequiredPermission(entity, operation);
+      } catch {
+        results.push({
+          id: mutationId, mutationId, status: "REJECTED", success: false,
+          errorCode: "UNKNOWN_SYNC_OPERATION",
+          message: `Unsupported sync operation ${operation} for entity ${entity}.`
+        });
+        summary.rejected.push(mutationId);
+        continue;
+      }
+
+      if (!effectivePermissions.has(requiredPermission)) {
+        results.push({
+          id: mutationId, mutationId, status: "UNAUTHORIZED", success: false,
+          errorCode: "PERMISSION_DENIED",
+          message: `Missing required permission: ${requiredPermission}`
+        });
         summary.unauthorized.push(mutationId);
         continue;
       }
@@ -241,33 +247,67 @@ export class SyncProcessorService {
     };
   }
 
-  private static getRequiredPermission(entity: string, operation: string): string | null {
-    switch (entity.toUpperCase()) {
-      case "INVOICE": case "SALE": 
-        return operation === "CREATE" || operation === "POST" ? "sales.invoice.create" : "sales.invoice.update";
-      case "PURCHASE":
-        return "purchases.create";
-      case "PRODUCT": 
-        return "inventory.products.manage";
-      case "PAYMENT": case "VOUCHER": 
-        return "accounting.voucher.create";
-      case "JOURNAL_ENTRY": 
-        return "accounting.journal.post";
-      case "CUSTOMER": 
-        return "crm.customers.manage";
-      case "SUPPLIER": 
-        return "crm.suppliers.manage";
-      case "INVENTORY_BATCH": case "INVENTORY_MOVEMENT": case "STOCK_ADJUSTMENT": 
-        return "inventory.stock.manage";
-      case "BRANCH_TRANSFER": case "STOCK_TRANSFER": case "TRANSFER": 
-        return "inventory.transfers.manage";
-      case "SETTINGS": 
-        return "system.settings.manage";
-      case "DEVICE": 
-        return "system.devices.manage";
-      default: 
-        return "system.data.mutate";
+  private static getRequiredPermission(entity: string, operation: string): string {
+    const permissionByEntityOperation: Record<string, string> = {
+      "INVOICE:CREATE": "sales.invoice.create",
+      "INVOICE:UPDATE": "sales.invoice.update",
+      "INVOICE:POST": "sales.invoice.create",
+      "INVOICE:DELETE": "sales.invoice.delete",
+      "SALE:CREATE": "sales.invoice.create",
+      "SALE:UPDATE": "sales.invoice.update",
+      "SALE:POST": "sales.invoice.create",
+      "SALE:DELETE": "sales.invoice.delete",
+      "PURCHASE:CREATE": "purchases.create",
+      "PRODUCT:CREATE": "inventory.products.manage",
+      "PRODUCT:UPDATE": "inventory.products.manage",
+      "PRODUCT:DELETE": "inventory.products.manage",
+      "PAYMENT:CREATE": "accounting.voucher.create",
+      "PAYMENT:UPDATE": "accounting.voucher.create",
+      "PAYMENT:DELETE": "accounting.voucher.create",
+      "VOUCHER:CREATE": "accounting.voucher.create",
+      "VOUCHER:UPDATE": "accounting.voucher.create",
+      "VOUCHER:DELETE": "accounting.voucher.create",
+      "JOURNAL_ENTRY:CREATE": "accounting.journal.post",
+      "JOURNAL_ENTRY:UPDATE": "accounting.journal.post",
+      "JOURNAL_ENTRY:DELETE": "accounting.journal.post",
+      "INVENTORY_BATCH:CREATE": "inventory.stock.manage",
+      "INVENTORY_BATCH:UPDATE": "inventory.stock.manage",
+      "INVENTORY_BATCH:DELETE": "inventory.stock.manage",
+      "INVENTORY_MOVEMENT:CREATE": "inventory.stock.manage",
+      "INVENTORY_MOVEMENT:UPDATE": "inventory.stock.manage",
+      "INVENTORY_MOVEMENT:DELETE": "inventory.stock.manage",
+      "STOCK_ADJUSTMENT:CREATE": "inventory.stock.manage",
+      "STOCK_ADJUSTMENT:UPDATE": "inventory.stock.manage",
+      "STOCK_ADJUSTMENT:DELETE": "inventory.stock.manage",
+      "BRANCH_TRANSFER:CREATE": "inventory.transfers.manage",
+      "BRANCH_TRANSFER:UPDATE": "inventory.transfers.manage",
+      "BRANCH_TRANSFER:DELETE": "inventory.transfers.manage",
+      "STOCK_TRANSFER:CREATE": "inventory.transfers.manage",
+      "STOCK_TRANSFER:UPDATE": "inventory.transfers.manage",
+      "STOCK_TRANSFER:DELETE": "inventory.transfers.manage",
+      "TRANSFER:CREATE": "inventory.transfers.manage",
+      "TRANSFER:UPDATE": "inventory.transfers.manage",
+      "TRANSFER:DELETE": "inventory.transfers.manage",
+      "CUSTOMER:CREATE": "crm.customers.manage",
+      "CUSTOMER:UPDATE": "crm.customers.manage",
+      "CUSTOMER:DELETE": "crm.customers.manage",
+      "SUPPLIER:CREATE": "crm.suppliers.manage",
+      "SUPPLIER:UPDATE": "crm.suppliers.manage",
+      "SUPPLIER:DELETE": "crm.suppliers.manage",
+      "SETTINGS:CREATE": "system.settings.manage",
+      "SETTINGS:UPDATE": "system.settings.manage",
+      "SETTINGS:DELETE": "system.settings.manage",
+      "DEVICE:CREATE": "system.devices.manage",
+      "DEVICE:UPDATE": "system.devices.manage",
+      "DEVICE:DELETE": "system.devices.manage"
+    };
+
+    const key = `${entity.toUpperCase()}:${operation.toUpperCase()}`;
+    const requiredPermission = permissionByEntityOperation[key];
+    if (!requiredPermission) {
+      throw new Error("UNKNOWN_SYNC_OPERATION");
     }
+    return requiredPermission;
   }
 
   private static async executeEntityMutation(params: {
