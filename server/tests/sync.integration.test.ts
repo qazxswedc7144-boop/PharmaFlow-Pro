@@ -268,12 +268,25 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
       deviceId, deviceName: "V30S Membership Test", tenantId: ctx.tenantAId,
       branchId: ctx.branchAId, userId: ctx.userAId, appVersion: "ci", schemaVersion: 1
     });
-    const response = await SyncProcessorService.processBatch({
-      envelope: { tenantId: ctx.tenantAId, branchId: unassignedBranch.id, deviceId, schemaVersion: 1, mutations: [] } as any,
-      authenticatedTenantId: ctx.tenantAId, authenticatedUserId: ctx.userAId, authenticatedUserRole: "TENANT_ADMIN"
+    await prisma.user.update({ where: { id: ctx.userAId }, data: { role: "TENANT_ADMIN" } });
+    const login = await request(ctx, "/api/v1/auth/login", {
+      method: "POST",
+      body: { username: ctx.usernameA, password: "Ci-Only-Password-2026!" }
     });
-    expect(response.success).toBe(false);
-    expect(response.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
+    expect(login.status, JSON.stringify(login.body)).toBe(200);
+
+    const response = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: login.body.accessToken,
+      body: {
+        deviceId,
+        branchId: unassignedBranch.id,
+        schemaVersion: 1,
+        mutations: []
+      }
+    });
+    expect(response.status).toBe(403);
+    expect(response.body.errorCode).toBe("BRANCH_MEMBERSHIP_REQUIRED");
   });
 
   it("rejects an unknown DEVICE operation with UNKNOWN_SYNC_OPERATION", async () => {
@@ -285,18 +298,22 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
       deviceId, deviceName: "V30S Operation Test", tenantId: ctx.tenantAId,
       branchId: ctx.branchAId, userId: ctx.userAId, appVersion: "ci", schemaVersion: 1
     });
-    const response = await SyncProcessorService.processBatch({
-      envelope: {
-        tenantId: ctx.tenantAId, branchId: ctx.branchAId, deviceId, schemaVersion: 1,
+    const response = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        deviceId,
+        branchId: ctx.branchAId,
+        schemaVersion: 1,
         mutations: [{
           id: randomUUID(), entity: "DEVICE", entityId: randomUUID(), operation: "NUKE",
           payload: {}, idempotencyKey: randomUUID(), version: 1
         }]
-      } as any,
-      authenticatedTenantId: ctx.tenantAId, authenticatedUserId: ctx.userAId, authenticatedUserRole: "ADMIN"
+      }
     });
-    expect(response.results[0]?.status).toBe("REJECTED");
-    expect(response.results[0]?.errorCode).toBe("UNKNOWN_SYNC_OPERATION");
+    expect(response.status).toBe(400);
+    expect(response.body.results[0]?.status).toBe("REJECTED");
+    expect(response.body.results[0]?.errorCode).toBe("UNKNOWN_SYNC_OPERATION");
   });
 
   it("rejects DELETE of a POSTED invoice through sync", async () => {
@@ -317,18 +334,22 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
       deviceId, deviceName: "V30S Posted Delete Test", tenantId: ctx.tenantAId,
       branchId: ctx.branchAId, userId: ctx.userAId, appVersion: "ci", schemaVersion: 1
     });
-    const response = await SyncProcessorService.processBatch({
-      envelope: {
-        tenantId: ctx.tenantAId, branchId: ctx.branchAId, deviceId, schemaVersion: 1,
+    const response = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        deviceId,
+        branchId: ctx.branchAId,
+        schemaVersion: 1,
         mutations: [{
           id: randomUUID(), entity: "INVOICE", entityId: invoiceId, operation: "DELETE",
           payload: {}, idempotencyKey: randomUUID(), version: 1
         }]
-      } as any,
-      authenticatedTenantId: ctx.tenantAId, authenticatedUserId: ctx.userAId, authenticatedUserRole: "ADMIN"
+      }
     });
-    expect(response.results[0]?.status).toBe("REJECTED");
-    expect(response.results[0]?.errorCode).toBe("DELETION_OF_POSTED_DOCUMENT_FORBIDDEN");
+    expect(response.status).toBe(403);
+    expect(response.body.results[0]?.status).toBe("REJECTED");
+    expect(response.body.results[0]?.errorCode).toBe("DELETION_OF_POSTED_DOCUMENT_FORBIDDEN");
     expect(await prisma.invoice.findUnique({ where: { id: invoiceId } })).toBeTruthy();
   });
 
