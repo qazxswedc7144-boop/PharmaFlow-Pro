@@ -325,11 +325,15 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
   it("stores V1 refresh tokens only as SHA-256 hashes and rotates using the submitted raw token", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
-    const rawRefreshToken = jwt.sign(
-      { userId: ctx.userAId, tenantId: ctx.tenantAId, jti: randomUUID() },
-      getJwtRefreshSecret(),
-      { expiresIn: "7d", algorithm: "HS256" }
-    );
+    const rawRefreshToken = AuthService.generateRefreshToken({
+      userId: ctx.userAId,
+      tenantId: ctx.tenantAId
+    });
+    const immediateSuccessor = AuthService.generateRefreshToken({
+      userId: ctx.userAId,
+      tenantId: ctx.tenantAId
+    });
+    expect(immediateSuccessor).not.toBe(rawRefreshToken);
     const tokenHash = createHash("sha256").update(rawRefreshToken).digest("hex");
 
     await AuthService.createRefreshTokenRecord(ctx.userAId, rawRefreshToken);
