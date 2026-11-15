@@ -685,6 +685,10 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   }, [isLocked]);
 
   const handlePost = useCallback(async () => {
+    if (isGeneratingInvoiceNumber) {
+      addToast('يرجى الانتظار حتى يكتمل تجهيز رقم الفاتورة.', 'info');
+      return;
+    }
     if (savePhase === 'saving') return;
     if (items.length === 0 || isLocked || isDuplicate || !salesPolicy || !pricingState.result || pricingState.error) {
       addToast('تعذر الحفظ: سياسة التسعير أو سعر أحد الأصناف غير متاح.', 'error');
@@ -797,7 +801,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     } finally {
       setIsSaving(false);
     }
-  }, [items, isLocked, isDuplicate, savePhase, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification, salesPolicy, pricingState]);
+  }, [items, isLocked, isDuplicate, savePhase, isGeneratingInvoiceNumber, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification, salesPolicy, pricingState]);
 
   const getStatusLabel = (status: string) => {
     switch(status) {
