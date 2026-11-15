@@ -234,8 +234,8 @@ export class SyncProcessorService {
 
       // Intentional PLATFORM_OWNER wildcard exception: the role's platform-level grant may satisfy
       // per-operation permissions, but it never changes the authenticated tenant boundary.
-      // tenantId is derived only from the verified session (not the envelope), and tenant-owned
-      // reads/writes below remain scoped to that authenticatedTenantId.
+      // tenantId is derived only from the verified session (not the envelope); cross-tenant
+      // records are rejected before mutation, and writes are scoped to that authenticated tenant.
       if (!effectivePermissions.has(requiredPermission) && !effectivePermissions.has("*")) {
         results.push({
           id: mutationId, mutationId, status: "UNAUTHORIZED", success: false,
