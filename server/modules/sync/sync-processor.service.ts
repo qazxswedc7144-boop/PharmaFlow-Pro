@@ -400,12 +400,18 @@ export class SyncProcessorService {
       const protectedDeleteEntities = new Set([
         "INVOICE", "SALE", "VOUCHER", "PAYMENT", "JOURNAL_ENTRY", "INVENTORY_MOVEMENT", "STOCK_ADJUSTMENT"
       ]);
+      // Payments and inventory movements are ledger events with no draft status in
+      // the current Prisma models; treat them as immutable and require compensating entries.
+      const immutableLedgerEntities = new Set([
+        "VOUCHER", "PAYMENT", "INVENTORY_MOVEMENT", "STOCK_ADJUSTMENT"
+      ]);
       const documentStates = [existingAny.documentStatus, existingAny.status, existingAny.state]
         .filter((value) => typeof value === "string")
         .map((value) => value.toUpperCase());
 
       if (protectedDeleteEntities.has(upperEntity) &&
-          documentStates.some((state) => state === "POSTED" || state === "CONFIRMED")) {
+          (immutableLedgerEntities.has(upperEntity) ||
+           documentStates.some((state) => state === "POSTED" || state === "CONFIRMED"))) {
         // Posted financial/inventory records must be corrected through the approved
         // reversal or cancellation workflows; direct sync deletion destroys the audit trail.
         return {
