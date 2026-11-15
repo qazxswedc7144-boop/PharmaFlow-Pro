@@ -178,7 +178,7 @@ export class SyncProcessorService {
         continue;
       }
 
-      if (!effectivePermissions.has(requiredPermission)) {
+      if (!effectivePermissions.has(requiredPermission) && !effectivePermissions.has("*")) {
         results.push({
           id: mutationId, mutationId, status: "UNAUTHORIZED", success: false,
           errorCode: "PERMISSION_DENIED",
