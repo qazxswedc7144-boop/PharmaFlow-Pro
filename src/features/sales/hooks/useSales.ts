@@ -97,6 +97,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   const noteInputRef = useRef<HTMLInputElement>(null);
   const categoryInputRef = useRef<HTMLSelectElement>(null);
 
+  const [isGeneratingInvoiceNumber, setIsGeneratingInvoiceNumber] = useState(false);
+
   const [header, setHeader] = useState({ 
     invoice_number: '', customer_id: '', payment_method: 'Cash',
     status: 'DRAFT' as InvoiceStatus, payment_status: 'Unpaid' as PaymentStatus,
@@ -105,6 +107,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   });
 
   const resetInvoiceState = useCallback(async () => {
+    setIsGeneratingInvoiceNumber(true);
     try {
       const nextNum = await InvoiceRepository.generateInvoiceNumber();
       setHeader({
@@ -125,6 +128,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
       setEditingInvoiceId(null);
     } catch (e) {
       console.error("resetInvoiceState failed:", e);
+    } finally {
+      setIsGeneratingInvoiceNumber(false);
     }
   }, [setEditingInvoiceId]);
 
@@ -821,6 +826,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     searchTerm, setSearchTerm,
     isAutoSaving,
     isSaving,
+    isGeneratingInvoiceNumber,
     isAdding,
     isDuplicate,
     hasDependencies,
