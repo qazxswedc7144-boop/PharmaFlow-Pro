@@ -118,7 +118,7 @@ export class AuthController {
 
       const decoded = AuthService.verifyRefreshToken(refreshToken);
       const record = await prisma.refreshToken.findUnique({
-        where: { token: refreshToken }
+        where: { token: AuthService.hashRefreshToken(refreshToken) }
       });
 
       if (!record || record.revoked || record.expiresAt < new Date()) {
