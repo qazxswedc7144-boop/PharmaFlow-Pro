@@ -61,6 +61,7 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
     header, setHeader,
     isLocked,
     isSaving,
+    isGeneratingInvoiceNumber,
     vTotalSum,
     filteredProducts,
     selectProduct,
@@ -305,6 +306,12 @@ const SalesModule: React.FC<{ onNavigate?: (view: string, params?: Record<string
                 placeholder="رقم الفاتورة..."
                 className="w-full h-10 border-b border-gray-400 focus:outline-none focus:border-green-500 rounded-none text-black text-right placeholder-gray-400 bg-transparent"
               />
+              {isGeneratingInvoiceNumber && (
+                <p role="status" aria-live="polite" className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-emerald-700">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-700" />
+                  جاري تجهيز رقم الفاتورة...
+                </p>
+              )}
             </div>
             <div className="basis-[73%] relative flex items-center">
               <textarea 
