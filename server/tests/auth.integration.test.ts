@@ -362,4 +362,30 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     });
   });
 
+
+  it("allows only one concurrent refresh-token rotation and rejects replay", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const rawRefreshToken = AuthService.generateRefreshToken({
+      userId: ctx.userAId,
+      tenantId: ctx.tenantAId
+    });
+    const tokenHash = AuthService.hashRefreshToken(rawRefreshToken);
+    await AuthService.createRefreshTokenRecord(ctx.userAId, rawRefreshToken);
+
+    const responses = await Promise.all([
+      request(ctx, "/api/v1/auth/refresh", { method: "POST", body: { refreshToken: rawRefreshToken } }),
+      request(ctx, "/api/v1/auth/refresh", { method: "POST", body: { refreshToken: rawRefreshToken } })
+    ]);
+
+    expect(responses.filter(response => response.status === 200)).toHaveLength(1);
+    expect(responses.filter(response => response.status === 401)).toHaveLength(1);
+    expect(await prisma.refreshToken.findUnique({ where: { token: tokenHash } })).toMatchObject({ revoked: true });
+    const successfulResponse = responses.find(response => response.status === 200)!;
+    const replacementHash = AuthService.hashRefreshToken(successfulResponse.body.refreshToken);
+    expect(await prisma.refreshToken.findUnique({ where: { token: replacementHash } })).toMatchObject({
+      userId: ctx.userAId,
+      revoked: false
+    });
+  });
 });
