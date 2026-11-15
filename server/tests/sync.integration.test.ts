@@ -259,7 +259,6 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
     const { DeviceService } = await import("../modules/sync/device.service.js");
-    const { SyncProcessorService } = await import("../modules/sync/sync-processor.service.js");
     const deviceId = `ci-v30s-membership-${ctx.suffix}`;
     const unassignedBranch = await prisma.branch.create({
       data: { tenantId: ctx.tenantAId, code: `V30S-${ctx.suffix}`, name: "V30S Unassigned Branch", isActive: true }
@@ -292,7 +291,6 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
   it("rejects an unknown DEVICE operation with UNKNOWN_SYNC_OPERATION", async () => {
     const ctx = getContext();
     const { DeviceService } = await import("../modules/sync/device.service.js");
-    const { SyncProcessorService } = await import("../modules/sync/sync-processor.service.js");
     const deviceId = `ci-v30s-operation-${ctx.suffix}`;
     await DeviceService.registerDevice({
       deviceId, deviceName: "V30S Operation Test", tenantId: ctx.tenantAId,
@@ -320,7 +318,6 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
     const { DeviceService } = await import("../modules/sync/device.service.js");
-    const { SyncProcessorService } = await import("../modules/sync/sync-processor.service.js");
     const deviceId = `ci-v30s-delete-posted-${ctx.suffix}`;
     const invoiceId = randomUUID();
     await prisma.invoice.create({
