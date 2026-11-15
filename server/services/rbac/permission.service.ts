@@ -128,7 +128,7 @@ export const ENTERPRISE_PERMISSIONS: StandardPermission[] = [
 ];
 
 export const SYSTEM_ROLE_PERMISSIONS: Record<string, string[]> = {
-  PLATFORM_OWNER: ['*'],
+  PLATFORM_OWNER: ['*', 'sync.all_branches'],
   TENANT_ADMIN: [
     'sales.invoice.view', 'sales.invoice.create', 'sales.invoice.update', 'sales.invoice.delete', 'sales.invoice.approve', 'sales.invoice.export', 'sales.refund', 'sales.pos.access', 'sales.price.override',
     'purchases.invoice.view', 'purchases.invoice.create', 'purchases.invoice.update', 'purchases.invoice.delete', 'purchases.invoice.approve', 'purchases.invoice.export',
