@@ -152,17 +152,24 @@ export const InvoiceRepository = {
       } else {
         // One-time tenant-scoped backfill preserves legacy invoice numbering.
         // Subsequent calls use the O(1) counter path and never scan invoice tables.
-        const [legacyRecords, unifiedRecords] = await Promise.all([
-          legacyTable.where('tenantId').equals(tenantId).toArray(),
-          db.invoices.where('tenantId').equals(tenantId).filter((record: any) => matchesInvoiceType(record, type)).toArray()
-        ]);
-        const highestSequence = [...legacyRecords, ...unifiedRecords].reduce((highest, record: any) => {
+        // Cursor iteration keeps memory bounded: never materialize a tenant's
+        // complete invoice history into arrays during the one-time counter backfill.
+        let highestSequence = 1000;
+        const inspectRecord = (record: any) => {
           for (const field of numberFields) {
             const sequence = getInvoiceSequence(record?.[field], type);
-            if (sequence !== null && sequence > highest) highest = sequence;
+            if (sequence !== null && sequence > highestSequence) highestSequence = sequence;
           }
-          return highest;
-        }, 1000);
+        };
+
+        await Promise.all([
+          legacyTable.where('tenantId').equals(tenantId).each(inspectRecord),
+          db.invoices
+            .where('tenantId')
+            .equals(tenantId)
+            .filter((record: any) => matchesInvoiceType(record, type))
+            .each(inspectRecord)
+        ]);
         nextSequence = highestSequence + 1;
         await db.invoiceCounters.add({
           id: counterId,
