@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import jwt from "jsonwebtoken";
 import { createHash, randomUUID } from "node:crypto";
 import { AuthService } from "../../apps/api/src/modules/auth/auth.service.js";
@@ -6,6 +6,21 @@ import { getJwtSecret, getJwtRefreshSecret } from "../security/jwtSecrets.js";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
 definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) => {
+  it("generates distinct refresh tokens for repeated issuance within the same second", () => {
+    const now = Date.now();
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const payload = { userId: "same-second-user", tenantId: "same-second-tenant" };
+      const first = AuthService.generateRefreshToken(payload);
+      const second = AuthService.generateRefreshToken(payload);
+      expect(first).not.toBe(second);
+      expect((jwt.decode(first) as jwt.JwtPayload).jti).toBeTruthy();
+      expect((jwt.decode(second) as jwt.JwtPayload).jti).toBeTruthy();
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
   it("authenticates both isolated tenant users through the real login HTTP route", async () => {
     const ctx = getContext();
     const meA = await request(ctx, "/api/v1/auth/me", { token: ctx.tokenA });
@@ -347,6 +362,11 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     });
     expect(response.status).toBe(200);
     expect(response.body.refreshToken).toBeTruthy();
+
+    const rotatedPayload = jwt.decode(response.body.refreshToken) as jwt.JwtPayload;
+    const originalPayload = jwt.decode(rawRefreshToken) as jwt.JwtPayload;
+    expect(rotatedPayload.jti).toBeTruthy();
+    expect(rotatedPayload.jti).not.toBe(originalPayload.jti);
 
     const rotatedHash = createHash("sha256").update(response.body.refreshToken).digest("hex");
     expect(await prisma.refreshToken.findUnique({ where: { token: tokenHash } })).toMatchObject({ revoked: true });
