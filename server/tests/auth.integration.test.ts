@@ -16,6 +16,18 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
       expect(first).not.toBe(second);
       expect((jwt.decode(first) as { jti?: string }).jti).toBeTruthy();
       expect((jwt.decode(second) as jwt.JwtPayload).jti).toBeTruthy();
+
+      const accessPayload = {
+        userId: "same-second-user",
+        username: "same-second-user",
+        role: "ADMIN" as any,
+        tenantId: "same-second-tenant"
+      };
+      const firstAccess = AuthService.generateAccessToken(accessPayload);
+      const secondAccess = AuthService.generateAccessToken(accessPayload);
+      expect(firstAccess).not.toBe(secondAccess);
+      expect((jwt.decode(firstAccess) as jwt.JwtPayload).jti).toBeTruthy();
+      expect((jwt.decode(secondAccess) as jwt.JwtPayload).jti).toBeTruthy();
     } finally {
       dateNow.mockRestore();
     }
