@@ -231,9 +231,9 @@ describe('InventoryAdjustmentWorkflow atomicity through the real workflow pipeli
   });
 
   it.each([
-    ['journal-entry', 'journalEntries'],
-    ['journal-line', 'journalLines'],
-    ['account-balance', 'accounts'],
+    'journal-entry',
+    'journal-line',
+    'account-balance',
   ] as const)(
     'rolls back all stock and accounting writes when %s persistence fails',
     async (failurePoint: FailurePoint) => {
