@@ -128,6 +128,14 @@ describe('InventoryAdjustmentWorkflow full-pipeline atomicity', () => {
     await db.delete();
     await db.open();
 
+    await db.branches.put({
+      id: BRANCH_ID,
+      code: BRANCH_ID,
+      name: 'Atomicity test branch',
+      tenantId: TENANT_ID,
+      isActive: true,
+    } as any);
+
     await db.products.put({
       id: PRODUCT_ID,
       tenantId: TENANT_ID,
@@ -196,9 +204,10 @@ describe('InventoryAdjustmentWorkflow full-pipeline atomicity', () => {
   });
 
   it('rolls back inventory, FIFO, journal and account balances when a journal-line write fails', async () => {
-    const originalAdd = Dexie.Table.prototype.add;
+    const tablePrototype = Object.getPrototypeOf(db.journalLines);
+    const originalAdd = tablePrototype.add;
     let journalLineWrites = 0;
-    const addSpy = vi.spyOn(Dexie.Table.prototype, 'add').mockImplementation(function (
+    const addSpy = vi.spyOn(tablePrototype, 'add').mockImplementation(function (
       this: any,
       item: any,
       key?: any,
