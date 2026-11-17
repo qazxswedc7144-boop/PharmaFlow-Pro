@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { Role } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { getJwtSecret, getJwtRefreshSecret } from "../../../../../server/security/jwtSecrets.js";
 
 // 🚨 FIX: Centralized constants to prevent expiration drift between JWT and DB records
@@ -100,9 +101,15 @@ export class AuthService {
   /**
    * Generates or retrieves active server-side sessions.
    */
-  static async createSession(userId: string, token: string, ip?: string, agent?: string) {
+  static async createSession(
+    userId: string,
+    token: string,
+    ip?: string,
+    agent?: string,
+    tx?: Prisma.TransactionClient
+  ) {
     const expiresAt = new Date(Date.now() + ACCESS_TOKEN_EXPIRY_MS);
-    return prisma.session.create({
+    return (tx ?? prisma).session.create({
       data: {
         userId,
         token,
@@ -116,9 +123,13 @@ export class AuthService {
   /**
    * Refreshes access tokens when validated against the database refresh tokens.
    */
-  static async createRefreshTokenRecord(userId: string, token: string) {
+  static async createRefreshTokenRecord(
+    userId: string,
+    token: string,
+    tx?: Prisma.TransactionClient
+  ) {
     const expiresAt = new Date(Date.now() + REFRESH_TOKEN_EXPIRY_MS);
-    return prisma.refreshToken.create({
+    return (tx ?? prisma).refreshToken.create({
       data: {
         userId,
         token: this.hashRefreshToken(token),
