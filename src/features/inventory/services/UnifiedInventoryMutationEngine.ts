@@ -234,27 +234,42 @@ export class UnifiedInventoryMutationEngine {
   /**
    * 5. Execute Inventory Adjustment (Physical count reconciliation)
    */
-  public async executeAdjustment(command: ExecuteInventoryAdjustmentCommand): Promise<InventoryMutationResult> {
+  public async executeAdjustment(command: ExecuteInventoryAdjustmentCommand, tx?: any): Promise<InventoryMutationResult> {
+    if (tx && typeof tx.table !== 'function') throw new Error('INVALID_INVENTORY_TRANSACTION');
     await this.validateCommandBasics(command, 'ExecuteAdjustment');
     const timestamp = command.timestamp || new Date().toISOString();
 
-    const existingTx = await this.checkExistingIdempotentTransaction(command.transactionUuid, command.adjustmentId, 'ADJUSTMENT', command.productId, command.tenantId);
-    if (existingTx) {
-      return {
-        success: true,
-        transactionId: existingTx.TransactionID || existingTx.id,
-        productId: command.productId,
-        warehouseId: command.warehouseId,
-        previousStock: Number(existingTx.before_qty ?? 0),
-        newStock: Number(existingTx.after_qty ?? 0),
-        delta: Number(existingTx.QuantityChange ?? existingTx.quantityChange ?? 0),
-        calculatedCost: existingTx.unit_cost,
-        timestamp: existingTx.TransactionDate || existingTx.created_at || timestamp
-      };
-    }
+    const execute = async (activeTx: any): Promise<InventoryMutationResult> => {
+      // Idempotency lookup, stock snapshot, ledger mutation, FIFO and projections
+      // must all observe and write through the same transaction.
+      const existingTx = await this.checkExistingIdempotentTransaction(
+        command.transactionUuid,
+        command.adjustmentId,
+        'ADJUSTMENT',
+        command.productId,
+        command.tenantId,
+        activeTx
+      );
+      if (existingTx) {
+        return {
+          success: true,
+          transactionId: existingTx.TransactionID || existingTx.id,
+          productId: command.productId,
+          warehouseId: command.warehouseId,
+          previousStock: Number(existingTx.before_qty ?? 0),
+          newStock: Number(existingTx.after_qty ?? 0),
+          delta: Number(existingTx.QuantityChange ?? existingTx.quantityChange ?? 0),
+          calculatedCost: existingTx.unit_cost,
+          timestamp: existingTx.TransactionDate || existingTx.created_at || timestamp
+        };
+      }
 
-    return await this.executeAtomicTransaction(async () => {
-      const ws = await this.readWarehouseStock(command.warehouseId, command.productId, command.tenantId);
+      const ws = await this.readWarehouseStock(
+        command.warehouseId,
+        command.productId,
+        command.tenantId,
+        activeTx
+      );
       const currentWarehouseQty = ws ? ws.quantity : 0;
       const delta = command.actualQuantity - currentWarehouseQty;
 
@@ -273,8 +288,10 @@ export class UnifiedInventoryMutationEngine {
         idempotencyKey: command.transactionUuid,
         notes: command.notes || `تسوية جردية #${command.adjustmentId}: ${command.reason}`,
         timestamp
-      });
-    });
+      }, activeTx);
+    };
+
+    return tx ? execute(tx) : this.executeAtomicTransaction(execute);
   }
 
   /**
