@@ -439,7 +439,17 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         const oldTotal =
           existing.finalTotal || existing.totalAmount || 0;
 
-        if (oldSuppId && oldSuppId !== 'مورد نقدي') {
+        const oldPaymentStatus = String(
+          (existing as any).paymentStatus ??
+          (existing as any).payment_status ??
+          ''
+        ).trim().toUpperCase();
+
+        if (
+          oldSuppId &&
+          oldSuppId !== 'مورد نقدي' &&
+          oldPaymentStatus !== 'CASH'
+        ) {
           const balanceReversal =
             (existing as any).isReturn ? oldTotal : -oldTotal;
 
@@ -708,7 +718,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       const suppId = input.supplierId;
       const verifiedTotal = (savedDoc as any).totalAmount || (savedDoc as any).finalTotal || input.total;
 
-      if (suppId && suppId !== 'مورد نقدي') {
+      if (suppId && suppId !== 'مورد نقدي' && !input.isCash) {
         const balanceDelta = isReturn
           ? -verifiedTotal
           : verifiedTotal;
@@ -757,6 +767,9 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         {
           ...input,
           type: 'PURCHASE',
+          // AccountingEngine selects Cash vs Payables from Purchase.status.
+          // Keep this accounting-only status separate from document posting status.
+          status: input.isCash ? 'PAID' : 'PENDING',
           id: refId,
           transactionUuid: ctx.idempotencyKey,
           tenantId: ctx.tenantId,
