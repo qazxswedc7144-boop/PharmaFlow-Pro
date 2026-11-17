@@ -1,4 +1,3 @@
-import Dexie from 'dexie';
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -179,7 +178,7 @@ describe('InventoryAdjustmentWorkflow full-pipeline atomicity', () => {
       createContext('SUCCESS') as any,
     );
 
-    expect(result.success).toBe(true);
+    expect(result.success, result.error?.message || JSON.stringify(result)).toBe(true);
     const product = await db.products.get(PRODUCT_ID);
     const warehouse = await db.warehouseStock.get('warehouse-stock-adjustment-atomicity');
     const branchInventory = await db.branchInventory.get('branch-inventory-adjustment-atomicity');
