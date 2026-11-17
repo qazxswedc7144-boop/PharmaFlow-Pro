@@ -60,6 +60,16 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
     ctx: WorkflowContext,
     tx?: any
   ): Promise<InventoryAdjustmentResult> {
+    // Direct/legacy callers must receive the same atomic boundary as pipeline callers.
+    if (!tx) {
+      return await db.safeTransaction('rw', this.tables, async (activeTx: any) =>
+        this.executeDomainSteps(input, ctx, activeTx)
+      );
+    }
+    if (typeof tx.table !== 'function') {
+      throw new Error('INVALID_INVENTORY_ADJUSTMENT_TRANSACTION');
+    }
+
     const adjustmentId = `ADJ-${Date.now()}`;
     const transactionUuid = ctx.idempotencyKey || `TX-ADJ-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
@@ -170,11 +180,11 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
         updatedAt: now
       };
 
-      await db.journalEntries.add(entry);
+      await tx.table('journalEntries').add(entry);
       for (const l of lines) {
-        await db.journalLines.add(l);
+        await tx.table('journalLines').add(l);
         if (l.accountId) {
-          await db.updateAccountBalance(l.accountId, l.debit - l.credit);
+          await db.updateAccountBalance(l.accountId, l.debit - l.credit, tx);
         }
       }
     }
