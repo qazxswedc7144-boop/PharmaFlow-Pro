@@ -31,8 +31,8 @@ vi.mock('@/store/authStore', () => ({
       user: {
         id: 'user-adjustment-atomicity',
         userId: 'user-adjustment-atomicity',
-        tenantId: TENANT_ID,
-        branchId: BRANCH_ID,
+        tenantId: 'tenant-adjustment-atomicity',
+        branchId: 'branch-adjustment-atomicity',
         role: 'admin',
       },
       tenantId: TENANT_ID,
