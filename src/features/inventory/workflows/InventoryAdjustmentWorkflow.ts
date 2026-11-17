@@ -182,8 +182,8 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
 
       await journalEntriesTable.add(entry);
       for (const line of lines) {
-        line.tenantId = tenantId;
-        line.branchId = branchId;
+        (line as any).tenantId = tenantId;
+        (line as any).branchId = branchId;
         await journalLinesTable.add(line);
 
         if (line.accountId) {
