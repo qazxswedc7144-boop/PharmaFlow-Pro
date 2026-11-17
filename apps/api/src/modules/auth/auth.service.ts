@@ -1,6 +1,6 @@
 // apps/api/src/modules/auth/auth.service.ts
 import bcrypt from "bcryptjs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { Role } from "@prisma/client";
@@ -69,7 +69,7 @@ export class AuthService {
     if (!finalUserId) throw new Error("USER_ID_REQUIRED: Cannot generate refresh token without user ID.");
 
     return jwt.sign(
-      { userId: finalUserId, tenantId: user.tenantId }, 
+      { userId: finalUserId, tenantId: user.tenantId, jti: randomUUID() },
       getJwtRefreshSecret(),
       { expiresIn: REFRESH_TOKEN_EXPIRY_STR, algorithm: "HS256" }
     );
