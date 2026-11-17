@@ -76,7 +76,11 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
       throw new Error('FAIL_CLOSED: TRUSTED_BRANCH_CONTEXT_REQUIRED: يتطلب تنفيذ تسوية المخزون وجود سياق فرع موثوق.');
     }
 
-    // التعديل 3: تمرير tx إلى محرك المخزون
+    if (!tx || typeof tx.table !== 'function') {
+      throw new Error('TRANSACTION_REQUIRED: Inventory adjustment must run inside WorkflowExecutionPipeline.');
+    }
+
+    // Stock mutation and accounting postings must share the pipeline transaction.
     const mutationResult = await unifiedInventoryMutationEngine.executeAdjustment({
       adjustmentId,
       productId: input.productId,
@@ -160,6 +164,8 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
         description: `قيد تسوية مخزون الصنف [${input.productId}] - مستند #${adjustmentId}`,
         referenceType: 'ADJUSTMENT',
         referenceId: adjustmentId,
+        tenantId,
+        branchId,
         lines,
         totalDebit: adjustmentValue,
         totalCredit: adjustmentValue,
@@ -170,11 +176,31 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
         updatedAt: now
       };
 
-      await db.journalEntries.add(entry);
-      for (const l of lines) {
-        await db.journalLines.add(l);
-        if (l.accountId) {
-          await db.updateAccountBalance(l.accountId, l.debit - l.credit);
+      const journalEntriesTable = tx.table('journalEntries');
+      const journalLinesTable = tx.table('journalLines');
+      const accountsTable = tx.table('accounts');
+
+      await journalEntriesTable.add(entry);
+      for (const line of lines) {
+        (line as any).tenantId = tenantId;
+        (line as any).branchId = branchId;
+        await journalLinesTable.add(line);
+
+        if (line.accountId) {
+          const account = await accountsTable.get(line.accountId);
+          if (account) {
+            const accountTenantId = account.tenantId || account.tenant_id;
+            if (accountTenantId !== tenantId) {
+              throw new Error(
+                `CROSS_TENANT_ACCOUNT_UPDATE_REJECTED: Account '${line.accountId}' does not belong to tenant '${tenantId}'.`
+              );
+            }
+
+            await accountsTable.update(line.accountId, {
+              balance: (Number(account.balance) || 0) + line.debit - line.credit,
+              updatedAt: now
+            });
+          }
         }
       }
     }

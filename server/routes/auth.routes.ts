@@ -537,13 +537,13 @@ authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, a
 
     // 4. Generate: accessToken and refreshToken with full tenant & RBAC context
     const accessToken = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role, tenantId, branchId, subscriptionPlan },
+      { userId: user.id, username: user.username, role: user.role, tenantId, branchId, subscriptionPlan, jti: crypto.randomUUID() },
       getJwtSecret(),
       { expiresIn: "4h" }
     );
 
     const refreshToken = jwt.sign(
-      { userId: user.id, tenantId, branchId },
+      { userId: user.id, tenantId, branchId, jti: crypto.randomUUID() },
       getJwtRefreshSecret(),
       { expiresIn: "7d" }
     );
@@ -733,14 +733,14 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
 
     // Generate fresh access token with the same verified tenant + branch context.
     const accessToken = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role, tenantId, branchId },
+      { userId: user.id, username: user.username, role: user.role, tenantId, branchId, jti: crypto.randomUUID() },
       getJwtSecret(),
       { expiresIn: "4h" }
     );
 
     // Rotate refresh token while preserving the verified branch context.
     const newRefreshToken = jwt.sign(
-      { userId: user.id, tenantId, branchId },
+      { userId: user.id, tenantId, branchId, jti: crypto.randomUUID() },
       getJwtRefreshSecret(),
       { expiresIn: "7d" }
     );

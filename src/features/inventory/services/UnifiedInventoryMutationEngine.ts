@@ -234,31 +234,53 @@ export class UnifiedInventoryMutationEngine {
   /**
    * 5. Execute Inventory Adjustment (Physical count reconciliation)
    */
-  public async executeAdjustment(command: ExecuteInventoryAdjustmentCommand): Promise<InventoryMutationResult> {
+  public async executeAdjustment(
+    command: ExecuteInventoryAdjustmentCommand,
+    tx?: any
+  ): Promise<InventoryMutationResult> {
+    if (tx && typeof tx.table !== 'function') {
+      throw new Error('INVALID_INVENTORY_TRANSACTION');
+    }
+
     await this.validateCommandBasics(command, 'ExecuteAdjustment');
     const timestamp = command.timestamp || new Date().toISOString();
 
-    const existingTx = await this.checkExistingIdempotentTransaction(command.transactionUuid, command.adjustmentId, 'ADJUSTMENT', command.productId, command.tenantId);
-    if (existingTx) {
-      return {
-        success: true,
-        transactionId: existingTx.TransactionID || existingTx.id,
-        productId: command.productId,
-        warehouseId: command.warehouseId,
-        previousStock: Number(existingTx.before_qty ?? 0),
-        newStock: Number(existingTx.after_qty ?? 0),
-        delta: Number(existingTx.QuantityChange ?? existingTx.quantityChange ?? 0),
-        calculatedCost: existingTx.unit_cost,
-        timestamp: existingTx.TransactionDate || existingTx.created_at || timestamp
-      };
-    }
+    // Reuse the caller's transaction when the adjustment is part of a larger
+    // business workflow (stock + journal). Keep the standalone API atomic too.
+    const execute = async (activeTx: any): Promise<InventoryMutationResult> => {
+      const existingTx = await this.checkExistingIdempotentTransaction(
+        command.transactionUuid,
+        command.adjustmentId,
+        'ADJUSTMENT',
+        command.productId,
+        command.tenantId,
+        activeTx
+      );
 
-    return await this.executeAtomicTransaction(async () => {
-      const ws = await this.readWarehouseStock(command.warehouseId, command.productId, command.tenantId);
-      const currentWarehouseQty = ws ? ws.quantity : 0;
+      if (existingTx) {
+        return {
+          success: true,
+          transactionId: existingTx.TransactionID || existingTx.id,
+          productId: command.productId,
+          warehouseId: command.warehouseId,
+          previousStock: Number(existingTx.before_qty ?? 0),
+          newStock: Number(existingTx.after_qty ?? 0),
+          delta: Number(existingTx.QuantityChange ?? existingTx.quantityChange ?? 0),
+          calculatedCost: existingTx.unit_cost,
+          timestamp: existingTx.TransactionDate || existingTx.created_at || timestamp
+        };
+      }
+
+      const ws = await this.readWarehouseStock(
+        command.warehouseId,
+        command.productId,
+        command.tenantId,
+        activeTx
+      );
+      const currentWarehouseQty = ws ? Number(ws.quantity || 0) : 0;
       const delta = command.actualQuantity - currentWarehouseQty;
 
-      return await this.mutateSingleItem({
+      return this.mutateSingleItem({
         productId: command.productId,
         warehouseId: command.warehouseId,
         delta,
@@ -273,8 +295,10 @@ export class UnifiedInventoryMutationEngine {
         idempotencyKey: command.transactionUuid,
         notes: command.notes || `تسوية جردية #${command.adjustmentId}: ${command.reason}`,
         timestamp
-      });
-    });
+      }, activeTx);
+    };
+
+    return tx ? execute(tx) : this.executeAtomicTransaction(execute);
   }
 
   /**
