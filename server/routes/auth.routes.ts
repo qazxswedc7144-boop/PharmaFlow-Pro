@@ -750,7 +750,7 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
 
     // Atomically revoke the submitted token and persist its replacement.
     // updateMany provides a compare-and-set guard against concurrent replay.
-    await prisma.$transaction(async (tx) => {
+    const rotationCommitted = await prisma.$transaction(async (tx) => {
       const revoked = await tx.refreshToken.updateMany({
         where: {
           id: record.id,
@@ -761,9 +761,7 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
         data: { revoked: true }
       });
 
-      if (revoked.count !== 1) {
-        throw new Error("REFRESH_TOKEN_ALREADY_ROTATED");
-      }
+      if (revoked.count !== 1) return false;
 
       await tx.refreshToken.create({
         data: {
@@ -772,7 +770,15 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
           expiresAt
         }
       });
+      return true;
     });
+
+    if (!rotationCommitted) {
+      return res.status(401).json({
+        error: "INVALID_REFRESH_TOKEN",
+        message: "Refresh token has already been rotated or revoked."
+      });
+    }
 
     return res.json({
       accessToken,
