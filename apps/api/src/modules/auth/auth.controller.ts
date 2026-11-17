@@ -127,8 +127,9 @@ export class AuthController {
         throw err;
       }
 
+      const refreshTokenHash = AuthService.hashRefreshToken(refreshToken);
       const record = await prisma.refreshToken.findUnique({
-        where: { token: AuthService.hashRefreshToken(refreshToken) }
+        where: { token: refreshTokenHash }
       });
 
       if (!record || record.revoked || record.expiresAt < new Date()) {
@@ -162,11 +163,30 @@ export class AuthController {
 
       const newAccessToken = AuthService.generateAccessToken(tokenPayload);
       
-      // ✅ Refresh Token Rotation (إصلاح أمني: إلغاء القديم وإصدار جديد)
-      await AuthService.revokeRefreshToken(refreshToken);
+      // Consume the old token and persist both replacement credentials atomically.
       const newRefreshToken = AuthService.generateRefreshToken(tokenPayload);
-      await AuthService.createRefreshTokenRecord(user.id, newRefreshToken);
-      await AuthService.createSession(user.id, newAccessToken, req.ip, req.headers["user-agent"]);
+      const rotationSucceeded = await prisma.$transaction(async (tx) => {
+        const consumed = await tx.refreshToken.updateMany({
+          where: {
+            token: refreshTokenHash,
+            revoked: false,
+            expiresAt: { gt: new Date() }
+          },
+          data: { revoked: true }
+        });
+
+        // A concurrent request may have consumed the same token while this
+        // request was validating the user and tenant context.
+        if (consumed.count !== 1) return false;
+
+        await AuthService.createRefreshTokenRecord(user.id, newRefreshToken, tx);
+        await AuthService.createSession(user.id, newAccessToken, req.ip, req.headers["user-agent"], tx);
+        return true;
+      });
+
+      if (!rotationSucceeded) {
+        return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "رمز التحديث مستخدم أو ملغى أو منتهي الصلاحية." });
+      }
 
       return res.json({
         success: true,

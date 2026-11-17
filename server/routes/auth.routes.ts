@@ -748,18 +748,35 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
-    // Delete old refresh token record and insert new rotated token
-    await prisma.refreshToken.delete({
-      where: { id: record.id }
-    }).catch(() => {});
+    // Consume the old token exactly once and persist its replacement atomically.
+    const rotationSucceeded = await prisma.$transaction(async (tx) => {
+      const consumed = await tx.refreshToken.deleteMany({
+        where: {
+          id: record.id,
+          token: refreshTokenHash,
+          revoked: false,
+          expiresAt: { gt: new Date() }
+        }
+      });
 
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        token: newRefreshTokenHash,
-        expiresAt
-      }
+      if (consumed.count !== 1) return false;
+
+      await tx.refreshToken.create({
+        data: {
+          userId: user.id,
+          token: newRefreshTokenHash,
+          expiresAt
+        }
+      });
+      return true;
     });
+
+    if (!rotationSucceeded) {
+      return res.status(401).json({
+        error: "INVALID_REFRESH_TOKEN",
+        message: "Refresh token has already been used or is no longer valid."
+      });
+    }
 
     return res.json({
       accessToken,

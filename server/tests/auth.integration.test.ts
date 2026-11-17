@@ -118,6 +118,136 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     });
   });
 
+  it("allows exactly one concurrent V1 refresh rotation and rejects replay", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const originalToken = AuthService.generateRefreshToken({ userId: ctx.userAId, tenantId: ctx.tenantAId });
+    const originalHash = AuthService.hashRefreshToken(originalToken);
+    await AuthService.createRefreshTokenRecord(ctx.userAId, originalToken);
+
+    const responses = await Promise.all([
+      request(ctx, "/api/v1/auth/refresh", { method: "POST", body: { refreshToken: originalToken } }),
+      request(ctx, "/api/v1/auth/refresh", { method: "POST", body: { refreshToken: originalToken } })
+    ]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 401]);
+
+    const winner = responses.find(response => response.status === 200)!;
+    const replacementHash = AuthService.hashRefreshToken(winner.body.refreshToken as string);
+    expect(await prisma.refreshToken.findUnique({ where: { token: originalHash } })).toMatchObject({ userId: ctx.userAId, revoked: true });
+    expect(await prisma.refreshToken.findUnique({ where: { token: replacementHash } })).toMatchObject({ userId: ctx.userAId, token: replacementHash, revoked: false });
+    expect(await prisma.session.findUnique({ where: { token: winner.body.accessToken } })).toBeTruthy();
+
+    const replay = await request(ctx, "/api/v1/auth/refresh", { method: "POST", body: { refreshToken: originalToken } });
+    expect(replay.status).toBe(401);
+  });
+
+  it("rolls back V1 token consumption when replacement refresh-token persistence fails", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const originalToken = AuthService.generateRefreshToken({ userId: ctx.userAId, tenantId: ctx.tenantAId });
+    const originalHash = AuthService.hashRefreshToken(originalToken);
+    await AuthService.createRefreshTokenRecord(ctx.userAId, originalToken);
+    const safeUserId = ctx.userAId.replace(/[^0-9a-f-]/gi, "");
+
+    try {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS ci_fail_refresh_rotation_insert ON public.refresh_tokens");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS public.ci_fail_refresh_rotation_insert()");
+      await prisma.$executeRawUnsafe(
+        "CREATE FUNCTION public.ci_fail_refresh_rotation_insert() RETURNS trigger AS $$ " +
+        "BEGIN IF NEW.\"userId\" = '" + safeUserId + "' THEN RAISE EXCEPTION 'forced refresh rotation insert failure'; END IF; " +
+        "RETURN NEW; END; $$ LANGUAGE plpgsql"
+      );
+      await prisma.$executeRawUnsafe("CREATE TRIGGER ci_fail_refresh_rotation_insert BEFORE INSERT ON public.refresh_tokens FOR EACH ROW EXECUTE FUNCTION public.ci_fail_refresh_rotation_insert()");
+
+      const response = await request(ctx, "/api/v1/auth/refresh", { method: "POST", body: { refreshToken: originalToken } });
+      expect(response.status).toBe(500);
+      expect(await prisma.refreshToken.findUnique({ where: { token: originalHash } })).toMatchObject({ userId: ctx.userAId, revoked: false });
+    } finally {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS ci_fail_refresh_rotation_insert ON public.refresh_tokens");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS public.ci_fail_refresh_rotation_insert()");
+    }
+  });
+
+  it("rolls back V1 token consumption when replacement session persistence fails", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const originalToken = AuthService.generateRefreshToken({ userId: ctx.userAId, tenantId: ctx.tenantAId });
+    const originalHash = AuthService.hashRefreshToken(originalToken);
+    await AuthService.createRefreshTokenRecord(ctx.userAId, originalToken);
+    const previousSessionCount = await prisma.session.count({ where: { userId: ctx.userAId } });
+    const safeUserId = ctx.userAId.replace(/[^0-9a-f-]/gi, "");
+
+    try {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS ci_fail_refresh_session_insert ON public.sessions");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS public.ci_fail_refresh_session_insert()");
+      await prisma.$executeRawUnsafe(
+        "CREATE FUNCTION public.ci_fail_refresh_session_insert() RETURNS trigger AS $$ " +
+        "BEGIN IF NEW.\"userId\" = '" + safeUserId + "' THEN RAISE EXCEPTION 'forced refresh session insert failure'; END IF; " +
+        "RETURN NEW; END; $$ LANGUAGE plpgsql"
+      );
+      await prisma.$executeRawUnsafe("CREATE TRIGGER ci_fail_refresh_session_insert BEFORE INSERT ON public.sessions FOR EACH ROW EXECUTE FUNCTION public.ci_fail_refresh_session_insert()");
+
+      const response = await request(ctx, "/api/v1/auth/refresh", { method: "POST", body: { refreshToken: originalToken } });
+      expect(response.status).toBe(500);
+      expect(await prisma.refreshToken.findUnique({ where: { token: originalHash } })).toMatchObject({ userId: ctx.userAId, revoked: false });
+      expect(await prisma.session.count({ where: { userId: ctx.userAId } })).toBe(previousSessionCount);
+    } finally {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS ci_fail_refresh_session_insert ON public.sessions");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS public.ci_fail_refresh_session_insert()");
+    }
+  });
+
+  it("allows exactly one concurrent legacy refresh rotation and rejects replay", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const login = await request(ctx, "/api/auth/login", { method: "POST", body: { username: ctx.usernameA, password: "Ci-Only-Password-2026!" } });
+    expect(login.status).toBe(200);
+    const originalToken = login.body.refreshToken as string;
+    const originalHash = createHash("sha256").update(originalToken).digest("hex");
+
+    const responses = await Promise.all([
+      request(ctx, "/api/auth/refresh", { method: "POST", body: { refreshToken: originalToken } }),
+      request(ctx, "/api/auth/refresh", { method: "POST", body: { refreshToken: originalToken } })
+    ]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 401]);
+
+    const winner = responses.find(response => response.status === 200)!;
+    const replacementHash = createHash("sha256").update(winner.body.refreshToken as string).digest("hex");
+    expect(await prisma.refreshToken.findUnique({ where: { token: originalHash } })).toBeNull();
+    expect(await prisma.refreshToken.findUnique({ where: { token: replacementHash } })).toMatchObject({ userId: ctx.userAId, token: replacementHash, revoked: false });
+
+    const replay = await request(ctx, "/api/auth/refresh", { method: "POST", body: { refreshToken: originalToken } });
+    expect(replay.status).toBe(401);
+  });
+
+  it("rolls back legacy refresh-token deletion when replacement persistence fails", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const login = await request(ctx, "/api/auth/login", { method: "POST", body: { username: ctx.usernameA, password: "Ci-Only-Password-2026!" } });
+    expect(login.status).toBe(200);
+    const originalToken = login.body.refreshToken as string;
+    const originalHash = createHash("sha256").update(originalToken).digest("hex");
+    const safeUserId = ctx.userAId.replace(/[^0-9a-f-]/gi, "");
+
+    try {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS ci_fail_legacy_refresh_insert ON public.refresh_tokens");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS public.ci_fail_legacy_refresh_insert()");
+      await prisma.$executeRawUnsafe(
+        "CREATE FUNCTION public.ci_fail_legacy_refresh_insert() RETURNS trigger AS $$ " +
+        "BEGIN IF NEW.\"userId\" = '" + safeUserId + "' THEN RAISE EXCEPTION 'forced legacy refresh insert failure'; END IF; " +
+        "RETURN NEW; END; $$ LANGUAGE plpgsql"
+      );
+      await prisma.$executeRawUnsafe("CREATE TRIGGER ci_fail_legacy_refresh_insert BEFORE INSERT ON public.refresh_tokens FOR EACH ROW EXECUTE FUNCTION public.ci_fail_legacy_refresh_insert()");
+
+      const response = await request(ctx, "/api/auth/refresh", { method: "POST", body: { refreshToken: originalToken } });
+      expect(response.status).toBe(500);
+      expect(await prisma.refreshToken.findUnique({ where: { token: originalHash } })).toMatchObject({ userId: ctx.userAId, token: originalHash, revoked: false });
+    } finally {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS ci_fail_legacy_refresh_insert ON public.refresh_tokens");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS public.ci_fail_legacy_refresh_insert()");
+    }
+  });
+
   it("recreates a missing branch membership during legacy login and returns that branch in the JWT payload", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
