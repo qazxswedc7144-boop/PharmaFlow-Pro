@@ -43,6 +43,7 @@
     "cookie-parser": "^1.4.7",
     "crypto-js": "^4.2.0",
     "date-fns": "^4.2.1",
+    "decimal.js-light": "^2.5.1",
     "dexie": "3.2.4",
     "dexie-react-hooks": "^1.1.7",
     "esbuild": "^0.28.2",
@@ -78,14 +79,15 @@
     "vite": "^6.2.0",
     "ws": "^8.21.0",
     "zod": "^4.4.3",
-    "zustand": "^5.0.11",
-    "decimal.js-light": "^2.5.1"
+    "zustand": "^5.0.11"
   },
   "overrides": {
     "deepmerge-ts": "^8.0.0",
     "browserslist": {
       "electron-to-chromium": "1.5.477"
-    }
+    },
+    "@grpc/grpc-js": "^1.14.7",
+    "brace-expansion@^1.1.7": "^1.1.22"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
