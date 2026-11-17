@@ -1828,10 +1828,11 @@ export class PharmaFlowDB extends Dexie {
     return all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }
 
-  async updateAccountBalance(id: string, delta: number) {
-    const acc = await this.accounts.get(id);
+  async updateAccountBalance(id: string, delta: number, tx?: Transaction) {
+    const accountsTable = tx ? tx.table('accounts') : this.accounts;
+    const acc = await accountsTable.get(id);
     if (acc) {
-      await this.accounts.update(id, {
+      await accountsTable.update(id, {
         balance: (acc.balance || 0) + delta,
         updatedAt: new Date().toISOString()
       });
