@@ -21,6 +21,39 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     }
   });
 
+  it("maps JWT verification errors to 401 and refresh-secret configuration failures to 500", async () => {
+    const ctx = getContext();
+    const invalidToken = await request(ctx, "/api/v1/auth/refresh", {
+      method: "POST",
+      body: { refreshToken: "not.a.valid.jwt" }
+    });
+    expect(invalidToken.status).toBe(401);
+
+    const previousVercelEnv = process.env.VERCEL_ENV;
+    const previousJwtSecret = process.env.JWT_SECRET;
+    const previousJwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
+    process.env.VERCEL_ENV = "production";
+    process.env.JWT_SECRET = "ci-auth-refresh-secret-which-is-at-least-32-bytes";
+    delete process.env.JWT_REFRESH_SECRET;
+
+    try {
+      const configurationFailure = await request(ctx, "/api/v1/auth/refresh", {
+        method: "POST",
+        body: { refreshToken: "not.a.valid.jwt" }
+      });
+      expect(configurationFailure.status).toBe(500);
+      expect(configurationFailure.body.error).toBe("INTERNAL_ERROR");
+      expect(configurationFailure.body.message).not.toContain("FATAL");
+    } finally {
+      if (previousVercelEnv === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = previousVercelEnv;
+      if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
+      else process.env.JWT_SECRET = previousJwtSecret;
+      if (previousJwtRefreshSecret === undefined) delete process.env.JWT_REFRESH_SECRET;
+      else process.env.JWT_REFRESH_SECRET = previousJwtRefreshSecret;
+    }
+  });
+
   it("authenticates both isolated tenant users through the real login HTTP route", async () => {
     const ctx = getContext();
     const meA = await request(ctx, "/api/v1/auth/me", { token: ctx.tokenA });
