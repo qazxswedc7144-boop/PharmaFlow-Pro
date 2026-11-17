@@ -14,7 +14,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
       const first = AuthService.generateRefreshToken(payload);
       const second = AuthService.generateRefreshToken(payload);
       expect(first).not.toBe(second);
-      expect((jwt.decode(first) as jwt.JwtPayload).jti).toBeTruthy();
+      expect((jwt.decode(first) as { jti?: string }).jti).toBeTruthy();
       expect((jwt.decode(second) as jwt.JwtPayload).jti).toBeTruthy();
     } finally {
       dateNow.mockRestore();
@@ -35,6 +35,42 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
       where: { userId: { in: [ctx.userAId, ctx.userBId] } },
     });
     expect(sessions).toBe(2);
+  });
+
+  it("rotates legacy refresh tokens without reusing a token issued in the same second", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+
+    const login = await request(ctx, "/api/auth/login", {
+      method: "POST",
+      body: { username: ctx.usernameA, password: "Ci-Only-Password-2026!" }
+    });
+    expect(login.status).toBe(200);
+    expect(login.body.refreshToken).toBeTruthy();
+
+    const originalToken = login.body.refreshToken as string;
+    const originalHash = createHash("sha256").update(originalToken).digest("hex");
+    const originalPayload = jwt.decode(originalToken) as { jti?: string };
+
+    const rotated = await request(ctx, "/api/auth/refresh", {
+      method: "POST",
+      body: { refreshToken: originalToken }
+    });
+    expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
+    expect(rotated.body.refreshToken).toBeTruthy();
+
+    const rotatedToken = rotated.body.refreshToken as string;
+    const rotatedPayload = jwt.decode(rotatedToken) as { jti?: string };
+    const rotatedHash = createHash("sha256").update(rotatedToken).digest("hex");
+
+    expect(rotatedPayload.jti).toBeTruthy();
+    expect(rotatedPayload.jti).not.toBe(originalPayload.jti);
+    expect(await prisma.refreshToken.findUnique({ where: { token: originalHash } })).toBeNull();
+    expect(await prisma.refreshToken.findUnique({ where: { token: rotatedHash } })).toMatchObject({
+      userId: ctx.userAId,
+      token: rotatedHash,
+      revoked: false
+    });
   });
 
   it("recreates a missing branch membership during legacy login and returns that branch in the JWT payload", async () => {
