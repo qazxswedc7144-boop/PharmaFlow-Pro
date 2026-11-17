@@ -197,13 +197,19 @@ describe('InventoryAdjustmentWorkflow full-pipeline atomicity', () => {
 
   it('rolls back inventory, FIFO, journal and account balances when a journal-line write fails', async () => {
     const originalAdd = Dexie.Table.prototype.add;
+    let journalLineWrites = 0;
     const addSpy = vi.spyOn(Dexie.Table.prototype, 'add').mockImplementation(function (
       this: any,
       item: any,
       key?: any,
     ) {
       if (this.name === 'journalLines') {
-        return Promise.reject(new Error('INJECTED_JOURNAL_LINE_FAILURE')) as any;
+        journalLineWrites += 1;
+        // Fail the second line: the first line and its account-balance update
+        // have already executed inside the same transaction at this point.
+        if (journalLineWrites === 2) {
+          return Promise.reject(new Error('INJECTED_SECOND_JOURNAL_LINE_FAILURE')) as any;
+        }
       }
       return originalAdd.call(this, item, key);
     });
