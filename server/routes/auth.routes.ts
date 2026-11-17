@@ -543,7 +543,7 @@ authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, a
     );
 
     const refreshToken = jwt.sign(
-      { userId: user.id, tenantId, branchId },
+      { userId: user.id, tenantId, branchId, jti: crypto.randomUUID() },
       getJwtRefreshSecret(),
       { expiresIn: "7d" }
     );
@@ -740,7 +740,7 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
 
     // Rotate refresh token while preserving the verified branch context.
     const newRefreshToken = jwt.sign(
-      { userId: user.id, tenantId, branchId },
+      { userId: user.id, tenantId, branchId, jti: crypto.randomUUID() },
       getJwtRefreshSecret(),
       { expiresIn: "7d" }
     );
@@ -748,18 +748,37 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 7);
 
-    // Delete old refresh token record and insert new rotated token
-    await prisma.refreshToken.delete({
-      where: { id: record.id }
-    }).catch(() => {});
+    // Atomically revoke the submitted token and persist its replacement.
+    // updateMany provides a compare-and-set guard against concurrent replay.
+    const rotationCommitted = await prisma.$transaction(async (tx) => {
+      const revoked = await tx.refreshToken.updateMany({
+        where: {
+          id: record.id,
+          userId: user.id,
+          revoked: false,
+          expiresAt: { gt: new Date() }
+        },
+        data: { revoked: true }
+      });
 
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        token: newRefreshTokenHash,
-        expiresAt
-      }
+      if (revoked.count !== 1) return false;
+
+      await tx.refreshToken.create({
+        data: {
+          userId: user.id,
+          token: newRefreshTokenHash,
+          expiresAt
+        }
+      });
+      return true;
     });
+
+    if (!rotationCommitted) {
+      return res.status(401).json({
+        error: "INVALID_REFRESH_TOKEN",
+        message: "Refresh token has already been rotated or revoked."
+      });
+    }
 
     return res.json({
       accessToken,
