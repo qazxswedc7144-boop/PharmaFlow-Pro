@@ -116,7 +116,13 @@ export class AuthController {
         return res.status(400).json({ error: "REFRESH_TOKEN_REQUIRED", message: "رمز التحديث مطلوب." });
       }
 
-      const decoded = AuthService.verifyRefreshToken(refreshToken);
+      let decoded;
+      try {
+        decoded = AuthService.verifyRefreshToken(refreshToken);
+      } catch {
+        return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "رمز التحديث غير صالح أو منتهي الصلاحية." });
+      }
+
       const record = await prisma.refreshToken.findUnique({
         where: { token: AuthService.hashRefreshToken(refreshToken) }
       });
@@ -164,7 +170,11 @@ export class AuthController {
         refreshToken: newRefreshToken // ✅ تم عكس الرمز
       });
     } catch (err: any) {
-      return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "فشل التحقق من توقيع الرمز." });
+      console.error("[AUTH] Refresh operation failed:", err);
+      return res.status(500).json({
+        error: "INTERNAL_ERROR",
+        message: "تعذر تحديث الجلسة حالياً."
+      });
     }
   }
 

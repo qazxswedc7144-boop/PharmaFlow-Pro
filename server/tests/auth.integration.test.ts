@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import jwt from "jsonwebtoken";
 import { createHash, randomUUID } from "node:crypto";
 import { AuthService } from "../../apps/api/src/modules/auth/auth.service.js";
@@ -6,6 +6,21 @@ import { getJwtSecret, getJwtRefreshSecret } from "../security/jwtSecrets.js";
 import { definePostgresHttpSuite, request } from "./helpers/postgres-http.integration.helpers.js";
 
 definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) => {
+  it("generates distinct refresh tokens for repeated issuance within the same second", () => {
+    const now = Date.now();
+    const dateNow = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const payload = { userId: "same-second-user", tenantId: "same-second-tenant" };
+      const first = AuthService.generateRefreshToken(payload);
+      const second = AuthService.generateRefreshToken(payload);
+      expect(first).not.toBe(second);
+      expect((jwt.decode(first) as { jti?: string }).jti).toBeTruthy();
+      expect((jwt.decode(second) as jwt.JwtPayload).jti).toBeTruthy();
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
   it("authenticates both isolated tenant users through the real login HTTP route", async () => {
     const ctx = getContext();
     const meA = await request(ctx, "/api/v1/auth/me", { token: ctx.tokenA });
@@ -20,6 +35,42 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
       where: { userId: { in: [ctx.userAId, ctx.userBId] } },
     });
     expect(sessions).toBe(2);
+  });
+
+  it("rotates legacy refresh tokens without reusing a token issued in the same second", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+
+    const login = await request(ctx, "/api/auth/login", {
+      method: "POST",
+      body: { username: ctx.usernameA, password: "Ci-Only-Password-2026!" }
+    });
+    expect(login.status).toBe(200);
+    expect(login.body.refreshToken).toBeTruthy();
+
+    const originalToken = login.body.refreshToken as string;
+    const originalHash = createHash("sha256").update(originalToken).digest("hex");
+    const originalPayload = jwt.decode(originalToken) as { jti?: string };
+
+    const rotated = await request(ctx, "/api/auth/refresh", {
+      method: "POST",
+      body: { refreshToken: originalToken }
+    });
+    expect(rotated.status, JSON.stringify(rotated.body)).toBe(200);
+    expect(rotated.body.refreshToken).toBeTruthy();
+
+    const rotatedToken = rotated.body.refreshToken as string;
+    const rotatedPayload = jwt.decode(rotatedToken) as { jti?: string };
+    const rotatedHash = createHash("sha256").update(rotatedToken).digest("hex");
+
+    expect(rotatedPayload.jti).toBeTruthy();
+    expect(rotatedPayload.jti).not.toBe(originalPayload.jti);
+    expect(await prisma.refreshToken.findUnique({ where: { token: originalHash } })).toBeNull();
+    expect(await prisma.refreshToken.findUnique({ where: { token: rotatedHash } })).toMatchObject({
+      userId: ctx.userAId,
+      token: rotatedHash,
+      revoked: false
+    });
   });
 
   it("recreates a missing branch membership during legacy login and returns that branch in the JWT payload", async () => {
@@ -347,6 +398,11 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Authentication", (getContext) 
     });
     expect(response.status).toBe(200);
     expect(response.body.refreshToken).toBeTruthy();
+
+    const rotatedPayload = jwt.decode(response.body.refreshToken) as jwt.JwtPayload;
+    const originalPayload = jwt.decode(rawRefreshToken) as jwt.JwtPayload;
+    expect(rotatedPayload.jti).toBeTruthy();
+    expect(rotatedPayload.jti).not.toBe(originalPayload.jti);
 
     const rotatedHash = createHash("sha256").update(response.body.refreshToken).digest("hex");
     expect(await prisma.refreshToken.findUnique({ where: { token: tokenHash } })).toMatchObject({ revoked: true });

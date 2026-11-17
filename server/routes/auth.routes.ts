@@ -543,7 +543,7 @@ authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, a
     );
 
     const refreshToken = jwt.sign(
-      { userId: user.id, tenantId, branchId },
+      { userId: user.id, tenantId, branchId, jti: crypto.randomUUID() },
       getJwtRefreshSecret(),
       { expiresIn: "7d" }
     );
@@ -740,7 +740,7 @@ authRouter.post("/refresh", async (req: Request, res: Response) => {
 
     // Rotate refresh token while preserving the verified branch context.
     const newRefreshToken = jwt.sign(
-      { userId: user.id, tenantId, branchId },
+      { userId: user.id, tenantId, branchId, jti: crypto.randomUUID() },
       getJwtRefreshSecret(),
       { expiresIn: "7d" }
     );
