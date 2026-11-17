@@ -72,14 +72,14 @@ vi.mock('@/store/authStore', () => ({
   useAuthStore: {
     getState: () => ({
       user: {
-        id: USER_ID,
-        tenantId: TENANT_ID,
-        branchId: BRANCH_ID,
+        id: 'user-adjustment-atomicity',
+        tenantId: 'tenant-adjustment-atomicity',
+        branchId: 'branch-adjustment-atomicity',
         role: 'admin',
         permissions: ['inventory.adjust', 'inventory.manage'],
       },
-      tenantId: TENANT_ID,
-      branchId: BRANCH_ID,
+      tenantId: 'tenant-adjustment-atomicity',
+      branchId: 'branch-adjustment-atomicity',
       isAuthenticated: true,
       hasPermission: () => true,
     }),
