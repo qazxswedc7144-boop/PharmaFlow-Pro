@@ -2,6 +2,7 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "./auth.middleware.js";
 import { AuthService } from "./auth.service.js";
+import { JsonWebTokenError } from "jsonwebtoken";
 import { AuditService } from "../audit/audit.service.js";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { LoginAttemptAuditError, LoginAttemptStoreError, recordFailedLoginAttempt, releaseLoginAttempt } from "../../../../../server/security/loginAttemptGuard.js";
@@ -119,8 +120,11 @@ export class AuthController {
       let decoded;
       try {
         decoded = AuthService.verifyRefreshToken(refreshToken);
-      } catch {
-        return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "رمز التحديث غير صالح أو منتهي الصلاحية." });
+      } catch (err) {
+        if (err instanceof JsonWebTokenError) {
+          return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "رمز التحديث غير صالح أو منتهي الصلاحية." });
+        }
+        throw err;
       }
 
       const record = await prisma.refreshToken.findUnique({
