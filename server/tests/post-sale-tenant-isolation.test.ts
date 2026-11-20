@@ -78,12 +78,13 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       date: new Date(),
     });
 
-    fakeTx.$queryRaw.mockImplementation(async (sql: any) => {
-      const text = typeof sql === 'string'
-        ? sql
-        : (sql?.text || (sql?.strings ? sql.strings.join('') : '') || JSON.stringify(sql || ''));
+    fakeTx.$queryRaw.mockImplementation(async (stringsOrSql: any, ...values: any[]) => {
+      const strings = Array.isArray(stringsOrSql) ? stringsOrSql : (stringsOrSql?.strings || [stringsOrSql?.text || '']);
+      const text = strings.join('');
       if (text.includes('invoices') || text.includes('documentStatus')) {
         expect(text).toContain('tenantId');
+        expect(values).toContain('INV-1');
+        expect(values).toContain('tenant-A');
         return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
       }
       if (text.includes('products') || text.includes('stockQuantity')) {
@@ -152,12 +153,13 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       date: invoiceDate,
     });
 
-    fakeTx.$queryRaw.mockImplementation(async (sql: any) => {
-      const text = typeof sql === 'string'
-        ? sql
-        : (sql?.text || (sql?.strings ? sql.strings.join('') : '') || JSON.stringify(sql || ''));
+    fakeTx.$queryRaw.mockImplementation(async (stringsOrSql: any, ...values: any[]) => {
+      const strings = Array.isArray(stringsOrSql) ? stringsOrSql : (stringsOrSql?.strings || [stringsOrSql?.text || '']);
+      const text = strings.join('');
       if (text.includes('invoices') || text.includes('documentStatus')) {
         expect(text).toContain('tenantId');
+        expect(values).toContain('INV-1');
+        expect(values).toContain('tenant-A');
         return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
       }
       if (text.includes('products') || text.includes('stockQuantity')) {
