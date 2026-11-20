@@ -12,6 +12,27 @@ function findNode<T extends ts.Node>(node: ts.Node, predicate: (candidate: ts.No
   return ts.forEachChild(node, child => findNode(child, predicate));
 }
 
+function getHandlePostCallback(): string {
+  const declaration = findNode(
+    sourceFile,
+    (node): node is ts.VariableDeclaration =>
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === 'handlePost'
+  );
+
+  if (!declaration?.initializer || !ts.isCallExpression(declaration.initializer)) {
+    throw new Error('Could not locate the useSales handlePost callback.');
+  }
+
+  const callback = declaration.initializer.arguments[0];
+  if (!callback || !ts.isArrowFunction(callback)) {
+    throw new Error('The useSales handlePost callback is not an arrow function.');
+  }
+
+  return sourceText.slice(callback.getStart(sourceFile), callback.end);
+}
+
 describe('useSales handlePost resolved failure contract', () => {
   const handlePost = findNode(
     sourceFile,
@@ -49,7 +70,108 @@ describe('useSales handlePost resolved failure contract', () => {
     expect(branchText).not.toContain('currentOperationRef.current = null');
     expect(branchText).not.toContain('clearInvoiceDraft');
     expect(branchText).not.toContain('clearDraft');
-    expect(sourceText).toContain('if (isSavingRef.current || savePhase === \'saving\') return;');
+    expect(sourceText).toContain("if (isSavingRef.current || savePhase === 'saving') return;");
     expect(sourceText).toContain('isSavingRef.current = false;');
+  });
+
+  it('executes the real handlePost callback: retries a resolved failure with the identical transactionUuid', async () => {
+    let savePhase: 'idle' | 'saving' | 'failed' = 'idle';
+    const currentOperationRef: { current: string | null } = { current: null };
+    const isSavingRef = { current: false };
+    const addInvoiceRequests: Array<Record<string, any>> = [];
+    const savedDraftUuids: string[] = [];
+    const savingTransitions: boolean[] = [];
+    const notifications: string[] = [];
+    const toasts: string[] = [];
+    let generatedUuidCount = 0;
+
+    const addInvoice = async (request: Record<string, any>) => {
+      addInvoiceRequests.push(request);
+      return { success: false, error: 'SIMULATED_WORKFLOW_FAILURE' };
+    };
+
+    const dependencies = {
+      isSavingRef,
+      savePhase,
+      items: [{ id: 'item-1', product_id: 'product-1', qty: 1, price: 10 }],
+      isLocked: false,
+      isDuplicate: false,
+      salesPolicy: { tenantId: 'tenant-test' },
+      pricingState: { result: { totalAmount: '10.00' }, error: null },
+      addToast: (message: string) => toasts.push(message),
+      setIsSaving: (value: boolean) => savingTransitions.push(value),
+      setSavePhase: (value: 'idle' | 'saving' | 'failed') => { savePhase = value; },
+      showNotification: (message: string) => notifications.push(message),
+      currentOperationRef,
+      generateTransactionUuid: () => {
+        generatedUuidCount += 1;
+        return 'SALE-retry-stable-uuid';
+      },
+      customers: [],
+      header: {
+        customer_id: 'customer-1',
+        invoice_number: 'SALE-TEST-001',
+        payment_method: 'Cash',
+        notes: '',
+        attachment: '',
+        date: '2026-11-21',
+        isReturn: false
+      },
+      DraftService: {
+        saveInvoiceDraft: async (_key: string, _type: string, _items: unknown[], metadata: { transactionUuid: string }) => {
+          savedDraftUuids.push(metadata.transactionUuid);
+        }
+      },
+      vTotalSum: 10,
+      InvoiceWorkflowEngine: {
+        determineNextStatus: () => 'POSTED'
+      },
+      editingInvoiceId: null,
+      currency: 'YER',
+      addInvoice
+    };
+
+    const dependencyNames = Object.keys(dependencies);
+    const callbackSource = getHandlePostCallback();
+    const javascriptCallback = ts.transpileModule(callbackSource, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.None
+      }
+    }).outputText;
+    const compileCallback = new Function(...dependencyNames, `return (${javascriptCallback});`) as (...args: unknown[]) => () => Promise<void>;
+
+    const renderHandlePost = () => compileCallback(...dependencyNames.map(name =>
+      name === 'savePhase' ? savePhase : dependencies[name as keyof typeof dependencies]
+    ));
+
+    await renderHandlePost()();
+
+    expect(savePhase).toBe('failed');
+    expect(isSavingRef.current).toBe(false);
+    expect(savingTransitions).toEqual([true, false]);
+    expect(addInvoiceRequests).toHaveLength(1);
+    expect(savedDraftUuids).toEqual(['SALE-retry-stable-uuid']);
+    expect(currentOperationRef.current).toBe('SALE-retry-stable-uuid');
+
+    // A React rerender creates a fresh callback closure with savePhase='failed',
+    // while the operation ref and the exact draft/request identity remain stable.
+    await renderHandlePost()();
+
+    expect(savePhase).toBe('failed');
+    expect(isSavingRef.current).toBe(false);
+    expect(savingTransitions).toEqual([true, false, true, false]);
+    expect(addInvoiceRequests).toHaveLength(2);
+    expect(addInvoiceRequests.map(request => request.payload.transactionUuid)).toEqual([
+      'SALE-retry-stable-uuid',
+      'SALE-retry-stable-uuid'
+    ]);
+    expect(savedDraftUuids).toEqual([
+      'SALE-retry-stable-uuid',
+      'SALE-retry-stable-uuid'
+    ]);
+    expect(generatedUuidCount).toBe(1);
+    expect(notifications.filter(message => message.includes('تعذر حفظ فاتورة المبيعات'))).toHaveLength(2);
+    expect(toasts).toContain('SIMULATED_WORKFLOW_FAILURE');
   });
 });
