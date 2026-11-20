@@ -124,30 +124,33 @@ export const DraftService = {
   ): Promise<void> => {
     const scope = getDraftScope();
     const storageId = scopedDraftId(draftId, scope);
-    const existing = await db.draft_invoices.get(storageId);
-    if (existing) assertDraftScope(existing, scope, 'overwrite');
-    const now = new Date().toISOString();
-    const draft = {
-      id: storageId,
-      draftId: storageId,
-      invoiceType,
-      items,
-      // Keep a previously persisted operation key when an overlapping autosave
-      // writes a snapshot that does not yet include it.
-      totals: {
-        ...(totals || {}),
-        ...(typeof totals?.transactionUuid === 'string' && totals.transactionUuid.trim()
-          ? { transactionUuid: totals.transactionUuid.trim() }
-          : typeof existing?.totals?.transactionUuid === 'string'
-            ? { transactionUuid: existing.totals.transactionUuid }
-            : {})
-      },
-      tenantId: scope.tenantId,
-      branchId: scope.branchId,
-      createdAt: existing?.createdAt || createdAt || now,
-      updatedAt: now
-    };
-    await db.draft_invoices.put(draft);
+
+    // Serialize read/merge/write so a stale autosave cannot erase a key saved
+    // by a concurrent post attempt.
+    await db.transaction('rw', db.draft_invoices, async () => {
+      const existing = await db.draft_invoices.get(storageId);
+      if (existing) assertDraftScope(existing, scope, 'overwrite');
+      const now = new Date().toISOString();
+      const draft = {
+        id: storageId,
+        draftId: storageId,
+        invoiceType,
+        items,
+        totals: {
+          ...(totals || {}),
+          ...(typeof totals?.transactionUuid === 'string' && totals.transactionUuid.trim()
+            ? { transactionUuid: totals.transactionUuid.trim() }
+            : typeof existing?.totals?.transactionUuid === 'string'
+              ? { transactionUuid: existing.totals.transactionUuid }
+              : {})
+        },
+        tenantId: scope.tenantId,
+        branchId: scope.branchId,
+        createdAt: existing?.createdAt || createdAt || now,
+        updatedAt: now
+      };
+      await db.draft_invoices.put(draft);
+    });
   },
 
   quarantineInvoiceDraft: async (draft: any): Promise<void> => {
