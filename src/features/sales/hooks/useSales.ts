@@ -710,11 +710,11 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
       // Persist the operation key and the exact current invoice snapshot before
       // dispatch. If the app closes after a commit but before the response, the
       // next launch can retry with the same key and payload.
-      const partner = customers.find(c => c.id === header.customer_id);
+      const draftPartner = customers.find(c => c.id === header.customer_id);
       await DraftService.saveInvoiceDraft('sales_draft_current', 'SALE', items, {
         subtotal: vTotalSum,
         header,
-        partner: { partnerName: partner ? partner.Supplier_Name : '' },
+        partner: { partnerName: draftPartner ? draftPartner.Supplier_Name : '' },
         transactionUuid: requestUuid
       });
       const nextStatus = InvoiceWorkflowEngine.determineNextStatus(vTotalSum, header.payment_method === 'Cash' ? vTotalSum : 0, 'PENDING');
