@@ -22,6 +22,23 @@ const fakeTx: any = {
   invoiceItem: {
     update: vi.fn(),
   },
+  tenantSalesPolicy: {
+    findUnique: vi.fn().mockResolvedValue({
+      tenantId: 'tenant-A',
+      maxDiscountPercent: 10,
+      taxRatePercent: 0,
+      taxMode: 'NONE',
+    }),
+  },
+  inventoryBatch: {
+    update: vi.fn().mockResolvedValue({ id: 'batch-1' }),
+  },
+  inventoryMovement: {
+    create: vi.fn().mockResolvedValue({ id: 'mov-1' }),
+  },
+  product: {
+    update: vi.fn().mockResolvedValue({ id: 'prod-1' }),
+  },
   account: {
     findFirst: vi.fn(),
     findUnique: vi.fn(),
@@ -52,12 +69,27 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       invoiceNumber: 'INV-001',
       type: InvoiceType.SALE,
       totalAmount: 100,
+      subtotalAmount: 100,
+      taxAmount: 0,
+      discountAmount: 0,
+      taxMode: 'NONE',
       paymentStatus: 'PAID',
-      items: [],
+      items: [{ productId: 'prod-1', price: 100, qty: 1, product: { id: 'prod-1', price: 100, tenantId: 'tenant-A' } }],
       date: new Date(),
     });
 
-    fakeTx.$queryRaw.mockResolvedValue([{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }]);
+    fakeTx.$queryRaw.mockImplementation(async (sql: any) => {
+      const text = typeof sql === 'string'
+        ? sql
+        : (sql?.text || (sql?.strings ? sql.strings.join('') : '') || JSON.stringify(sql || ''));
+      if (text.includes('products') || text.includes('stockQuantity') || text.includes('FOR UPDATE')) {
+        return [{ id: 'prod-1', stockQuantity: 100, version: 1, tenantId: 'tenant-A' }];
+      }
+      if (text.includes('inventory_batches')) {
+        return [{ id: 'batch-1', batchNumber: 'B-001', stockQuantity: 200, cost: 10, expiryDate: new Date(Date.now() + 864000000), version: 1 }];
+      }
+      return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
+    });
     fakeTx.account.findFirst.mockResolvedValue({ id: 'ACC-1', version: 1, name: 'Cash' });
     fakeTx.account.findUnique.mockResolvedValue({ id: 'ACC-1', version: 1, name: 'Cash' });
     fakeTx.account.update.mockResolvedValue({ id: 'ACC-1' });
@@ -107,12 +139,27 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       invoiceNumber: 'INV-001',
       type: InvoiceType.SALE,
       totalAmount: 100,
+      subtotalAmount: 100,
+      taxAmount: 0,
+      discountAmount: 0,
+      taxMode: 'NONE',
       paymentStatus: 'PAID',
-      items: [],
+      items: [{ productId: 'prod-1', price: 100, qty: 1, product: { id: 'prod-1', price: 100, tenantId: 'tenant-A' } }],
       date: invoiceDate,
     });
 
-    fakeTx.$queryRaw.mockResolvedValue([{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }]);
+    fakeTx.$queryRaw.mockImplementation(async (sql: any) => {
+      const text = typeof sql === 'string'
+        ? sql
+        : (sql?.text || (sql?.strings ? sql.strings.join('') : '') || JSON.stringify(sql || ''));
+      if (text.includes('products') || text.includes('stockQuantity') || text.includes('FOR UPDATE')) {
+        return [{ id: 'prod-1', stockQuantity: 100, version: 1, tenantId: 'tenant-A' }];
+      }
+      if (text.includes('inventory_batches')) {
+        return [{ id: 'batch-1', batchNumber: 'B-001', stockQuantity: 200, cost: 10, expiryDate: new Date(Date.now() + 864000000), version: 1 }];
+      }
+      return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
+    });
     fakeTx.account.findFirst.mockResolvedValue({ id: 'ACC-1', version: 1, name: 'Cash' });
     fakeTx.account.findUnique.mockResolvedValue({ id: 'ACC-1', version: 1, name: 'Cash' });
     fakeTx.account.update.mockResolvedValue({ id: 'ACC-1' });
