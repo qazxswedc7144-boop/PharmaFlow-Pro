@@ -132,7 +132,16 @@ export const DraftService = {
       draftId: storageId,
       invoiceType,
       items,
-      totals,
+      // Keep a previously persisted operation key when an overlapping autosave
+      // writes a snapshot that does not yet include it.
+      totals: {
+        ...(totals || {}),
+        ...(typeof totals?.transactionUuid === 'string' && totals.transactionUuid.trim()
+          ? { transactionUuid: totals.transactionUuid.trim() }
+          : typeof existing?.totals?.transactionUuid === 'string'
+            ? { transactionUuid: existing.totals.transactionUuid }
+            : {})
+      },
       tenantId: scope.tenantId,
       branchId: scope.branchId,
       createdAt: existing?.createdAt || createdAt || now,
