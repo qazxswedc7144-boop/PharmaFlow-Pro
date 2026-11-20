@@ -344,9 +344,19 @@ export class WorkflowExecutionPipeline {
 
       const errorObj = err instanceof WorkflowExecutionError ? err : new WorkflowExecutionError(err.message || String(err), 'TRANSACTION_FAILED', { originalError: err });
 
-      // Rollback Idempotency status
+      // Remove only an uncommitted PROCESSING marker after a confirmed rollback.
+      // A payload-mismatch or replay error must never erase a COMMITTED key: doing so
+      // would allow the same key to execute a second business transaction.
       if (ctx.idempotencyKey) {
-        await IdempotencyRegistry.delete(ctx.idempotencyKey, ctx.tenantId).catch(() => null);
+        try {
+          const existingIdempotency = await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId);
+          if (existingIdempotency?.status === 'PROCESSING') {
+            await IdempotencyRegistry.delete(ctx.idempotencyKey, ctx.tenantId);
+          }
+        } catch (idempotencyCleanupError) {
+          // Fail closed: if the durable status cannot be read, preserve the key.
+          console.warn('[WorkflowExecutionPipeline] Idempotency cleanup skipped because status could not be verified:', idempotencyCleanupError);
+        }
       }
 
       // Register Incident Recovery
