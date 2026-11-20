@@ -22,7 +22,7 @@ import { configurationService } from '@/services/config/configurationService';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { TenantSalesPolicyService, type CachedTenantSalesPolicy } from '@features/sales/services/tenantSalesPolicy.service';
 import { LocalSalesPricingService, type LocalSalesPricingResult } from '@features/sales/services/localSalesPricing.service';
-import { restoreSalesDraftItems } from '@features/sales/services/salesDraftRecovery.service';
+import { getSalesDraftOperationKey, restoreSalesDraftItems } from '@features/sales/services/salesDraftRecovery.service';
 import { generateTransactionUuid } from '@/utils/uuid';
 
 const DRAFT_KEY = 'pharmaflow_sales_draft';
@@ -224,6 +224,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         // references only; pricing is recalculated by LocalSalesPricingService.
         const restoredItems = await restoreSalesDraftItems(recoveryDraftData, (productId) => db.products.get(productId));
         if (data.header) setHeader(data.header);
+        currentOperationRef.current = getSalesDraftOperationKey(recoveryDraftData);
         setItems(restoredItems);
         const partnerName = recoveryDraftData.partner?.partnerName || data.partner?.partnerName;
         if (partnerName) setCustomerSearchTerm(partnerName);
@@ -470,7 +471,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         await DraftService.saveInvoiceDraft('sales_draft_current', 'SALE', items, {
           subtotal: vTotalSum,
           header,
-          partner: { partnerName }
+          partner: { partnerName },
+          transactionUuid: currentOperationRef.current || undefined
         });
       } catch (e) {
         console.error("Interval auto-save failed:", e);
@@ -507,7 +509,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
           await DraftService.saveInvoiceDraft('sales_draft_current', 'SALE', items, {
             subtotal: vTotalSum,
             header,
-            partner: { partnerName }
+            partner: { partnerName },
+            transactionUuid: currentOperationRef.current || undefined
           });
         } catch (e) {
           console.error("Immediate change-triggered auto-save failed:", e);
@@ -704,6 +707,16 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         currentOperationRef.current = generateTransactionUuid('SALE');
       }
       const requestUuid = currentOperationRef.current;
+      // Persist the operation key and the exact current invoice snapshot before
+      // dispatch. If the app closes after a commit but before the response, the
+      // next launch can retry with the same key and payload.
+      const partner = customers.find(c => c.id === header.customer_id);
+      await DraftService.saveInvoiceDraft('sales_draft_current', 'SALE', items, {
+        subtotal: vTotalSum,
+        header,
+        partner: { partnerName: partner ? partner.Supplier_Name : '' },
+        transactionUuid: requestUuid
+      });
       const nextStatus = InvoiceWorkflowEngine.determineNextStatus(vTotalSum, header.payment_method === 'Cash' ? vTotalSum : 0, 'PENDING');
 
       const res = await addInvoice({
