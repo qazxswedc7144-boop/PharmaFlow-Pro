@@ -80,6 +80,20 @@ describe('DraftService tenant isolation and persistence errors', () => {
     await DraftService.clearDraft(logicalId);
   });
 
+  it('preserves a sales transaction UUID in the recoverable draft across reload', async () => {
+    const logicalId = uniqueId();
+    const transactionUuid = 'SALE-OPERATION-RELOAD-TEST';
+    await DraftService.saveInvoiceDraft(logicalId, 'SALE', [{ product_id: 'product-1', qty: 1 }], {
+      header: { invoice_number: 'SALE-RELOAD-1' },
+      transactionUuid
+    });
+
+    // A fresh lookup models the next application launch reading IndexedDB.
+    const recovered = await DraftService.getUnfinishedInvoiceDraft('SALE');
+    expect(recovered?.totals?.transactionUuid).toBe(transactionUuid);
+    await DraftService.clearInvoiceDraft(logicalId);
+  });
+
   it('verifies active invoice draft removal instead of silently accepting a no-op delete', async () => {
     const logicalId = uniqueId();
     await DraftService.saveInvoiceDraft(logicalId, 'PURCHASE', [{ productId: 'p-1' }], { total: 10 });
