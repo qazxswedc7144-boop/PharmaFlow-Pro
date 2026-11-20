@@ -109,7 +109,7 @@ vi.mock('@/services/saas/usageMeterService', () => ({
 }));
 
 vi.mock('@/core/observability', () => ({
-  observabilityService: { recordMetric: vi.fn() },
+  observabilityService: { recordMetric: vi.fn(), recordPerformance: vi.fn() },
 }));
 
 vi.mock('@features/auth/services/authService', () => ({
@@ -374,7 +374,7 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     };
     for (let i = 0; i < warmups; i += 1) await runOne();
 
-    const metricRecorder = (observabilityService as any).recordMetric;
+    const metricRecorder = (observabilityService as any).recordPerformance;
     metricRecorder.mockClear();
     const endToEnd: number[] = [];
     for (let i = 0; i < samples; i += 1) {
@@ -400,8 +400,12 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     const report: Record<string, ReturnType<typeof summarize>> = {};
     for (const stage of ['validation', 'idempotency', 'local_commit', 'sync_persistence', 'post_commit']) {
       const values = calls
-        .filter(([name, , labels]) => name === 'workflow.stage_duration_ms' && (labels as any)?.stage === stage)
-        .map(([, duration]) => Number(duration));
+        .filter(([name, category, , , metadata]) =>
+          name === `workflow.stage.${stage}` &&
+          category === (stage === 'sync_persistence' ? 'SYNC' : 'FINANCIAL_SAVE') &&
+          (metadata as any)?.stage === stage
+        )
+        .map(([, , duration]) => Number(duration));
       expect(values).toHaveLength(samples);
       report[stage] = summarize(values);
     }
