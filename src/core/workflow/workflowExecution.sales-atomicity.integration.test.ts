@@ -374,7 +374,8 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     };
     for (let i = 0; i < warmups; i += 1) await runOne();
 
-    vi.mocked(observabilityService.recordMetric).mockClear();
+    const metricRecorder = (observabilityService as any).recordMetric;
+    metricRecorder.mockClear();
     const endToEnd: number[] = [];
     for (let i = 0; i < samples; i += 1) {
       const startedAt = performance.now();
@@ -395,7 +396,7 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
       };
     };
 
-    const calls = vi.mocked(observabilityService.recordMetric).mock.calls;
+    const calls = metricRecorder.mock.calls;
     const report: Record<string, ReturnType<typeof summarize>> = {};
     for (const stage of ['validation', 'idempotency', 'local_commit', 'sync_persistence', 'post_commit']) {
       const values = calls
