@@ -29,9 +29,9 @@ describe('ProductApplicationWorkflow local commit boundary', () => {
   it('owns product sync enqueue inside the same local transaction', () => {
     expect(productApplicationWorkflow.syncHandledInDomainTransaction).toBe(true);
     expect(typeof productApplicationWorkflow.localExecutionGuard).toBe('function');
-    expect((productApplicationWorkflow.localExecutionGuard as Function)({ isNew: true })).toBe(true);
-    expect((productApplicationWorkflow.localExecutionGuard as Function)({})).toBe(true);
-    expect((productApplicationWorkflow.localExecutionGuard as Function)({ isNew: false })).toBe(false);
+    expect((productApplicationWorkflow.localExecutionGuard as (arg?: unknown) => boolean)({ isNew: true })).toBe(true);
+    expect((productApplicationWorkflow.localExecutionGuard as (arg?: unknown) => boolean)({})).toBe(true);
+    expect((productApplicationWorkflow.localExecutionGuard as (arg?: unknown) => boolean)({ isNew: false })).toBe(false);
     expect(productApplicationWorkflow.tables).toEqual(
       expect.arrayContaining(['products', 'syncQueue', 'outbox', 'auditLogs'])
     );

@@ -2,7 +2,7 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "./auth.middleware.js";
 import { AuthService } from "./auth.service.js";
-import { JsonWebTokenError } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
 import { AuditService } from "../audit/audit.service.js";
 import { prisma } from "../../../../../server/database/prisma.js";
 import { LoginAttemptAuditError, LoginAttemptStoreError, recordFailedLoginAttempt, releaseLoginAttempt } from "../../../../../server/security/loginAttemptGuard.js";
@@ -121,7 +121,7 @@ export class AuthController {
       try {
         decoded = AuthService.verifyRefreshToken(refreshToken);
       } catch (err) {
-        if (err instanceof JsonWebTokenError) {
+        if (err instanceof jwt.JsonWebTokenError) {
           return res.status(401).json({ error: "INVALID_REFRESH_TOKEN", message: "رمز التحديث غير صالح أو منتهي الصلاحية." });
         }
         throw err;

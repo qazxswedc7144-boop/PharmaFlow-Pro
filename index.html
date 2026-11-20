@@ -4,10 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>PharmaFlow Pro</title>
-    <meta name="description" content="تطبيق مالي ومحاسبي متكامل لإدارة الحسابات والديون للشركات والصيدليات مع دعم أوفلاين كامل.">
-    <meta property="og:title" content="حساباتي | Hisabati">
-    <meta property="og:description" content="تطبيق مالي ومحاسبي متكامل لإدارة الحسابات والديون للشركات والصيدليات مع دعم أوفلاين كامل.">
+    <title>PharmaFlow</title>
+    <meta name="description" content="Enterprise-grade ERP for pharmacies with Offline-First, encrypted local storage, AI analytics, and strict financial auditing.">
+    <meta property="og:title" content="PharmaFlow">
+    <meta property="og:description" content="Enterprise-grade ERP for pharmacies with Offline-First, encrypted local storage, AI analytics, and strict financial auditing.">
     
     <!-- PWA & Mobile Meta -->
     <link rel="icon" type="image/png" href="/logo.png">
@@ -128,6 +128,16 @@
               .catch(function(err) { console.warn('[PWA] Failed to load', err); });
           });
         }
+
+        // SILENCE VITE WEBSOCKET NOISE (Expected in AI Studio preview)
+        const originalError = console.error;
+        console.error = function(...args) {
+          const msg = args.join(' ');
+          if (msg.includes('WebSocket closed without opened') || msg.includes('[vite]')) {
+            return;
+          }
+          originalError.apply(console, args);
+        };
       })();
     </script>
 <script type="module" src="/src/main.tsx"></script>

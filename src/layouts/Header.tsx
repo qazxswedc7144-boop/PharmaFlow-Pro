@@ -2,9 +2,10 @@
 import { useState, useEffect } from 'react';
 import { db } from '@/core/db';
 const defaultLogoImg = '/logo.png';
-import { HeartPulse, Menu } from 'lucide-react';
+import { HeartPulse, Menu, LogOut } from 'lucide-react';
 import NotificationCenter from '@/components/shared/NotificationCenter';
 import { SidebarMenu } from './SidebarMenu';
+import { useAuth } from '@/features/auth/hooks/useAuth';
 
 const DynamicLogo = () => {
   const [logoSrc, setLogoSrc] = useState<string | null>(null);
@@ -110,7 +111,22 @@ const Header = ({
   currentView,
   isHome,
 }: HeaderProps) => {
+  const { signOut } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (window.confirm('هل أنت متأكد من تسجيل الخروج؟')) {
+      setIsLoggingOut(true);
+      try {
+        await signOut();
+      } catch (error) {
+        console.error('Logout failed:', error);
+      } finally {
+        setIsLoggingOut(false);
+      }
+    }
+  };
 
   const [windowLocation, setWindowLocation] = useState(() => ({
     pathname: typeof window !== 'undefined' ? window.location.pathname : '/',
@@ -199,6 +215,20 @@ const Header = ({
       {/* التنبيهات وأزرار الرجوع والعنوان */}
       <div className="absolute left-4 sm:left-6 top-1/2 -translate-y-1/2 z-10 flex items-center gap-2 md:gap-3">
         <NotificationCenter />
+
+        <button
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+          className="w-10 h-10 flex items-center justify-center bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-xl transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+          title="تسجيل الخروج"
+          aria-label="تسجيل الخروج"
+        >
+          {isLoggingOut ? (
+            <div className="w-4 h-4 border-2 border-red-600/30 border-t-red-600 rounded-full animate-spin" />
+          ) : (
+            <LogOut size={18} />
+          )}
+        </button>
 
         {showBackButton && (
           <button

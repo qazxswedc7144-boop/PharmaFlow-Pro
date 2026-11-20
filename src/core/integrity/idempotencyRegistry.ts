@@ -37,48 +37,43 @@ export class IdempotencyRegistry {
     }
 
     // 2. Check Dexie database (idempotency_records table)
-    try {
-      if (typeof indexedDB !== 'undefined' && db && db.idempotency_records) {
-        let record = await db.idempotency_records.get(effectiveKey);
-        if (!record && key !== effectiveKey) {
-          record = await db.idempotency_records.get(key);
-          if (record && tenantId && record.tenantId !== tenantId) {
-            record = undefined; // Do not leak cross-tenant idempotency record
-          }
-        }
-        if (record) {
-          this.inMemoryStore.set(effectiveKey, record);
-          return record;
+    // Storage read failures fail closed so a caller cannot execute a duplicate workflow.
+    if (typeof indexedDB !== 'undefined' && db && db.idempotency_records) {
+      let record = await db.idempotency_records.get(effectiveKey);
+      if (!record && key !== effectiveKey) {
+        record = await db.idempotency_records.get(key);
+        if (record && tenantId && record.tenantId !== tenantId) {
+          record = undefined; // Do not leak cross-tenant idempotency record
         }
       }
+      if (record) {
+        this.inMemoryStore.set(effectiveKey, record);
+        return record;
+      }
+    }
 
-      // 3. Fallback check on legacy idempotencyKeys table
-      if (typeof indexedDB !== 'undefined' && db && db.idempotencyKeys) {
-        const legacyRec = await db.idempotencyKeys.get(effectiveKey) || await db.idempotencyKeys.get(key);
-        if (legacyRec) {
-          const recTenant = (legacyRec as any).tenantId || tenantId;
-          if (tenantId && recTenant && recTenant !== tenantId) {
-            return null;
-          }
-          const rec: IdempotencyRecord = {
-            key: legacyRec.id,
-            status: legacyRec.status as IdempotencyStatus,
-            tenantId: recTenant || tenantId || 'unknown',
-            branchId: (legacyRec as any).branchId || 'BRH-001',
-            operationType: 'legacy',
-            entityType: 'transaction',
-            fingerprint: 'legacy',
-            createdAt: legacyRec.createdAt || new Date().toISOString(),
-            completedAt: legacyRec.completedAt
-          };
-          this.inMemoryStore.set(effectiveKey, rec);
-          return rec;
+    // 3. Fallback check on legacy idempotencyKeys table
+    if (typeof indexedDB !== 'undefined' && db && db.idempotencyKeys) {
+      const legacyRec = await db.idempotencyKeys.get(effectiveKey) || await db.idempotencyKeys.get(key);
+      if (legacyRec) {
+        const recTenant = (legacyRec as any).tenantId || tenantId;
+        if (tenantId && recTenant && recTenant !== tenantId) {
+          return null;
         }
+        const rec: IdempotencyRecord = {
+          key: legacyRec.id,
+          status: legacyRec.status as IdempotencyStatus,
+          tenantId: recTenant || tenantId || 'unknown',
+          branchId: (legacyRec as any).branchId || 'BRH-001',
+          operationType: 'legacy',
+          entityType: 'transaction',
+          fingerprint: 'legacy',
+          createdAt: legacyRec.createdAt || new Date().toISOString(),
+          completedAt: legacyRec.completedAt
+        };
+        this.inMemoryStore.set(effectiveKey, rec);
+        return rec;
       }
-    } catch (err) {
-      // A storage read failure is not equivalent to "no prior operation".
-      // Fail closed so a caller cannot execute a duplicate workflow.
-      throw err;
     }
 
     return null;
