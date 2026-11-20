@@ -82,7 +82,11 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       const text = typeof sql === 'string'
         ? sql
         : (sql?.text || (sql?.strings ? sql.strings.join('') : '') || JSON.stringify(sql || ''));
-      if (text.includes('products') || text.includes('stockQuantity') || text.includes('FOR UPDATE')) {
+      if (text.includes('invoices') || text.includes('documentStatus')) {
+        expect(text).toContain('tenantId');
+        return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
+      }
+      if (text.includes('products') || text.includes('stockQuantity')) {
         return [{ id: 'prod-1', stockQuantity: 100, version: 1, tenantId: 'tenant-A' }];
       }
       if (text.includes('inventory_batches')) {
@@ -152,7 +156,11 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       const text = typeof sql === 'string'
         ? sql
         : (sql?.text || (sql?.strings ? sql.strings.join('') : '') || JSON.stringify(sql || ''));
-      if (text.includes('products') || text.includes('stockQuantity') || text.includes('FOR UPDATE')) {
+      if (text.includes('invoices') || text.includes('documentStatus')) {
+        expect(text).toContain('tenantId');
+        return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
+      }
+      if (text.includes('products') || text.includes('stockQuantity')) {
         return [{ id: 'prod-1', stockQuantity: 100, version: 1, tenantId: 'tenant-A' }];
       }
       if (text.includes('inventory_batches')) {
