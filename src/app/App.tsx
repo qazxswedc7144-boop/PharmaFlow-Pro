@@ -776,7 +776,7 @@ function MainLayout() {
     if (currentView === 'branch-reports') return 'تقرير تحليلات الفروع الذكي';
     if (currentView === 'settings') return 'مركز الإدارة والإعدادات';
     if (currentView === 'fifo-audit-temp') return 'تدقيق FIFO مؤقت';
-    return 'العملية';
+    return '';
   };
 
   if (!isReady) {
