@@ -749,16 +749,6 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         showNotification("Invoice Saved Successfully\nReturning to Dashboard...", 'success', 1000);
         addToast("Invoice Saved Successfully\nReturning to Dashboard...", "success");
 
-        reportCache.purge();
-        db.incrementDataVersion();
-        ReportEngine.scheduleRefreshInBackground();
-        void Promise.resolve()
-          .then(() => refreshGlobal())
-          .catch((refreshError: unknown) => {
-            console.warn('[useSales] Background provider refresh failed:', refreshError);
-            showNotification('تم حفظ الفاتورة، لكن تعذر تحديث بعض بيانات الشاشة. أعد تحديث الصفحة عند الحاجة.', 'warning');
-          });
-
         const postCommitWarnings: string[] = [];
         const runPostCommitTask = async (name: string, task: () => Promise<unknown> | unknown) => {
           try {
@@ -768,6 +758,18 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
             postCommitWarnings.push(name);
           }
         };
+
+        // These are secondary projections. Their failures must never turn a
+        // committed sale into an apparent save failure.
+        await runPostCommitTask('report-cache-purge', () => reportCache.purge());
+        await runPostCommitTask('data-version-increment', () => db.incrementDataVersion());
+        await runPostCommitTask('report-refresh-schedule', () => ReportEngine.scheduleRefreshInBackground());
+        void Promise.resolve()
+          .then(() => refreshGlobal())
+          .catch((refreshError: unknown) => {
+            console.warn('[useSales] Background provider refresh failed:', refreshError);
+            showNotification('تم حفظ الفاتورة، لكن تعذر تحديث بعض بيانات الشاشة. أعد تحديث الصفحة عند الحاجة.', 'warning');
+          });
 
         await runPostCommitTask('audit-log', () =>
           auditLogService.logSale(res.refId || editingInvoiceId || header.invoice_number, `Sale created: ${header.invoice_number}`, { items, total: vTotalSum })
