@@ -27,6 +27,17 @@ export class WorkflowExecutionPipeline {
     let committedResult!: TResult;
     const postCommitWarnings: string[] = [];
     let syncStatus: 'ENQUEUED' | 'SYNCED' | 'FAILED' | 'LOCAL_ONLY' = 'ENQUEUED';
+    const measureNow = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const recordStageDuration = (stage: string, startedAt: number) => {
+      try {
+        observabilityService.recordMetric?.('workflow.stage_duration_ms', Math.max(0, measureNow() - startedAt), {
+          workflow: workflow.id,
+          stage
+        });
+      } catch {
+        // Measurement must never change the business transaction outcome.
+      }
+    };
     const addPostCommitWarning = (step: string, error: unknown) => {
       console.warn(`[WorkflowExecutionPipeline] Post-commit step failed (${step}):`, error);
       postCommitWarnings.push(step);
@@ -47,14 +58,17 @@ export class WorkflowExecutionPipeline {
       await WorkflowHooksRunner.runHook(workflow.hooks?.afterAuthorization, input, ctx, 'afterAuthorization');
 
       // Step 5 & 6: Validation & Hooks
+      const validationStartedAt = measureNow();
       await WorkflowHooksRunner.runHook(workflow.hooks?.beforeValidation, input, ctx, 'beforeValidation');
       await WorkflowValidation.validate(workflow, input, ctx);
       await WorkflowHooksRunner.runHook(workflow.hooks?.afterValidation, input, ctx, 'afterValidation');
+      recordStageDuration('validation', validationStartedAt);
 
       // Step 8: Before Execute Hook
       await WorkflowHooksRunner.runHook(workflow.hooks?.beforeExecute, input, ctx, 'beforeExecute');
 
       // Step 9: Idempotency Check & Acquisition
+      const idempotencyStartedAt = measureNow();
       if (ctx.idempotencyKey) {
         const payloadFingerprint = JSON.stringify(input ?? {});
         const existing = await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId);
@@ -139,6 +153,8 @@ export class WorkflowExecutionPipeline {
         }
       }
 
+      recordStageDuration('idempotency', idempotencyStartedAt);
+
       // Resolve sync dependencies before opening the IndexedDB transaction.
       // Dynamic imports / non-IDB awaits inside an active Dexie transaction can
       // let IndexedDB auto-commit before the Queue/Outbox writes are reached.
@@ -176,6 +192,7 @@ export class WorkflowExecutionPipeline {
               );
             }
             const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = saleSyncDependencies;
+            const syncStartedAt = measureNow();
             const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
               workflow.operationType,
               toSaleSyncDTO(res),
@@ -183,6 +200,7 @@ export class WorkflowExecutionPipeline {
               ctx.idempotencyKey,
               { tenantId: ctx.tenantId, branchId: ctx.branchId }
             );
+            recordStageDuration('sync_persistence', syncStartedAt);
             if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
               throw new WorkflowExecutionError(
                 'SYNC_ENQUEUE_FAILED: Durable sale queue/outbox acknowledgement is incomplete.',
@@ -208,9 +226,12 @@ export class WorkflowExecutionPipeline {
 
       // Catalog product creation uses only an in-tab guard; its idempotency and
       // queue/outbox writes remain durable inside the Dexie transaction.
+      const localCommitStartedAt = measureNow();
       const domainResult = useLocalExecutionGuard
         ? await ExecutionGuard.executeWithLocalGuard<TResult>(guardOptions, executeDomainTransaction)
         : await ExecutionGuard.executeWithGuard<TResult>(guardOptions, executeDomainTransaction);
+      recordStageDuration('local_commit', localCommitStartedAt);
+      const postCommitStartedAt = measureNow();
 
       // Step 12: Mark Idempotency Completed & Invalidate Meter Cache
       if (ctx.idempotencyKey) {
@@ -311,6 +332,7 @@ export class WorkflowExecutionPipeline {
         addPostCommitWarning('after-commit-hooks', hookError);
       }
 
+      recordStageDuration('post_commit', postCommitStartedAt);
       return WorkflowResultBuilder.success(domainResult, ctx, {
         auditReference: auditRef,
         warnings: postCommitWarnings,
