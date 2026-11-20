@@ -116,7 +116,7 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     expect(mockSave).toHaveBeenCalledTimes(1);
     expect(mockExecuteDomainSteps).not.toHaveBeenCalled();
     expect(mockUpdateStatus).not.toHaveBeenCalled();
-    expect(mockDelete).toHaveBeenCalledWith(context.idempotencyKey, context.tenantId);
+    expect(mockDelete).not.toHaveBeenCalled();
   });
 
   it('keeps a committed workflow successful when the completion event fails', async () => {
