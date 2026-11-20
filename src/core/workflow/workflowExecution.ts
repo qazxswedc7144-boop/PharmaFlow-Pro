@@ -28,12 +28,12 @@ export class WorkflowExecutionPipeline {
     const postCommitWarnings: string[] = [];
     let syncStatus: 'ENQUEUED' | 'SYNCED' | 'FAILED' | 'LOCAL_ONLY' = 'ENQUEUED';
     const measureNow = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
-    const recordStageDuration = (stage: string, startedAt: number) => {
+    const recordStageDurationValue = (stage: string, durationMs: number) => {
       try {
         (observabilityService as any).recordPerformance?.(
           `workflow.stage.${stage}`,
           stage === 'sync_persistence' ? 'SYNC' : 'FINANCIAL_SAVE',
-          Math.max(0, measureNow() - startedAt),
+          Math.max(0, durationMs),
           { feature: workflow.id, tenantId: ctx.tenantId },
           { workflow: workflow.id, stage }
         );
@@ -41,6 +41,8 @@ export class WorkflowExecutionPipeline {
         // Measurement must never change the business transaction outcome.
       }
     };
+    const recordStageDuration = (stage: string, startedAt: number) =>
+      recordStageDurationValue(stage, measureNow() - startedAt);
     const addPostCommitWarning = (step: string, error: unknown) => {
       console.warn(`[WorkflowExecutionPipeline] Post-commit step failed (${step}):`, error);
       postCommitWarnings.push(step);
@@ -182,6 +184,7 @@ export class WorkflowExecutionPipeline {
       };
 
       const executeDomainTransaction = async (): Promise<TResult> => {
+        let syncPersistenceDurationMs: number | null = null;
         const committed = await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
           // Step 11: Execute Domain Steps
           const res = await workflow.executeDomainSteps(input, ctx, tx);
@@ -203,7 +206,7 @@ export class WorkflowExecutionPipeline {
               ctx.idempotencyKey,
               { tenantId: ctx.tenantId, branchId: ctx.branchId }
             );
-            recordStageDuration('sync_persistence', syncStartedAt);
+            syncPersistenceDurationMs = Math.max(0, measureNow() - syncStartedAt);
             if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
               throw new WorkflowExecutionError(
                 'SYNC_ENQUEUE_FAILED: Durable sale queue/outbox acknowledgement is incomplete.',
@@ -214,6 +217,11 @@ export class WorkflowExecutionPipeline {
           return res;
         });
 
+        // Record nested Queue/Outbox persistence only after the IndexedDB transaction
+        // commits, so telemetry cannot accidentally join or prolong the Dexie transaction.
+        if (syncPersistenceDurationMs !== null) {
+          recordStageDurationValue('sync_persistence', syncPersistenceDurationMs);
+        }
         // TransactionBoundary resolves only after the IndexedDB transaction commits.
         transactionCommitted = true;
         committedResult = committed;
