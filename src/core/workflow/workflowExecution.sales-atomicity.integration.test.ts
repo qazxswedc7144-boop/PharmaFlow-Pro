@@ -360,8 +360,8 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     vi.mocked(IdempotencyRegistry.updateStatus).mockImplementation((...args) => actualRegistry.updateStatus(...args));
     vi.mocked(IdempotencyRegistry.delete).mockImplementation((...args) => actualRegistry.delete(...args));
 
-    const warmups = 5;
-    const samples = 30;
+    const warmups = 10;
+    const samples = 100;
     let sequence = 0;
     const runOne = async () => {
       sequence += 1;
