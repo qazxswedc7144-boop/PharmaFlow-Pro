@@ -15,6 +15,19 @@ type CatalogProduct = {
 };
 
 /**
+ * Returns the stable operation key stored with a recoverable sales draft.
+ * The key lives in the existing totals payload; no Dexie schema change is needed.
+ */
+export function getSalesDraftOperationKey(draft: unknown): string | null {
+  const source = draft as any;
+  const data = source?.totals?.header
+    ? source.totals
+    : (source?.payload || source || {});
+  const key = data?.transactionUuid ?? source?.transactionUuid;
+  return typeof key === 'string' && key.trim() ? key.trim() : null;
+}
+
+/**
  * Rehydrates legacy sale draft lines from the current tenant's Dexie catalog.
  * Deliberately does not read or return legacy totals/discount/tax/fee fields.
  */

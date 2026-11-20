@@ -109,7 +109,7 @@ vi.mock('@/services/saas/usageMeterService', () => ({
 }));
 
 vi.mock('@/core/observability', () => ({
-  observabilityService: { recordMetric: vi.fn() },
+  observabilityService: { recordMetric: vi.fn(), recordPerformance: vi.fn() },
 }));
 
 vi.mock('@features/auth/services/authService', () => ({
@@ -131,6 +131,8 @@ import { db } from '@/core/db';
 import { WorkflowExecutionPipeline } from '@/core/workflow/workflowExecution';
 import { salesWorkflow } from '@/features/sales/workflows/SalesWorkflow';
 import { DistributedSyncEngine } from '@/features/sync/sync.engine';
+import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import { observabilityService } from '@/core/observability';
 
 const createContext = (suffix: string) => ({
   workflowId: `workflow-sales-atomicity-${suffix}`,
@@ -242,6 +244,88 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     expect(outboxRows[0].operation).toBe('POST');
   });
 
+  it('replays a committed sale with the same idempotency key without repeating domain writes', async () => {
+    const context = createContext('REPLAY');
+    const input = createInput('REPLAY');
+
+    const firstResult = await WorkflowExecutionPipeline.run(salesWorkflow, input as any, context);
+    expect(firstResult.success).toBe(true);
+
+    const savedMarker = vi.mocked(IdempotencyRegistry.save).mock.calls
+      .map(([record]) => record)
+      .find((record: any) => record.key === context.idempotencyKey);
+    expect(savedMarker).toBeTruthy();
+
+    const committedRecord = {
+      ...savedMarker,
+      status: 'COMMITTED',
+      result: firstResult.data,
+      responseData: firstResult.data,
+    };
+
+    // SalesWorkflow validation performs one lookup before the pipeline's
+    // idempotency check. Return no record there, then the committed marker.
+    vi.mocked(IdempotencyRegistry.get)
+      .mockResolvedValueOnce(null as any)
+      .mockResolvedValueOnce(committedRecord as any);
+
+    const replayResult = await WorkflowExecutionPipeline.run(
+      salesWorkflow,
+      createInput('REPLAY') as any,
+      createContext('REPLAY'),
+    );
+
+    expect(replayResult.success).toBe(true);
+    expect(replayResult.warnings?.join(' ')).toContain('تم استرجاع النتيجة');
+    expect(mockInventoryIssue).toHaveBeenCalledTimes(1);
+    expect(mockPostInvoice).toHaveBeenCalledTimes(1);
+    expect(await db.invoices.where('id').equals('SALE-ATOMICITY-REPLAY').count()).toBe(1);
+    expect(await db.inventoryTransactions.where('id').equals('inventory-SALE-ATOMICITY-REPLAY').count()).toBe(1);
+    expect(await db.journalEntries.where('id').equals('journal-SALE-ATOMICITY-REPLAY').count()).toBe(1);
+    expect(await db.syncQueue.where('idempotencyKey').equals('sale-atomicity-REPLAY').count()).toBe(1);
+    expect(await db.outbox.where('idempotencyKey').equals('sale-atomicity-REPLAY').count()).toBe(1);
+  });
+
+  it('does not delete a COMMITTED key when the same key is reused with a different payload', async () => {
+    const context = createContext('MISMATCH');
+    const firstResult = await WorkflowExecutionPipeline.run(
+      salesWorkflow,
+      createInput('MISMATCH') as any,
+      context,
+    );
+    expect(firstResult.success).toBe(true);
+
+    const savedMarker = vi.mocked(IdempotencyRegistry.save).mock.calls
+      .map(([record]) => record)
+      .find((record: any) => record.key === context.idempotencyKey);
+    expect(savedMarker).toBeTruthy();
+    const committedRecord = {
+      ...savedMarker,
+      status: 'COMMITTED',
+      result: firstResult.data,
+      responseData: firstResult.data,
+    };
+
+    const changedPayload = createInput('MISMATCH');
+    changedPayload.invoiceNumber = 'INV-CHANGED-WITH-SAME-KEY';
+    vi.mocked(IdempotencyRegistry.get)
+      .mockResolvedValueOnce(null as any)
+      .mockResolvedValueOnce(committedRecord as any)
+      .mockResolvedValueOnce(committedRecord as any);
+
+    const mismatchResult = await WorkflowExecutionPipeline.run(
+      salesWorkflow,
+      changedPayload as any,
+      createContext('MISMATCH'),
+    );
+
+    expect(mismatchResult.success).toBe(false);
+    expect(mismatchResult.error?.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(IdempotencyRegistry.delete).not.toHaveBeenCalledWith(context.idempotencyKey, TENANT_ID);
+    expect(mockInventoryIssue).toHaveBeenCalledTimes(1);
+    expect(await db.invoices.where('id').equals('SALE-ATOMICITY-MISMATCH').count()).toBe(1);
+  });
+
   it('rolls back the real SalesWorkflow invoice, inventory, financial and journal writes when Outbox persistence fails', async () => {
     const outboxAdd = vi.spyOn(db.outbox, 'add').mockRejectedValueOnce(new Error('OUTBOX_WRITE_FAILED'));
 
@@ -263,5 +347,80 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     expect(await db.outbox.where('idempotencyKey').equals('sale-atomicity-ROLLBACK').count()).toBe(0);
 
     outboxAdd.mockRestore();
+  });
+
+  it('BENCHMARK: reports 100-sample stage Median/P95 using Dexie and the SalesWorkflow pipeline', async () => {
+    const actualModule = await vi.importActual<typeof import('@/core/integrity/idempotencyRegistry')>(
+      '@/core/integrity/idempotencyRegistry'
+    );
+    const actualRegistry = actualModule.IdempotencyRegistry;
+    actualRegistry.clearInMemory();
+    vi.mocked(IdempotencyRegistry.get).mockImplementation((key, tenantId) => actualRegistry.get(key, tenantId));
+    vi.mocked(IdempotencyRegistry.save).mockImplementation(record => actualRegistry.save(record));
+    vi.mocked(IdempotencyRegistry.updateStatus).mockImplementation((...args) => actualRegistry.updateStatus(...args));
+    vi.mocked(IdempotencyRegistry.delete).mockImplementation((...args) => actualRegistry.delete(...args));
+
+    const warmups = 10;
+    const samples = 100;
+    let sequence = 0;
+    const runOne = async () => {
+      sequence += 1;
+      const result = await WorkflowExecutionPipeline.run(
+        salesWorkflow,
+        createInput(`BENCH-${sequence}`) as any,
+        createContext(`BENCH-${sequence}`),
+      );
+      expect(result.success).toBe(true);
+    };
+    for (let i = 0; i < warmups; i += 1) await runOne();
+
+    const metricRecorder = (observabilityService as any).recordPerformance;
+    metricRecorder.mockClear();
+    const endToEnd: number[] = [];
+    for (let i = 0; i < samples; i += 1) {
+      const startedAt = performance.now();
+      await runOne();
+      endToEnd.push(performance.now() - startedAt);
+    }
+
+    const summarize = (values: number[]) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const middle = Math.floor(sorted.length / 2);
+      const median = sorted.length % 2
+        ? (sorted[middle] ?? 0)
+        : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+      return {
+        samples: values.length,
+        medianMs: Number(median.toFixed(3)),
+        p95Ms: Number((sorted[Math.max(0, Math.ceil(0.95 * sorted.length) - 1)] || 0).toFixed(3))
+      };
+    };
+
+    const calls = metricRecorder.mock.calls;
+    const report: Record<string, ReturnType<typeof summarize>> = {};
+    for (const stage of ['validation', 'idempotency', 'local_commit', 'sync_persistence', 'post_commit']) {
+      const values = calls
+        .filter(([name, category, , , metadata]) =>
+          name === `workflow.stage.${stage}` &&
+          category === (stage === 'sync_persistence' ? 'SYNC' : 'FINANCIAL_SAVE') &&
+          (metadata as any)?.stage === stage
+        )
+        .map(([, , duration]) => Number(duration));
+      expect(values).toHaveLength(samples);
+      report[stage] = summarize(values);
+    }
+    report.end_to_end = summarize(endToEnd);
+
+    console.info('SALES_SAVE_BENCHMARK ' + JSON.stringify({
+      label: process.env.SALES_BENCH_LABEL || 'HEAD',
+      runtime: process.version,
+      warmups,
+      report,
+      note: 'Real Dexie IndexedDB transactions and SalesWorkflow; sync_persistence is durable Queue/Outbox write time nested within local_commit. React rendering and remote network round-trip are excluded.'
+    }));
+
+    expect(await db.invoices.count()).toBe(samples + warmups);
+    expect(await db.syncQueue.count()).toBe(samples + warmups);
+    expect(await db.outbox.count()).toBe(samples + warmups);
   });
 });

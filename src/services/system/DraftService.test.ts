@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db, dbInstance } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { DraftService } from './DraftService';
+import { getSalesDraftOperationKey } from '@features/sales/services/salesDraftRecovery.service';
 import { discardPurchaseDrafts } from '@/features/purchases/utils/discardPurchaseDrafts';
 import { readDiagnosticLogs } from './diagnosticLogger';
 
@@ -78,6 +79,35 @@ describe('DraftService tenant isolation and persistence errors', () => {
     });
     vi.restoreAllMocks();
     await DraftService.clearDraft(logicalId);
+  });
+
+  it('preserves a sales transaction UUID in the recoverable draft across reload', async () => {
+    const logicalId = uniqueId();
+    const transactionUuid = 'SALE-OPERATION-RELOAD-TEST';
+    await DraftService.saveInvoiceDraft(logicalId, 'SALE', [{ product_id: 'product-1', qty: 1 }], {
+      header: { invoice_number: 'SALE-RELOAD-1' },
+      transactionUuid
+    });
+
+    // A fresh lookup models the next application launch reading IndexedDB.
+    // Race a stale autosave against a save carrying the operation key.
+    // The transaction must serialize both writes and retain the key either way.
+    await Promise.all([
+      DraftService.saveInvoiceDraft(logicalId, 'SALE', [{ product_id: 'product-1', qty: 2 }], {
+        header: { invoice_number: 'SALE-RELOAD-1' }
+      }),
+      DraftService.saveInvoiceDraft(logicalId, 'SALE', [{ product_id: 'product-1', qty: 3 }], {
+        header: { invoice_number: 'SALE-RELOAD-1' },
+        transactionUuid
+      })
+    ]);
+
+    const recovered = await DraftService.getInvoiceDraft(logicalId);
+    expect(recovered?.totals?.transactionUuid).toBe(transactionUuid);
+    expect(getSalesDraftOperationKey(recovered)).toBe(transactionUuid);
+    expect(recovered?.items).toEqual(expect.arrayContaining([expect.objectContaining({ product_id: 'product-1' })]));
+    expect([2, 3]).toContain(recovered?.items?.[0]?.qty);
+    await DraftService.clearInvoiceDraft(logicalId);
   });
 
   it('verifies active invoice draft removal instead of silently accepting a no-op delete', async () => {

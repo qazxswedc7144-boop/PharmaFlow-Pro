@@ -27,6 +27,22 @@ export class WorkflowExecutionPipeline {
     let committedResult!: TResult;
     const postCommitWarnings: string[] = [];
     let syncStatus: 'ENQUEUED' | 'SYNCED' | 'FAILED' | 'LOCAL_ONLY' = 'ENQUEUED';
+    const measureNow = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const recordStageDurationValue = (stage: string, durationMs: number) => {
+      try {
+        (observabilityService as any).recordPerformance?.(
+          `workflow.stage.${stage}`,
+          stage === 'sync_persistence' ? 'SYNC' : 'FINANCIAL_SAVE',
+          Math.max(0, durationMs),
+          { feature: workflow.id, tenantId: ctx.tenantId },
+          { workflow: workflow.id, stage }
+        );
+      } catch {
+        // Measurement must never change the business transaction outcome.
+      }
+    };
+    const recordStageDuration = (stage: string, startedAt: number) =>
+      recordStageDurationValue(stage, measureNow() - startedAt);
     const addPostCommitWarning = (step: string, error: unknown) => {
       console.warn(`[WorkflowExecutionPipeline] Post-commit step failed (${step}):`, error);
       postCommitWarnings.push(step);
@@ -47,14 +63,17 @@ export class WorkflowExecutionPipeline {
       await WorkflowHooksRunner.runHook(workflow.hooks?.afterAuthorization, input, ctx, 'afterAuthorization');
 
       // Step 5 & 6: Validation & Hooks
+      const validationStartedAt = measureNow();
       await WorkflowHooksRunner.runHook(workflow.hooks?.beforeValidation, input, ctx, 'beforeValidation');
       await WorkflowValidation.validate(workflow, input, ctx);
       await WorkflowHooksRunner.runHook(workflow.hooks?.afterValidation, input, ctx, 'afterValidation');
+      recordStageDuration('validation', validationStartedAt);
 
       // Step 8: Before Execute Hook
       await WorkflowHooksRunner.runHook(workflow.hooks?.beforeExecute, input, ctx, 'beforeExecute');
 
       // Step 9: Idempotency Check & Acquisition
+      const idempotencyStartedAt = measureNow();
       if (ctx.idempotencyKey) {
         const payloadFingerprint = JSON.stringify(input ?? {});
         const existing = await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId);
@@ -139,6 +158,8 @@ export class WorkflowExecutionPipeline {
         }
       }
 
+      recordStageDuration('idempotency', idempotencyStartedAt);
+
       // Resolve sync dependencies before opening the IndexedDB transaction.
       // Dynamic imports / non-IDB awaits inside an active Dexie transaction can
       // let IndexedDB auto-commit before the Queue/Outbox writes are reached.
@@ -163,6 +184,7 @@ export class WorkflowExecutionPipeline {
       };
 
       const executeDomainTransaction = async (): Promise<TResult> => {
+        let syncPersistenceDurationMs: number | null = null;
         const committed = await TransactionBoundary.executeAtomic<TResult>(tables, async (tx?: any) => {
           // Step 11: Execute Domain Steps
           const res = await workflow.executeDomainSteps(input, ctx, tx);
@@ -176,6 +198,7 @@ export class WorkflowExecutionPipeline {
               );
             }
             const [{ DistributedSyncEngine }, { toSaleSyncDTO }] = saleSyncDependencies;
+            const syncStartedAt = measureNow();
             const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
               workflow.operationType,
               toSaleSyncDTO(res),
@@ -183,6 +206,7 @@ export class WorkflowExecutionPipeline {
               ctx.idempotencyKey,
               { tenantId: ctx.tenantId, branchId: ctx.branchId }
             );
+            syncPersistenceDurationMs = Math.max(0, measureNow() - syncStartedAt);
             if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
               throw new WorkflowExecutionError(
                 'SYNC_ENQUEUE_FAILED: Durable sale queue/outbox acknowledgement is incomplete.',
@@ -193,6 +217,11 @@ export class WorkflowExecutionPipeline {
           return res;
         });
 
+        // Record nested Queue/Outbox persistence only after the IndexedDB transaction
+        // commits, so telemetry cannot accidentally join or prolong the Dexie transaction.
+        if (syncPersistenceDurationMs !== null) {
+          recordStageDurationValue('sync_persistence', syncPersistenceDurationMs);
+        }
         // TransactionBoundary resolves only after the IndexedDB transaction commits.
         transactionCommitted = true;
         committedResult = committed;
@@ -208,9 +237,12 @@ export class WorkflowExecutionPipeline {
 
       // Catalog product creation uses only an in-tab guard; its idempotency and
       // queue/outbox writes remain durable inside the Dexie transaction.
+      const localCommitStartedAt = measureNow();
       const domainResult = useLocalExecutionGuard
         ? await ExecutionGuard.executeWithLocalGuard<TResult>(guardOptions, executeDomainTransaction)
         : await ExecutionGuard.executeWithGuard<TResult>(guardOptions, executeDomainTransaction);
+      recordStageDuration('local_commit', localCommitStartedAt);
+      const postCommitStartedAt = measureNow();
 
       // Step 12: Mark Idempotency Completed & Invalidate Meter Cache
       if (ctx.idempotencyKey) {
@@ -311,6 +343,7 @@ export class WorkflowExecutionPipeline {
         addPostCommitWarning('after-commit-hooks', hookError);
       }
 
+      recordStageDuration('post_commit', postCommitStartedAt);
       return WorkflowResultBuilder.success(domainResult, ctx, {
         auditReference: auditRef,
         warnings: postCommitWarnings,
@@ -344,9 +377,19 @@ export class WorkflowExecutionPipeline {
 
       const errorObj = err instanceof WorkflowExecutionError ? err : new WorkflowExecutionError(err.message || String(err), 'TRANSACTION_FAILED', { originalError: err });
 
-      // Rollback Idempotency status
+      // Remove only an uncommitted PROCESSING marker after a confirmed rollback.
+      // A payload-mismatch or replay error must never erase a COMMITTED key: doing so
+      // would allow the same key to execute a second business transaction.
       if (ctx.idempotencyKey) {
-        await IdempotencyRegistry.delete(ctx.idempotencyKey, ctx.tenantId).catch(() => null);
+        try {
+          const existingIdempotency = await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId);
+          if (existingIdempotency?.status === 'PROCESSING') {
+            await IdempotencyRegistry.delete(ctx.idempotencyKey, ctx.tenantId);
+          }
+        } catch (idempotencyCleanupError) {
+          // Fail closed: if the durable status cannot be read, preserve the key.
+          console.warn('[WorkflowExecutionPipeline] Idempotency cleanup skipped because status could not be verified:', idempotencyCleanupError);
+        }
       }
 
       // Register Incident Recovery
