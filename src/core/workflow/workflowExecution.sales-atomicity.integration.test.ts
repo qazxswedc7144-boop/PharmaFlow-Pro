@@ -275,7 +275,7 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     );
 
     expect(replayResult.success).toBe(true);
-    expect(replayResult.warnings?.join(' ')).toContain('Idempotent replay');
+    expect(replayResult.warnings?.join(' ')).toContain('تم استرجاع النتيجة');
     expect(mockInventoryIssue).toHaveBeenCalledTimes(1);
     expect(mockPostInvoice).toHaveBeenCalledTimes(1);
     expect(await db.invoices.where('id').equals('SALE-ATOMICITY-REPLAY').count()).toBe(1);
