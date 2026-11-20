@@ -30,7 +30,7 @@ export class WorkflowExecutionPipeline {
     const measureNow = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
     const recordStageDuration = (stage: string, startedAt: number) => {
       try {
-        observabilityService.recordMetric?.('workflow.stage_duration_ms', Math.max(0, measureNow() - startedAt), {
+        (observabilityService as any).recordMetric?.('workflow.stage_duration_ms', Math.max(0, measureNow() - startedAt), {
           workflow: workflow.id,
           stage
         });
