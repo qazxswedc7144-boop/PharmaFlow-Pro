@@ -349,7 +349,7 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     outboxAdd.mockRestore();
   });
 
-  it('BENCHMARK: reports real stage Median/P95 using Dexie and the SalesWorkflow pipeline', async () => {
+  it('BENCHMARK: reports 100-sample stage Median/P95 using Dexie and the SalesWorkflow pipeline', async () => {
     const actualModule = await vi.importActual<typeof import('@/core/integrity/idempotencyRegistry')>(
       '@/core/integrity/idempotencyRegistry'
     );
