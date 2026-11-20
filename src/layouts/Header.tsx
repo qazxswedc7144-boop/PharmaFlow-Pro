@@ -210,9 +210,11 @@ const Header = ({
           </button>
         )}
 
-        <h1 className="text-base font-bold text-gray-800 dark:text-gray-100 hidden md:block">
-          {pageTitle || 'PharmaFlow'}
-        </h1>
+        {pageTitle && (
+          <h1 className="text-base font-bold text-gray-800 dark:text-gray-100 hidden md:block">
+            {pageTitle}
+          </h1>
+        )}
       </div>
     </header>
   );
