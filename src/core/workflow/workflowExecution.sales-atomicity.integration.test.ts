@@ -132,6 +132,7 @@ import { WorkflowExecutionPipeline } from '@/core/workflow/workflowExecution';
 import { salesWorkflow } from '@/features/sales/workflows/SalesWorkflow';
 import { DistributedSyncEngine } from '@/features/sync/sync.engine';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import { observabilityService } from '@/core/observability';
 
 const createContext = (suffix: string) => ({
   workflowId: `workflow-sales-atomicity-${suffix}`,
@@ -346,5 +347,75 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     expect(await db.outbox.where('idempotencyKey').equals('sale-atomicity-ROLLBACK').count()).toBe(0);
 
     outboxAdd.mockRestore();
+  });
+
+  it('BENCHMARK: reports real stage Median/P95 using Dexie and the SalesWorkflow pipeline', async () => {
+    const actualModule = await vi.importActual<typeof import('@/core/integrity/idempotencyRegistry')>(
+      '@/core/integrity/idempotencyRegistry'
+    );
+    const actualRegistry = actualModule.IdempotencyRegistry;
+    actualRegistry.clearInMemory();
+    vi.mocked(IdempotencyRegistry.get).mockImplementation((key, tenantId) => actualRegistry.get(key, tenantId));
+    vi.mocked(IdempotencyRegistry.save).mockImplementation(record => actualRegistry.save(record));
+    vi.mocked(IdempotencyRegistry.updateStatus).mockImplementation((...args) => actualRegistry.updateStatus(...args));
+    vi.mocked(IdempotencyRegistry.delete).mockImplementation((...args) => actualRegistry.delete(...args));
+
+    const warmups = 5;
+    const samples = 30;
+    let sequence = 0;
+    const runOne = async () => {
+      sequence += 1;
+      const result = await WorkflowExecutionPipeline.run(
+        salesWorkflow,
+        createInput(`BENCH-${sequence}`) as any,
+        createContext(`BENCH-${sequence}`),
+      );
+      expect(result.success).toBe(true);
+    };
+    for (let i = 0; i < warmups; i += 1) await runOne();
+
+    vi.mocked(observabilityService.recordMetric).mockClear();
+    const endToEnd: number[] = [];
+    for (let i = 0; i < samples; i += 1) {
+      const startedAt = performance.now();
+      await runOne();
+      endToEnd.push(performance.now() - startedAt);
+    }
+
+    const summarize = (values: number[]) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const middle = Math.floor(sorted.length / 2);
+      const median = sorted.length % 2
+        ? sorted[middle]
+        : ((sorted[middle - 1] || 0) + (sorted[middle] || 0)) / 2;
+      return {
+        samples: values.length,
+        medianMs: Number(median.toFixed(3)),
+        p95Ms: Number((sorted[Math.max(0, Math.ceil(0.95 * sorted.length) - 1)] || 0).toFixed(3))
+      };
+    };
+
+    const calls = vi.mocked(observabilityService.recordMetric).mock.calls;
+    const report: Record<string, ReturnType<typeof summarize>> = {};
+    for (const stage of ['validation', 'idempotency', 'local_commit', 'sync_persistence', 'post_commit']) {
+      const values = calls
+        .filter(([name, , labels]) => name === 'workflow.stage_duration_ms' && (labels as any)?.stage === stage)
+        .map(([, duration]) => Number(duration));
+      expect(values).toHaveLength(samples);
+      report[stage] = summarize(values);
+    }
+    report.end_to_end = summarize(endToEnd);
+
+    console.info('SALES_SAVE_BENCHMARK ' + JSON.stringify({
+      label: process.env.SALES_BENCH_LABEL || 'HEAD',
+      runtime: process.version,
+      warmups,
+      report,
+      note: 'Real Dexie IndexedDB transactions and SalesWorkflow; sync_persistence is durable Queue/Outbox write time nested within local_commit. React rendering and remote network round-trip are excluded.'
+    }));
+
+    expect(await db.invoices.count()).toBe(samples + warmups);
+    expect(await db.syncQueue.count()).toBe(samples + warmups);
+    expect(await db.outbox.count()).toBe(samples + warmups);
   });
 });
