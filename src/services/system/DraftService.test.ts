@@ -90,10 +90,17 @@ describe('DraftService tenant isolation and persistence errors', () => {
     });
 
     // A fresh lookup models the next application launch reading IndexedDB.
-    // A later autosave without an explicit key must not erase the operation key.
-    await DraftService.saveInvoiceDraft(logicalId, 'SALE', [{ product_id: 'product-1', qty: 2 }], {
-      header: { invoice_number: 'SALE-RELOAD-1' }
-    });
+    // Race a stale autosave against a save carrying the operation key.
+    // The transaction must serialize both writes and retain the key either way.
+    await Promise.all([
+      DraftService.saveInvoiceDraft(logicalId, 'SALE', [{ product_id: 'product-1', qty: 2 }], {
+        header: { invoice_number: 'SALE-RELOAD-1' }
+      }),
+      DraftService.saveInvoiceDraft(logicalId, 'SALE', [{ product_id: 'product-1', qty: 3 }], {
+        header: { invoice_number: 'SALE-RELOAD-1' },
+        transactionUuid
+      })
+    ]);
 
     const recovered = await DraftService.getInvoiceDraft(logicalId);
     expect(recovered?.totals?.transactionUuid).toBe(transactionUuid);
