@@ -131,6 +131,7 @@ import { db } from '@/core/db';
 import { WorkflowExecutionPipeline } from '@/core/workflow/workflowExecution';
 import { salesWorkflow } from '@/features/sales/workflows/SalesWorkflow';
 import { DistributedSyncEngine } from '@/features/sync/sync.engine';
+import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 
 const createContext = (suffix: string) => ({
   workflowId: `workflow-sales-atomicity-${suffix}`,
@@ -240,6 +241,88 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
     expect(outboxRows).toHaveLength(1);
     expect(queueRows[0].mutationId).toBe(outboxRows[0].mutationId);
     expect(outboxRows[0].operation).toBe('POST');
+  });
+
+  it('replays a committed sale with the same idempotency key without repeating domain writes', async () => {
+    const context = createContext('REPLAY');
+    const input = createInput('REPLAY');
+
+    const firstResult = await WorkflowExecutionPipeline.run(salesWorkflow, input as any, context);
+    expect(firstResult.success).toBe(true);
+
+    const savedMarker = vi.mocked(IdempotencyRegistry.save).mock.calls
+      .map(([record]) => record)
+      .find((record: any) => record.key === context.idempotencyKey);
+    expect(savedMarker).toBeTruthy();
+
+    const committedRecord = {
+      ...savedMarker,
+      status: 'COMMITTED',
+      result: firstResult.data,
+      responseData: firstResult.data,
+    };
+
+    // SalesWorkflow validation performs one lookup before the pipeline's
+    // idempotency check. Return no record there, then the committed marker.
+    vi.mocked(IdempotencyRegistry.get)
+      .mockResolvedValueOnce(null as any)
+      .mockResolvedValueOnce(committedRecord as any);
+
+    const replayResult = await WorkflowExecutionPipeline.run(
+      salesWorkflow,
+      createInput('REPLAY') as any,
+      createContext('REPLAY'),
+    );
+
+    expect(replayResult.success).toBe(true);
+    expect(replayResult.warnings?.join(' ')).toContain('Idempotent replay');
+    expect(mockInventoryIssue).toHaveBeenCalledTimes(1);
+    expect(mockPostInvoice).toHaveBeenCalledTimes(1);
+    expect(await db.invoices.where('id').equals('SALE-ATOMICITY-REPLAY').count()).toBe(1);
+    expect(await db.inventoryTransactions.where('id').equals('inventory-SALE-ATOMICITY-REPLAY').count()).toBe(1);
+    expect(await db.journalEntries.where('id').equals('journal-SALE-ATOMICITY-REPLAY').count()).toBe(1);
+    expect(await db.syncQueue.where('idempotencyKey').equals('sale-atomicity-REPLAY').count()).toBe(1);
+    expect(await db.outbox.where('idempotencyKey').equals('sale-atomicity-REPLAY').count()).toBe(1);
+  });
+
+  it('does not delete a COMMITTED key when the same key is reused with a different payload', async () => {
+    const context = createContext('MISMATCH');
+    const firstResult = await WorkflowExecutionPipeline.run(
+      salesWorkflow,
+      createInput('MISMATCH') as any,
+      context,
+    );
+    expect(firstResult.success).toBe(true);
+
+    const savedMarker = vi.mocked(IdempotencyRegistry.save).mock.calls
+      .map(([record]) => record)
+      .find((record: any) => record.key === context.idempotencyKey);
+    expect(savedMarker).toBeTruthy();
+    const committedRecord = {
+      ...savedMarker,
+      status: 'COMMITTED',
+      result: firstResult.data,
+      responseData: firstResult.data,
+    };
+
+    const changedPayload = createInput('MISMATCH');
+    changedPayload.invoiceNumber = 'INV-CHANGED-WITH-SAME-KEY';
+    vi.mocked(IdempotencyRegistry.get)
+      .mockResolvedValueOnce(null as any)
+      .mockResolvedValueOnce(committedRecord as any)
+      .mockResolvedValueOnce(committedRecord as any);
+
+    const mismatchResult = await WorkflowExecutionPipeline.run(
+      salesWorkflow,
+      changedPayload as any,
+      createContext('MISMATCH'),
+    );
+
+    expect(mismatchResult.success).toBe(false);
+    expect(mismatchResult.error?.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(IdempotencyRegistry.delete).not.toHaveBeenCalledWith(context.idempotencyKey, TENANT_ID);
+    expect(mockInventoryIssue).toHaveBeenCalledTimes(1);
+    expect(await db.invoices.where('id').equals('SALE-ATOMICITY-MISMATCH').count()).toBe(1);
   });
 
   it('rolls back the real SalesWorkflow invoice, inventory, financial and journal writes when Outbox persistence fails', async () => {
