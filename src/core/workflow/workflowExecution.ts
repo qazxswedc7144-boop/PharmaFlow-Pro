@@ -30,10 +30,13 @@ export class WorkflowExecutionPipeline {
     const measureNow = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
     const recordStageDuration = (stage: string, startedAt: number) => {
       try {
-        (observabilityService as any).recordMetric?.('workflow.stage_duration_ms', Math.max(0, measureNow() - startedAt), {
-          workflow: workflow.id,
-          stage
-        });
+        (observabilityService as any).recordPerformance?.(
+          `workflow.stage.${stage}`,
+          stage === 'sync_persistence' ? 'SYNC' : 'FINANCIAL_SAVE',
+          Math.max(0, measureNow() - startedAt),
+          { feature: workflow.id, tenantId: ctx.tenantId },
+          { workflow: workflow.id, stage }
+        );
       } catch {
         // Measurement must never change the business transaction outcome.
       }
