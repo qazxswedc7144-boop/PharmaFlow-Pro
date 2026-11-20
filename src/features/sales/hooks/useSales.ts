@@ -23,6 +23,7 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 import { TenantSalesPolicyService, type CachedTenantSalesPolicy } from '@features/sales/services/tenantSalesPolicy.service';
 import { LocalSalesPricingService, type LocalSalesPricingResult } from '@features/sales/services/localSalesPricing.service';
 import { restoreSalesDraftItems } from '@features/sales/services/salesDraftRecovery.service';
+import { generateTransactionUuid } from '@/utils/uuid';
 
 const DRAFT_KEY = 'pharmaflow_sales_draft';
 
@@ -96,6 +97,8 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   const expiryInputRef = useRef<HTMLInputElement>(null);
   const noteInputRef = useRef<HTMLInputElement>(null);
   const categoryInputRef = useRef<HTMLSelectElement>(null);
+  const currentOperationRef = useRef<string | null>(null);
+  const isSavingRef = useRef(false);
 
   const [header, setHeader] = useState({ 
     invoice_number: '', customer_id: '', payment_method: 'Cash',
@@ -120,6 +123,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         attachment: ''
       });
       setItems([]);
+      currentOperationRef.current = null;
       setSalesPolicyError(null);
       setCustomerSearchTerm('');
       setEditingInvoiceId(null);
@@ -680,50 +684,67 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   }, [isLocked]);
 
   const handlePost = useCallback(async () => {
-    if (savePhase === 'saving') return;
+    // A ref lock closes the same-tick/double-click window before React can rerender.
+    if (isSavingRef.current || savePhase === 'saving') return;
     if (items.length === 0 || isLocked || isDuplicate || !salesPolicy || !pricingState.result || pricingState.error) {
       addToast('تعذر الحفظ: سياسة التسعير أو سعر أحد الأصناف غير متاح.', 'error');
       return;
     }
-    
-    // OPTIMISTIC: Show success immediately and block UI only enough to navigate
-    showNotification('⌛ جاري طباعة الإيصال وترحيل الصندوق...', 'info');
-    addToast("جاري الحفظ والمزامنة... ⏳", "info");
-    const navPromise = new Promise(res => setTimeout(res, 500)); // Briefly show toast
-    
+
+    isSavingRef.current = true;
     setIsSaving(true);
     setSavePhase('saving');
-    try {
-      const nextStatus = InvoiceWorkflowEngine.determineNextStatus(vTotalSum, header.payment_method === 'Cash' ? vTotalSum : 0, 'PENDING');
-      
-      const res = await addInvoice({
-          type: 'SALE',
-          payload: { 
-            customerId: header.customer_id, 
-            items, 
-            total: vTotalSum, 
-            invoiceId: header.invoice_number,
-            id: editingInvoiceId || undefined,
-            notes: header.notes,
-            attachment: header.attachment,
-            date: header.date
-          },
-          options: { 
-            isCash: header.payment_method === 'Cash', 
-            paymentStatus: header.payment_method === 'Cash' ? 'Cash' : 'Credit',
-            invoiceStatus: nextStatus, 
-            isReturn: header.isReturn, 
-            currency,
-            date: header.date
-          }
-        });
-      await navPromise;
+    showNotification('⌛ جاري طباعة الإيصال وترحيل الصندوق...', 'info');
+    addToast("جاري الحفظ والمزامنة... ⏳", "info");
 
-      if (res?.success) { 
+    try {
+      // Retain one operation key across retries until this invoice is committed
+      // and reset. This lets the workflow replay an already-committed request safely.
+      if (!currentOperationRef.current) {
+        currentOperationRef.current = generateTransactionUuid('SALE');
+      }
+      const requestUuid = currentOperationRef.current;
+      const nextStatus = InvoiceWorkflowEngine.determineNextStatus(vTotalSum, header.payment_method === 'Cash' ? vTotalSum : 0, 'PENDING');
+
+      const res = await addInvoice({
+        type: 'SALE',
+        payload: {
+          customerId: header.customer_id,
+          items,
+          total: vTotalSum,
+          invoiceId: header.invoice_number,
+          id: editingInvoiceId || undefined,
+          transactionUuid: requestUuid,
+          notes: header.notes,
+          attachment: header.attachment,
+          date: header.date
+        },
+        options: {
+          isCash: header.payment_method === 'Cash',
+          paymentStatus: header.payment_method === 'Cash' ? 'Cash' : 'Credit',
+          invoiceStatus: nextStatus,
+          isReturn: header.isReturn,
+          currency,
+          date: header.date
+        }
+      });
+
+      if (res?.success) {
         setSavePhase('idle');
-        // Local persistence has succeeded. Post-commit UI work must never report save failure.
+        // The local transaction (including inventory, ledger, queue and outbox)
+        // has committed. Never hold the success path on projections/provider reloads.
         showNotification("Invoice Saved Successfully\nReturning to Dashboard...", 'success', 1000);
         addToast("Invoice Saved Successfully\nReturning to Dashboard...", "success");
+
+        reportCache.purge();
+        db.incrementDataVersion();
+        ReportEngine.scheduleRefreshInBackground();
+        void Promise.resolve()
+          .then(() => refreshGlobal())
+          .catch((refreshError: unknown) => {
+            console.warn('[useSales] Background provider refresh failed:', refreshError);
+            showNotification('تم حفظ الفاتورة، لكن تعذر تحديث بعض بيانات الشاشة. أعد تحديث الصفحة عند الحاجة.', 'warning');
+          });
 
         const postCommitWarnings: string[] = [];
         const runPostCommitTask = async (name: string, task: () => Promise<unknown> | unknown) => {
@@ -735,18 +756,11 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
           }
         };
 
-        await runPostCommitTask('report-and-provider-refresh', async () => {
-          reportCache.purge();
-          db.incrementDataVersion();
-          await ReportEngine.refresh();
-          await refreshGlobal();
-        });
         await runPostCommitTask('audit-log', () =>
           auditLogService.logSale(res.refId || editingInvoiceId || header.invoice_number, `Sale created: ${header.invoice_number}`, { items, total: vTotalSum })
         );
         configurationService.delete(DRAFT_KEY).catch(() => {});
-        
-        // Capture data for success modal 2.0 (Task 4) and dispose of draft (Task 5)
+
         const partner = customers.find(c => c.id === header.customer_id);
         const partnerName = partner ? partner.Supplier_Name : 'عميل مبيعات كاشير عام';
         await runPostCommitTask('draft-cleanup', async () => {
@@ -765,21 +779,19 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
           totalAmount: vTotalSum,
           type: 'SALE',
           date: header.date,
-          partnerName: partnerName,
+          partnerName,
           accountingStatus: header.payment_method === 'Cash' ? 'ترحيل فوري بالقيد المزدوج' : 'ذمم مدينة مرحلة',
           inventoryStatus: 'تم فك تجميد الوحدات وصرفها',
           balanceStatus: 'محدث بالكامل (صندوق كاشير)'
         });
 
-        setEditingInvoiceId(null); 
-        // Instantly generate a clean new invoice state to prevent dirty or stale state reuse
+        setEditingInvoiceId(null);
         await resetInvoiceState();
 
-        // Delay navigation by 1 second to show the toast and feedback
         setTimeout(() => {
           try {
             onNavigate?.('dashboard');
-          } catch (error) {
+          } catch {
             window.location.hash = '#/dashboard';
           }
         }, 1000);
@@ -790,9 +802,10 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
       showNotification('❌ تعذر حفظ فاتورة المبيعات', 'error');
       addToast(normalized.arabicMessage, 'error');
     } finally {
+      isSavingRef.current = false;
       setIsSaving(false);
     }
-  }, [items, isLocked, isDuplicate, savePhase, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification, salesPolicy, pricingState]);
+  }, [items, isLocked, isDuplicate, savePhase, vTotalSum, header, editingInvoiceId, currency, addInvoice, addToast, onNavigate, setEditingInvoiceId, showNotification, salesPolicy, pricingState, refreshGlobal, customers, resetInvoiceState]);
 
   const getStatusLabel = (status: string) => {
     switch(status) {
