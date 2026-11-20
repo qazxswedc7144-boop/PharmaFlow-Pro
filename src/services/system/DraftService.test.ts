@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db, dbInstance } from '@/core/db';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { DraftService } from './DraftService';
+import { getSalesDraftOperationKey } from '@features/sales/services/salesDraftRecovery.service';
 import { discardPurchaseDrafts } from '@/features/purchases/utils/discardPurchaseDrafts';
 import { readDiagnosticLogs } from './diagnosticLogger';
 
@@ -89,8 +90,9 @@ describe('DraftService tenant isolation and persistence errors', () => {
     });
 
     // A fresh lookup models the next application launch reading IndexedDB.
-    const recovered = await DraftService.getUnfinishedInvoiceDraft('SALE');
+    const recovered = await DraftService.getInvoiceDraft(logicalId);
     expect(recovered?.totals?.transactionUuid).toBe(transactionUuid);
+    expect(getSalesDraftOperationKey(recovered)).toBe(transactionUuid);
     await DraftService.clearInvoiceDraft(logicalId);
   });
 
