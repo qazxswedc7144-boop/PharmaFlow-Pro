@@ -742,6 +742,19 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         }
       });
 
+      if (!res?.success) {
+        // A resolved workflow failure is not a committed sale. Keep the draft
+        // and operation key intact so the user can safely retry the same request.
+        setSavePhase('failed');
+        const failureMessage =
+          typeof (res as { error?: unknown } | null)?.error === 'string'
+            ? (res as { error: string }).error
+            : 'تعذر حفظ فاتورة المبيعات. يمكنك إعادة المحاولة.';
+        showNotification('❌ تعذر حفظ فاتورة المبيعات', 'error');
+        addToast(failureMessage, 'error');
+        return;
+      }
+
       if (res?.success) {
         setSavePhase('idle');
         // The local transaction (including inventory, ledger, queue and outbox)
