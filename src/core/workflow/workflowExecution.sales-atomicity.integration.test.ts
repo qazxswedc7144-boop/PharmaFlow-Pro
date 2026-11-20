@@ -387,8 +387,8 @@ describe('SalesWorkflow real pipeline atomicity integration', () => {
       const sorted = [...values].sort((a, b) => a - b);
       const middle = Math.floor(sorted.length / 2);
       const median = sorted.length % 2
-        ? sorted[middle]
-        : ((sorted[middle - 1] || 0) + (sorted[middle] || 0)) / 2;
+        ? (sorted[middle] ?? 0)
+        : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
       return {
         samples: values.length,
         medianMs: Number(median.toFixed(3)),
