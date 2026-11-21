@@ -519,28 +519,29 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
               </div>
               <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
                 <button type="button" onClick={resetDraftArchiveFilters} className="flex-1 rounded-xl bg-slate-100 px-3 py-3 text-[10px] font-black text-slate-600 hover:bg-slate-200">
-                  <span className="flex items-center justify-center gap-1"><RotateCcw iv>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-2">ترتيب حسب</label>
-              <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-100">
-                {(['date', 'total', 'id'] as const).map(s => (
-                  <button 
-                    key={s}
-                    onClick={() => {
-                      if (sortBy === s) setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-                      else { setSortBy(s); setSortOrder('desc'); }
-                    }}
-                    className={`flex-1 py-2 rounded-xl text-[10px] font-black transition-all ${sortBy === s ? 'bg-[#1E4D4D] text-white shadow-md' : 'text-slate-400 hover:text-[#1E4D4D]'}`}
-                  >
-                    {s === 'date' ? 'التاريخ' : s === 'total' ? 'الإجمالي' : 'المرجع'}
-                    {sortBy === s && (sortOrder === 'asc' ? ' ↑' : ' ↓')}
-                  </button>
-                ))}
+                  <span className="flex items-center justify-center gap-1"><RotateCcw size={13} /> إعادة تعيين</span>
+                </button>
+                <button type="button" onClick={applyArchiveFilters} className="flex-[1.4] rounded-xl bg-[#1E4D4D] px-3 py-3 text-[10px] font-black text-white shadow-md hover:bg-[#163c3c]">
+                  تطبيق الفلترة
+                </button>
               </div>
             </div>
+          </>
+        )}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: 'المستندات', value: archiveStats.total },
+          { label: 'المبيعات', value: archiveStats.sales },
+          { label: 'المشتريات', value: archiveStats.purchases },
+          { label: 'غير مسددة', value: archiveStats.unpaid }
+        ].map(stat => (
+          <div key={stat.label} className="bg-white border border-slate-100 rounded-xl px-3 py-2 shadow-sm min-w-0">
+            <p className="text-[9px] font-bold text-slate-400 truncate">{stat.label}</p>
+            <p className="text-base font-black text-[#1E4D4D] tabular-nums">{stat.value.toLocaleString('ar')}</p>
           </div>
-        </div>
-      )}
+        ))}
+      </div>
 
       {/* Virtualized Mobile Cards View */}
       <div className="lg:hidden w-full" style={{ height: filteredInvoices.length === 0 ? 'auto' : Math.min(600, Math.max(300, filteredInvoices.length * 170)) }}>
