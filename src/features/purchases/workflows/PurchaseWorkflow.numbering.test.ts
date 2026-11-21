@@ -214,6 +214,91 @@ describe('PurchaseWorkflow Phase 1 invoice numbering (TDD)', () => {
     expect((await db.products.get(product.id))?.stock).toBe(7);
   });
 
+  it('preserves the original creation timestamp when an existing purchase invoice date is edited', async () => {
+    const original = await db.processPurchase(
+      'SUP-CREATED-AT-PURCHASE',
+      [],
+      0,
+      'PUR-CREATED-AT-PURCHASE',
+      false,
+      'YER',
+      'DRAFT',
+      0,
+      'LOW',
+      'PUR-EXT-CREATED-AT',
+      '',
+      false,
+      '2026-11-21T00:00:00.000Z',
+      'PUR-CREATED-AT-UUID',
+      TENANT_ID,
+      BRANCH_ID
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 5));
+
+    const edited = await db.processPurchase(
+      'SUP-CREATED-AT-PURCHASE',
+      [],
+      0,
+      'PUR-CREATED-AT-PURCHASE',
+      false,
+      'YER',
+      'DRAFT',
+      0,
+      'LOW',
+      'PUR-EXT-CREATED-AT',
+      '',
+      false,
+      '2026-11-22T00:00:00.000Z',
+      'PUR-CREATED-AT-UUID',
+      TENANT_ID,
+      BRANCH_ID
+    );
+
+    expect(edited.date).toBe('2026-11-22T00:00:00.000Z');
+    expect(edited.createdAt).toBe(original.createdAt);
+    expect(edited.updatedAt).not.toBe(original.updatedAt);
+  });
+
+  it('preserves the original creation timestamp when an existing sales invoice date is edited', async () => {
+    const args = [
+      'CUSTOMER-CREATED-AT-SALE',
+      [] as any,
+      0,
+      'SALE-CREATED-AT-001',
+      false,
+      'YER',
+      'DRAFT',
+      0,
+      'LOW',
+      'INV-CREATED-AT-001',
+      '',
+      false
+    ] as const;
+
+    const original = await db.processSale(
+      ...args,
+      '2026-11-21T00:00:00.000Z',
+      'SALE-CREATED-AT-UUID',
+      TENANT_ID,
+      BRANCH_ID
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 5));
+
+    const edited = await db.processSale(
+      ...args,
+      '2026-11-22T00:00:00.000Z',
+      'SALE-CREATED-AT-UUID',
+      TENANT_ID,
+      BRANCH_ID
+    );
+
+    expect(edited.date).toBe('2026-11-22T00:00:00.000Z');
+    expect(edited.createdAt).toBe(original.createdAt);
+    expect(edited.updatedAt).not.toBe(original.updatedAt);
+  });
+
   it('T11: keeps the Phase 1 supplier number out of the pre-Phase-2 sync payload', () => {
     const payload = purchaseWorkflow.syncContract.buildPayload({
       refId: 'PUR-NUMBERING-SYNC-001',
