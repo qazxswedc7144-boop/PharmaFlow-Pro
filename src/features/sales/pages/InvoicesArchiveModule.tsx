@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
 import { AdjustmentRepository } from '@/database/repositories/AdjustmentRepository';
 import { SupplierRepository } from '@/database/repositories/SupplierRepository';
@@ -77,6 +77,9 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
   const [finalTotals, setFinalTotals] = useState<Record<string, number>>({});
   const [lockedInvoices, setLockedInvoices] = useState<Record<string, boolean>>({});
   const [showFilters, setShowFilters] = useState(false);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const filterPopoverRef = useRef<HTMLDivElement>(null);
+  const [filterPopoverPosition, setFilterPopoverPosition] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const [isDateModalOpen, setIsDateModalOpen] = useState(false);
   const [filterType, setFilterType] = useState<'ALL' | 'SALE' | 'PURCHASE'>(initialFilter);
   const [quickFilter, setQuickFilter] = useState<'ALL' | 'UNPAID' | 'RETURNS'>('ALL');
@@ -113,6 +116,60 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
     });
     setIsDateModalOpen(true);
   };
+
+  useEffect(() => {
+    if (!showFilters) {
+      setFilterPopoverPosition(null);
+      return;
+    }
+
+    const updateFilterPopoverPosition = () => {
+      const trigger = filterButtonRef.current;
+      const popover = filterPopoverRef.current;
+      if (!trigger || !popover) return;
+
+      const visualViewport = window.visualViewport;
+      const viewportTop = visualViewport?.offsetTop ?? 0;
+      const viewportHeight = visualViewport?.height ?? window.innerHeight;
+      const viewportWidth = visualViewport?.width ?? window.innerWidth;
+      const viewportBottom = viewportTop + viewportHeight;
+      const edge = 12;
+      const gap = 8;
+      const maxHeight = Math.max(160, viewportHeight - edge * 2);
+      const triggerRect = trigger.getBoundingClientRect();
+
+      popover.style.maxHeight = `${maxHeight}px`;
+      const popoverRect = popover.getBoundingClientRect();
+      const fitsAbove = triggerRect.top - popoverRect.height - gap >= viewportTop + edge;
+      const preferredTop = fitsAbove
+        ? triggerRect.top - popoverRect.height - gap
+        : triggerRect.bottom + gap;
+      const top = Math.min(
+        Math.max(preferredTop, viewportTop + edge),
+        viewportBottom - Math.min(popoverRect.height, maxHeight) - edge
+      );
+      const left = Math.min(
+        Math.max(triggerRect.left, edge),
+        viewportWidth - popoverRect.width - edge
+      );
+
+      setFilterPopoverPosition({ top, left, maxHeight });
+    };
+
+    const frame = window.requestAnimationFrame(updateFilterPopoverPosition);
+    window.addEventListener('resize', updateFilterPopoverPosition);
+    window.addEventListener('scroll', updateFilterPopoverPosition, true);
+    window.visualViewport?.addEventListener('resize', updateFilterPopoverPosition);
+    window.visualViewport?.addEventListener('scroll', updateFilterPopoverPosition);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateFilterPopoverPosition);
+      window.removeEventListener('scroll', updateFilterPopoverPosition, true);
+      window.visualViewport?.removeEventListener('resize', updateFilterPopoverPosition);
+      window.visualViewport?.removeEventListener('scroll', updateFilterPopoverPosition);
+    };
+  }, [showFilters]);
 
   const toggleArchiveFilters = () => {
     if (!showFilters) {
@@ -472,13 +529,13 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
           <input type="text" placeholder="رقم الفاتورة أو العميل أو المورد..." aria-label="البحث في أرشيف المستندات" className="w-full min-w-0 bg-slate-50 border-2 border-transparent rounded-[16px] px-10 py-3 text-[10px] sm:text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
           <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
         </div>
-        <button onClick={toggleArchiveFilters} aria-expanded={showFilters} aria-haspopup="dialog" className={`shrink-0 flex items-center gap-2 px-3 sm:px-5 py-3 rounded-[16px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
+        <button ref={filterButtonRef} onClick={toggleArchiveFilters} aria-expanded={showFilters} aria-haspopup="dialog" className={`shrink-0 flex items-center gap-2 px-3 sm:px-5 py-3 rounded-[16px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
           <Filter size={14} /> فلترة
         </button>
         {showFilters && (
           <>
             <div className="fixed inset-0 z-40" role="presentation" onClick={() => setShowFilters(false)} />
-            <div className="absolute bottom-full left-0 z-50 mb-3 w-[min(320px,calc(100vw-32px))] rounded-2xl border border-slate-100 bg-white p-3 shadow-2xl" dir="rtl" role="dialog" aria-label="تصفية أرشيف المستندات">
+            <div ref={filterPopoverRef} className="fixed z-50 w-[min(320px,calc(100vw-24px))] overflow-y-auto overscroll-contain rounded-2xl border border-slate-100 bg-white p-3 shadow-2xl" style={{ top: filterPopoverPosition?.top ?? 12, left: filterPopoverPosition?.left ?? 12, maxHeight: filterPopoverPosition?.maxHeight ?? 'calc(100dvh - 24px)', visibility: filterPopoverPosition ? 'visible' : 'hidden' }} dir="rtl" role="dialog" aria-label="تصفية أرشيف المستندات">
               <button type="button" onClick={openDatePicker} className="w-full rounded-xl bg-slate-50 px-3 py-3 text-sm font-black text-[#1E4D4D] hover:bg-emerald-50 transition-colors">
                 <span className="flex items-center justify-center gap-2">
                   <span>التاريخ</span>
