@@ -185,7 +185,8 @@ describe('useSales handlePost resolved failure contract', () => {
       'SALE-retry-stable-uuid'
     ]);
     expect(generatedUuidCount).toBe(1);
-    expect(notifications.filter(message => message.includes('تعذر حفظ فاتورة المبيعات'))).toHaveLength(2);
+    expect(notifications.filter(message => message.includes('تعذر حفظ فاتورة المبيعات'))).toHaveLength(1);
+    expect(currentOperationRef.current).toBeNull();
     expect(toasts).toContain('SIMULATED_WORKFLOW_FAILURE');
   });
 });
