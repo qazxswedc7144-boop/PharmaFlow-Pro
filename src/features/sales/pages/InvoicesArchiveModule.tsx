@@ -12,10 +12,9 @@ import { db } from '@/core/db';
 import { transactionOrchestrator } from '@/services/transactions/transactionOrchestrator';
 import { 
   Search, Edit3, ArrowRight, Tag, History, Filter, Fingerprint,
-  Plus, Banknote, Clock, Lock, Ban, Cloud, RefreshCw
+  Plus, Banknote, Clock, Lock, Ban, Cloud, RefreshCw, CalendarDays, RotateCcw
 } from 'lucide-react';
 import { FixedSizeList as List } from 'react-window';
-import { CalendarDays, RotateCcw } from 'lucide-react';
 import type { ArchiveDateFilter } from '@/features/sales/utils/archiveDateFilters';
 import {
   getArchiveDateValue,
