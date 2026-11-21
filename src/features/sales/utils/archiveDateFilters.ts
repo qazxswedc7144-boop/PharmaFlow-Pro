@@ -53,8 +53,8 @@ export const getArchiveDateValue = (
   invoice: Record<string, unknown>,
   basis: ArchiveDateBasis
 ): unknown => basis === 'CREATED'
-  ? invoice.createdAt ?? invoice.created_at ?? invoice.Created_At
-  : invoice.date ?? invoice.Date;
+  ? invoice.createdAt || invoice.created_at || invoice.Created_At
+  : invoice.date || invoice.Date;
 
 export const resolveArchiveDateRange = (
   filter: ArchiveDateFilter
