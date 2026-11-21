@@ -15,6 +15,15 @@ import {
   Plus, Banknote, Clock, Lock, Ban, Cloud, RefreshCw
 } from 'lucide-react';
 import { FixedSizeList as List } from 'react-window';
+import { CalendarDays, RotateCcw } from 'lucide-react';
+import {
+  ArchiveDateFilter,
+  getArchiveDateValue,
+  getCurrentYearArchiveRange,
+  isArchiveDateWithinRange,
+  resolveArchiveDateRange,
+  toArchiveDateKey
+} from '@/features/sales/utils/archiveDateFilters';
 
 export interface ArchiveInvoice {
   id: string;
@@ -24,6 +33,9 @@ export interface ArchiveInvoice {
   purchase_id?: string;
   date?: string;
   Date?: string;
+  createdAt?: string | Date;
+  created_at?: string;
+  Created_At?: string;
   finalTotal?: number;
   FinalTotal?: number;
   totalAmount?: number;
@@ -66,9 +78,16 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
   const [finalTotals, setFinalTotals] = useState<Record<string, number>>({});
   const [lockedInvoices, setLockedInvoices] = useState<Record<string, boolean>>({});
   const [showFilters, setShowFilters] = useState(false);
-
+  const [isDateModalOpen, setIsDateModalOpen] = useState(false);
   const [filterType, setFilterType] = useState<'ALL' | 'SALE' | 'PURCHASE'>(initialFilter);
   const [quickFilter, setQuickFilter] = useState<'ALL' | 'UNPAID' | 'RETURNS'>('ALL');
+  const [draftFilterType, setDraftFilterType] = useState<'ALL' | 'SALE' | 'PURCHASE'>(initialFilter);
+  const [draftQuickFilter, setDraftQuickFilter] = useState<'ALL' | 'UNPAID' | 'RETURNS'>('ALL');
+  const [appliedDateFilter, setAppliedDateFilter] = useState<ArchiveDateFilter | null>(null);
+  const [draftDateFilter, setDraftDateFilter] = useState<ArchiveDateFilter | null>(null);
+  const [calendarDateFilter, setCalendarDateFilter] = useState<ArchiveDateFilter>({
+    basis: 'DOCUMENT', granularity: 'DAY', start: '', end: ''
+  });
   const paymentFilter: 'ALL' | 'Cash' | 'Credit' = 'ALL';
   const [sortBy, setSortBy] = useState<'date' | 'total' | 'id'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -80,6 +99,53 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
   const [page, setPage] = useState(1);
   const pageSize = 10;
+
+  const formatArchiveDate = (value: unknown): string => {
+    const dateKey = toArchiveDateKey(value);
+    return dateKey ? new Date(`${dateKey}T00:00:00`).toLocaleDateString('ar-SA') : '—';
+  };
+
+  const openDatePicker = () => {
+    setCalendarDateFilter(draftDateFilter || {
+      basis: appliedDateFilter?.basis || 'DOCUMENT',
+      granularity: 'DAY',
+      start: '',
+      end: ''
+    });
+    setIsDateModalOpen(true);
+  };
+
+  const toggleArchiveFilters = () => {
+    if (!showFilters) {
+      setDraftFilterType(filterType);
+      setDraftQuickFilter(quickFilter);
+      setDraftDateFilter(appliedDateFilter);
+    }
+    setShowFilters(current => !current);
+  };
+
+  const applyArchiveFilters = () => {
+    setFilterType(draftFilterType);
+    setQuickFilter(draftQuickFilter);
+    setAppliedDateFilter(draftDateFilter);
+    setShowFilters(false);
+  };
+
+  const resetDraftArchiveFilters = () => {
+    setDraftFilterType('ALL');
+    setDraftQuickFilter('ALL');
+    setDraftDateFilter(null);
+  };
+
+  const confirmCalendarRange = () => {
+    const range = resolveArchiveDateRange(calendarDateFilter);
+    if (!range) {
+      addToast('يرجى تحديد تاريخ بداية ونهاية صحيحين، والتأكد أن البداية لا تتجاوز النهاية', 'warning');
+      return;
+    }
+    setDraftDateFilter(calendarDateFilter);
+    setIsDateModalOpen(false);
+  };
 
   const getSyncBadge = (inv: ArchiveInvoice) => {
     const isSynced = inv.is_synced === 1 || inv.isSynced === true || inv.syncStatus === 'SYNCED';
@@ -105,7 +171,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, filterType, quickFilter, paymentFilter, sortBy]);
+  }, [searchTerm, filterType, quickFilter, paymentFilter, sortBy, appliedDateFilter]);
 
   useEffect(() => {
     const loadArchive = async () => {
@@ -118,6 +184,16 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
   const filteredInvoices = useMemo(() => {
     let list = [...invoices];
     if (filterType !== 'ALL') list = list.filter(inv => inv.entityType === filterType);
+
+    // The archive defaults to the current calendar year using the invoice's visible document date.
+    // A user-selected creation-date range uses the immutable record timestamp instead.
+    const dateRange = appliedDateFilter
+      ? resolveArchiveDateRange(appliedDateFilter)
+      : getCurrentYearArchiveRange();
+    const dateBasis = appliedDateFilter?.basis || 'DOCUMENT';
+    if (dateRange) {
+      list = list.filter(inv => isArchiveDateWithinRange(getArchiveDateValue(inv, dateBasis), dateRange));
+    }
     if (quickFilter === 'UNPAID') {
       list = list.filter(inv => {
         const paid = Number(inv.paidAmount || 0);
@@ -150,8 +226,8 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
       let valA: number | string = 0;
       let valB: number | string = 0;
       if (sortBy === 'date') {
-        valA = new Date(String(a.entityType === 'SALE' ? (a.date || a.Date || '') : a.date || '')).getTime();
-        valB = new Date(String(b.entityType === 'SALE' ? (b.date || b.Date || '') : b.date || '')).getTime();
+        valA = new Date(`${toArchiveDateKey(getArchiveDateValue(a, dateBasis)) || '1970-01-01'}T00:00:00`).getTime();
+        valB = new Date(`${toArchiveDateKey(getArchiveDateValue(b, dateBasis)) || '1970-01-01'}T00:00:00`).getTime();
       } else if (sortBy === 'total') {
         const idA = a.entityType === 'SALE' ? (a.SaleID || a.id) : (a.invoiceId || a.purchase_id || a.id);
         const idB = b.entityType === 'SALE' ? (b.SaleID || b.id) : (b.invoiceId || b.purchase_id || b.id);
@@ -168,7 +244,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
     });
 
     return list;
-  }, [invoices, searchTerm, filterType, quickFilter, paymentFilter, sortBy, sortOrder, finalTotals]);
+  }, [invoices, searchTerm, filterType, quickFilter, paymentFilter, sortBy, sortOrder, finalTotals, appliedDateFilter]);
 
   const archiveStats = useMemo(() => ({
     total: filteredInvoices.length,
@@ -182,11 +258,15 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
     }).length
   }), [filteredInvoices]);
 
-  const hasActiveFilters = Boolean(searchTerm.trim()) || filterType !== 'ALL' || quickFilter !== 'ALL';
+  const hasActiveFilters = Boolean(searchTerm.trim()) || filterType !== 'ALL' || quickFilter !== 'ALL' || appliedDateFilter !== null;
   const resetFilters = () => {
     setSearchTerm('');
     setFilterType('ALL');
     setQuickFilter('ALL');
+    setAppliedDateFilter(null);
+    setDraftFilterType('ALL');
+    setDraftQuickFilter('ALL');
+    setDraftDateFilter(null);
     setSortBy('date');
     setSortOrder('desc');
   };
@@ -393,29 +473,42 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
           <input type="text" placeholder="رقم الفاتورة أو العميل أو المورد..." aria-label="البحث في أرشيف المستندات" className="w-full min-w-0 bg-slate-50 border-2 border-transparent rounded-[16px] px-10 py-3 text-[10px] sm:text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
           <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
         </div>
-        <button onClick={() => setShowFilters(!showFilters)} aria-expanded={showFilters} className={`shrink-0 flex items-center gap-2 px-3 sm:px-5 py-3 rounded-[16px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
+        <button onClick={toggleArchiveFilters} aria-expanded={showFilters} aria-haspopup="dialog" className={`shrink-0 flex items-center gap-2 px-3 sm:px-5 py-3 rounded-[16px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
           <Filter size={14} /> فلترة
         </button>
-      </div>
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide" role="group" aria-label="فلاتر سريعة للمستندات">
-        {([
-          { id: 'ALL', label: 'الكل' },
-          { id: 'SALE', label: 'مبيعات' },
-          { id: 'PURCHASE', label: 'مشتريات' },
-          { id: 'UNPAID', label: 'غير مسددة' },
-          { id: 'RETURNS', label: 'مرتجعات' }
-        ] as const).map(item => {
-          const active = item.id === 'ALL' ? filterType === 'ALL' && quickFilter === 'ALL'
-            : item.id === 'SALE' || item.id === 'PURCHASE' ? filterType === item.id && quickFilter === 'ALL'
-            : quickFilter === item.id;
-          return (
-            <button key={item.id} onClick={() => {
-              if (item.id === 'ALL') { setFilterType('ALL'); setQuickFilter('ALL'); }
-              else if (item.id === 'SALE' || item.id === 'PURCHASE') { setFilterType(item.id); setQuickFilter('ALL'); }
-              else { setFilterType('ALL'); setQuickFilter(item.id); }
-            }} className={`shrink-0 px-4 py-2 rounded-full text-[10px] font-black transition-colors ${active ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:text-[#1E4D4D]'}`} aria-pressed={active}>{item.label}</button>
-          );
-        })}
+        {showFilters && (
+          <>
+            <div className="fixed inset-0 z-40" role="presentation" onClick={() => setShowFilters(false)} />
+            <div className="absolute bottom-full left-0 z-50 mb-3 w-[min(320px,calc(100vw-32px))] rounded-2xl border border-slate-100 bg-white p-3 shadow-2xl" dir="rtl" role="dialog" aria-label="تصفية أرشيف المستندات">
+              <button type="button" onClick={openDatePicker} className="w-full rounded-xl bg-slate-50 px-3 py-3 text-sm font-black text-[#1E4D4D] hover:bg-emerald-50 transition-colors">
+                <span className="flex items-center justify-center gap-2">
+                  <span>التاريخ</span>
+                  <CalendarDays size={18} />
+                </span>
+              </button>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => { setDraftFilterType('ALL'); setDraftQuickFilter('ALL'); }} aria-pressed={draftFilterType === 'ALL' && draftQuickFilter === 'ALL'} className={`col-span-2 rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftFilterType === 'ALL' && draftQuickFilter === 'ALL' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>الكل</button>
+                <button type="button" onClick={() => { setDraftFilterType('SALE'); setDraftQuickFilter('ALL'); }} aria-pressed={draftFilterType === 'SALE' && draftQuickFilter === 'ALL'} className={`rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftFilterType === 'SALE' && draftQuickFilter === 'ALL' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>مبيعات</button>
+                <button type="button" onClick={() => { setDraftFilterType('PURCHASE'); setDraftQuickFilter('ALL'); }} aria-pressed={draftFilterType === 'PURCHASE' && draftQuickFilter === 'ALL'} className={`rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftFilterType === 'PURCHASE' && draftQuickFilter === 'ALL' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>مشتريات</button>
+                <button type="button" onClick={() => { setDraftFilterType('ALL'); setDraftQuickFilter('RETURNS'); }} aria-pressed={draftQuickFilter === 'RETURNS'} className={`rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftQuickFilter === 'RETURNS' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>مرتجعات</button>
+                <button type="button" onClick={() => { setDraftFilterType('ALL'); setDraftQuickFilter('UNPAID'); }} aria-pressed={draftQuickFilter === 'UNPAID'} className={`rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftQuickFilter === 'UNPAID' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>غير مسددة</button>
+              </div>
+              <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-center text-[10px] font-bold text-slate-500">
+                {draftDateFilter
+                  ? `من ${draftDateFilter.start} إلى ${draftDateFilter.end} · ${draftDateFilter.basis === 'DOCUMENT' ? 'تاريخ الفاتورة' : 'تاريخ الإنشاء'}`
+                  : 'بدون نطاق محدد: من بداية السنة إلى اليوم'}
+              </div>
+              <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
+                <button type="button" onClick={resetDraftArchiveFilters} className="flex-1 rounded-xl bg-slate-100 px-3 py-3 text-[10px] font-black text-slate-600 hover:bg-slate-200">
+                  <span className="flex items-center justify-center gap-1"><RotateCcw size={13} /> إعادة تعيين</span>
+                </button>
+                <button type="button" onClick={applyArchiveFilters} className="flex-[1.4] rounded-xl bg-[#1E4D4D] px-3 py-3 text-[10px] font-black text-white shadow-md hover:bg-[#163c3c]">
+                  تطبيق الفلترة
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
@@ -522,7 +615,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
                               <Lock size={10} className={isPeriodLocked ? "text-amber-500" : "text-red-400"} />
                             )}
                           </div>
-                          <p className="text-[9px] font-bold text-slate-400">{new Date(invDate || Date.now()).toLocaleDateString('ar-SA')}</p>
+                          <p className="text-[9px] font-bold text-slate-400">{formatArchiveDate(invDate)}</p>
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
@@ -616,7 +709,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
                     </div>
                   </div>
                   <div className="w-2/12 font-bold text-slate-400">
-                    {new Date(invDate || Date.now()).toLocaleDateString('ar-SA')}
+                    {formatArchiveDate(invDate)}
                   </div>
                   <div className="w-3/12 font-black text-slate-600 truncate">
                     {String(partner || '')}
@@ -680,6 +773,81 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
           </div>
         </div>
       )}
+
+      <Modal
+        isOpen={isDateModalOpen}
+        onClose={() => setIsDateModalOpen(false)}
+        title="تحديد فترة الأرشيف"
+        maxWidth="sm:max-w-md"
+        positionClass="items-center"
+      >
+        <div className="space-y-4 py-2" dir="rtl">
+          <div className="space-y-2">
+            <p className="text-xs font-black text-slate-600">أساس البحث بالتاريخ</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setCalendarDateFilter(current => ({ ...current, basis: 'DOCUMENT' }))} aria-pressed={calendarDateFilter.basis === 'DOCUMENT'} className={`rounded-xl border px-3 py-3 text-xs font-black ${calendarDateFilter.basis === 'DOCUMENT' ? 'border-[#1E4D4D] bg-[#1E4D4D] text-white' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                تاريخ الفاتورة
+              </button>
+              <button type="button" onClick={() => setCalendarDateFilter(current => ({ ...current, basis: 'CREATED' }))} aria-pressed={calendarDateFilter.basis === 'CREATED'} className={`rounded-xl border px-3 py-3 text-xs font-black ${calendarDateFilter.basis === 'CREATED' ? 'border-[#1E4D4D] bg-[#1E4D4D] text-white' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                تاريخ الإنشاء
+              </button>
+            </div>
+            <p className="text-[10px] leading-5 text-slate-400">
+              تاريخ الفاتورة هو التاريخ الظاهر في الأرشيف. تاريخ الإنشاء هو وقت إدخال السجل ولا يتغير عند تعديل تاريخ الفاتورة.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-black text-slate-600">نوع الفترة</p>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { value: 'DAY', label: 'يومي' },
+                { value: 'MONTH', label: 'شهري' },
+                { value: 'YEAR', label: 'سنوي' }
+              ] as const).map(option => (
+                <button key={option.value} type="button" onClick={() => setCalendarDateFilter(current => ({ ...current, granularity: option.value, start: '', end: '' }))} aria-pressed={calendarDateFilter.granularity === option.value} className={`rounded-xl border px-2 py-2.5 text-xs font-black ${calendarDateFilter.granularity === option.value ? 'border-[#1E4D4D] bg-emerald-50 text-[#1E4D4D]' : 'border-slate-200 bg-white text-slate-500'}`}>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="space-y-2">
+              <span className="block text-xs font-black text-slate-600">{calendarDateFilter.granularity === 'DAY' ? 'من تاريخ' : calendarDateFilter.granularity === 'MONTH' ? 'من شهر' : 'من سنة'}</span>
+              <input
+                type={calendarDateFilter.granularity === 'DAY' ? 'date' : calendarDateFilter.granularity === 'MONTH' ? 'month' : 'number'}
+                min={calendarDateFilter.granularity === 'YEAR' ? '1900' : undefined}
+                max={calendarDateFilter.granularity === 'YEAR' ? '9999' : undefined}
+                step={calendarDateFilter.granularity === 'YEAR' ? '1' : undefined}
+                inputMode={calendarDateFilter.granularity === 'YEAR' ? 'numeric' : undefined}
+                value={calendarDateFilter.start}
+                onChange={event => setCalendarDateFilter(current => ({ ...current, start: event.target.value }))}
+                className="w-full min-w-0 rounded-xl border-2 border-slate-200 bg-white px-2 py-3 text-center text-xs font-bold text-slate-700 outline-none focus:border-[#1E4D4D]"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="block text-xs font-black text-slate-600">{calendarDateFilter.granularity === 'DAY' ? 'إلى تاريخ' : calendarDateFilter.granularity === 'MONTH' ? 'إلى شهر' : 'إلى سنة'}</span>
+              <input
+                type={calendarDateFilter.granularity === 'DAY' ? 'date' : calendarDateFilter.granularity === 'MONTH' ? 'month' : 'number'}
+                min={calendarDateFilter.granularity === 'YEAR' ? '1900' : undefined}
+                max={calendarDateFilter.granularity === 'YEAR' ? '9999' : undefined}
+                step={calendarDateFilter.granularity === 'YEAR' ? '1' : undefined}
+                inputMode={calendarDateFilter.granularity === 'YEAR' ? 'numeric' : undefined}
+                value={calendarDateFilter.end}
+                onChange={event => setCalendarDateFilter(current => ({ ...current, end: event.target.value }))}
+                className="w-full min-w-0 rounded-xl border-2 border-slate-200 bg-white px-2 py-3 text-center text-xs font-bold text-slate-700 outline-none focus:border-[#1E4D4D]"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2 border-t border-slate-100 pt-3">
+            <button type="button" onClick={() => setIsDateModalOpen(false)} className="flex-1 rounded-xl bg-slate-100 px-4 py-3 text-xs font-black text-slate-600">
+              إلغاء
+            </button>
+            <button type="button" onClick={confirmCalendarRange} className="flex-1 rounded-xl bg-[#1E4D4D] px-4 py-3 text-xs font-black text-white shadow-md">
+              اعتماد الفترة
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal isOpen={isSettlementModalOpen} onClose={() => setIsSettlementModalOpen(false)} title="سجل سدادات الفاتورة">
          {targetInvoice && (
