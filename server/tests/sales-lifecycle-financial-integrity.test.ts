@@ -11,38 +11,64 @@ import { FIFOEngine } from '@/features/inventory/services/fifoEngine';
 describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
   const tenantId = 'TENANT-SALES-PROD-01';
   const branchId = 'BRH-SALES-MAIN-01';
-  const customerId = 'CUST-SALES-001';
-  const productId = 'PROD-SALES-001';
+  const customerId = '10000000-0000-4000-8000-000000000001';
+  const productId = '20000000-0000-4000-8000-000000000001';
   const warehouseId = 'WH-MAIN';
 
-  beforeEach(async () => {
-    vi.clearAllMocks();
-
-    // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
+  const setSalesAuthContext = (activeTenantId: string) => {
     const userObj = {
       id: 'usr-sales-auditor',
       user_id: 'usr-sales-auditor',
       User_Name: 'Sales Auditor',
       User_Email: 'auditor@pharmaflow.test',
+      role: 'SuperAdmin',
       Role: 'SuperAdmin',
       User_Role: 'SuperAdmin',
-      tenantId,
-      tenant_id: tenantId,
+      tenantId: activeTenantId,
+      tenant_id: activeTenantId,
       branchId,
       branch_id: branchId,
-      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'accounting.voucher.create', 'vouchers.create']
+      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'sales.price.override', 'accounting.voucher.create', 'vouchers.create']
     };
 
-    TokenProvider.setSession(userObj as any, 'mock-jwt-sales-audit', 'mock-refresh-sales-audit');
+    const token = `mock-jwt-sales-audit-${activeTenantId}`;
+    TokenProvider.setSession(userObj as any, token, `mock-refresh-${activeTenantId}`);
     useAuthStore.setState({
       user: userObj as any,
-      token: 'mock-jwt-sales-audit',
-      tenantId,
+      token,
+      tenantId: activeTenantId,
       branchId,
       roles: ['SuperAdmin'],
-      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'accounting.voucher.create', 'vouchers.create'],
+      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'sales.price.override', 'accounting.voucher.create', 'vouchers.create'],
       isAuthenticated: true
     });
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== '/api/invoices/sales-policy') {
+        throw new Error(`Unexpected fetch in sales lifecycle test: ${String(input)}`);
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          policy: {
+            tenantId,
+            maxDiscountPercent: '100',
+            taxRatePercent: '0',
+            taxMode: 'NONE',
+            updatedAt: '2026-11-21T00:00:00.000Z'
+          }
+        })
+      } as Response;
+    }));
+
+    // Seed the test session before touching tenant-guarded Dexie tables.
+    setSalesAuthContext(tenantId);
 
     (globalThis as any).__FAIL_AT_STAGE__ = undefined;
     IdempotencyRegistry.clearInMemory();
@@ -65,6 +91,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
     await db.accounts.clear();
     await db.idempotencyRecords.clear();
     await db.idempotencyKeys.clear();
+    await db.tenantSalesPolicies.clear();
     await db.voucherInvoiceLinks.clear();
     await db.vouchers.clear();
     await db.auditLogs.clear();
@@ -126,6 +153,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
       branchId,
       productId,
       quantity: 100,
+      stockQuantity: 100,
       tenantId
     } as any);
 
@@ -536,13 +564,15 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
     const foreignTenantId = 'TENANT-FOREIGN-SALE-99';
 
     it('rejects sale using customer from another tenant', async () => {
-      const foreignCustId = 'CUST-FOREIGN-99';
+      const foreignCustId = '10000000-0000-4000-8000-000000000099';
+      setSalesAuthContext(foreignTenantId);
       await db.customers.put({
         id: foreignCustId,
         name: 'Foreign Customer',
         balance: 0,
         tenantId: foreignTenantId
       } as any);
+      setSalesAuthContext(tenantId);
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processSale({
@@ -550,11 +580,12 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
           items: [{ productId, quantity: 5, unitPrice: 20, price: 20 } as any],
           total: 100
         })
-      ).rejects.toThrow(/CROSS_TENANT_CUSTOMER_FORBIDDEN|تابع لمؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_CUSTOMER_FORBIDDEN|FAIL_CLOSED: Unauthorized direct read on 'customers'|تابع لمؤسسة أخرى/i);
     });
 
     it('rejects sale using product from another tenant', async () => {
-      const foreignProductId = 'PROD-FOREIGN-SALE-99';
+      const foreignProductId = '20000000-0000-4000-8000-000000000099';
+      setSalesAuthContext(foreignTenantId);
       await db.products.put({
         id: foreignProductId,
         name: 'Foreign Product',
@@ -564,6 +595,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
         costPrice: 20,
         tenantId: foreignTenantId
       } as any);
+      setSalesAuthContext(tenantId);
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processSale({
@@ -571,11 +603,12 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
           items: [{ productId: foreignProductId, quantity: 5, unitPrice: 20, price: 20 } as any],
           total: 100
         })
-      ).rejects.toThrow(/CROSS_TENANT_PRODUCT_FORBIDDEN|تابع لمؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_PRODUCT_FORBIDDEN|FAIL_CLOSED: Unauthorized direct read on 'products'|تابع لمؤسسة أخرى/i);
     });
 
     it('prevents allocating a customer receipt to a sales invoice belonging to another tenant', async () => {
       const foreignSaleId = 'SALE-FOREIGN-INV-99';
+      setSalesAuthContext(foreignTenantId);
       await db.invoices.put({
         id: foreignSaleId,
         tenantId: foreignTenantId,
@@ -584,6 +617,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
         paidAmount: 0,
         type: 'SALE'
       } as any);
+      setSalesAuthContext(tenantId);
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processCustomerReceipt({
@@ -591,7 +625,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
           amount: 200,
           allocations: { [foreignSaleId]: 200 }
         })
-      ).rejects.toThrow(/CROSS_TENANT_INVOICE_FORBIDDEN|مؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_INVOICE_FORBIDDEN|FAIL_CLOSED: Unauthorized direct read on 'invoices'|مؤسسة أخرى/i);
     });
   });
 
@@ -665,7 +699,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
     });
 
     it('rejects receipt allocated to invoice belonging to a different customer', async () => {
-      const otherCustomerId = 'CUST-OTHER-777';
+      const otherCustomerId = '10000000-0000-4000-8000-000000000077';
       await db.customers.put({
         id: otherCustomerId,
         name: 'Other Customer',
