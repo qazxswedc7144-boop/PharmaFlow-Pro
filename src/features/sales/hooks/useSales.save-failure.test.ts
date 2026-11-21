@@ -142,7 +142,10 @@ describe('useSales handlePost resolved failure contract', () => {
       setSaveSuccessData: () => undefined,
       setEditingInvoiceId: () => undefined,
       resetInvoiceState: async () => { currentOperationRef.current = null; },
-      onNavigate: () => undefined
+      onNavigate: () => undefined,
+      ErrorManager: {
+        handleError: (error: unknown) => ({ arabicMessage: error instanceof Error ? error.message : String(error) })
+      }
     };
 
     const dependencyNames = Object.keys(dependencies);
