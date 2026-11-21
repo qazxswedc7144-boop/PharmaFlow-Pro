@@ -105,7 +105,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, filterType, paymentFilter, sortBy]);
+  }, [searchTerm, filterType, quickFilter, paymentFilter, sortBy]);
 
   useEffect(() => {
     const loadArchive = async () => {
@@ -374,7 +374,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
           >
             <ArrowRight size={16} />
           </button>
-          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#1E4D4D] text-white rounded-[16px] sm:rounded-[20px] flex items-center justify-center text-xl sm:text-2xl shadow-lg shrink-0" aria-hidden="true">📦</div>
+          <div className="w-12 h-12 sm:w-14 sm:h-14 bg-[#1E4D4D] text-white rounded-[20px] flex items-center justify-center text-2xl shadow-lg shrink-0" aria-hidden="true">📦</div>
           <div className="flex items-baseline gap-2 min-w-0 flex-1 overflow-hidden whitespace-nowrap">
             <h2 className="text-base sm:text-xl md:text-2xl font-black text-[#1E4D4D] shrink-0">أرشيف المستندات</h2>
             <p className="hidden sm:block text-slate-400 text-[10px] font-bold truncate min-w-0">إدارة سجلات العمليات والربط المالي</p>
