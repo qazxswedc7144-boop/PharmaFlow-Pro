@@ -73,7 +73,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     const customersTbl = tx ? tx.table('customers') : db.customers;
     const suppliersTbl = tx ? tx.table('suppliers') : db.suppliers;
 
-    // Double cancellation prevention check
+    // Double cancellation prevention & record inspection
     const voucher = await vouchersTbl.get(input.id);
     const receipt = input.type === 'RECEIPT' ? await receiptsTbl.get(input.id) : null;
     const payment = input.type === 'PAYMENT' ? await paymentsTbl.get(input.id) : null;
@@ -82,18 +82,25 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       throw new Error(`السند رقم [${input.id}] غير موجود أو تم إلغاؤه مسبقاً (Double Cancellation Prevented)`);
     }
 
+    const savedRecord = receipt || payment || voucher;
+    const savedAmount = Number(savedRecord?.amount ?? savedRecord?.finalTotal ?? savedRecord?.totalAmount ?? input.amount);
+    if (!Number.isFinite(savedAmount) || Math.abs(savedAmount - input.amount) > 0.01) {
+      throw new Error(`VOUCHER_AMOUNT_MISMATCH: Cancellation amount (${input.amount}) does not match saved record amount (${savedAmount}).`);
+    }
+
     if (input.type === 'RECEIPT') {
       if (receipt) {
         await receiptsTbl.delete(input.id);
       }
       if (input.partnerId && input.partnerId !== 'عميل نقدي') {
         const customer = await customersTbl.get(input.partnerId);
-        if (customer) {
-          await customersTbl.update(input.partnerId, {
-            balance: (customer.balance || 0) + input.amount,
-            updatedAt: new Date().toISOString()
-          });
+        if (!customer) {
+          throw new Error(`CUSTOMER_NOT_FOUND: Customer ${input.partnerId} for receipt cancellation does not exist.`);
         }
+        await customersTbl.update(input.partnerId, {
+          balance: (customer.balance || 0) + input.amount,
+          updatedAt: new Date().toISOString()
+        });
       }
     } else {
       if (payment) {
@@ -101,12 +108,13 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       }
       if (input.partnerId && input.partnerId !== 'مورد نقدي') {
         const supplier = await suppliersTbl.get(input.partnerId);
-        if (supplier) {
-          await suppliersTbl.update(input.partnerId, {
-            balance: (supplier.balance || 0) + input.amount,
-            updatedAt: new Date().toISOString()
-          });
+        if (!supplier) {
+          throw new Error(`SUPPLIER_NOT_FOUND: Supplier ${input.partnerId} for payment cancellation does not exist.`);
         }
+        await suppliersTbl.update(input.partnerId, {
+          balance: (supplier.balance || 0) + input.amount,
+          updatedAt: new Date().toISOString()
+        });
       }
     }
 
@@ -139,20 +147,28 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       await vouchersTbl.delete(input.id);
     }
 
-    await (AuditService.log as any)({
-      action: 'DELETE',
-      module: 'VOUCHERS',
-      transactionUuid: ctx.workflowId,
-      recordId: input.id,
-      details: `تم إلغاء السند [${input.id}] بقيمة ${input.amount}`
-    });
+    try {
+      await (AuditService.log as any)({
+        action: 'DELETE',
+        module: 'VOUCHERS',
+        transactionUuid: ctx.workflowId,
+        recordId: input.id,
+        details: `تم إلغاء السند [${input.id}] بقيمة ${input.amount}`
+      });
+    } catch (auditErr) {
+      console.warn('[VoucherCancellation] Audit log failed:', auditErr);
+    }
 
-    await ProjectionEventBus.publish('VOUCHER_CANCELLED', input.id, {
-      type: input.type,
-      partnerId: input.partnerId,
-      amount: input.amount,
-      correlationId: ctx.correlationId
-    });
+    try {
+      await ProjectionEventBus.publish('VOUCHER_CANCELLED', input.id, {
+        type: input.type,
+        partnerId: input.partnerId,
+        amount: input.amount,
+        correlationId: ctx.correlationId
+      });
+    } catch (eventErr) {
+      console.warn('[VoucherCancellation] Projection event publish failed:', eventErr);
+    }
 
     return {
       success: true,

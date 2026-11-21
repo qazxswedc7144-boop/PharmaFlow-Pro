@@ -51,6 +51,39 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
 
     // Ensure core chart of accounts exist for the tenant
     await db.accounts.put({
+      id: 'ACC-101',
+      code: '101',
+      name: 'الصندوق',
+      type: 'Asset',
+      balanceType: 'Debit',
+      balance: 100000,
+      tenantId,
+      branchId
+    } as any);
+
+    await db.accounts.put({
+      id: 'ACC-201',
+      code: '201',
+      name: 'الموردين',
+      type: 'Liability',
+      balanceType: 'Credit',
+      balance: 50000,
+      tenantId,
+      branchId
+    } as any);
+
+    await db.accounts.put({
+      id: 'ACC-103',
+      code: '103',
+      name: 'العملاء',
+      type: 'Asset',
+      balanceType: 'Debit',
+      balance: 50000,
+      tenantId,
+      branchId
+    } as any);
+
+    await db.accounts.put({
       id: 'ACC-CASH-01',
       code: '1010',
       name: 'الصندوق الرئيسي',

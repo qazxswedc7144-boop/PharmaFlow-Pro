@@ -256,44 +256,65 @@ export const AccountingRepository = {
       const jlTbl = t.table('journalLines');
 
       const entry = await jeTbl.get(entryId);
-      if (!entry) return;
+      if (!entry) {
+        throw new Error(`JOURNAL_ENTRY_NOT_FOUND: Entry ${entryId} does not exist or was already deleted.`);
+      }
 
       const savedLines = await jlTbl.where('entryId').equals(entryId).toArray();
       const inlineLines = entry.lines || [];
 
-      if (savedLines.length > 0 && inlineLines.length > 0 && savedLines.length !== inlineLines.length) {
-        throw new Error(`JOURNAL_LINE_MISMATCH: Saved journal lines count (${savedLines.length}) does not match entry.lines count (${inlineLines.length}) for entry ${entryId}`);
+      if (savedLines.length === 0 && inlineLines.length === 0) {
+        throw new Error(`JOURNAL_LINES_MISSING: Entry ${entryId} has no journal lines in journalLines table or entry.lines.`);
+      }
+
+      if (savedLines.length > 0 && inlineLines.length > 0) {
+        if (savedLines.length !== inlineLines.length) {
+          throw new Error(`JOURNAL_LINE_COUNT_MISMATCH: Saved lines count (${savedLines.length}) does not match entry.lines count (${inlineLines.length}).`);
+        }
+        for (let i = 0; i < savedLines.length; i++) {
+          const s = savedLines[i];
+          const inl = inlineLines[i];
+          const sAcc = s.accountId || s.account_id;
+          const inlAcc = inl.accountId || inl.account_id;
+          if (sAcc !== inlAcc || Math.abs((s.debit || 0) - (inl.debit || 0)) > 0.001 || Math.abs((s.credit || 0) - (inl.credit || 0)) > 0.001) {
+            throw new Error(`JOURNAL_LINE_DATA_MISMATCH: Saved line data does not match inline line data for entry ${entryId}`);
+          }
+        }
       }
 
       const linesToReverse = savedLines.length > 0 ? savedLines : inlineLines;
 
-      // Reverse balances before deleting
       for (const line of linesToReverse) {
-        const lineAccId = line.accountId || line.account_id || 'ACC-GENERIC';
-        const amount =
-          (line.credit || 0) -
-          (line.debit || 0);
+        const lineAccId = line.accountId || line.account_id;
+        if (!lineAccId || lineAccId === 'ACC-GENERIC') {
+          throw new Error(`INVALID_ACCOUNT_ID: Journal line for entry ${entryId} has missing or generic account ID.`);
+        }
+
+        const debit = Number(line.debit || 0);
+        const credit = Number(line.credit || 0);
+
+        if (!Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 || (debit > 0 && credit > 0)) {
+          throw new Error(`INVALID_JOURNAL_AMOUNTS: Debit (${debit}) or Credit (${credit}) contains invalid numbers.`);
+        }
 
         const account = await accTbl.get(lineAccId);
-
-        if (account) {
-          await accTbl.update(lineAccId, {
-            balance:
-              (account.balance || 0) +
-              amount,
-            updatedAt:
-              new Date().toISOString()
-          });
+        if (!account) {
+          throw new Error(`ACCOUNT_NOT_FOUND: Account ${lineAccId} referenced in journal entry ${entryId} does not exist.`);
         }
+
+        const amount = credit - debit;
+        if (!Number.isFinite(amount)) {
+          throw new Error(`INVALID_REVERSAL_AMOUNT: Computed reversal amount is not finite.`);
+        }
+
+        await accTbl.update(lineAccId, {
+          balance: (account.balance || 0) + amount,
+          updatedAt: new Date().toISOString()
+        });
       }
 
       await jeTbl.delete(entryId);
-
-      // Also delete lines from journalLines table
-      await jlTbl
-        .where('entryId')
-        .equals(entryId)
-        .delete();
+      await jlTbl.where('entryId').equals(entryId).delete();
     };
 
     if (tx) {
