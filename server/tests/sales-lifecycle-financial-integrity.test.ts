@@ -11,9 +11,38 @@ import { FIFOEngine } from '@/features/inventory/services/fifoEngine';
 describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
   const tenantId = 'TENANT-SALES-PROD-01';
   const branchId = 'BRH-SALES-MAIN-01';
-  const customerId = 'CUST-SALES-001';
-  const productId = 'PROD-SALES-001';
+  const customerId = '10000000-0000-4000-8000-000000000001';
+  const productId = '20000000-0000-4000-8000-000000000001';
   const warehouseId = 'WH-MAIN';
+
+  const setSalesAuthContext = (activeTenantId: string) => {
+    const userObj = {
+      id: 'usr-sales-auditor',
+      user_id: 'usr-sales-auditor',
+      User_Name: 'Sales Auditor',
+      User_Email: 'auditor@pharmaflow.test',
+      role: 'SuperAdmin',
+      Role: 'SuperAdmin',
+      User_Role: 'SuperAdmin',
+      tenantId: activeTenantId,
+      tenant_id: activeTenantId,
+      branchId,
+      branch_id: branchId,
+      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'sales.price.override', 'accounting.voucher.create', 'vouchers.create']
+    };
+
+    const token = `mock-jwt-sales-audit-${activeTenantId}`;
+    TokenProvider.setSession(userObj as any, token, `mock-refresh-${activeTenantId}`);
+    useAuthStore.setState({
+      user: userObj as any,
+      token,
+      tenantId: activeTenantId,
+      branchId,
+      roles: ['SuperAdmin'],
+      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'sales.price.override', 'accounting.voucher.create', 'vouchers.create'],
+      isAuthenticated: true
+    });
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -38,31 +67,8 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
       } as Response;
     }));
 
-    // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
-    const userObj = {
-      id: 'usr-sales-auditor',
-      user_id: 'usr-sales-auditor',
-      User_Name: 'Sales Auditor',
-      User_Email: 'auditor@pharmaflow.test',
-      Role: 'SuperAdmin',
-      User_Role: 'SuperAdmin',
-      tenantId,
-      tenant_id: tenantId,
-      branchId,
-      branch_id: branchId,
-      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'sales.price.override', 'accounting.voucher.create', 'vouchers.create']
-    };
-
-    TokenProvider.setSession(userObj as any, 'mock-jwt-sales-audit', 'mock-refresh-sales-audit');
-    useAuthStore.setState({
-      user: userObj as any,
-      token: 'mock-jwt-sales-audit',
-      tenantId,
-      branchId,
-      roles: ['SuperAdmin'],
-      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'accounting.voucher.create', 'vouchers.create'],
-      isAuthenticated: true
-    });
+    // Seed the test session before touching tenant-guarded Dexie tables.
+    setSalesAuthContext(tenantId);
 
     (globalThis as any).__FAIL_AT_STAGE__ = undefined;
     IdempotencyRegistry.clearInMemory();
@@ -558,13 +564,15 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
     const foreignTenantId = 'TENANT-FOREIGN-SALE-99';
 
     it('rejects sale using customer from another tenant', async () => {
-      const foreignCustId = 'CUST-FOREIGN-99';
+      const foreignCustId = '10000000-0000-4000-8000-000000000099';
+      setSalesAuthContext(foreignTenantId);
       await db.customers.put({
         id: foreignCustId,
         name: 'Foreign Customer',
         balance: 0,
         tenantId: foreignTenantId
       } as any);
+      setSalesAuthContext(tenantId);
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processSale({
@@ -576,7 +584,8 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
     });
 
     it('rejects sale using product from another tenant', async () => {
-      const foreignProductId = 'PROD-FOREIGN-SALE-99';
+      const foreignProductId = '20000000-0000-4000-8000-000000000099';
+      setSalesAuthContext(foreignTenantId);
       await db.products.put({
         id: foreignProductId,
         name: 'Foreign Product',
@@ -586,6 +595,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
         costPrice: 20,
         tenantId: foreignTenantId
       } as any);
+      setSalesAuthContext(tenantId);
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processSale({
@@ -598,6 +608,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
 
     it('prevents allocating a customer receipt to a sales invoice belonging to another tenant', async () => {
       const foreignSaleId = 'SALE-FOREIGN-INV-99';
+      setSalesAuthContext(foreignTenantId);
       await db.invoices.put({
         id: foreignSaleId,
         tenantId: foreignTenantId,
@@ -606,6 +617,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
         paidAmount: 0,
         type: 'SALE'
       } as any);
+      setSalesAuthContext(tenantId);
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processCustomerReceipt({
