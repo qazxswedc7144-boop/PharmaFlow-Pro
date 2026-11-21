@@ -2,7 +2,7 @@ name: Run Tests
 
 on:
   push:
-    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency ]
+    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state ]
   pull_request:
     branches: [ main, fix/sync-outbox-ownership-phase3 ]
   workflow_dispatch:
@@ -64,6 +64,7 @@ jobs:
           src/features/purchases/utils/recoverablePurchaseDraft.test.ts
           src/features/sales/components/productRegistrationError.test.ts
           src/features/sales/components/productLookup.test.ts
+          src/features/sales/hooks/useSales.save-failure.test.ts
           src/features/sales/utils/saleStockAvailability.test.ts
           src/database/repositories/invoice.repository.p2.test.ts
           src/services/reports/reportEngine.refresh.test.ts
