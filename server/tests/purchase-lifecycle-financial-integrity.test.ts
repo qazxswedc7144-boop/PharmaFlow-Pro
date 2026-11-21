@@ -161,6 +161,43 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
       expect(inv?.remainingAmount).toBe(0);
       expect(inv?.paymentStatus).toBe('Cash');
       expect(inv?.financialStatus).toBe('Paid');
+
+      // Cash settlement must not create a supplier payable balance.
+      expect((await db.suppliers.get(supplierId))?.balance).toBe(0);
+
+      const entry = await db.journalEntries.where('sourceId').equals(res.refId).first();
+      expect(entry).toBeDefined();
+      const lines = await db.journalLines.where('entryId').equals(entry!.id).toArray();
+      expect(lines.find(line => line.credit > 0)?.accountId).toBe('ACC-101');
+    });
+
+    it('does not reverse supplier balance when editing a cash purchase', async () => {
+      const purchaseId = 'PUR-CASH-EDIT-001';
+      const create = await UnifiedBusinessWorkflowOrchestrator.processPurchase(
+        {
+          id: purchaseId,
+          supplierId,
+          items: [{ productId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
+          total: 100
+        },
+        { isCash: true }
+      );
+
+      expect(create.success).toBe(true);
+      expect((await db.suppliers.get(supplierId))?.balance).toBe(0);
+
+      const edit = await UnifiedBusinessWorkflowOrchestrator.processPurchase(
+        {
+          id: purchaseId,
+          supplierId,
+          items: [{ productId, quantity: 12, unitCost: 10, unitPrice: 10 } as any],
+          total: 120
+        },
+        { isCash: true, isEdit: true }
+      );
+
+      expect(edit.success).toBe(true);
+      expect((await db.suppliers.get(supplierId))?.balance).toBe(0);
     });
   });
 
