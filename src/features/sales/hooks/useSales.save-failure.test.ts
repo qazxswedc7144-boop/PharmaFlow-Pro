@@ -85,9 +85,13 @@ describe('useSales handlePost resolved failure contract', () => {
     const toasts: string[] = [];
     let generatedUuidCount = 0;
 
+    let addInvoiceCallCount = 0;
     const addInvoice = async (request: Record<string, any>) => {
       addInvoiceRequests.push(request);
-      return { success: false, error: 'SIMULATED_WORKFLOW_FAILURE' };
+      addInvoiceCallCount += 1;
+      return addInvoiceCallCount === 1
+        ? { success: false, error: 'SIMULATED_WORKFLOW_FAILURE' }
+        : { success: true, refId: 'invoice-retry-success', syncStatus: 'SYNCED' };
     };
 
     const dependencies = {
@@ -128,7 +132,17 @@ describe('useSales handlePost resolved failure contract', () => {
       },
       editingInvoiceId: null,
       currency: 'YER',
-      addInvoice
+      addInvoice,
+      reportCache: { purge: async () => undefined },
+      db: { incrementDataVersion: async () => undefined },
+      ReportEngine: { scheduleRefreshInBackground: async () => undefined },
+      refreshGlobal: async () => undefined,
+      auditLogService: { logSale: async () => undefined },
+      configurationService: { delete: async () => undefined },
+      setSaveSuccessData: () => undefined,
+      setEditingInvoiceId: () => undefined,
+      resetInvoiceState: async () => { currentOperationRef.current = null; },
+      onNavigate: () => undefined
     };
 
     const dependencyNames = Object.keys(dependencies);
@@ -158,7 +172,7 @@ describe('useSales handlePost resolved failure contract', () => {
     // while the operation ref and the exact draft/request identity remain stable.
     await renderHandlePost()();
 
-    expect(savePhase).toBe('failed');
+    expect(savePhase).toBe('idle');
     expect(isSavingRef.current).toBe(false);
     expect(savingTransitions).toEqual([true, false, true, false]);
     expect(addInvoiceRequests).toHaveLength(2);
