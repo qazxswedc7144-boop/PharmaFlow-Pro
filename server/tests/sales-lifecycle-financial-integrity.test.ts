@@ -50,7 +50,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
       tenant_id: tenantId,
       branchId,
       branch_id: branchId,
-      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'accounting.voucher.create', 'vouchers.create']
+      permissions: ['ALL', 'sales.create', 'sales.edit', 'sales.return', 'sales.price.override', 'accounting.voucher.create', 'vouchers.create']
     };
 
     TokenProvider.setSession(userObj as any, 'mock-jwt-sales-audit', 'mock-refresh-sales-audit');
@@ -147,6 +147,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
       branchId,
       productId,
       quantity: 100,
+      stockQuantity: 100,
       tenantId
     } as any);
 
