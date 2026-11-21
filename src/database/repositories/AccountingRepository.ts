@@ -249,52 +249,66 @@ export const AccountingRepository = {
     return await AccountingRepository.addEntry(entry);
   },
 
-  deleteEntry: async (entryId: string) => {
-    await db.safeTransaction(
-      'rw',
-      [
-        'journalEntries',
-        'accounts',
-        'journalLines'
-      ],
-      async () => {
-        const entry =
-          await db.journalEntries.get(entryId);
+  deleteEntry: async (entryId: string, tx?: any) => {
+    const performDelete = async (t: any) => {
+      const jeTbl = t.table('journalEntries');
+      const accTbl = t.table('accounts');
+      const jlTbl = t.table('journalLines');
 
-        if (entry) {
-          // Reverse balances before deleting
-          for (const line of (entry.lines || [])) {
-            const amount =
-              (line.credit || 0) -
-              (line.debit || 0);
+      const entry = await jeTbl.get(entryId);
+      if (!entry) return;
 
-            const account =
-              await db.accounts.get(line.accountId);
+      const savedLines = await jlTbl.where('entryId').equals(entryId).toArray();
+      const inlineLines = entry.lines || [];
 
-            if (account) {
-              await db.accounts.update(
-                line.accountId,
-                {
-                  balance:
-                    (account.balance || 0) +
-                    amount,
-                  updatedAt:
-                    new Date().toISOString()
-                }
-              );
-            }
-          }
+      if (savedLines.length > 0 && inlineLines.length > 0 && savedLines.length !== inlineLines.length) {
+        throw new Error(`JOURNAL_LINE_MISMATCH: Saved journal lines count (${savedLines.length}) does not match entry.lines count (${inlineLines.length}) for entry ${entryId}`);
+      }
 
-          await db.journalEntries.delete(entryId);
+      const linesToReverse = savedLines.length > 0 ? savedLines : inlineLines;
 
-          // Also delete lines
-          await db.journalLines
-            .where('entryId')
-            .equals(entryId)
-            .delete();
+      // Reverse balances before deleting
+      for (const line of linesToReverse) {
+        const lineAccId = line.accountId || line.account_id || 'ACC-GENERIC';
+        const amount =
+          (line.credit || 0) -
+          (line.debit || 0);
+
+        const account = await accTbl.get(lineAccId);
+
+        if (account) {
+          await accTbl.update(lineAccId, {
+            balance:
+              (account.balance || 0) +
+              amount,
+            updatedAt:
+              new Date().toISOString()
+          });
         }
       }
-    );
+
+      await jeTbl.delete(entryId);
+
+      // Also delete lines from journalLines table
+      await jlTbl
+        .where('entryId')
+        .equals(entryId)
+        .delete();
+    };
+
+    if (tx) {
+      await performDelete(tx);
+    } else {
+      await db.safeTransaction(
+        'rw',
+        [
+          'journalEntries',
+          'accounts',
+          'journalLines'
+        ],
+        performDelete
+      );
+    }
   },
 
   deleteEntriesBySource: async (

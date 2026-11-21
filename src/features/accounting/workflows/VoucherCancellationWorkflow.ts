@@ -2,6 +2,7 @@ import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow
 import { db } from '@/core/db';
 import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
+import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 
 export interface VoucherCancellationInput {
   id: string;
@@ -60,53 +61,83 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
 
   public async executeDomainSteps(
     input: VoucherCancellationInput,
-    ctx: WorkflowContext
+    ctx: WorkflowContext,
+    tx?: any
   ): Promise<VoucherCancellationResult> {
-    if (input.type === 'RECEIPT') {
-      await db.receipts.delete(input.id);
-      if (input.partnerId && input.partnerId !== 'عميل نقدي') {
-        // Reverting receipt restores customer receivable balance (+amount)
-        await db.updateCustomerBalance(input.partnerId, input.amount);
-      }
-    } else {
-      await db.payments.delete(input.id);
-      if (input.partnerId && input.partnerId !== 'مورد نقدي') {
-        // Reverting payment restores supplier payable balance (+amount)
-        await db.updateSupplierBalance(input.partnerId, input.amount);
-      }
+    const receiptsTbl = tx ? tx.table('receipts') : db.receipts;
+    const paymentsTbl = tx ? tx.table('payments') : db.payments;
+    const vouchersTbl = tx ? tx.table('vouchers') : db.vouchers;
+    const linksTbl = tx ? tx.table('voucherInvoiceLinks') : db.voucherInvoiceLinks;
+    const invoicesTbl = tx ? tx.table('invoices') : db.invoices;
+    const jeTbl = tx ? tx.table('journalEntries') : db.journalEntries;
+    const customersTbl = tx ? tx.table('customers') : db.customers;
+    const suppliersTbl = tx ? tx.table('suppliers') : db.suppliers;
+
+    // Double cancellation prevention check
+    const voucher = await vouchersTbl.get(input.id);
+    const receipt = input.type === 'RECEIPT' ? await receiptsTbl.get(input.id) : null;
+    const payment = input.type === 'PAYMENT' ? await paymentsTbl.get(input.id) : null;
+
+    if (!voucher && !receipt && !payment) {
+      throw new Error(`السند رقم [${input.id}] غير موجود أو تم إلغاؤه مسبقاً (Double Cancellation Prevented)`);
     }
 
-    // Revert invoice allocations linked to this voucher
-    try {
-      const links = await db.voucherInvoiceLinks.where('voucherId').equals(input.id).toArray();
-      for (const link of links) {
-        const inv = await db.invoices.get(link.invoiceId);
-        if (inv) {
-          const newPaid = Math.max(0, Math.round(((inv.paidAmount || 0) - (link.Paid_Amount || 0)) * 100) / 100);
-          const total = Number(inv.totalAmount ?? inv.finalTotal ?? 0);
-          await db.invoices.update(link.invoiceId, {
-            paidAmount: newPaid,
-            paymentStatus: newPaid <= 0.001 ? 'UNPAID' : (newPaid < total - 0.001 ? 'PARTIAL' : 'PAID'),
+    if (input.type === 'RECEIPT') {
+      if (receipt) {
+        await receiptsTbl.delete(input.id);
+      }
+      if (input.partnerId && input.partnerId !== 'عميل نقدي') {
+        const customer = await customersTbl.get(input.partnerId);
+        if (customer) {
+          await customersTbl.update(input.partnerId, {
+            balance: (customer.balance || 0) + input.amount,
             updatedAt: new Date().toISOString()
           });
         }
-        await db.voucherInvoiceLinks.delete(link.id);
       }
-    } catch (linkErr) {
-      console.warn('[VoucherCancellation] Error reverting voucher invoice links:', linkErr);
+    } else {
+      if (payment) {
+        await paymentsTbl.delete(input.id);
+      }
+      if (input.partnerId && input.partnerId !== 'مورد نقدي') {
+        const supplier = await suppliersTbl.get(input.partnerId);
+        if (supplier) {
+          await suppliersTbl.update(input.partnerId, {
+            balance: (supplier.balance || 0) + input.amount,
+            updatedAt: new Date().toISOString()
+          });
+        }
+      }
     }
 
-    // Reverse journal entries linked
-    const entries = await db.journalEntries.where('sourceId').equals(input.id).toArray();
+    // Revert invoice allocations linked to this voucher (NO error swallowing!)
+    const links = await linksTbl.where('voucherId').equals(input.id).toArray();
+    for (const link of links) {
+      const inv = await invoicesTbl.get(link.invoiceId);
+      if (!inv) {
+        throw new Error(`INVOICE_NOT_FOUND: Invoice ${link.invoiceId} linked to voucher ${input.id} could not be found for cancellation.`);
+      }
+      const paidAmount = Number(link.Paid_Amount ?? link.paid_amount ?? 0);
+      const newPaid = Math.max(0, Math.round(((inv.paidAmount || 0) - paidAmount) * 100) / 100);
+      const total = Number(inv.totalAmount ?? inv.finalTotal ?? 0);
+      await invoicesTbl.update(link.invoiceId, {
+        paidAmount: newPaid,
+        paymentStatus: newPaid <= 0.001 ? 'UNPAID' : (newPaid < total - 0.001 ? 'PARTIAL' : 'PAID'),
+        updatedAt: new Date().toISOString()
+      });
+      await linksTbl.delete(link.id);
+    }
+
+    // Reverse journal entries and lines atomically via AccountingRepository.deleteEntry
+    const entries = await jeTbl.where('sourceId').equals(input.id).toArray();
     for (const entry of entries) {
-      for (const line of (entry.lines || [])) {
-        await db.updateAccountBalance(line.accountId, line.type === 'DEBIT' ? -line.amount : line.amount);
-      }
-      await db.journalEntries.delete(entry.id);
+      await AccountingRepository.deleteEntry(entry.id, tx);
     }
 
-    // Delete or update status in vouchers table
-    await db.vouchers.delete(input.id).catch(() => null);
+    // Delete voucher record if exists
+    if (voucher) {
+      await vouchersTbl.delete(input.id);
+    }
 
     await (AuditService.log as any)({
       action: 'DELETE',
