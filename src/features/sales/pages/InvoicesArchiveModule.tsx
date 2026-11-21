@@ -300,7 +300,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
         }
 
         if (nextLocks[id] === undefined) {
-          const invDate = inv.entityType === 'SALE' ? (inv.date || inv.Date) : inv.date;
+          const invDate = inv.date || inv.Date;
           nextLocks[id] = await db.isDateLocked(invDate);
           updated = true;
         }
@@ -574,7 +574,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
               const total = finalTotals[id] || 0;
               const paid = inv.paidAmount || 0;
               const isFinancialLocked = inv.payment_status && inv.payment_status !== 'Unpaid';
-              const invDate = inv.entityType === 'SALE' ? (inv.date || inv.Date) : inv.date;
+              const invDate = inv.date || inv.Date;
               const isPeriodLocked = lockedInvoices[id] || false;
               const partner = inv.entityType === 'SALE'
                 ? (inv.customerName || inv.CustomerName || inv.customerId || 'عميل نقدي')
@@ -667,7 +667,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
               const total = finalTotals[id] || 0;
               const paid = inv.paidAmount || 0;
               const isFinancialLocked = inv.payment_status && inv.payment_status !== 'Unpaid';
-              const invDate = inv.entityType === 'SALE' ? (inv.date || inv.Date) : inv.date;
+              const invDate = inv.date || inv.Date;
               const isPeriodLocked = lockedInvoices[id] || false;
               const partner = inv.entityType === 'SALE'
                 ? (inv.customerName || inv.CustomerName || inv.customerId || 'عميل نقدي')
