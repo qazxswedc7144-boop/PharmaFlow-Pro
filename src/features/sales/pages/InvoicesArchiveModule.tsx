@@ -68,7 +68,8 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
   const [showFilters, setShowFilters] = useState(false);
 
   const [filterType, setFilterType] = useState<'ALL' | 'SALE' | 'PURCHASE'>(initialFilter);
-  const [paymentFilter] = useState<'ALL' | 'Cash' | 'Credit'>('ALL');
+  const [quickFilter, setQuickFilter] = useState<'ALL' | 'UNPAID' | 'RETURNS'>('ALL');
+  const paymentFilter: 'ALL' | 'Cash' | 'Credit' = 'ALL';
   const [sortBy, setSortBy] = useState<'date' | 'total' | 'id'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
@@ -117,6 +118,16 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
   const filteredInvoices = useMemo(() => {
     let list = [...invoices];
     if (filterType !== 'ALL') list = list.filter(inv => inv.entityType === filterType);
+    if (quickFilter === 'UNPAID') {
+      list = list.filter(inv => {
+        const paid = Number(inv.paidAmount || 0);
+        const total = Number(inv.finalTotal || inv.FinalTotal || inv.totalAmount || inv.finalAmount || 0);
+        const status = String(inv.payment_status || inv.paymentStatus || '').toLowerCase();
+        return status.includes('unpaid') || status.includes('غير مسدد') || (total > 0 && paid < total);
+      });
+    } else if (quickFilter === 'RETURNS') {
+      list = list.filter(inv => inv.isReturn === true || String(inv.invoiceType || '').toLowerCase().includes('return') || String(inv.invoiceType || '').includes('مرتجع'));
+    }
     if (paymentFilter !== 'ALL') {
       list = list.filter(inv => {
         const method = inv.paymentStatus || (inv.status === 'PAID' ? 'Cash' : 'Credit');
@@ -155,7 +166,28 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
     });
 
     return list;
-  }, [invoices, searchTerm, filterType, paymentFilter, sortBy, sortOrder, finalTotals]);
+  }, [invoices, searchTerm, filterType, quickFilter, paymentFilter, sortBy, sortOrder, finalTotals]);
+
+  const archiveStats = useMemo(() => ({
+    total: filteredInvoices.length,
+    sales: filteredInvoices.filter(inv => inv.entityType === 'SALE').length,
+    purchases: filteredInvoices.filter(inv => inv.entityType === 'PURCHASE').length,
+    unpaid: filteredInvoices.filter(inv => {
+      const paid = Number(inv.paidAmount || 0);
+      const total = Number(inv.finalTotal || inv.FinalTotal || inv.totalAmount || inv.finalAmount || 0);
+      const status = String(inv.payment_status || inv.paymentStatus || '').toLowerCase();
+      return status.includes('unpaid') || status.includes('غير مسدد') || (total > 0 && paid < total);
+    }).length
+  }), [filteredInvoices]);
+
+  const hasActiveFilters = Boolean(searchTerm.trim()) || filterType !== 'ALL' || quickFilter !== 'ALL';
+  const resetFilters = () => {
+    setSearchTerm('');
+    setFilterType('ALL');
+    setQuickFilter('ALL');
+    setSortBy('date');
+    setSortOrder('desc');
+  };
 
   const paginatedInvoices = useMemo(() => {
     return filteredInvoices.slice((page - 1) * pageSize, page * pageSize);
@@ -332,41 +364,69 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
   return (
     <div className="p-4 md:p-8 space-y-6 bg-[#F8FAFA] min-h-full pb-32 animate-in fade-in" dir="rtl">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 bg-[#1E4D4D] text-white rounded-[20px] flex items-center justify-center text-2xl shadow-xl">📦</div>
-          <div>
-            <h2 className="text-xl md:text-2xl font-black text-[#1E4D4D]">أرشيف المستندات</h2>
-            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">إدارة سجلات العمليات والربط المالي</p>
+      <div className="space-y-4">
+        <div className="flex items-center gap-2.5 min-w-0 w-full">
+          <button
+            onClick={() => onNavigate?.('dashboard')}
+            className="w-7 h-7 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shrink-0"
+            title="الرجوع للرئيسية"
+            aria-label="الرجوع للرئيسية"
+          >
+            <ArrowRight size={16} />
+          </button>
+          <div className="w-10 h-10 sm:w-12 sm:h-12 bg-[#1E4D4D] text-white rounded-[16px] sm:rounded-[20px] flex items-center justify-center text-xl sm:text-2xl shadow-lg shrink-0" aria-hidden="true">📦</div>
+          <div className="flex items-baseline gap-2 min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+            <h2 className="text-base sm:text-xl md:text-2xl font-black text-[#1E4D4D] shrink-0">أرشيف المستندات</h2>
+            <p className="hidden sm:block text-slate-400 text-[10px] font-bold truncate min-w-0">إدارة سجلات العمليات والربط المالي</p>
           </div>
         </div>
-        
-        <div className="flex flex-col md:flex-row items-center gap-4 mr-auto w-full md:w-auto mt-4 md:mt-0 justify-between md:justify-end">
-          <div className="flex items-center gap-3">
-            <button onClick={() => onNavigate?.('sales')} className="bg-[#10B981] text-white px-5 py-2.5 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all flex items-center gap-2"><Plus size={14} /> مبيعات جديدة</button>
-            <button onClick={() => onNavigate?.('purchases')} className="bg-[#1E4D4D] text-white px-5 py-2.5 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all flex items-center gap-2"><Plus size={14} /> مشتريات جديدة</button>
-          </div>
-          
-          <div className="hidden md:block w-px h-8 bg-slate-200 mx-2"></div>
-          
-          <button 
-            onClick={() => onNavigate?.('dashboard')} 
-            className="p-3 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-all duration-300 cursor-pointer flex items-center justify-center group"
-            title="العودة للرئيسية"
-          >
-             <ArrowRight size={28} className="group-hover:-translate-x-1 transition-transform" />
-          </button>
+        <div className="flex items-center gap-2 w-full">
+          <button onClick={() => onNavigate?.('sales')} className="flex-1 min-w-0 bg-[#10B981] text-white px-3 sm:px-5 py-2.5 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"><Plus size={14} /> مبيعات جديدة</button>
+          <button onClick={() => onNavigate?.('purchases')} className="flex-1 min-w-0 bg-[#1E4D4D] text-white px-3 sm:px-5 py-2.5 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"><Plus size={14} /> مشتريات جديدة</button>
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-3 bg-white p-2 rounded-[24px] border border-slate-100 shadow-sm relative">
-        <div className="relative flex-1 group">
-          <input type="text" placeholder="البحث برقم الفاتورة، الطرف الثاني..." className="w-full bg-slate-50 border-2 border-transparent rounded-[18px] px-12 py-3.5 text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-          <Search size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300" />
+      <div className="flex items-center gap-2 bg-white p-2 rounded-[20px] border border-slate-100 shadow-sm relative">
+        <div className="relative flex-1 min-w-0 group">
+          <input type="text" placeholder="ابحث برقم الفاتورة، العميل، أو المورد..." aria-label="البحث في أرشيف المستندات" className="w-full min-w-0 bg-slate-50 border-2 border-transparent rounded-[16px] px-10 py-3 text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+          <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
         </div>
-        <button onClick={() => setShowFilters(!showFilters)} className={`flex items-center gap-2 px-5 py-3 rounded-[18px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
+        <button onClick={() => setShowFilters(!showFilters)} aria-expanded={showFilters} className={`shrink-0 flex items-center gap-2 px-3 sm:px-5 py-3 rounded-[16px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
           <Filter size={14} /> فلترة
         </button>
+      </div>
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide" role="group" aria-label="فلاتر سريعة للمستندات">
+        {([
+          { id: 'ALL', label: 'الكل' },
+          { id: 'SALE', label: 'مبيعات' },
+          { id: 'PURCHASE', label: 'مشتريات' },
+          { id: 'UNPAID', label: 'غير مسددة' },
+          { id: 'RETURNS', label: 'مرتجعات' }
+        ] as const).map(item => {
+          const active = item.id === 'ALL' ? filterType === 'ALL' && quickFilter === 'ALL'
+            : item.id === 'SALE' || item.id === 'PURCHASE' ? filterType === item.id && quickFilter === 'ALL'
+            : quickFilter === item.id;
+          return (
+            <button key={item.id} onClick={() => {
+              if (item.id === 'ALL') { setFilterType('ALL'); setQuickFilter('ALL'); }
+              else if (item.id === 'SALE' || item.id === 'PURCHASE') { setFilterType(item.id); setQuickFilter('ALL'); }
+              else { setFilterType('ALL'); setQuickFilter(item.id); }
+            }} className={`shrink-0 px-4 py-2 rounded-full text-[10px] font-black transition-colors ${active ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-500 hover:text-[#1E4D4D]'}`} aria-pressed={active}>{item.label}</button>
+          );
+        })}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: 'المستندات', value: archiveStats.total },
+          { label: 'المبيعات', value: archiveStats.sales },
+          { label: 'المشتريات', value: archiveStats.purchases },
+          { label: 'غير مسددة', value: archiveStats.unpaid }
+        ].map(stat => (
+          <div key={stat.label} className="bg-white border border-slate-100 rounded-xl px-3 py-2 shadow-sm min-w-0">
+            <p className="text-[9px] font-bold text-slate-400 truncate">{stat.label}</p>
+            <p className="text-base font-black text-[#1E4D4D] tabular-nums">{stat.value.toLocaleString('ar')}</p>
+          </div>
+        ))}
       </div>
 
       {showFilters && (
@@ -409,10 +469,20 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
       )}
 
       {/* Virtualized Mobile Cards View */}
-      <div className="lg:hidden w-full" style={{ height: Math.min(600, Math.max(300, filteredInvoices.length * 170)) }}>
+      <div className="lg:hidden w-full" style={{ height: filteredInvoices.length === 0 ? 'auto' : Math.min(600, Math.max(300, filteredInvoices.length * 170)) }}>
         {filteredInvoices.length === 0 ? (
-          <div className="py-12 text-center text-slate-300 font-black italic bg-white rounded-3xl border border-slate-100">
-            لا توجد فواتير مطابقة للبحث
+          <div className="py-10 px-4 text-center bg-white rounded-3xl border border-slate-100 shadow-sm space-y-3">
+            <div className="mx-auto w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center text-[#1E4D4D] text-xl">{invoices.length === 0 ? '📦' : '🔎'}</div>
+            <p className="text-sm font-black text-slate-600">{invoices.length === 0 ? 'الأرشيف فارغ حالياً' : 'لا توجد مستندات مطابقة للفلاتر'}</p>
+            <p className="text-[10px] text-slate-400">{invoices.length === 0 ? 'أنشئ أول مستند ليظهر هنا' : 'جرّب تعديل البحث أو إعادة تعيين الفلاتر'}</p>
+            {hasActiveFilters ? (
+              <button onClick={resetFilters} className="px-4 py-2 rounded-xl bg-slate-100 text-[#1E4D4D] text-[10px] font-black">إعادة تعيين الفلاتر</button>
+            ) : invoices.length === 0 ? (
+              <div className="flex justify-center gap-2">
+                <button onClick={() => onNavigate?.('sales')} className="px-3 py-2 rounded-xl bg-[#10B981] text-white text-[10px] font-black">فاتورة مبيعات جديدة</button>
+                <button onClick={() => onNavigate?.('purchases')} className="px-3 py-2 rounded-xl bg-[#1E4D4D] text-white text-[10px] font-black">فاتورة مشتريات جديدة</button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <List
@@ -452,6 +522,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
+                        <span className="text-[9px] font-black text-[#1E4D4D] bg-emerald-50 px-2 py-1 rounded-full">{inv.entityType === 'SALE' ? 'مبيعات' : 'مشتريات'}{inv.isReturn || String(inv.invoiceType || '').includes('مرتجع') ? ' · مرتجع' : ''}</span>
                         {getPaymentStatusBadge(inv, total)}
                         {getSyncBadge(inv)}
                       </div>
@@ -469,12 +540,12 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-50 flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
-                          <span className="text-[10px] font-black text-slate-400">المسدد: <span className="text-emerald-600">{paid.toLocaleString()}</span></span>
+                      <div className="pt-2 border-t border-slate-50 flex items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="text-[9px] font-black text-slate-400">المسدد: <span className="text-emerald-600">{paid.toLocaleString()}</span></span>
+                          <span className="text-[9px] font-black text-slate-400">المتبقي: <span className="text-amber-600">{Math.max(0, total - paid).toLocaleString()}</span></span>
                         </div>
-                        <div className="flex gap-1">
+                        <div className="flex gap-1 shrink-0">
                           <button onClick={(e) => { e.stopPropagation(); handleViewAudit(e, inv); }} className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-[#1E4D4D] hover:text-white transition-colors"><Fingerprint size={14}/></button>
                           <button onClick={(e) => { e.stopPropagation(); handleOpenSettlements(e, inv); }} className="p-2 bg-slate-50 text-blue-500 rounded-lg hover:bg-blue-505 hover:text-white transition-colors"><History size={14}/></button>
                         </div>
@@ -500,8 +571,9 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
         </div>
 
         {filteredInvoices.length === 0 ? (
-          <div className="py-20 text-center text-slate-300 font-black italic">
-            لا توجد فواتير مطابقة للبحث
+          <div className="py-16 px-4 text-center text-slate-500 font-black bg-white">
+            <p>{invoices.length === 0 ? 'الأرشيف فارغ حالياً' : 'لا توجد مستندات مطابقة للفلاتر'}</p>
+            {hasActiveFilters && <button onClick={resetFilters} className="mt-3 px-4 py-2 rounded-xl bg-slate-100 text-[#1E4D4D] text-[10px]">إعادة تعيين الفلاتر</button>}
           </div>
         ) : (
           <List
