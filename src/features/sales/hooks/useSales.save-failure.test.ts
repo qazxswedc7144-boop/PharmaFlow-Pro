@@ -145,7 +145,8 @@ describe('useSales handlePost resolved failure contract', () => {
       onNavigate: () => undefined,
       ErrorManager: {
         handleError: (error: unknown) => ({ arabicMessage: error instanceof Error ? error.message : String(error) })
-      }
+      },
+      DRAFT_KEY: 'pharmaflow_sales_draft'
     };
 
     const dependencyNames = Object.keys(dependencies);
