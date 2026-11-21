@@ -699,7 +699,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
     });
 
     it('rejects receipt allocated to invoice belonging to a different customer', async () => {
-      const otherCustomerId = 'CUST-OTHER-777';
+      const otherCustomerId = '10000000-0000-4000-8000-000000000077';
       await db.customers.put({
         id: otherCustomerId,
         name: 'Other Customer',
