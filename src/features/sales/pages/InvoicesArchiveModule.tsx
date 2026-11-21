@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { InvoiceRepository } from '@/database/repositories/invoice.repository';
 import { AdjustmentRepository } from '@/database/repositories/AdjustmentRepository';
 import { SupplierRepository } from '@/database/repositories/SupplierRepository';
@@ -12,9 +12,17 @@ import { db } from '@/core/db';
 import { transactionOrchestrator } from '@/services/transactions/transactionOrchestrator';
 import { 
   Search, Edit3, ArrowRight, Tag, History, Filter, Fingerprint,
-  Plus, Banknote, Clock, Lock, Ban, Cloud, RefreshCw
+  Plus, Banknote, Clock, Lock, Ban, Cloud, RefreshCw, CalendarDays, RotateCcw
 } from 'lucide-react';
 import { FixedSizeList as List } from 'react-window';
+import type { ArchiveDateFilter } from '@/features/sales/utils/archiveDateFilters';
+import {
+  getArchiveDateValue,
+  getCurrentYearArchiveRange,
+  isArchiveDateWithinRange,
+  resolveArchiveDateRange,
+  toArchiveDateKey
+} from '@/features/sales/utils/archiveDateFilters';
 
 export interface ArchiveInvoice {
   id: string;
@@ -24,6 +32,9 @@ export interface ArchiveInvoice {
   purchase_id?: string;
   date?: string;
   Date?: string;
+  createdAt?: string | Date;
+  created_at?: string;
+  Created_At?: string;
   finalTotal?: number;
   FinalTotal?: number;
   totalAmount?: number;
@@ -66,9 +77,20 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
   const [finalTotals, setFinalTotals] = useState<Record<string, number>>({});
   const [lockedInvoices, setLockedInvoices] = useState<Record<string, boolean>>({});
   const [showFilters, setShowFilters] = useState(false);
-
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const filterPopoverRef = useRef<HTMLDivElement>(null);
+  const [filterPopoverPosition, setFilterPopoverPosition] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
+  const [isDateModalOpen, setIsDateModalOpen] = useState(false);
   const [filterType, setFilterType] = useState<'ALL' | 'SALE' | 'PURCHASE'>(initialFilter);
-  const [paymentFilter] = useState<'ALL' | 'Cash' | 'Credit'>('ALL');
+  const [quickFilter, setQuickFilter] = useState<'ALL' | 'UNPAID' | 'RETURNS'>('ALL');
+  const [draftFilterType, setDraftFilterType] = useState<'ALL' | 'SALE' | 'PURCHASE'>(initialFilter);
+  const [draftQuickFilter, setDraftQuickFilter] = useState<'ALL' | 'UNPAID' | 'RETURNS'>('ALL');
+  const [appliedDateFilter, setAppliedDateFilter] = useState<ArchiveDateFilter | null>(null);
+  const [draftDateFilter, setDraftDateFilter] = useState<ArchiveDateFilter | null>(null);
+  const [calendarDateFilter, setCalendarDateFilter] = useState<ArchiveDateFilter>({
+    basis: 'DOCUMENT', granularity: 'DAY', start: '', end: ''
+  });
+  const paymentFilter: 'ALL' | 'Cash' | 'Credit' = 'ALL';
   const [sortBy, setSortBy] = useState<'date' | 'total' | 'id'>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   
@@ -79,6 +101,107 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
   const [page, setPage] = useState(1);
   const pageSize = 10;
+
+  const formatArchiveDate = (value: unknown): string => {
+    const dateKey = toArchiveDateKey(value);
+    return dateKey ? new Date(`${dateKey}T00:00:00`).toLocaleDateString('ar-SA') : '—';
+  };
+
+  const openDatePicker = () => {
+    setCalendarDateFilter(draftDateFilter || {
+      basis: 'DOCUMENT',
+      granularity: 'DAY',
+      start: '',
+      end: ''
+    });
+    setIsDateModalOpen(true);
+  };
+
+  useEffect(() => {
+    if (!showFilters) {
+      setFilterPopoverPosition(null);
+      return;
+    }
+
+    const updateFilterPopoverPosition = () => {
+      const trigger = filterButtonRef.current;
+      const popover = filterPopoverRef.current;
+      if (!trigger || !popover) return;
+
+      const visualViewport = window.visualViewport;
+      const viewportTop = visualViewport?.offsetTop ?? 0;
+      const viewportHeight = visualViewport?.height ?? window.innerHeight;
+      const viewportWidth = visualViewport?.width ?? window.innerWidth;
+      const viewportBottom = viewportTop + viewportHeight;
+      const edge = 12;
+      const gap = 8;
+      const maxHeight = Math.max(160, viewportHeight - edge * 2);
+      const triggerRect = trigger.getBoundingClientRect();
+
+      popover.style.maxHeight = `${maxHeight}px`;
+      const popoverRect = popover.getBoundingClientRect();
+      const fitsAbove = triggerRect.top - popoverRect.height - gap >= viewportTop + edge;
+      const preferredTop = fitsAbove
+        ? triggerRect.top - popoverRect.height - gap
+        : triggerRect.bottom + gap;
+      const top = Math.min(
+        Math.max(preferredTop, viewportTop + edge),
+        viewportBottom - Math.min(popoverRect.height, maxHeight) - edge
+      );
+      const left = Math.min(
+        Math.max(triggerRect.left, edge),
+        viewportWidth - popoverRect.width - edge
+      );
+
+      setFilterPopoverPosition({ top, left, maxHeight });
+    };
+
+    const frame = window.requestAnimationFrame(updateFilterPopoverPosition);
+    window.addEventListener('resize', updateFilterPopoverPosition);
+    window.addEventListener('scroll', updateFilterPopoverPosition, true);
+    window.visualViewport?.addEventListener('resize', updateFilterPopoverPosition);
+    window.visualViewport?.addEventListener('scroll', updateFilterPopoverPosition);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateFilterPopoverPosition);
+      window.removeEventListener('scroll', updateFilterPopoverPosition, true);
+      window.visualViewport?.removeEventListener('resize', updateFilterPopoverPosition);
+      window.visualViewport?.removeEventListener('scroll', updateFilterPopoverPosition);
+    };
+  }, [showFilters]);
+
+  const toggleArchiveFilters = () => {
+    if (!showFilters) {
+      setDraftFilterType(filterType);
+      setDraftQuickFilter(quickFilter);
+      setDraftDateFilter(appliedDateFilter);
+    }
+    setShowFilters(current => !current);
+  };
+
+  const applyArchiveFilters = () => {
+    setFilterType(draftFilterType);
+    setQuickFilter(draftQuickFilter);
+    setAppliedDateFilter(draftDateFilter);
+    setShowFilters(false);
+  };
+
+  const resetDraftArchiveFilters = () => {
+    setDraftFilterType('ALL');
+    setDraftQuickFilter('ALL');
+    setDraftDateFilter(null);
+  };
+
+  const confirmCalendarRange = () => {
+    const range = resolveArchiveDateRange(calendarDateFilter);
+    if (!range) {
+      addToast('يرجى تحديد تاريخ بداية ونهاية صحيحين، والتأكد أن البداية لا تتجاوز النهاية', 'warning');
+      return;
+    }
+    setDraftDateFilter(calendarDateFilter);
+    setIsDateModalOpen(false);
+  };
 
   const getSyncBadge = (inv: ArchiveInvoice) => {
     const isSynced = inv.is_synced === 1 || inv.isSynced === true || inv.syncStatus === 'SYNCED';
@@ -104,7 +227,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, filterType, paymentFilter, sortBy]);
+  }, [searchTerm, filterType, quickFilter, paymentFilter, sortBy, appliedDateFilter]);
 
   useEffect(() => {
     const loadArchive = async () => {
@@ -117,6 +240,26 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
   const filteredInvoices = useMemo(() => {
     let list = [...invoices];
     if (filterType !== 'ALL') list = list.filter(inv => inv.entityType === filterType);
+
+    // The archive defaults to the current calendar year using the invoice's visible document date.
+    // A user-selected creation-date range uses the immutable record timestamp instead.
+    const dateRange = appliedDateFilter
+      ? resolveArchiveDateRange(appliedDateFilter)
+      : getCurrentYearArchiveRange();
+    const dateBasis = appliedDateFilter?.basis || 'DOCUMENT';
+    if (dateRange) {
+      list = list.filter(inv => isArchiveDateWithinRange(getArchiveDateValue(inv, dateBasis), dateRange));
+    }
+    if (quickFilter === 'UNPAID') {
+      list = list.filter(inv => {
+        const paid = Number(inv.paidAmount || 0);
+        const total = Number(inv.finalTotal || inv.FinalTotal || inv.totalAmount || inv.finalAmount || 0);
+        const status = String(inv.payment_status || inv.paymentStatus || '').toLowerCase();
+        return status.includes('unpaid') || status.includes('غير مسدد') || (total > 0 && paid < total);
+      });
+    } else if (quickFilter === 'RETURNS') {
+      list = list.filter(inv => inv.isReturn === true || String(inv.invoiceType || '').toLowerCase().includes('return') || String(inv.invoiceType || '').includes('مرتجع'));
+    }
     if (paymentFilter !== 'ALL') {
       list = list.filter(inv => {
         const method = inv.paymentStatus || (inv.status === 'PAID' ? 'Cash' : 'Credit');
@@ -127,7 +270,9 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
       const term = searchTerm.toLowerCase();
       list = list.filter(inv => {
         const invId = inv.entityType === 'SALE' ? (inv.SaleID || inv.id) : (inv.invoiceId || inv.purchase_id || inv.id);
-        const partner = String(inv.entityType === 'SALE' ? (inv.customerId || 'عميل نقدي') : (inv.partnerName || inv.partnerId || ''));
+        const partner = String(inv.entityType === 'SALE'
+          ? (inv.customerName || inv.CustomerName || inv.customerId || 'عميل نقدي')
+          : (inv.partnerName || inv.supplierName || inv.partnerId || ''));
         return invId.toLowerCase().includes(term) || partner.toLowerCase().includes(term);
       });
     }
@@ -137,8 +282,8 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
       let valA: number | string = 0;
       let valB: number | string = 0;
       if (sortBy === 'date') {
-        valA = new Date(String(a.entityType === 'SALE' ? (a.date || a.Date || '') : a.date || '')).getTime();
-        valB = new Date(String(b.entityType === 'SALE' ? (b.date || b.Date || '') : b.date || '')).getTime();
+        valA = new Date(`${toArchiveDateKey(getArchiveDateValue(a, dateBasis)) || '1970-01-01'}T00:00:00`).getTime();
+        valB = new Date(`${toArchiveDateKey(getArchiveDateValue(b, dateBasis)) || '1970-01-01'}T00:00:00`).getTime();
       } else if (sortBy === 'total') {
         const idA = a.entityType === 'SALE' ? (a.SaleID || a.id) : (a.invoiceId || a.purchase_id || a.id);
         const idB = b.entityType === 'SALE' ? (b.SaleID || b.id) : (b.invoiceId || b.purchase_id || b.id);
@@ -155,7 +300,32 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
     });
 
     return list;
-  }, [invoices, searchTerm, filterType, paymentFilter, sortBy, sortOrder, finalTotals]);
+  }, [invoices, searchTerm, filterType, quickFilter, paymentFilter, sortBy, sortOrder, finalTotals, appliedDateFilter]);
+
+  const archiveStats = useMemo(() => ({
+    total: filteredInvoices.length,
+    sales: filteredInvoices.filter(inv => inv.entityType === 'SALE').length,
+    purchases: filteredInvoices.filter(inv => inv.entityType === 'PURCHASE').length,
+    unpaid: filteredInvoices.filter(inv => {
+      const paid = Number(inv.paidAmount || 0);
+      const total = Number(inv.finalTotal || inv.FinalTotal || inv.totalAmount || inv.finalAmount || 0);
+      const status = String(inv.payment_status || inv.paymentStatus || '').toLowerCase();
+      return status.includes('unpaid') || status.includes('غير مسدد') || (total > 0 && paid < total);
+    }).length
+  }), [filteredInvoices]);
+
+  const hasActiveFilters = Boolean(searchTerm.trim()) || filterType !== 'ALL' || quickFilter !== 'ALL' || appliedDateFilter !== null;
+  const resetFilters = () => {
+    setSearchTerm('');
+    setFilterType('ALL');
+    setQuickFilter('ALL');
+    setAppliedDateFilter(null);
+    setDraftFilterType('ALL');
+    setDraftQuickFilter('ALL');
+    setDraftDateFilter(null);
+    setSortBy('date');
+    setSortOrder('desc');
+  };
 
   const paginatedInvoices = useMemo(() => {
     return filteredInvoices.slice((page - 1) * pageSize, page * pageSize);
@@ -186,7 +356,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
         }
 
         if (nextLocks[id] === undefined) {
-          const invDate = inv.entityType === 'SALE' ? (inv.date || inv.Date) : inv.date;
+          const invDate = inv.date || inv.Date;
           nextLocks[id] = await db.isDateLocked(invDate);
           updated = true;
         }
@@ -332,87 +502,118 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
   return (
     <div className="p-4 md:p-8 space-y-6 bg-[#F8FAFA] min-h-full pb-32 animate-in fade-in" dir="rtl">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex items-center gap-4">
-          <div className="w-14 h-14 bg-[#1E4D4D] text-white rounded-[20px] flex items-center justify-center text-2xl shadow-xl">📦</div>
-          <div>
-            <h2 className="text-xl md:text-2xl font-black text-[#1E4D4D]">أرشيف المستندات</h2>
-            <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">إدارة سجلات العمليات والربط المالي</p>
+      <div className="space-y-4">
+        <div className="flex items-center gap-2.5 min-w-0 w-full">
+          <button
+            onClick={() => onNavigate?.('dashboard')}
+            className="w-7 h-7 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-center text-[#1E4D4D] hover:bg-slate-100 transition-all shrink-0"
+            title="الرجوع للرئيسية"
+            aria-label="الرجوع للرئيسية"
+          >
+            <ArrowRight size={16} />
+          </button>
+          <div className="w-12 h-12 sm:w-14 sm:h-14 bg-[#1E4D4D] text-white rounded-[20px] flex items-center justify-center text-2xl shadow-lg shrink-0" aria-hidden="true">📦</div>
+          <div className="flex items-baseline gap-2 min-w-0 flex-1 overflow-hidden whitespace-nowrap">
+            <h2 className="text-base sm:text-xl md:text-2xl font-black text-[#1E4D4D] shrink-0">أرشيف المستندات</h2>
+            <p className="hidden sm:block text-slate-400 text-[10px] font-bold truncate min-w-0">إدارة سجلات العمليات والربط المالي</p>
           </div>
         </div>
-        
-        <div className="flex flex-col md:flex-row items-center gap-4 mr-auto w-full md:w-auto mt-4 md:mt-0 justify-between md:justify-end">
-          <div className="flex items-center gap-3">
-            <button onClick={() => onNavigate?.('sales')} className="bg-[#10B981] text-white px-5 py-2.5 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all flex items-center gap-2"><Plus size={14} /> مبيعات جديدة</button>
-            <button onClick={() => onNavigate?.('purchases')} className="bg-[#1E4D4D] text-white px-5 py-2.5 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all flex items-center gap-2"><Plus size={14} /> مشتريات جديدة</button>
-          </div>
-          
-          <div className="hidden md:block w-px h-8 bg-slate-200 mx-2"></div>
-          
-          <button 
-            onClick={() => onNavigate?.('dashboard')} 
-            className="p-3 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-all duration-300 cursor-pointer flex items-center justify-center group"
-            title="العودة للرئيسية"
-          >
-             <ArrowRight size={28} className="group-hover:-translate-x-1 transition-transform" />
-          </button>
+        <div className="flex items-center gap-2 w-full">
+          <button onClick={() => onNavigate?.('sales')} className="flex-1 min-w-0 bg-[#10B981] text-white px-3 sm:px-5 py-2.5 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"><Plus size={14} /> مبيعات جديدة</button>
+          <button onClick={() => onNavigate?.('purchases')} className="flex-1 min-w-0 bg-[#1E4D4D] text-white px-3 sm:px-5 py-2.5 rounded-xl font-black text-[10px] shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"><Plus size={14} /> مشتريات جديدة</button>
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-3 bg-white p-2 rounded-[24px] border border-slate-100 shadow-sm relative">
-        <div className="relative flex-1 group">
-          <input type="text" placeholder="البحث برقم الفاتورة، الطرف الثاني..." className="w-full bg-slate-50 border-2 border-transparent rounded-[18px] px-12 py-3.5 text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-          <Search size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300" />
+      <div className="flex items-center gap-2 bg-white p-2 rounded-[20px] border border-slate-100 shadow-sm relative">
+        <div className="relative flex-1 min-w-0 group">
+          <input type="text" placeholder="رقم الفاتورة أو العميل أو المورد..." aria-label="البحث في أرشيف المستندات" className="w-full min-w-0 bg-slate-50 border-2 border-transparent rounded-[16px] px-10 py-3 text-[10px] sm:text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+          <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
         </div>
-        <button onClick={() => setShowFilters(!showFilters)} className={`flex items-center gap-2 px-5 py-3 rounded-[18px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
+        <button ref={filterButtonRef} onClick={toggleArchiveFilters} aria-expanded={showFilters} aria-haspopup="dialog" className={`shrink-0 flex items-center gap-2 px-3 sm:px-5 py-3 rounded-[16px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
           <Filter size={14} /> فلترة
         </button>
+        {showFilters && (
+          <>
+            <div className="fixed inset-0 z-40" role="presentation" onClick={() => setShowFilters(false)} />
+            <div ref={filterPopoverRef} className="fixed z-50 w-[min(320px,calc(100vw-24px))] overflow-y-auto overscroll-contain rounded-2xl border border-slate-100 bg-white p-3 shadow-2xl" style={{ top: filterPopoverPosition?.top ?? 12, left: filterPopoverPosition?.left ?? 12, maxHeight: filterPopoverPosition?.maxHeight ?? 'calc(100dvh - 24px)', visibility: filterPopoverPosition ? 'visible' : 'hidden' }} dir="rtl" role="dialog" aria-label="تصفية أرشيف المستندات">
+              <button type="button" onClick={openDatePicker} className="w-full rounded-xl bg-slate-50 px-3 py-3 text-sm font-black text-[#1E4D4D] hover:bg-emerald-50 transition-colors">
+                <span className="flex items-center justify-center gap-2">
+                  <span>التاريخ</span>
+                  <CalendarDays size={18} />
+                </span>
+              </button>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => { setDraftFilterType('ALL'); setDraftQuickFilter('ALL'); }} aria-pressed={draftFilterType === 'ALL' && draftQuickFilter === 'ALL'} className={`col-span-2 rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftFilterType === 'ALL' && draftQuickFilter === 'ALL' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>الكل</button>
+                <button type="button" onClick={() => { setDraftFilterType('SALE'); setDraftQuickFilter('ALL'); }} aria-pressed={draftFilterType === 'SALE' && draftQuickFilter === 'ALL'} className={`rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftFilterType === 'SALE' && draftQuickFilter === 'ALL' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>مبيعات</button>
+                <button type="button" onClick={() => { setDraftFilterType('PURCHASE'); setDraftQuickFilter('ALL'); }} aria-pressed={draftFilterType === 'PURCHASE' && draftQuickFilter === 'ALL'} className={`rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftFilterType === 'PURCHASE' && draftQuickFilter === 'ALL' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>مشتريات</button>
+                <button type="button" onClick={() => { setDraftFilterType('ALL'); setDraftQuickFilter('RETURNS'); }} aria-pressed={draftQuickFilter === 'RETURNS'} className={`rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftQuickFilter === 'RETURNS' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>مرتجعات</button>
+                <button type="button" onClick={() => { setDraftFilterType('ALL'); setDraftQuickFilter('UNPAID'); }} aria-pressed={draftQuickFilter === 'UNPAID'} className={`rounded-xl px-3 py-2.5 text-xs font-black transition-colors ${draftQuickFilter === 'UNPAID' ? 'bg-[#1E4D4D] text-white shadow-sm' : 'bg-slate-100 text-slate-600'}`}>غير مسددة</button>
+              </div>
+              <div className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-center text-[10px] font-bold text-slate-500">
+                {draftDateFilter
+                  ? `من ${draftDateFilter.start} إلى ${draftDateFilter.end} · ${draftDateFilter.basis === 'DOCUMENT' ? 'تاريخ الفاتورة' : 'تاريخ الإنشاء'}`
+                  : 'بدون نطاق محدد: من بداية السنة إلى اليوم'}
+              </div>
+              <div className="mt-3 space-y-2">
+                <p className="text-[10px] font-black text-slate-500">ترتيب حسب</p>
+                <div className="flex rounded-xl bg-slate-50 p-1">
+                  {(['date', 'total', 'id'] as const).map(option => (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => {
+                        if (sortBy === option) setSortOrder(current => current === 'asc' ? 'desc' : 'asc');
+                        else { setSortBy(option); setSortOrder('desc'); }
+                      }}
+                      className={`flex-1 rounded-lg py-2 text-[9px] font-black transition-colors ${sortBy === option ? 'bg-white text-[#1E4D4D] shadow-sm' : 'text-slate-500'}`}
+                    >
+                      {option === 'date' ? 'التاريخ' : option === 'total' ? 'الإجمالي' : 'المرجع'}
+                      {sortBy === option ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
+                <button type="button" onClick={resetDraftArchiveFilters} className="flex-1 rounded-xl bg-slate-100 px-3 py-3 text-[10px] font-black text-slate-600 hover:bg-slate-200">
+                  <span className="flex items-center justify-center gap-1"><RotateCcw size={13} /> إعادة تعيين</span>
+                </button>
+                <button type="button" onClick={applyArchiveFilters} className="flex-[1.4] rounded-xl bg-[#1E4D4D] px-3 py-3 text-[10px] font-black text-white shadow-md hover:bg-[#163c3c]">
+                  تطبيق الفلترة
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { label: 'المستندات', value: archiveStats.total },
+          { label: 'المبيعات', value: archiveStats.sales },
+          { label: 'المشتريات', value: archiveStats.purchases },
+          { label: 'غير مسددة', value: archiveStats.unpaid }
+        ].map(stat => (
+          <div key={stat.label} className="bg-white border border-slate-100 rounded-xl px-3 py-2 shadow-sm min-w-0">
+            <p className="text-[9px] font-bold text-slate-400 truncate">{stat.label}</p>
+            <p className="text-base font-black text-[#1E4D4D] tabular-nums">{stat.value.toLocaleString('ar')}</p>
+          </div>
+        ))}
       </div>
 
-      {showFilters && (
-        <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-xl animate-in slide-in-from-top-4 duration-300 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-2">نوع المستند</label>
-              <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-100">
-                {(['ALL', 'SALE', 'PURCHASE'] as const).map(t => (
-                  <button 
-                    key={t}
-                    onClick={() => setFilterType(t)}
-                    className={`flex-1 py-2 rounded-xl text-[10px] font-black transition-all ${filterType === t ? 'bg-[#1E4D4D] text-white shadow-md' : 'text-slate-400 hover:text-[#1E4D4D]'}`}
-                  >
-                    {t === 'ALL' ? 'الكل' : t === 'SALE' ? 'مبيعات' : 'مشتريات'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-2">ترتيب حسب</label>
-              <div className="flex bg-slate-50 p-1 rounded-2xl border border-slate-100">
-                {(['date', 'total', 'id'] as const).map(s => (
-                  <button 
-                    key={s}
-                    onClick={() => {
-                      if (sortBy === s) setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-                      else { setSortBy(s); setSortOrder('desc'); }
-                    }}
-                    className={`flex-1 py-2 rounded-xl text-[10px] font-black transition-all ${sortBy === s ? 'bg-[#1E4D4D] text-white shadow-md' : 'text-slate-400 hover:text-[#1E4D4D]'}`}
-                  >
-                    {s === 'date' ? 'التاريخ' : s === 'total' ? 'الإجمالي' : 'المرجع'}
-                    {sortBy === s && (sortOrder === 'asc' ? ' ↑' : ' ↓')}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Virtualized Mobile Cards View */}
-      <div className="lg:hidden w-full" style={{ height: Math.min(600, Math.max(300, filteredInvoices.length * 170)) }}>
+      <div className="lg:hidden w-full" style={{ height: filteredInvoices.length === 0 ? 'auto' : Math.min(600, Math.max(300, filteredInvoices.length * 170)) }}>
         {filteredInvoices.length === 0 ? (
-          <div className="py-12 text-center text-slate-300 font-black italic bg-white rounded-3xl border border-slate-100">
-            لا توجد فواتير مطابقة للبحث
+          <div className="py-10 px-4 text-center bg-white rounded-3xl border border-slate-100 shadow-sm space-y-3">
+            <div className="mx-auto w-12 h-12 rounded-2xl bg-slate-50 flex items-center justify-center text-[#1E4D4D] text-xl">{invoices.length === 0 ? '📦' : '🔎'}</div>
+            <p className="text-sm font-black text-slate-600">{invoices.length === 0 ? 'الأرشيف فارغ حالياً' : 'لا توجد مستندات مطابقة للفلاتر'}</p>
+            <p className="text-[10px] text-slate-400">{invoices.length === 0 ? 'أنشئ أول مستند ليظهر هنا' : 'جرّب تعديل البحث أو إعادة تعيين الفلاتر'}</p>
+            {hasActiveFilters ? (
+              <button onClick={resetFilters} className="px-4 py-2 rounded-xl bg-slate-100 text-[#1E4D4D] text-[10px] font-black">إعادة تعيين الفلاتر</button>
+            ) : invoices.length === 0 ? (
+              <div className="flex justify-center gap-2">
+                <button onClick={() => onNavigate?.('sales')} className="px-3 py-2 rounded-xl bg-[#10B981] text-white text-[10px] font-black">فاتورة مبيعات جديدة</button>
+                <button onClick={() => onNavigate?.('purchases')} className="px-3 py-2 rounded-xl bg-[#1E4D4D] text-white text-[10px] font-black">فاتورة مشتريات جديدة</button>
+              </div>
+            ) : null}
           </div>
         ) : (
           <List
@@ -429,9 +630,11 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
               const total = finalTotals[id] || 0;
               const paid = inv.paidAmount || 0;
               const isFinancialLocked = inv.payment_status && inv.payment_status !== 'Unpaid';
-              const invDate = inv.entityType === 'SALE' ? (inv.date || inv.Date) : inv.date;
+              const invDate = inv.date || inv.Date;
               const isPeriodLocked = lockedInvoices[id] || false;
-              const partner = inv.entityType === 'SALE' ? (inv.customerId || 'عميل نقدي') : (inv.partnerName || inv.partnerId);
+              const partner = inv.entityType === 'SALE'
+                ? (inv.customerName || inv.CustomerName || inv.customerId || 'عميل نقدي')
+                : (inv.partnerName || inv.supplierName || inv.partnerId);
 
               return (
                 <div style={style} className="pb-3 px-1" key={id}>
@@ -448,10 +651,11 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
                               <Lock size={10} className={isPeriodLocked ? "text-amber-500" : "text-red-400"} />
                             )}
                           </div>
-                          <p className="text-[9px] font-bold text-slate-400">{new Date(invDate || Date.now()).toLocaleDateString('ar-SA')}</p>
+                          <p className="text-[9px] font-bold text-slate-400">{formatArchiveDate(invDate)}</p>
                         </div>
                       </div>
                       <div className="flex flex-col items-end gap-1">
+                        <span className="text-[9px] font-black text-[#1E4D4D] bg-emerald-50 px-2 py-1 rounded-full">{inv.entityType === 'SALE' ? 'مبيعات' : 'مشتريات'}{inv.isReturn || String(inv.invoiceType || '').includes('مرتجع') ? ' · مرتجع' : ''}</span>
                         {getPaymentStatusBadge(inv, total)}
                         {getSyncBadge(inv)}
                       </div>
@@ -469,12 +673,12 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-50 flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
-                          <span className="text-[10px] font-black text-slate-400">المسدد: <span className="text-emerald-600">{paid.toLocaleString()}</span></span>
+                      <div className="pt-2 border-t border-slate-50 flex items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="text-[9px] font-black text-slate-400">المسدد: <span className="text-emerald-600">{paid.toLocaleString()}</span></span>
+                          <span className="text-[9px] font-black text-slate-400">المتبقي: <span className="text-amber-600">{Math.max(0, total - paid).toLocaleString()}</span></span>
                         </div>
-                        <div className="flex gap-1">
+                        <div className="flex gap-1 shrink-0">
                           <button onClick={(e) => { e.stopPropagation(); handleViewAudit(e, inv); }} className="p-2 bg-slate-50 text-slate-400 rounded-lg hover:bg-[#1E4D4D] hover:text-white transition-colors"><Fingerprint size={14}/></button>
                           <button onClick={(e) => { e.stopPropagation(); handleOpenSettlements(e, inv); }} className="p-2 bg-slate-50 text-blue-500 rounded-lg hover:bg-blue-505 hover:text-white transition-colors"><History size={14}/></button>
                         </div>
@@ -500,8 +704,9 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
         </div>
 
         {filteredInvoices.length === 0 ? (
-          <div className="py-20 text-center text-slate-300 font-black italic">
-            لا توجد فواتير مطابقة للبحث
+          <div className="py-16 px-4 text-center text-slate-500 font-black bg-white">
+            <p>{invoices.length === 0 ? 'الأرشيف فارغ حالياً' : 'لا توجد مستندات مطابقة للفلاتر'}</p>
+            {hasActiveFilters && <button onClick={resetFilters} className="mt-3 px-4 py-2 rounded-xl bg-slate-100 text-[#1E4D4D] text-[10px]">إعادة تعيين الفلاتر</button>}
           </div>
         ) : (
           <List
@@ -518,9 +723,11 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
               const total = finalTotals[id] || 0;
               const paid = inv.paidAmount || 0;
               const isFinancialLocked = inv.payment_status && inv.payment_status !== 'Unpaid';
-              const invDate = inv.entityType === 'SALE' ? (inv.date || inv.Date) : inv.date;
+              const invDate = inv.date || inv.Date;
               const isPeriodLocked = lockedInvoices[id] || false;
-              const partner = inv.entityType === 'SALE' ? (inv.customerId || 'عميل نقدي') : (inv.partnerName || inv.partnerId);
+              const partner = inv.entityType === 'SALE'
+                ? (inv.customerName || inv.CustomerName || inv.customerId || 'عميل نقدي')
+                : (inv.partnerName || inv.supplierName || inv.partnerId);
 
               return (
                 <div 
@@ -538,7 +745,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
                     </div>
                   </div>
                   <div className="w-2/12 font-bold text-slate-400">
-                    {new Date(invDate || Date.now()).toLocaleDateString('ar-SA')}
+                    {formatArchiveDate(invDate)}
                   </div>
                   <div className="w-3/12 font-black text-slate-600 truncate">
                     {String(partner || '')}
@@ -602,6 +809,81 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
           </div>
         </div>
       )}
+
+      <Modal
+        isOpen={isDateModalOpen}
+        onClose={() => setIsDateModalOpen(false)}
+        title="تحديد فترة الأرشيف"
+        maxWidth="sm:max-w-md"
+        positionClass="items-center"
+      >
+        <div className="space-y-4 py-2" dir="rtl">
+          <div className="space-y-2">
+            <p className="text-xs font-black text-slate-600">أساس البحث بالتاريخ</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setCalendarDateFilter(current => ({ ...current, basis: 'DOCUMENT' }))} aria-pressed={calendarDateFilter.basis === 'DOCUMENT'} className={`rounded-xl border px-3 py-3 text-xs font-black ${calendarDateFilter.basis === 'DOCUMENT' ? 'border-[#1E4D4D] bg-[#1E4D4D] text-white' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                تاريخ الفاتورة
+              </button>
+              <button type="button" onClick={() => setCalendarDateFilter(current => ({ ...current, basis: 'CREATED' }))} aria-pressed={calendarDateFilter.basis === 'CREATED'} className={`rounded-xl border px-3 py-3 text-xs font-black ${calendarDateFilter.basis === 'CREATED' ? 'border-[#1E4D4D] bg-[#1E4D4D] text-white' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                تاريخ الإنشاء
+              </button>
+            </div>
+            <p className="text-[10px] leading-5 text-slate-400">
+              تاريخ الفاتورة هو التاريخ الظاهر في الأرشيف. تاريخ الإنشاء هو وقت إدخال السجل ولا يتغير عند تعديل تاريخ الفاتورة.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-black text-slate-600">نوع الفترة</p>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { value: 'DAY', label: 'يومي' },
+                { value: 'MONTH', label: 'شهري' },
+                { value: 'YEAR', label: 'سنوي' }
+              ] as const).map(option => (
+                <button key={option.value} type="button" onClick={() => setCalendarDateFilter(current => ({ ...current, granularity: option.value, start: '', end: '' }))} aria-pressed={calendarDateFilter.granularity === option.value} className={`rounded-xl border px-2 py-2.5 text-xs font-black ${calendarDateFilter.granularity === option.value ? 'border-[#1E4D4D] bg-emerald-50 text-[#1E4D4D]' : 'border-slate-200 bg-white text-slate-500'}`}>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="space-y-2">
+              <span className="block text-xs font-black text-slate-600">{calendarDateFilter.granularity === 'DAY' ? 'من تاريخ' : calendarDateFilter.granularity === 'MONTH' ? 'من شهر' : 'من سنة'}</span>
+              <input
+                type={calendarDateFilter.granularity === 'DAY' ? 'date' : calendarDateFilter.granularity === 'MONTH' ? 'month' : 'number'}
+                min={calendarDateFilter.granularity === 'YEAR' ? '1900' : undefined}
+                max={calendarDateFilter.granularity === 'YEAR' ? '9999' : undefined}
+                step={calendarDateFilter.granularity === 'YEAR' ? '1' : undefined}
+                inputMode={calendarDateFilter.granularity === 'YEAR' ? 'numeric' : undefined}
+                value={calendarDateFilter.start}
+                onChange={event => setCalendarDateFilter(current => ({ ...current, start: event.target.value }))}
+                className="w-full min-w-0 rounded-xl border-2 border-slate-200 bg-white px-2 py-3 text-center text-xs font-bold text-slate-700 outline-none focus:border-[#1E4D4D]"
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="block text-xs font-black text-slate-600">{calendarDateFilter.granularity === 'DAY' ? 'إلى تاريخ' : calendarDateFilter.granularity === 'MONTH' ? 'إلى شهر' : 'إلى سنة'}</span>
+              <input
+                type={calendarDateFilter.granularity === 'DAY' ? 'date' : calendarDateFilter.granularity === 'MONTH' ? 'month' : 'number'}
+                min={calendarDateFilter.granularity === 'YEAR' ? '1900' : undefined}
+                max={calendarDateFilter.granularity === 'YEAR' ? '9999' : undefined}
+                step={calendarDateFilter.granularity === 'YEAR' ? '1' : undefined}
+                inputMode={calendarDateFilter.granularity === 'YEAR' ? 'numeric' : undefined}
+                value={calendarDateFilter.end}
+                onChange={event => setCalendarDateFilter(current => ({ ...current, end: event.target.value }))}
+                className="w-full min-w-0 rounded-xl border-2 border-slate-200 bg-white px-2 py-3 text-center text-xs font-bold text-slate-700 outline-none focus:border-[#1E4D4D]"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2 border-t border-slate-100 pt-3">
+            <button type="button" onClick={() => setIsDateModalOpen(false)} className="flex-1 rounded-xl bg-slate-100 px-4 py-3 text-xs font-black text-slate-600">
+              إلغاء
+            </button>
+            <button type="button" onClick={confirmCalendarRange} className="flex-1 rounded-xl bg-[#1E4D4D] px-4 py-3 text-xs font-black text-white shadow-md">
+              اعتماد الفترة
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal isOpen={isSettlementModalOpen} onClose={() => setIsSettlementModalOpen(false)} title="سجل سدادات الفاتورة">
          {targetInvoice && (

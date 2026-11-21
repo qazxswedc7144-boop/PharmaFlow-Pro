@@ -1596,6 +1596,8 @@ export class PharmaFlowDB extends Dexie {
     const nowIso = new Date().toISOString();
     const docDate = date || nowIso;
     const saleId = id || this.generateId('SALE');
+    const existingSale = id ? await this.invoices.get(saleId) : undefined;
+    const originalCreatedAt = existingSale?.createdAt || existingSale?.created_at || existingSale?.Created_At;
     const payStatusStr = isCash ? 'Cash' : 'Credit';
     const finStatusStr = isCash ? 'Paid' : 'Unpaid';
     const docStatusStr = docStatus || 'POSTED';
@@ -1649,7 +1651,7 @@ export class PharmaFlowDB extends Dexie {
       tenant_id: effectiveTenantId,
       branchId: effectiveBranchId,
       branch_id: effectiveBranchId,
-      createdAt: nowIso,
+      createdAt: originalCreatedAt || nowIso,
       isSynced: (typeof navigator !== 'undefined' && navigator.onLine),
       syncStatus: (typeof navigator !== 'undefined' && navigator.onLine) ? 'SYNCED' : 'PENDING',
       updatedAt: nowIso
@@ -1686,6 +1688,11 @@ export class PharmaFlowDB extends Dexie {
     // 2. User-facing Invoice Number (invNum): Use provided 'refId' (user input) or generate a sequential-like ID.
     const purId = id || this.generateId('PUR');
     const invNum = refId || this.generateId('PURCH');
+    // Read the existing record from the same transaction when editing, preserving its original creation time.
+    const invoicesTable = adjustments?.tx?.table ? adjustments.tx.table('invoices') : this.invoices;
+    const purchasesTable = adjustments?.tx?.table ? adjustments.tx.table('purchases') : this.purchases;
+    const existingPurchase = id ? await invoicesTable.get(purId) : undefined;
+    const originalCreatedAt = existingPurchase?.createdAt || existingPurchase?.created_at || existingPurchase?.Created_At;
     
     const payStatusStr = isCash ? 'Cash' : 'Credit';
     const finStatusStr = isCash ? 'Paid' : 'Unpaid';
@@ -1764,16 +1771,13 @@ export class PharmaFlowDB extends Dexie {
       tenant_id: effectiveTenantId,
       branchId: effectiveBranchId,
       branch_id: effectiveBranchId,
-      createdAt: nowIso,
+      createdAt: originalCreatedAt || nowIso,
       isSynced: (typeof navigator !== 'undefined' && navigator.onLine),
       syncStatus: (typeof navigator !== 'undefined' && navigator.onLine) ? 'SYNCED' : 'PENDING',
       updatedAt: nowIso
     };
 
-    // Use transaction table if provided to maintain atomic commit inside workflow
-    const invoicesTable = adjustments?.tx?.table ? adjustments.tx.table('invoices') : this.invoices;
-    const purchasesTable = adjustments?.tx?.table ? adjustments.tx.table('purchases') : this.purchases;
-
+    // Use the transaction-scoped tables above to maintain atomic commit inside workflow.
     await invoicesTable.put(purchase);
     await purchasesTable.put(purchase);
     return purchase;
