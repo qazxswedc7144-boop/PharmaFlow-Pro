@@ -90,6 +90,7 @@ jobs:
           server/tests/sales-lifecycle-financial-integrity.test.ts
           server/tests/payment-idempotency-tenant-isolation.test.ts
           server/tests/financial-transaction-sales-price-policy.test.ts
+          src/features/sales/utils/archiveDateFilters.test.ts
           src/features/inventory/utils/localSyncQueueForensics.test.ts
           src/features/sales/components/itemEntryModalLifecycle.test.ts
           src/features/sync/saleSyncDto.test.ts
