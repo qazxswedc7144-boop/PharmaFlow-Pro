@@ -138,7 +138,7 @@ describe('useSales handlePost resolved failure contract', () => {
         target: ts.ScriptTarget.ES2022,
         module: ts.ModuleKind.None
       }
-    }).outputText;
+    }).outputText.trim().replace(/;\\s*$/, '');
     const compileCallback = new Function(...dependencyNames, `return (${javascriptCallback});`) as (...args: unknown[]) => () => Promise<void>;
 
     const renderHandlePost = () => compileCallback(...dependencyNames.map(name =>
