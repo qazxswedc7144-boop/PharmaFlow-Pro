@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js-light';
 import { db } from '@/core/db';
 import { Account, AccountingEntry, CashFlow, Transaction } from '@/types';
 import { useAuthStore } from '@/store/authStore';
@@ -251,6 +252,12 @@ export const AccountingRepository = {
 
   deleteEntry: async (entryId: string, tx?: any) => {
     const performDelete = async (t: any) => {
+      if (!t || typeof t.table !== 'function') {
+        throw new Error(
+          'ACCOUNTING_WRITE_REJECTED: ACTIVE_TRANSACTION_REQUIRED'
+        );
+      }
+
       const jeTbl = t.table('journalEntries');
       const accTbl = t.table('accounts');
       const jlTbl = t.table('journalLines');
@@ -261,55 +268,115 @@ export const AccountingRepository = {
       }
 
       const savedLines = await jlTbl.where('entryId').equals(entryId).toArray();
-      const inlineLines = entry.lines || [];
+      const inlineLines = Array.isArray(entry.lines) ? entry.lines : [];
 
       if (savedLines.length === 0 && inlineLines.length === 0) {
         throw new Error(`JOURNAL_LINES_MISSING: Entry ${entryId} has no journal lines in journalLines table or entry.lines.`);
       }
-
-      if (savedLines.length > 0 && inlineLines.length > 0) {
-        if (savedLines.length !== inlineLines.length) {
-          throw new Error(`JOURNAL_LINE_COUNT_MISMATCH: Saved lines count (${savedLines.length}) does not match entry.lines count (${inlineLines.length}).`);
-        }
-        for (let i = 0; i < savedLines.length; i++) {
-          const s = savedLines[i];
-          const inl = inlineLines[i];
-          const sAcc = s.accountId || s.account_id;
-          const inlAcc = inl.accountId || inl.account_id;
-          if (sAcc !== inlAcc || Math.abs((s.debit || 0) - (inl.debit || 0)) > 0.001 || Math.abs((s.credit || 0) - (inl.credit || 0)) > 0.001) {
-            throw new Error(`JOURNAL_LINE_DATA_MISMATCH: Saved line data does not match inline line data for entry ${entryId}`);
-          }
-        }
+      if (savedLines.length === 0) {
+        throw new Error(`PERSISTED_JOURNAL_LINES_MISSING: Entry ${entryId} has inline entry.lines but no persisted rows in journalLines table.`);
+      }
+      if (inlineLines.length === 0) {
+        throw new Error(`INLINE_JOURNAL_LINES_MISSING: Entry ${entryId} has persisted journalLines rows but is missing inline entry.lines.`);
+      }
+      if (savedLines.length !== inlineLines.length) {
+        throw new Error(`JOURNAL_LINE_COUNT_MISMATCH: Saved lines count (${savedLines.length}) does not match entry.lines count (${inlineLines.length}).`);
+      }
+      if (savedLines.length < 2) {
+        throw new Error(`INVALID_JOURNAL_LINE_COUNT: Entry ${entryId} must contain at least 2 journal lines.`);
       }
 
-      const linesToReverse = savedLines.length > 0 ? savedLines : inlineLines;
+      const parseLineAmount = (raw: unknown, fieldName: string): Decimal => {
+        if (raw === undefined || raw === null) {
+          return new Decimal(0);
+        }
+        if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) {
+          throw new Error(`INVALID_JOURNAL_AMOUNTS: ${fieldName} (${String(raw)}) in entry ${entryId} contains an invalid numeric value.`);
+        }
+        return new Decimal(raw);
+      };
 
-      for (const line of linesToReverse) {
-        const lineAccId = line.accountId || line.account_id;
-        if (!lineAccId || lineAccId === 'ACC-GENERIC') {
+      const normalizeLine = (line: any) => {
+        const rawAccId = line?.accountId ?? line?.account_id;
+        const accountId = typeof rawAccId === 'string' ? rawAccId.trim() : '';
+        if (!accountId || accountId === 'ACC-GENERIC') {
           throw new Error(`INVALID_ACCOUNT_ID: Journal line for entry ${entryId} has missing or generic account ID.`);
         }
 
-        const debit = Number(line.debit || 0);
-        const credit = Number(line.credit || 0);
+        const debit = parseLineAmount(line?.debit, 'Debit');
+        const credit = parseLineAmount(line?.credit, 'Credit');
 
-        if (!Number.isFinite(debit) || !Number.isFinite(credit) || debit < 0 || credit < 0 || (debit > 0 && credit > 0)) {
-          throw new Error(`INVALID_JOURNAL_AMOUNTS: Debit (${debit}) or Credit (${credit}) contains invalid numbers.`);
+        if ((debit.greaterThan(0) && credit.greaterThan(0)) || (debit.equals(0) && credit.equals(0))) {
+          throw new Error(`INVALID_JOURNAL_AMOUNTS: Journal line for entry ${entryId} must have either positive debit or positive credit.`);
         }
 
-        const account = await accTbl.get(lineAccId);
+        return {
+          accountId,
+          debit,
+          credit,
+          signature: `${accountId}|${debit.toFixed(4)}|${credit.toFixed(4)}`
+        };
+      };
+
+      const normalizedSaved = savedLines.map(normalizeLine);
+      const normalizedInline = inlineLines.map(normalizeLine);
+
+      // Order-independent comparison of persisted journalLines against inline entry.lines
+      const savedSignatures = normalizedSaved.map((l) => l.signature).sort();
+      const inlineSignatures = normalizedInline.map((l) => l.signature).sort();
+
+      for (let i = 0; i < savedSignatures.length; i++) {
+        if (savedSignatures[i] !== inlineSignatures[i]) {
+          throw new Error(`JOURNAL_LINE_DATA_MISMATCH: Persisted journalLines do not match inline entry.lines for entry ${entryId}.`);
+        }
+      }
+
+      // Verify journal entry balance before mutating any account
+      let totalDebit = new Decimal(0);
+      let totalCredit = new Decimal(0);
+      const accountDeltas = new Map<string, Decimal>();
+
+      for (const line of normalizedSaved) {
+        totalDebit = totalDebit.plus(line.debit);
+        totalCredit = totalCredit.plus(line.credit);
+
+        const reversalDelta = line.credit.minus(line.debit);
+        const existingDelta = accountDeltas.get(line.accountId) ?? new Decimal(0);
+        accountDeltas.set(line.accountId, existingDelta.plus(reversalDelta));
+      }
+
+      if (totalDebit.lessThanOrEqualTo(0) || totalDebit.minus(totalCredit).abs().greaterThan('0.01')) {
+        throw new Error(
+          `UNBALANCED_JOURNAL_ENTRY: Entry ${entryId} is unbalanced (debit=${totalDebit.toFixed(2)}, credit=${totalCredit.toFixed(2)}).`
+        );
+      }
+
+      // Validate all referenced accounts before mutating any balance
+      const accountsToUpdate: Array<{ accountId: string; nextBalance: number }> = [];
+      for (const [accountId, delta] of accountDeltas.entries()) {
+        const account = await accTbl.get(accountId);
         if (!account) {
-          throw new Error(`ACCOUNT_NOT_FOUND: Account ${lineAccId} referenced in journal entry ${entryId} does not exist.`);
+          throw new Error(`ACCOUNT_NOT_FOUND: Account ${accountId} referenced in journal entry ${entryId} does not exist.`);
         }
-
-        const amount = credit - debit;
-        if (!Number.isFinite(amount)) {
-          throw new Error(`INVALID_REVERSAL_AMOUNT: Computed reversal amount is not finite.`);
+        if (account.tenantId && entry.tenantId && account.tenantId !== entry.tenantId) {
+          throw new Error(`CROSS_TENANT_ACCOUNT_FORBIDDEN: Account ${accountId} does not belong to entry tenant ${entry.tenantId}.`);
         }
+        const currentBalance = account.balance ?? 0;
+        if (typeof currentBalance !== 'number' || !Number.isFinite(currentBalance)) {
+          throw new Error(`INVALID_ACCOUNT_BALANCE: Account ${accountId} has a non-finite balance.`);
+        }
+        const nextBalance = new Decimal(currentBalance).plus(delta).toNumber();
+        if (!Number.isFinite(nextBalance)) {
+          throw new Error(`INVALID_REVERSAL_AMOUNT: Computed reversal balance for account ${accountId} is not finite.`);
+        }
+        accountsToUpdate.push({ accountId, nextBalance });
+      }
 
-        await accTbl.update(lineAccId, {
-          balance: (account.balance || 0) + amount,
-          updatedAt: new Date().toISOString()
+      const now = new Date().toISOString();
+      for (const { accountId, nextBalance } of accountsToUpdate) {
+        await accTbl.update(accountId, {
+          balance: nextBalance,
+          updatedAt: now
         });
       }
 
@@ -317,7 +384,7 @@ export const AccountingRepository = {
       await jlTbl.where('entryId').equals(entryId).delete();
     };
 
-    if (tx) {
+    if (tx !== undefined) {
       await performDelete(tx);
     } else {
       await db.safeTransaction(

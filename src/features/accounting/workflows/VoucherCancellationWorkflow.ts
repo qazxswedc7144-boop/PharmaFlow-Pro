@@ -36,26 +36,33 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
   ];
 
   public async validateInput(input: VoucherCancellationInput): Promise<void> {
-    if (!input.id) {
+    if (!input || typeof input !== 'object') {
+      throw new Error('INVALID_VOUCHER_INPUT: بيانات إلغاء السند غير صالحة');
+    }
+    if (typeof input.id !== 'string' || input.id.trim().length === 0) {
       throw new Error('معرف السند مطلوب للإلغاء');
     }
-    if (!input.partnerId) {
+    if (input.type !== 'RECEIPT' && input.type !== 'PAYMENT') {
+      throw new Error('VOUCHER_TYPE_INVALID: نوع السند يجب أن يكون RECEIPT أو PAYMENT');
+    }
+    if (typeof input.partnerId !== 'string' || input.partnerId.trim().length === 0) {
       throw new Error('معرف الشريك مطلوب للإلغاء');
     }
-    if (input.amount <= 0) {
-      throw new Error('مبلغ السند يجب أن يكون أكبر من الصفر');
+    if (typeof input.amount !== 'number' || !Number.isFinite(input.amount) || input.amount <= 0) {
+      throw new Error('INVALID_VOUCHER_AMOUNT: مبلغ السند يجب أن يكون أكبر من الصفر');
     }
   }
 
   public async validateBusinessRules(input: VoucherCancellationInput): Promise<void> {
-    const voucher = await db.vouchers.get(input.id);
-    if (!voucher) {
-      // Also check fallback if needed
-      const existsInReceipts = input.type === 'RECEIPT' ? await db.receipts.get(input.id) : null;
-      const existsInPayments = input.type === 'PAYMENT' ? await db.payments.get(input.id) : null;
-      if (!existsInReceipts && !existsInPayments) {
-        throw new Error(`السند رقم [${input.id}] غير موجود أو تم إلغاؤه سابقاً`);
-      }
+    const voucherId = input.id.trim();
+    const [voucher, receipt, payment] = await Promise.all([
+      db.vouchers.get(voucherId),
+      db.receipts.get(voucherId),
+      db.payments.get(voucherId)
+    ]);
+
+    if (!voucher && !receipt && !payment) {
+      throw new Error(`السند رقم [${voucherId}] غير موجود أو تم إلغاؤه سابقاً`);
     }
   }
 
@@ -64,115 +71,209 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     ctx: WorkflowContext,
     tx?: any
   ): Promise<VoucherCancellationResult> {
-    const receiptsTbl = tx ? tx.table('receipts') : db.receipts;
-    const paymentsTbl = tx ? tx.table('payments') : db.payments;
-    const vouchersTbl = tx ? tx.table('vouchers') : db.vouchers;
-    const linksTbl = tx ? tx.table('voucherInvoiceLinks') : db.voucherInvoiceLinks;
-    const invoicesTbl = tx ? tx.table('invoices') : db.invoices;
-    const jeTbl = tx ? tx.table('journalEntries') : db.journalEntries;
-    const customersTbl = tx ? tx.table('customers') : db.customers;
-    const suppliersTbl = tx ? tx.table('suppliers') : db.suppliers;
+    if (!tx || typeof tx.table !== 'function') {
+      throw new Error('VOUCHER_CANCELLATION_REJECTED: ACTIVE_TRANSACTION_REQUIRED');
+    }
 
-    // Double cancellation prevention & record inspection
-    const voucher = await vouchersTbl.get(input.id);
-    const receipt = input.type === 'RECEIPT' ? await receiptsTbl.get(input.id) : null;
-    const payment = input.type === 'PAYMENT' ? await paymentsTbl.get(input.id) : null;
+    const voucherId = input.id.trim();
+    const inputPartnerId = input.partnerId.trim();
+
+    const receiptsTbl = tx.table('receipts');
+    const paymentsTbl = tx.table('payments');
+    const vouchersTbl = tx.table('vouchers');
+    const linksTbl = tx.table('voucherInvoiceLinks');
+    const invoicesTbl = tx.table('invoices');
+    const jeTbl = tx.table('journalEntries');
+    const customersTbl = tx.table('customers');
+    const suppliersTbl = tx.table('suppliers');
+
+    // Double cancellation prevention & authoritative record inspection inside active transaction
+    const voucher = await vouchersTbl.get(voucherId);
+    const receipt = await receiptsTbl.get(voucherId);
+    const payment = await paymentsTbl.get(voucherId);
 
     if (!voucher && !receipt && !payment) {
-      throw new Error(`السند رقم [${input.id}] غير موجود أو تم إلغاؤه مسبقاً (Double Cancellation Prevented)`);
+      throw new Error(`السند رقم [${voucherId}] غير موجود أو تم إلغاؤه مسبقاً (Double Cancellation Prevented)`);
     }
 
-    const savedRecord = receipt || payment || voucher;
-    const savedAmount = Number(savedRecord?.amount ?? savedRecord?.finalTotal ?? savedRecord?.totalAmount ?? input.amount);
-    if (!Number.isFinite(savedAmount) || Math.abs(savedAmount - input.amount) > 0.01) {
-      throw new Error(`VOUCHER_AMOUNT_MISMATCH: Cancellation amount (${input.amount}) does not match saved record amount (${savedAmount}).`);
+    if (receipt && payment) {
+      throw new Error(`VOUCHER_TYPE_CONFLICT: Voucher [${voucherId}] exists in both receipts and payments tables.`);
     }
+    if (input.type === 'RECEIPT' && payment) {
+      throw new Error(`VOUCHER_TYPE_MISMATCH: Voucher [${voucherId}] is stored as PAYMENT and cannot be cancelled as RECEIPT.`);
+    }
+    if (input.type === 'PAYMENT' && receipt) {
+      throw new Error(`VOUCHER_TYPE_MISMATCH: Voucher [${voucherId}] is stored as RECEIPT and cannot be cancelled as PAYMENT.`);
+    }
+
+    const persistedRecords: Array<{ source: string; record: any }> = [];
+    if (voucher) persistedRecords.push({ source: 'vouchers', record: voucher });
+    if (receipt) persistedRecords.push({ source: 'receipts', record: receipt });
+    if (payment) persistedRecords.push({ source: 'payments', record: payment });
+
+    // Validate persisted type, authoritative amount, and partner across every persisted record
+    const persistedAmounts: number[] = [];
+    for (const { source, record } of persistedRecords) {
+      const rawType = record.type ?? record.voucherType;
+      if (rawType !== undefined && rawType !== null && String(rawType).trim() !== '') {
+        const normalizedType = String(rawType).trim().toUpperCase();
+        if (normalizedType !== input.type) {
+          throw new Error(
+            `VOUCHER_TYPE_MISMATCH: Persisted ${source} type (${normalizedType}) does not match requested type (${input.type}).`
+          );
+        }
+      }
+
+      const rawAmount = record.amount;
+      if (typeof rawAmount !== 'number' || !Number.isFinite(rawAmount) || rawAmount <= 0) {
+        throw new Error(
+          `VOUCHER_AMOUNT_MISSING_OR_INVALID: Persisted ${source} record [${voucherId}] has missing or invalid amount (${String(rawAmount)}).`
+        );
+      }
+      persistedAmounts.push(rawAmount);
+
+      const rawPartner =
+        input.type === 'RECEIPT'
+          ? (record.partnerId ?? record.customer_id ?? record.customerId ?? record.partner_id)
+          : (record.partnerId ?? record.supplier_id ?? record.supplierId ?? record.partner_id);
+      const persistedPartnerId = typeof rawPartner === 'string' ? rawPartner.trim() : '';
+      if (!persistedPartnerId) {
+        throw new Error(
+          `VOUCHER_PARTNER_MISSING: Persisted ${source} record [${voucherId}] is missing partner identifier.`
+        );
+      }
+      if (persistedPartnerId !== inputPartnerId) {
+        throw new Error(
+          `VOUCHER_PARTNER_MISMATCH: Persisted ${source} partner (${persistedPartnerId}) does not match requested partner (${inputPartnerId}).`
+        );
+      }
+    }
+
+    const authoritativeAmount = persistedAmounts[0];
+    if (authoritativeAmount === undefined) {
+      throw new Error(
+        `VOUCHER_AMOUNT_MISSING_OR_INVALID: Persisted voucher [${voucherId}] has no authoritative amount.`
+      );
+    }
+    for (let i = 1; i < persistedAmounts.length; i++) {
+      const candidateAmount = persistedAmounts[i];
+      if (candidateAmount === undefined || Math.abs(candidateAmount - authoritativeAmount) > 0.001) {
+        throw new Error(
+          `VOUCHER_AMOUNT_INCONSISTENT: Persisted records for voucher [${voucherId}] have conflicting amounts (${authoritativeAmount} vs ${String(candidateAmount)}).`
+        );
+      }
+    }
+
+    if (Math.abs(authoritativeAmount - input.amount) > 0.01) {
+      throw new Error(
+        `VOUCHER_AMOUNT_MISMATCH: Cancellation amount (${input.amount}) does not match saved record amount (${authoritativeAmount}).`
+      );
+    }
+
+    const now = new Date().toISOString();
 
     if (input.type === 'RECEIPT') {
       if (receipt) {
-        await receiptsTbl.delete(input.id);
+        await receiptsTbl.delete(voucherId);
       }
-      if (input.partnerId && input.partnerId !== 'عميل نقدي') {
-        const customer = await customersTbl.get(input.partnerId);
+      if (inputPartnerId !== 'عميل نقدي') {
+        const customer = await customersTbl.get(inputPartnerId);
         if (!customer) {
-          throw new Error(`CUSTOMER_NOT_FOUND: Customer ${input.partnerId} for receipt cancellation does not exist.`);
+          throw new Error(`CUSTOMER_NOT_FOUND: Customer ${inputPartnerId} for receipt cancellation does not exist.`);
         }
-        await customersTbl.update(input.partnerId, {
-          balance: (customer.balance || 0) + input.amount,
-          updatedAt: new Date().toISOString()
+        const currentBalance = Number(customer.balance ?? 0);
+        if (!Number.isFinite(currentBalance)) {
+          throw new Error(`INVALID_PARTNER_BALANCE: Customer ${inputPartnerId} has a non-finite balance.`);
+        }
+        await customersTbl.update(inputPartnerId, {
+          balance: Math.round((currentBalance + authoritativeAmount) * 100) / 100,
+          updatedAt: now
         });
       }
     } else {
       if (payment) {
-        await paymentsTbl.delete(input.id);
+        await paymentsTbl.delete(voucherId);
       }
-      if (input.partnerId && input.partnerId !== 'مورد نقدي') {
-        const supplier = await suppliersTbl.get(input.partnerId);
+      if (inputPartnerId !== 'مورد نقدي') {
+        const supplier = await suppliersTbl.get(inputPartnerId);
         if (!supplier) {
-          throw new Error(`SUPPLIER_NOT_FOUND: Supplier ${input.partnerId} for payment cancellation does not exist.`);
+          throw new Error(`SUPPLIER_NOT_FOUND: Supplier ${inputPartnerId} for payment cancellation does not exist.`);
         }
-        await suppliersTbl.update(input.partnerId, {
-          balance: (supplier.balance || 0) + input.amount,
-          updatedAt: new Date().toISOString()
+        const currentBalance = Number(supplier.balance ?? 0);
+        if (!Number.isFinite(currentBalance)) {
+          throw new Error(`INVALID_PARTNER_BALANCE: Supplier ${inputPartnerId} has a non-finite balance.`);
+        }
+        await suppliersTbl.update(inputPartnerId, {
+          balance: Math.round((currentBalance + authoritativeAmount) * 100) / 100,
+          updatedAt: now
         });
       }
     }
 
     // Revert invoice allocations linked to this voucher (NO error swallowing!)
-    const links = await linksTbl.where('voucherId').equals(input.id).toArray();
+    const links = await linksTbl.where('voucherId').equals(voucherId).toArray();
     for (const link of links) {
       const inv = await invoicesTbl.get(link.invoiceId);
       if (!inv) {
-        throw new Error(`INVOICE_NOT_FOUND: Invoice ${link.invoiceId} linked to voucher ${input.id} could not be found for cancellation.`);
+        throw new Error(`INVOICE_NOT_FOUND: Invoice ${link.invoiceId} linked to voucher ${voucherId} could not be found for cancellation.`);
       }
-      const paidAmount = Number(link.Paid_Amount ?? link.paid_amount ?? 0);
-      const newPaid = Math.max(0, Math.round(((inv.paidAmount || 0) - paidAmount) * 100) / 100);
+      const rawPaidAmount = link.Paid_Amount ?? link.paid_amount;
+      if (typeof rawPaidAmount !== 'number' || !Number.isFinite(rawPaidAmount) || rawPaidAmount < 0) {
+        throw new Error(`INVALID_ALLOCATION_AMOUNT: Allocation link ${link.id} for voucher ${voucherId} has invalid paid amount (${String(rawPaidAmount)}).`);
+      }
+      const newPaid = Math.max(0, Math.round(((Number(inv.paidAmount) || 0) - rawPaidAmount) * 100) / 100);
       const total = Number(inv.totalAmount ?? inv.finalTotal ?? 0);
       await invoicesTbl.update(link.invoiceId, {
         paidAmount: newPaid,
         paymentStatus: newPaid <= 0.001 ? 'UNPAID' : (newPaid < total - 0.001 ? 'PARTIAL' : 'PAID'),
-        updatedAt: new Date().toISOString()
+        updatedAt: now
       });
       await linksTbl.delete(link.id);
     }
 
     // Reverse journal entries and lines atomically via AccountingRepository.deleteEntry
-    const entries = await jeTbl.where('sourceId').equals(input.id).toArray();
+    const entries = await jeTbl.where('sourceId').equals(voucherId).toArray();
     for (const entry of entries) {
       await AccountingRepository.deleteEntry(entry.id, tx);
     }
 
     // Delete voucher record if exists
     if (voucher) {
-      await vouchersTbl.delete(input.id);
+      await vouchersTbl.delete(voucherId);
     }
 
-    try {
-      await (AuditService.log as any)({
-        action: 'DELETE',
-        module: 'VOUCHERS',
-        transactionUuid: ctx.workflowId,
-        recordId: input.id,
-        details: `تم إلغاء السند [${input.id}] بقيمة ${input.amount}`
-      });
-    } catch (auditErr) {
-      console.warn('[VoucherCancellation] Audit log failed:', auditErr);
-    }
-
-    try {
-      await ProjectionEventBus.publish('VOUCHER_CANCELLED', input.id, {
+    // Transaction-scoped audit and projection writes (no silent swallowing: any failure aborts tx)
+    await AuditService.log({
+      action: 'DELETE',
+      module: 'VOUCHERS',
+      transactionUuid: ctx.workflowId,
+      recordId: voucherId,
+      before: {
+        id: voucherId,
         type: input.type,
-        partnerId: input.partnerId,
-        amount: input.amount,
-        correlationId: ctx.correlationId
-      });
-    } catch (eventErr) {
-      console.warn('[VoucherCancellation] Projection event publish failed:', eventErr);
-    }
+        partnerId: inputPartnerId,
+        amount: authoritativeAmount
+      },
+      after: {
+        cancelled: true,
+        id: voucherId,
+        type: input.type,
+        partnerId: inputPartnerId,
+        amount: authoritativeAmount,
+        reason: input.reason
+      }
+    }, tx);
+
+    await ProjectionEventBus.publish('VOUCHER_CANCELLED', voucherId, {
+      type: input.type,
+      partnerId: inputPartnerId,
+      amount: authoritativeAmount,
+      correlationId: ctx.correlationId
+    }, tx);
 
     return {
       success: true,
-      id: input.id
+      id: voucherId
     };
   }
 }

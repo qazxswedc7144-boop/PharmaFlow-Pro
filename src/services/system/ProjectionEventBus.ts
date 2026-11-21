@@ -61,7 +61,12 @@ export class ProjectionEventBus {
    * Publishes an event to the projection event bus.
    * Runs asynchronous processing of the event queue immediately in the background.
    */
-  static async publish(eventType: string, aggregateId: string, payload: any = {}): Promise<void> {
+  static async publish(
+    eventType: string,
+    aggregateId: string,
+    payload: any = {},
+    tx?: any
+  ): Promise<void> {
     try {
       const eventId = `evt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const eventRecord: ProjectionEvent = {
@@ -73,16 +78,36 @@ export class ProjectionEventBus {
         status: 'PENDING'
       };
 
+      const triggerQueue = () => {
+        ProjectionEventBus.processQueue().catch((err) => {
+          console.error('[ProjectionEventBus] Error in automatic queue trigger:', err);
+        });
+      };
+
+      if (tx !== undefined) {
+        if (!tx || typeof tx.table !== 'function') {
+          throw new Error('PROJECTION_WRITE_REJECTED: ACTIVE_TRANSACTION_REQUIRED');
+        }
+        await tx.table('projectionEvents').add(eventRecord);
+        console.log(`[ProjectionEventBus] Published Event (tx): ${eventType} (ID: ${eventId})`);
+
+        if (typeof tx.on === 'function') {
+          tx.on('complete', triggerQueue);
+        } else if (tx.on && typeof tx.on.complete === 'function') {
+          tx.on.complete(triggerQueue);
+        }
+        return;
+      }
+
       // Add to indexedDb projectionEvents log
       await db.projectionEvents.add(eventRecord);
       console.log(`[ProjectionEventBus] Published Event: ${eventType} (ID: ${eventId})`);
 
       // Trigger background worker process stream (async/non-blocking)
-      ProjectionEventBus.processQueue().catch((err) => {
-        console.error('[ProjectionEventBus] Error in automatic queue trigger:', err);
-      });
+      triggerQueue();
     } catch (err) {
       console.error('[ProjectionEventBus] Failed to publish projection event:', err);
+      if (tx !== undefined) throw err;
     }
   }
 
