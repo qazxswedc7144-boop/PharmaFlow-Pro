@@ -106,7 +106,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
   const openDatePicker = () => {
     setCalendarDateFilter(draftDateFilter || {
-      basis: appliedDateFilter?.basis || 'DOCUMENT',
+      basis: 'DOCUMENT',
       granularity: 'DAY',
       start: '',
       end: ''
