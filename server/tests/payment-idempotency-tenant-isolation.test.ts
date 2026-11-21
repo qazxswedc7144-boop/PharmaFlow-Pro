@@ -11,10 +11,19 @@ import { PurchaseRepository } from '@/database/repositories/PurchaseRepository';
 describe('Supplier Payment: Idempotency & Tenant Isolation Hardening Tests', () => {
   const setAuthContext = (tenantId: string | null, branchId: string | null = 'BRH-TEST', userId: string = 'usr-test') => {
     if (!tenantId) {
-      useAuthStore.setState({ user: null, tenantId: null, branchId: null, isAuthenticated: false });
+      useAuthStore.setState({
+        user: null,
+        token: null,
+        refreshToken: null,
+        tenantId: null,
+        branchId: null,
+        isAuthenticated: false
+      });
     } else {
       useAuthStore.setState({
         user: { id: userId, tenantId, branchId, role: 'ADMIN' } as any,
+        token: `mock-token-${tenantId}`,
+        refreshToken: null,
         tenantId,
         branchId,
         roles: ['ADMIN'],
@@ -78,6 +87,7 @@ describe('Supplier Payment: Idempotency & Tenant Isolation Hardening Tests', () 
     });
 
     it('POSITIVE: successfully acquires key with trusted tenant and branch', async () => {
+      setAuthContext('TEN-PHARMA-100', 'BRH-NORTH-01');
       await expect(
         UnifiedBusinessWorkflowOrchestrator.acquireIdempotencyKey('KEY-001', 'TEN-PHARMA-100', 'BRH-NORTH-01')
       ).resolves.not.toThrow();
@@ -95,6 +105,7 @@ describe('Supplier Payment: Idempotency & Tenant Isolation Hardening Tests', () 
   // =========================================================================
   describe('2. Idempotency Key Scoping: Cross-Tenant Isolation', () => {
     it('Tenant A and Tenant B using the EXACT SAME key are isolated without collisions or cross-tenant leaks', async () => {
+      setAuthContext('TENANT-A', 'BRH-A1');
       const sharedKey = 'PAYMENT-OP-IDENTICAL-KEY';
 
       // Tenant A acquires the key
@@ -102,6 +113,7 @@ describe('Supplier Payment: Idempotency & Tenant Isolation Hardening Tests', () 
       await IdempotencyRegistry.updateStatus(sharedKey, 'COMMITTED', { resultId: 'A-SUCCESS' }, undefined, 'TENANT-A');
 
       // Tenant B queries the same key under Tenant B context -> MUST be null (isolated!)
+      setAuthContext('TENANT-B', 'BRH-B1');
       const tenantBCheck = await IdempotencyRegistry.get(sharedKey, 'TENANT-B');
       expect(tenantBCheck).toBeNull();
 
@@ -115,6 +127,7 @@ describe('Supplier Payment: Idempotency & Tenant Isolation Hardening Tests', () 
       expect(tenantBRecord?.tenantId).toBe('TENANT-B');
 
       // Tenant A record remains untouched
+      setAuthContext('TENANT-A', 'BRH-A1');
       const tenantARecord = await IdempotencyRegistry.get(sharedKey, 'TENANT-A');
       expect(tenantARecord?.result?.resultId).toBe('A-SUCCESS');
     });
@@ -125,6 +138,7 @@ describe('Supplier Payment: Idempotency & Tenant Isolation Hardening Tests', () 
   // =========================================================================
   describe('3. Concurrency & Retry Behavior', () => {
     it('Concurrent requests with the same key in PROCESSING state are rejected', async () => {
+      setAuthContext('TENANT-TEST', 'BRH-01');
       const key = 'CONCURRENT-TX-001';
       await UnifiedBusinessWorkflowOrchestrator.acquireIdempotencyKey(key, 'TENANT-TEST', 'BRH-01');
 
@@ -135,6 +149,7 @@ describe('Supplier Payment: Idempotency & Tenant Isolation Hardening Tests', () 
     });
 
     it('Duplicate retry of already COMMITTED request succeeds idempotently', async () => {
+      setAuthContext('TENANT-TEST', 'BRH-01');
       const key = 'RETRY-TX-001';
       await UnifiedBusinessWorkflowOrchestrator.acquireIdempotencyKey(key, 'TENANT-TEST', 'BRH-01');
       await IdempotencyRegistry.updateStatus(key, 'COMMITTED', { amount: 500 }, undefined, 'TENANT-TEST');
