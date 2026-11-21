@@ -17,6 +17,26 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== '/api/invoices/sales-policy') {
+        throw new Error(`Unexpected fetch in sales lifecycle test: ${String(input)}`);
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          policy: {
+            tenantId,
+            maxDiscountPercent: '100',
+            taxRatePercent: '0',
+            taxMode: 'NONE',
+            updatedAt: '2026-11-21T00:00:00.000Z'
+          }
+        })
+      } as Response;
+    }));
 
     // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
     const userObj = {
@@ -65,6 +85,7 @@ describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
     await db.accounts.clear();
     await db.idempotencyRecords.clear();
     await db.idempotencyKeys.clear();
+    await db.tenantSalesPolicies.clear();
     await db.voucherInvoiceLinks.clear();
     await db.vouchers.clear();
     await db.auditLogs.clear();
