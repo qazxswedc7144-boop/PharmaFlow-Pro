@@ -4,6 +4,16 @@ import { authService } from '@features/auth/services/authService';
 import { useAuthStore } from '@/store/authStore';
 import { generateTransactionUuid } from '@/utils/uuid';
 
+function resolveFinancialTransactionsTable(tx?: any) {
+  if (tx !== undefined) {
+    if (!tx || typeof tx.table !== 'function') {
+      throw new Error('FINANCIAL_TRANSACTION_WRITE_REJECTED: ACTIVE_TRANSACTION_REQUIRED');
+    }
+    return tx.table('financialTransactions');
+  }
+  return db.financialTransactions;
+}
+
 /**
  * FinancialTransaction Repository - مركز التحكم في الحركات المالية (Phase 11 Update)
  */
@@ -19,15 +29,15 @@ export const FinancialTransactionRepository = {
 
   getByReference: async (refId: string, tx?: any, tenantId?: string, branchId?: string): Promise<FinancialTransaction[]> => {
     if (!refId) return [];
-    const table = tx?.financialTransactions ?? db.financialTransactions;
+    const table = resolveFinancialTransactionsTable(tx);
     let query = table.where('Reference_ID').equals(refId);
     
     if (tenantId) {
-      query = query.and(t => t.tenantId === tenantId);
+      query = query.and((t: FinancialTransaction) => t.tenantId === tenantId);
     }
     
     if (branchId) {
-      query = query.and(t => t.branchId === branchId);
+      query = query.and((t: FinancialTransaction) => t.branchId === branchId);
     }
     
     return await query.toArray();
@@ -77,7 +87,7 @@ export const FinancialTransactionRepository = {
       branchId
     } as FinancialTransaction;
 
-    const ftsTbl = tx ? tx.table('financialTransactions') : db.financialTransactions;
+    const ftsTbl = resolveFinancialTransactionsTable(tx);
     await ftsTbl.put(transaction);
     
     await db.addAuditLog(
@@ -95,7 +105,7 @@ export const FinancialTransactionRepository = {
    * إبطال/عكس الحركات المالية المرتبطة بمرجع معين (Non-Destructive Reversal)
    */
   reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string, tenantId?: string, branchId?: string): Promise<void> => {
-    const table = tx?.financialTransactions ?? db.financialTransactions;
+    const table = resolveFinancialTransactionsTable(tx);
     const transactions = await FinancialTransactionRepository.getByReference(refId, tx, tenantId, branchId);
     const now = new Date().toISOString();
     
@@ -105,6 +115,10 @@ export const FinancialTransactionRepository = {
     console.log(`[FinancialTransactionRepository] Found ${transactions.length} total FTs, ${activeTxs.length} are active for document ${refId} (Tenant: ${tenantId || 'GLOBAL'}, Branch: ${branchId || 'GLOBAL'})`);
 
     for (const trx of activeTxs) {
+      if (trx.Direction !== 'Debit' && trx.Direction !== 'Credit') {
+        throw new Error(`INVALID_FINANCIAL_TRANSACTION_DIRECTION: Transaction ${trx.id} has invalid direction (${String(trx.Direction)}).`);
+      }
+
       const reversalId = idempotencyKey ? `FT-REV-${trx.id}-${idempotencyKey}` : `FT-REV-${trx.id}`;
       
       // التحقق من وجود العكس مسبقاً لضمان Idempotency (استخدام الجدول المرتبط بالمعاملة لضمان الرؤية)
@@ -144,7 +158,7 @@ export const FinancialTransactionRepository = {
    * حذف أو إلغاء حركة (Logical Delete)
    */
   cancelTransaction: async (refId: string, tx?: any): Promise<void> => {
-    const table = tx?.financialTransactions ?? db.financialTransactions;
+    const table = resolveFinancialTransactionsTable(tx);
     const transactions = await FinancialTransactionRepository.getByReference(refId, tx);
     const now = new Date().toISOString();
     for (const trx of transactions) {

@@ -3,6 +3,7 @@ import { db } from '@/core/db';
 import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 
 export interface VoucherCancellationInput {
   id: string;
@@ -84,10 +85,15 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     const linksTbl = tx.table('voucherInvoiceLinks');
     const invoicesTbl = tx.table('invoices');
     const jeTbl = tx.table('journalEntries');
+    const ftTbl = tx.table('financialTransactions');
     const customersTbl = tx.table('customers');
     const suppliersTbl = tx.table('suppliers');
 
-    // Double cancellation prevention & authoritative record inspection inside active transaction
+    // =========================================================================
+    // PHASE 1: STRICT READ-ONLY VALIDATION (NO IRREVERSIBLE MUTATIONS YET)
+    // =========================================================================
+
+    // 1. Double cancellation prevention & authoritative record inspection inside active transaction
     const voucher = await vouchersTbl.get(voucherId);
     const receipt = await receiptsTbl.get(voucherId);
     const payment = await paymentsTbl.get(voucherId);
@@ -106,23 +112,38 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       throw new Error(`VOUCHER_TYPE_MISMATCH: Voucher [${voucherId}] is stored as RECEIPT and cannot be cancelled as PAYMENT.`);
     }
 
-    const persistedRecords: Array<{ source: string; record: any }> = [];
+    const persistedRecords: Array<{ source: 'vouchers' | 'receipts' | 'payments'; record: any }> = [];
     if (voucher) persistedRecords.push({ source: 'vouchers', record: voucher });
     if (receipt) persistedRecords.push({ source: 'receipts', record: receipt });
     if (payment) persistedRecords.push({ source: 'payments', record: payment });
 
-    // Validate persisted type, authoritative amount, and partner across every persisted record
+    // 2. Validate mandatory persisted type, authoritative amount, and partner across every persisted record
+    const persistedTypes: string[] = [];
     const persistedAmounts: number[] = [];
     for (const { source, record } of persistedRecords) {
       const rawType = record.type ?? record.voucherType;
-      if (rawType !== undefined && rawType !== null && String(rawType).trim() !== '') {
-        const normalizedType = String(rawType).trim().toUpperCase();
-        if (normalizedType !== input.type) {
-          throw new Error(
-            `VOUCHER_TYPE_MISMATCH: Persisted ${source} type (${normalizedType}) does not match requested type (${input.type}).`
-          );
-        }
+      if (typeof rawType !== 'string' || rawType.trim().length === 0) {
+        throw new Error(
+          `VOUCHER_TYPE_MISSING: Persisted ${source} record [${voucherId}] is missing required voucher type.`
+        );
       }
+      const normalizedType = rawType.trim().toUpperCase();
+      if (normalizedType !== 'RECEIPT' && normalizedType !== 'PAYMENT') {
+        throw new Error(
+          `VOUCHER_TYPE_INVALID: Persisted ${source} record [${voucherId}] has invalid voucher type (${normalizedType}).`
+        );
+      }
+      if (source === 'receipts' && normalizedType !== 'RECEIPT') {
+        throw new Error(
+          `VOUCHER_TYPE_CONFLICT: Record [${voucherId}] in receipts table has conflicting persisted type (${normalizedType}).`
+        );
+      }
+      if (source === 'payments' && normalizedType !== 'PAYMENT') {
+        throw new Error(
+          `VOUCHER_TYPE_CONFLICT: Record [${voucherId}] in payments table has conflicting persisted type (${normalizedType}).`
+        );
+      }
+      persistedTypes.push(normalizedType);
 
       const rawAmount = record.amount;
       if (typeof rawAmount !== 'number' || !Number.isFinite(rawAmount) || rawAmount <= 0) {
@@ -149,6 +170,20 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       }
     }
 
+    const authoritativeType = persistedTypes[0];
+    for (let i = 1; i < persistedTypes.length; i++) {
+      if (persistedTypes[i] !== authoritativeType) {
+        throw new Error(
+          `VOUCHER_TYPE_CONFLICT: Persisted records for voucher [${voucherId}] have conflicting types (${String(authoritativeType)} vs ${String(persistedTypes[i])}).`
+        );
+      }
+    }
+    if (authoritativeType !== input.type) {
+      throw new Error(
+        `VOUCHER_TYPE_MISMATCH: Persisted voucher type (${String(authoritativeType)}) does not match requested type (${input.type}).`
+      );
+    }
+
     const authoritativeAmount = persistedAmounts[0];
     if (authoritativeAmount === undefined) {
       throw new Error(
@@ -170,23 +205,201 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       );
     }
 
+    // 3. Validate partner existence & balance (preserve cash customer / cash supplier behavior)
+    let partnerNextBalance: number | null = null;
+    if (input.type === 'RECEIPT') {
+      if (inputPartnerId !== 'عميل نقدي') {
+        const customer = await customersTbl.get(inputPartnerId);
+        if (!customer) {
+          throw new Error(`CUSTOMER_NOT_FOUND: Customer ${inputPartnerId} for receipt cancellation does not exist.`);
+        }
+        const currentBalance = customer.balance ?? 0;
+        if (typeof currentBalance !== 'number' || !Number.isFinite(currentBalance)) {
+          throw new Error(`INVALID_PARTNER_BALANCE: Customer ${inputPartnerId} has a non-finite balance.`);
+        }
+        partnerNextBalance = Math.round((currentBalance + authoritativeAmount) * 100) / 100;
+      }
+    } else {
+      if (inputPartnerId !== 'مورد نقدي') {
+        const supplier = await suppliersTbl.get(inputPartnerId);
+        if (!supplier) {
+          throw new Error(`SUPPLIER_NOT_FOUND: Supplier ${inputPartnerId} for payment cancellation does not exist.`);
+        }
+        const currentBalance = supplier.balance ?? 0;
+        if (typeof currentBalance !== 'number' || !Number.isFinite(currentBalance)) {
+          throw new Error(`INVALID_PARTNER_BALANCE: Supplier ${inputPartnerId} has a non-finite balance.`);
+        }
+        partnerNextBalance = Math.round((currentBalance + authoritativeAmount) * 100) / 100;
+      }
+    }
+
+    // 4. Validate invoice allocations and target invoices completely before mutating anything
+    const links = await linksTbl.where('voucherId').equals(voucherId).toArray();
+    const allocationByInvoice = new Map<string, number>();
+    let totalAllocated = 0;
+
+    for (const link of links) {
+      const rawPaidAmount = link.Paid_Amount ?? link.paid_amount;
+      if (typeof rawPaidAmount !== 'number' || !Number.isFinite(rawPaidAmount) || rawPaidAmount <= 0) {
+        throw new Error(
+          `INVALID_ALLOCATION_AMOUNT: Allocation link ${link.id} for voucher ${voucherId} has invalid paid amount (${String(rawPaidAmount)}).`
+        );
+      }
+      totalAllocated = Math.round((totalAllocated + rawPaidAmount) * 100) / 100;
+      const prevForInvoice = allocationByInvoice.get(link.invoiceId) ?? 0;
+      allocationByInvoice.set(link.invoiceId, Math.round((prevForInvoice + rawPaidAmount) * 100) / 100);
+    }
+
+    // Per VoucherWorkflow creation rules, total allocations must never exceed voucher amount (tolerance 0.001)
+    if (totalAllocated > authoritativeAmount + 0.001) {
+      throw new Error(
+        `ALLOCATION_TOTAL_EXCEEDS_VOUCHER: Total linked allocations (${totalAllocated}) exceed voucher amount (${authoritativeAmount}) for voucher [${voucherId}].`
+      );
+    }
+
+    const invoiceRestorations: Array<{
+      invoiceId: string;
+      newPaid: number;
+      newRemaining: number;
+      paymentStatus: 'UNPAID' | 'PARTIAL' | 'PAID';
+    }> = [];
+
+    for (const [invoiceId, allocatedForInvoice] of allocationByInvoice.entries()) {
+      const inv = await invoicesTbl.get(invoiceId);
+      if (!inv) {
+        throw new Error(
+          `INVOICE_NOT_FOUND: Invoice ${invoiceId} linked to voucher ${voucherId} could not be found for cancellation.`
+        );
+      }
+
+      const rawCurrentPaid = inv.paidAmount;
+      if (typeof rawCurrentPaid !== 'number' || !Number.isFinite(rawCurrentPaid) || rawCurrentPaid < 0) {
+        throw new Error(
+          `INVALID_INVOICE_PAID_AMOUNT: Invoice [${invoiceId}] has missing, negative, or non-finite paidAmount (${String(rawCurrentPaid)}).`
+        );
+      }
+
+      const rawInvoiceTotal = inv.totalAmount !== undefined ? inv.totalAmount : inv.finalTotal;
+      if (typeof rawInvoiceTotal !== 'number' || !Number.isFinite(rawInvoiceTotal) || rawInvoiceTotal <= 0) {
+        throw new Error(
+          `INVALID_INVOICE_TOTAL: Invoice [${invoiceId}] has missing, non-positive, or non-finite total (${String(rawInvoiceTotal)}).`
+        );
+      }
+
+      if (rawCurrentPaid > rawInvoiceTotal + 0.001) {
+        throw new Error(
+          `INVALID_INVOICE_BALANCE: Invoice [${invoiceId}] recorded paidAmount (${rawCurrentPaid}) exceeds invoice total (${rawInvoiceTotal}).`
+        );
+      }
+
+      if (allocatedForInvoice > rawCurrentPaid + 0.001) {
+        throw new Error(
+          `ALLOCATION_EXCEEDS_PAID_AMOUNT: Allocation (${allocatedForInvoice}) exceeds invoice [${invoiceId}] recorded paidAmount (${rawCurrentPaid}).`
+        );
+      }
+
+      const computedPaid = Math.round((rawCurrentPaid - allocatedForInvoice) * 100) / 100;
+      const newPaid = computedPaid <= 0.001 ? 0 : computedPaid;
+      const newRemaining = Math.max(0, Math.round((rawInvoiceTotal - newPaid) * 100) / 100);
+      const paymentStatus: 'UNPAID' | 'PARTIAL' | 'PAID' =
+        newPaid <= 0.001 ? 'UNPAID' : (newPaid < rawInvoiceTotal - 0.001 ? 'PARTIAL' : 'PAID');
+
+      invoiceRestorations.push({
+        invoiceId,
+        newPaid,
+        newRemaining,
+        paymentStatus
+      });
+    }
+
+    // 5. Validate mandatory single JournalEntry for the voucher
+    const entries = await jeTbl.where('sourceId').equals(voucherId).toArray();
+    if (entries.length === 0) {
+      throw new Error(
+        `VOUCHER_JOURNAL_ENTRY_MISSING: No journal entry found for voucher [${voucherId}].`
+      );
+    }
+    if (entries.length > 1) {
+      throw new Error(
+        `DUPLICATE_VOUCHER_JOURNAL_ENTRIES: Voucher [${voucherId}] has ${entries.length} journal entries; expected exactly 1.`
+      );
+    }
+    const journalEntry = entries[0];
+    if (!journalEntry) {
+      throw new Error(
+        `VOUCHER_JOURNAL_ENTRY_MISSING: No journal entry found for voucher [${voucherId}].`
+      );
+    }
+
+    // 6. Validate mandatory single active FinancialTransaction for non-destructive reversal
+    const allFtsForVoucher = (await ftTbl.where('Reference_ID').equals(voucherId).toArray()).filter(
+      (ft: any) => !ft.Reference_Table || ft.Reference_Table === 'Vouchers'
+    );
+    for (const ft of allFtsForVoucher) {
+      if (ft.tenantId && ctx.tenantId && ft.tenantId !== ctx.tenantId) {
+        throw new Error(
+          `CROSS_TENANT_FINANCIAL_TRANSACTION_FORBIDDEN: FinancialTransaction [${ft.id}] does not belong to tenant [${ctx.tenantId}].`
+        );
+      }
+    }
+
+    const activeFts = allFtsForVoucher.filter(
+      (ft: any) => !ft.isDeleted && !ft.isReversal && !ft.reversedBy
+    );
+    const hasReversalOrReversed = allFtsForVoucher.some(
+      (ft: any) => Boolean(ft.isReversal || ft.reversedBy)
+    );
+
+    if (activeFts.length === 0) {
+      if (hasReversalOrReversed) {
+        throw new Error(
+          `VOUCHER_FINANCIAL_TRANSACTION_ALREADY_REVERSED: Financial transaction for voucher [${voucherId}] was already reversed.`
+        );
+      }
+      throw new Error(
+        `VOUCHER_FINANCIAL_TRANSACTION_MISSING: No active financial transaction found for voucher [${voucherId}].`
+      );
+    }
+    if (activeFts.length > 1) {
+      throw new Error(
+        `DUPLICATE_VOUCHER_FINANCIAL_TRANSACTIONS: Voucher [${voucherId}] has ${activeFts.length} active financial transaction records; expected exactly 1.`
+      );
+    }
+
+    const activeFt = activeFts[0];
+    const rawFtAmount = activeFt.Amount !== undefined
+      ? activeFt.Amount
+      : (activeFt.amount !== undefined ? activeFt.amount : activeFt.Paid_Amount);
+    if (
+      typeof rawFtAmount !== 'number' ||
+      !Number.isFinite(rawFtAmount) ||
+      rawFtAmount <= 0 ||
+      Math.abs(rawFtAmount - authoritativeAmount) > 0.01
+    ) {
+      throw new Error(
+        `VOUCHER_FINANCIAL_TRANSACTION_AMOUNT_MISMATCH: Financial transaction [${activeFt.id}] amount (${String(rawFtAmount)}) does not match voucher amount (${authoritativeAmount}).`
+      );
+    }
+
+    const expectedFtDirection = input.type === 'RECEIPT' ? 'Credit' : 'Debit';
+    if (activeFt.Direction !== expectedFtDirection) {
+      throw new Error(
+        `VOUCHER_FINANCIAL_TRANSACTION_DIRECTION_MISMATCH: Financial transaction [${activeFt.id}] direction (${String(activeFt.Direction)}) does not match expected direction (${expectedFtDirection}) for ${input.type}.`
+      );
+    }
+
+    // =========================================================================
+    // PHASE 2: ATOMIC MUTATIONS INSIDE THE ACTIVE TRANSACTION
+    // =========================================================================
     const now = new Date().toISOString();
 
     if (input.type === 'RECEIPT') {
       if (receipt) {
         await receiptsTbl.delete(voucherId);
       }
-      if (inputPartnerId !== 'عميل نقدي') {
-        const customer = await customersTbl.get(inputPartnerId);
-        if (!customer) {
-          throw new Error(`CUSTOMER_NOT_FOUND: Customer ${inputPartnerId} for receipt cancellation does not exist.`);
-        }
-        const currentBalance = Number(customer.balance ?? 0);
-        if (!Number.isFinite(currentBalance)) {
-          throw new Error(`INVALID_PARTNER_BALANCE: Customer ${inputPartnerId} has a non-finite balance.`);
-        }
+      if (partnerNextBalance !== null) {
         await customersTbl.update(inputPartnerId, {
-          balance: Math.round((currentBalance + authoritativeAmount) * 100) / 100,
+          balance: partnerNextBalance,
           updatedAt: now
         });
       }
@@ -194,48 +407,39 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       if (payment) {
         await paymentsTbl.delete(voucherId);
       }
-      if (inputPartnerId !== 'مورد نقدي') {
-        const supplier = await suppliersTbl.get(inputPartnerId);
-        if (!supplier) {
-          throw new Error(`SUPPLIER_NOT_FOUND: Supplier ${inputPartnerId} for payment cancellation does not exist.`);
-        }
-        const currentBalance = Number(supplier.balance ?? 0);
-        if (!Number.isFinite(currentBalance)) {
-          throw new Error(`INVALID_PARTNER_BALANCE: Supplier ${inputPartnerId} has a non-finite balance.`);
-        }
+      if (partnerNextBalance !== null) {
         await suppliersTbl.update(inputPartnerId, {
-          balance: Math.round((currentBalance + authoritativeAmount) * 100) / 100,
+          balance: partnerNextBalance,
           updatedAt: now
         });
       }
     }
 
-    // Revert invoice allocations linked to this voucher (NO error swallowing!)
-    const links = await linksTbl.where('voucherId').equals(voucherId).toArray();
-    for (const link of links) {
-      const inv = await invoicesTbl.get(link.invoiceId);
-      if (!inv) {
-        throw new Error(`INVOICE_NOT_FOUND: Invoice ${link.invoiceId} linked to voucher ${voucherId} could not be found for cancellation.`);
-      }
-      const rawPaidAmount = link.Paid_Amount ?? link.paid_amount;
-      if (typeof rawPaidAmount !== 'number' || !Number.isFinite(rawPaidAmount) || rawPaidAmount < 0) {
-        throw new Error(`INVALID_ALLOCATION_AMOUNT: Allocation link ${link.id} for voucher ${voucherId} has invalid paid amount (${String(rawPaidAmount)}).`);
-      }
-      const newPaid = Math.max(0, Math.round(((Number(inv.paidAmount) || 0) - rawPaidAmount) * 100) / 100);
-      const total = Number(inv.totalAmount ?? inv.finalTotal ?? 0);
-      await invoicesTbl.update(link.invoiceId, {
-        paidAmount: newPaid,
-        paymentStatus: newPaid <= 0.001 ? 'UNPAID' : (newPaid < total - 0.001 ? 'PARTIAL' : 'PAID'),
+    // Apply pre-validated invoice allocation restorations and delete links
+    for (const restoration of invoiceRestorations) {
+      await invoicesTbl.update(restoration.invoiceId, {
+        paidAmount: restoration.newPaid,
+        remainingAmount: restoration.newRemaining,
+        remaining: restoration.newRemaining,
+        paymentStatus: restoration.paymentStatus,
         updatedAt: now
       });
+    }
+    for (const link of links) {
       await linksTbl.delete(link.id);
     }
 
-    // Reverse journal entries and lines atomically via AccountingRepository.deleteEntry
-    const entries = await jeTbl.where('sourceId').equals(voucherId).toArray();
-    for (const entry of entries) {
-      await AccountingRepository.deleteEntry(entry.id, tx);
-    }
+    // Reverse journal entry and lines atomically via AccountingRepository.deleteEntry
+    await AccountingRepository.deleteEntry(journalEntry.id, tx);
+
+    // Non-destructive compensating reversal of the voucher's FinancialTransaction (preserves historical record)
+    await FinancialTransactionRepository.reverseTransactions(
+      voucherId,
+      tx,
+      ctx.idempotencyKey,
+      ctx.tenantId,
+      ctx.branchId
+    );
 
     // Delete voucher record if exists
     if (voucher) {

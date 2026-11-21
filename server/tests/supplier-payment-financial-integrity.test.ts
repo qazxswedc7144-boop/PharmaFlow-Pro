@@ -731,6 +731,18 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       const restoredInv = await db.invoices.get('INV-CANCEL-01');
       expect(restoredInv?.paidAmount).toBe(0);
       expect(restoredInv?.paymentStatus).toBe('UNPAID');
+
+      // FinancialTransaction history preserved with compensating Credit reversal and zero active originals
+      const ftsAfterCancel = await db.financialTransactions.where('Reference_ID').equals(paymentRes.payment.id).toArray();
+      expect(ftsAfterCancel).toHaveLength(2);
+      const originalFt = ftsAfterCancel.find((f: any) => !f.isReversal);
+      const reversalFt = ftsAfterCancel.find((f: any) => f.isReversal === true);
+      expect(originalFt?.isDeleted).toBe(true);
+      expect(originalFt?.reversedBy).toBe(reversalFt?.id);
+      expect(reversalFt?.reversalOf).toBe(originalFt?.id);
+      expect(reversalFt?.Direction).toBe('Credit');
+      expect(reversalFt?.Amount).toBe(500);
+      expect(reversalFt?.isDeleted).toBe(false);
     });
   });
 });
