@@ -138,7 +138,9 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
       const term = searchTerm.toLowerCase();
       list = list.filter(inv => {
         const invId = inv.entityType === 'SALE' ? (inv.SaleID || inv.id) : (inv.invoiceId || inv.purchase_id || inv.id);
-        const partner = String(inv.entityType === 'SALE' ? (inv.customerId || 'عميل نقدي') : (inv.partnerName || inv.partnerId || ''));
+        const partner = String(inv.entityType === 'SALE'
+          ? (inv.customerName || inv.CustomerName || inv.customerId || 'عميل نقدي')
+          : (inv.partnerName || inv.supplierName || inv.partnerId || ''));
         return invId.toLowerCase().includes(term) || partner.toLowerCase().includes(term);
       });
     }
@@ -388,7 +390,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
       <div className="flex items-center gap-2 bg-white p-2 rounded-[20px] border border-slate-100 shadow-sm relative">
         <div className="relative flex-1 min-w-0 group">
-          <input type="text" placeholder="ابحث برقم الفاتورة، العميل، أو المورد..." aria-label="البحث في أرشيف المستندات" className="w-full min-w-0 bg-slate-50 border-2 border-transparent rounded-[16px] px-10 py-3 text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+          <input type="text" placeholder="رقم الفاتورة أو العميل أو المورد..." aria-label="البحث في أرشيف المستندات" className="w-full min-w-0 bg-slate-50 border-2 border-transparent rounded-[16px] px-10 py-3 text-[10px] sm:text-[11px] font-black focus:bg-white focus:border-[#1E4D4D] outline-none shadow-inner" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
           <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300" />
         </div>
         <button onClick={() => setShowFilters(!showFilters)} aria-expanded={showFilters} className={`shrink-0 flex items-center gap-2 px-3 sm:px-5 py-3 rounded-[16px] text-[10px] font-black transition-all border ${showFilters ? 'bg-[#1E4D4D] text-white' : 'bg-slate-50 text-slate-500'}`}>
@@ -501,7 +503,9 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
               const isFinancialLocked = inv.payment_status && inv.payment_status !== 'Unpaid';
               const invDate = inv.entityType === 'SALE' ? (inv.date || inv.Date) : inv.date;
               const isPeriodLocked = lockedInvoices[id] || false;
-              const partner = inv.entityType === 'SALE' ? (inv.customerId || 'عميل نقدي') : (inv.partnerName || inv.partnerId);
+              const partner = inv.entityType === 'SALE'
+                ? (inv.customerName || inv.CustomerName || inv.customerId || 'عميل نقدي')
+                : (inv.partnerName || inv.supplierName || inv.partnerId);
 
               return (
                 <div style={style} className="pb-3 px-1" key={id}>
@@ -592,7 +596,9 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
               const isFinancialLocked = inv.payment_status && inv.payment_status !== 'Unpaid';
               const invDate = inv.entityType === 'SALE' ? (inv.date || inv.Date) : inv.date;
               const isPeriodLocked = lockedInvoices[id] || false;
-              const partner = inv.entityType === 'SALE' ? (inv.customerId || 'عميل نقدي') : (inv.partnerName || inv.partnerId);
+              const partner = inv.entityType === 'SALE'
+                ? (inv.customerName || inv.CustomerName || inv.customerId || 'عميل نقدي')
+                : (inv.partnerName || inv.supplierName || inv.partnerId);
 
               return (
                 <div 
