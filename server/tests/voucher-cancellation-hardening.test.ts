@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { voucherCancellationWorkflow } from '@/features/accounting/workflows/VoucherCancellationWorkflow';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { TransactionBoundary } from '@/core/integrity/transactionBoundary';
@@ -1482,5 +1483,335 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
     expect(updatedInv?.paidAmount).toBe(600);
     expect((updatedInv as any)?.remainingAmount).toBe(400);
     expect(updatedInv?.paymentStatus).toBe('PARTIAL');
+  });
+
+  // =========================================================================
+  // TARGETED FIX REGRESSION TESTS: FT Tenant/Branch Isolation & Reversal Verification
+  // =========================================================================
+
+  // 31. Missing tenantId on linked FinancialTransaction
+  it('31. Rejects cancellation when linked FinancialTransaction is missing tenantId and leaves all tables unchanged', async () => {
+    const fixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-NO-TENANT',
+      invoiceId: 'INV-FT-NO-TENANT'
+    });
+    await db.financialTransactions.update(fixture.ftId, { tenantId: undefined } as any);
+
+    const before = await captureDbSnapshot();
+    const res = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'RECEIPT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_TENANT_MISSING/i);
+    expect(await captureDbSnapshot()).toEqual(before);
+  });
+
+  // 32. Missing branchId on linked FinancialTransaction
+  it('32. Rejects cancellation when linked FinancialTransaction is missing branchId and leaves all tables unchanged', async () => {
+    const fixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-NO-BRANCH',
+      invoiceId: 'INV-FT-NO-BRANCH'
+    });
+    await db.financialTransactions.update(fixture.ftId, { branchId: undefined } as any);
+
+    const before = await captureDbSnapshot();
+    const res = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'RECEIPT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_BRANCH_MISSING/i);
+    expect(await captureDbSnapshot()).toEqual(before);
+  });
+
+  // 33. Different tenantId on linked FinancialTransaction
+  it('33. Rejects cancellation when linked FinancialTransaction belongs to a different tenantId and does not leak tenant IDs', async () => {
+    const fixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-WRONG-TENANT',
+      invoiceId: 'INV-FT-WRONG-TENANT'
+    });
+    // Use raw table put via Dexie transaction or direct update to simulate cross-tenant record
+    await db.financialTransactions.delete(fixture.ftId);
+    await db.financialTransactions.put({
+      id: fixture.ftId,
+      Transaction_ID: fixture.ftId,
+      Transaction_Type: 'Receipt',
+      Reference_ID: fixture.id,
+      Reference_Table: 'Vouchers',
+      Entity_Type: 'Customer',
+      Entity_Name: fixture.partnerId,
+      Amount: fixture.amount,
+      Paid_Amount: fixture.amount,
+      Direction: 'Credit',
+      Transaction_Date: '2026-01-15',
+      tenantId: 'TENANT-OTHER-SECRET-99',
+      branchId,
+      isDeleted: false
+    } as any);
+
+    const before = await captureDbSnapshot();
+    const res = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'RECEIPT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/CROSS_TENANT_FINANCIAL_TRANSACTION_FORBIDDEN/i);
+    expect(res.error?.message).not.toContain('TENANT-OTHER-SECRET-99');
+    expect(await captureDbSnapshot()).toEqual(before);
+  });
+
+  // 34. Different branchId on linked FinancialTransaction
+  it('34. Rejects cancellation when linked FinancialTransaction belongs to a different branchId and leaves all tables unchanged', async () => {
+    const fixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-WRONG-BRANCH',
+      invoiceId: 'INV-FT-WRONG-BRANCH'
+    });
+    await db.financialTransactions.update(fixture.ftId, { branchId: 'BRH-OTHER-SECRET-99' } as any);
+
+    const before = await captureDbSnapshot();
+    const res = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'RECEIPT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/CROSS_BRANCH_FINANCIAL_TRANSACTION_FORBIDDEN/i);
+    expect(res.error?.message).not.toContain('BRH-OTHER-SECRET-99');
+    expect(await captureDbSnapshot()).toEqual(before);
+  });
+
+  // 35. Missing or invalid Reference_Table on linked FinancialTransaction
+  it('35. Rejects missing and invalid Reference_Table on linked FinancialTransaction with full rollback', async () => {
+    const fixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-BAD-REFTBL',
+      invoiceId: 'INV-FT-BAD-REFTBL'
+    });
+
+    // Missing Reference_Table
+    await db.financialTransactions.update(fixture.ftId, { Reference_Table: undefined } as any);
+    const beforeMissing = await captureDbSnapshot();
+    const resMissing = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'RECEIPT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+    expect(resMissing.success).toBe(false);
+    expect(resMissing.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_REFERENCE_TABLE_MISSING/i);
+    expect(await captureDbSnapshot()).toEqual(beforeMissing);
+
+    // Invalid Reference_Table (not 'Vouchers')
+    await db.financialTransactions.update(fixture.ftId, { Reference_Table: 'Sales_Invoices' } as any);
+    const beforeInvalid = await captureDbSnapshot();
+    const resInvalid = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'RECEIPT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+    expect(resInvalid.success).toBe(false);
+    expect(resInvalid.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_REFERENCE_TABLE_INVALID/i);
+    expect(await captureDbSnapshot()).toEqual(beforeInvalid);
+  });
+
+  // 36. Reversal lookup returning no scoped transaction (no-op prevented)
+  it('36. Rejects no-op reversal when scoped FinancialTransaction lookup returns zero records and rolls back all tables', async () => {
+    const fixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-NOOP',
+      invoiceId: 'INV-FT-NOOP'
+    });
+    const before = await captureDbSnapshot();
+
+    vi.spyOn(FinancialTransactionRepository, 'getByReference').mockResolvedValueOnce([]);
+
+    const res = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'RECEIPT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_NO_OP/i);
+    expect(await captureDbSnapshot()).toEqual(before);
+  });
+
+  // 37. Original transaction not marked as reversed (postcondition guard)
+  it('37. Rejects cancellation and rolls back all tables if original FinancialTransaction is not marked isDeleted/reversedBy', async () => {
+    const fixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-UNMARKED',
+      invoiceId: 'INV-FT-UNMARKED'
+    });
+    const before = await captureDbSnapshot();
+
+    // Simulate a buggy reversal implementation that claims reversedCount: 1 without updating original FT
+    vi.spyOn(FinancialTransactionRepository, 'reverseTransactions').mockImplementationOnce(
+      async (_refId, tx) => {
+        const ftTbl = tx.table('financialTransactions');
+        const revId = `FT-REV-${fixture.ftId}-UNMARKED`;
+        await ftTbl.put({
+          id: revId,
+          Transaction_ID: revId,
+          Transaction_Type: 'Receipt',
+          Reference_ID: fixture.id,
+          Reference_Table: 'Vouchers',
+          Amount: fixture.amount,
+          Direction: 'Debit',
+          tenantId,
+          branchId,
+          isReversal: true,
+          reversalOf: fixture.ftId,
+          isDeleted: false
+        });
+        return { reversedCount: 1, reversalIds: [revId] };
+      }
+    );
+
+    const res = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'RECEIPT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED/i);
+    expect(await captureDbSnapshot()).toEqual(before);
+  });
+
+  // 38. Reversal record written with incorrect tenantId or branchId
+  it('38. Rejects cancellation and rolls back all tables if compensating reversal has incorrect tenantId or branchId', async () => {
+    const fixtureTenant = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-REV-BAD-TENANT',
+      invoiceId: 'INV-FT-REV-BAD-TENANT'
+    });
+    const beforeTenant = await captureDbSnapshot();
+
+    vi.spyOn(FinancialTransactionRepository, 'reverseTransactions').mockImplementationOnce(
+      async (_refId, tx) => {
+        const ftTbl = tx.table('financialTransactions');
+        const revId = `FT-REV-${fixtureTenant.ftId}-WRONG-TENANT`;
+        await ftTbl.put({
+          id: revId,
+          Transaction_ID: revId,
+          Transaction_Type: 'Receipt',
+          Reference_ID: fixtureTenant.id,
+          Reference_Table: 'Vouchers',
+          Amount: fixtureTenant.amount,
+          Direction: 'Debit',
+          tenantId: 'TENANT-ROGUE',
+          branchId,
+          isReversal: true,
+          reversalOf: fixtureTenant.ftId,
+          isDeleted: false
+        });
+        await ftTbl.update(fixtureTenant.ftId, { isDeleted: true, reversedBy: revId });
+        return { reversedCount: 1, reversalIds: [revId] };
+      }
+    );
+
+    const resWrongTenant = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixtureTenant.id,
+      type: 'RECEIPT',
+      partnerId: fixtureTenant.partnerId,
+      amount: fixtureTenant.amount
+    });
+    expect(resWrongTenant.success).toBe(false);
+    expect(resWrongTenant.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_SCOPE_VIOLATION/i);
+    expect(await captureDbSnapshot()).toEqual(beforeTenant);
+
+    // Now test wrong branchId on reversal record
+    const fixtureBranch = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-REV-BAD-BRANCH',
+      partnerId: 'CUST-REV-BAD-BR',
+      invoiceId: 'INV-FT-REV-BAD-BRANCH'
+    });
+    const beforeBranch = await captureDbSnapshot();
+
+    vi.spyOn(FinancialTransactionRepository, 'reverseTransactions').mockImplementationOnce(
+      async (_refId, tx) => {
+        const ftTbl = tx.table('financialTransactions');
+        const revId = `FT-REV-${fixtureBranch.ftId}-WRONG-BRANCH`;
+        await ftTbl.put({
+          id: revId,
+          Transaction_ID: revId,
+          Transaction_Type: 'Receipt',
+          Reference_ID: fixtureBranch.id,
+          Reference_Table: 'Vouchers',
+          Amount: fixtureBranch.amount,
+          Direction: 'Debit',
+          tenantId,
+          branchId: 'BRH-ROGUE',
+          isReversal: true,
+          reversalOf: fixtureBranch.ftId,
+          isDeleted: false
+        });
+        await ftTbl.update(fixtureBranch.ftId, { isDeleted: true, reversedBy: revId });
+        return { reversedCount: 1, reversalIds: [revId] };
+      }
+    );
+
+    const resWrongBranch = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixtureBranch.id,
+      type: 'RECEIPT',
+      partnerId: fixtureBranch.partnerId,
+      amount: fixtureBranch.amount
+    });
+    expect(resWrongBranch.success).toBe(false);
+    expect(resWrongBranch.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_SCOPE_VIOLATION/i);
+    expect(await captureDbSnapshot()).toEqual(beforeBranch);
+  });
+
+  // 39. Successful cancellation creates exactly one valid scoped compensating reversal
+  it('39. Successful cancellation creates exactly one valid compensating reversal within matching tenant and branch scope', async () => {
+    const fixture = await seedCompletePaymentFixture({
+      id: 'PYMT-FT-SCOPED-OK',
+      amount: 325,
+      invoiceId: 'PUR-FT-SCOPED-OK'
+    });
+
+    const res = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixture.id,
+      type: 'PAYMENT',
+      partnerId: fixture.partnerId,
+      amount: fixture.amount
+    });
+
+    expect(res.success).toBe(true);
+
+    const allFts = await db.financialTransactions.where('Reference_ID').equals(fixture.id).toArray();
+    expect(allFts).toHaveLength(2);
+
+    const originals = allFts.filter((f: any) => f.id === fixture.ftId);
+    const reversals = allFts.filter((f: any) => f.isReversal === true);
+    expect(originals).toHaveLength(1);
+    expect(reversals).toHaveLength(1);
+
+    const orig = originals[0]!;
+    const rev = reversals[0]!;
+
+    expect(orig.isDeleted).toBe(true);
+    expect(orig.reversedBy).toBe(rev.id);
+
+    expect(rev.isReversal).toBe(true);
+    expect(rev.reversalOf).toBe(orig.id);
+    expect(rev.isDeleted).toBe(false);
+    expect(rev.Direction).toBe('Credit');
+    expect(rev.Reference_Table).toBe('Vouchers');
+    expect(rev.tenantId).toBe(tenantId);
+    expect(rev.branchId).toBe(branchId);
+    expect(rev.Amount).toBe(325);
   });
 });

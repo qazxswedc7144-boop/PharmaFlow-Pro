@@ -331,14 +331,55 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       );
     }
 
-    // 6. Validate mandatory single active FinancialTransaction for non-destructive reversal
-    const allFtsForVoucher = (await ftTbl.where('Reference_ID').equals(voucherId).toArray()).filter(
-      (ft: any) => !ft.Reference_Table || ft.Reference_Table === 'Vouchers'
-    );
+    // 6. Validate mandatory single active FinancialTransaction with strict tenant/branch & Reference_Table scope
+    const expectedTenantId = typeof ctx.tenantId === 'string' ? ctx.tenantId.trim() : '';
+    const expectedBranchId = typeof ctx.branchId === 'string' ? ctx.branchId.trim() : '';
+    if (!expectedTenantId) {
+      throw new Error(
+        'VOUCHER_CANCELLATION_SCOPE_MISSING: Trusted tenant context is required for voucher cancellation.'
+      );
+    }
+    if (!expectedBranchId) {
+      throw new Error(
+        'VOUCHER_CANCELLATION_SCOPE_MISSING: Trusted branch context is required for voucher cancellation.'
+      );
+    }
+
+    const allFtsForVoucher = await ftTbl.where('Reference_ID').equals(voucherId).toArray();
     for (const ft of allFtsForVoucher) {
-      if (ft.tenantId && ctx.tenantId && ft.tenantId !== ctx.tenantId) {
+      const rawRefTable = typeof ft.Reference_Table === 'string' ? ft.Reference_Table.trim() : '';
+      if (!rawRefTable) {
         throw new Error(
-          `CROSS_TENANT_FINANCIAL_TRANSACTION_FORBIDDEN: FinancialTransaction [${ft.id}] does not belong to tenant [${ctx.tenantId}].`
+          'VOUCHER_FINANCIAL_TRANSACTION_REFERENCE_TABLE_MISSING: Financial transaction is missing required Reference_Table.'
+        );
+      }
+      if (rawRefTable !== 'Vouchers') {
+        throw new Error(
+          'VOUCHER_FINANCIAL_TRANSACTION_REFERENCE_TABLE_INVALID: Financial transaction Reference_Table does not match voucher contract.'
+        );
+      }
+
+      const ftTenantId = typeof ft.tenantId === 'string' ? ft.tenantId.trim() : '';
+      if (!ftTenantId) {
+        throw new Error(
+          'VOUCHER_FINANCIAL_TRANSACTION_TENANT_MISSING: Financial transaction is missing required tenantId.'
+        );
+      }
+      if (ftTenantId !== expectedTenantId) {
+        throw new Error(
+          'CROSS_TENANT_FINANCIAL_TRANSACTION_FORBIDDEN: Financial transaction belongs to a different tenant scope.'
+        );
+      }
+
+      const ftBranchId = typeof ft.branchId === 'string' ? ft.branchId.trim() : '';
+      if (!ftBranchId) {
+        throw new Error(
+          'VOUCHER_FINANCIAL_TRANSACTION_BRANCH_MISSING: Financial transaction is missing required branchId.'
+        );
+      }
+      if (ftBranchId !== expectedBranchId) {
+        throw new Error(
+          'CROSS_BRANCH_FINANCIAL_TRANSACTION_FORBIDDEN: Financial transaction belongs to a different branch scope.'
         );
       }
     }
@@ -433,13 +474,62 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     await AccountingRepository.deleteEntry(journalEntry.id, tx);
 
     // Non-destructive compensating reversal of the voucher's FinancialTransaction (preserves historical record)
-    await FinancialTransactionRepository.reverseTransactions(
+    const reversalOutcome = await FinancialTransactionRepository.reverseTransactions(
       voucherId,
       tx,
       ctx.idempotencyKey,
-      ctx.tenantId,
-      ctx.branchId
+      expectedTenantId,
+      expectedBranchId,
+      { requireActiveTransaction: true, referenceTable: 'Vouchers' }
     );
+
+    // Postcondition verification inside the same active transaction: no-op or mis-scoped reversals must fail closed
+    if (!reversalOutcome || reversalOutcome.reversedCount !== 1) {
+      throw new Error(
+        'FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED: Expected exactly one financial transaction to be reversed.'
+      );
+    }
+
+    const updatedOriginalFt = await ftTbl.get(activeFt.id);
+    if (!updatedOriginalFt || updatedOriginalFt.isDeleted !== true) {
+      throw new Error(
+        'FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED: Original financial transaction was not marked as deleted/reversed.'
+      );
+    }
+
+    const reversedById =
+      typeof updatedOriginalFt.reversedBy === 'string' ? updatedOriginalFt.reversedBy.trim() : '';
+    if (!reversedById) {
+      throw new Error(
+        'FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED: Original financial transaction is missing reversedBy reference.'
+      );
+    }
+
+    const reversalRecord = await ftTbl.get(reversedById);
+    const expectedReversalDirection = expectedFtDirection === 'Debit' ? 'Credit' : 'Debit';
+    if (!reversalRecord) {
+      throw new Error(
+        'FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED: Compensating reversal record referenced by reversedBy does not exist.'
+      );
+    }
+    if (
+      reversalRecord.isReversal !== true ||
+      reversalRecord.reversalOf !== activeFt.id ||
+      reversalRecord.isDeleted === true ||
+      reversalRecord.Direction !== expectedReversalDirection
+    ) {
+      throw new Error(
+        'FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED: Compensating reversal record failed integrity postconditions.'
+      );
+    }
+    if (
+      reversalRecord.tenantId !== expectedTenantId ||
+      reversalRecord.branchId !== expectedBranchId
+    ) {
+      throw new Error(
+        'FINANCIAL_TRANSACTION_REVERSAL_SCOPE_VIOLATION: Compensating reversal record does not match expected tenant and branch scope.'
+      );
+    }
 
     // Delete voucher record if exists
     if (voucher) {

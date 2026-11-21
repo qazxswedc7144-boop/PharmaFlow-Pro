@@ -104,27 +104,70 @@ export const FinancialTransactionRepository = {
   /**
    * إبطال/عكس الحركات المالية المرتبطة بمرجع معين (Non-Destructive Reversal)
    */
-  reverseTransactions: async (refId: string, tx?: any, idempotencyKey?: string, tenantId?: string, branchId?: string): Promise<void> => {
+  reverseTransactions: async (
+    refId: string,
+    tx?: any,
+    idempotencyKey?: string,
+    tenantId?: string,
+    branchId?: string,
+    options?: { requireActiveTransaction?: boolean; referenceTable?: string }
+  ): Promise<{ reversedCount: number; reversalIds: string[] }> => {
     const table = resolveFinancialTransactionsTable(tx);
     const transactions = await FinancialTransactionRepository.getByReference(refId, tx, tenantId, branchId);
+    const scopedTransactions = options?.referenceTable
+      ? transactions.filter((t) => t.Reference_Table === options.referenceTable)
+      : transactions;
     const now = new Date().toISOString();
     
     // Target ONLY active transactions that haven't been reversed yet
-    const activeTxs = transactions.filter(t => !t.isDeleted && !(t as any).isReversal && !(t as any).reversedBy);
+    const activeTxs = scopedTransactions.filter(t => !t.isDeleted && !(t as any).isReversal && !(t as any).reversedBy);
     
-    console.log(`[FinancialTransactionRepository] Found ${transactions.length} total FTs, ${activeTxs.length} are active for document ${refId} (Tenant: ${tenantId || 'GLOBAL'}, Branch: ${branchId || 'GLOBAL'})`);
+    console.log(`[FinancialTransactionRepository] Found ${scopedTransactions.length} total FTs, ${activeTxs.length} are active for document ${refId} (Tenant: ${tenantId || 'GLOBAL'}, Branch: ${branchId || 'GLOBAL'})`);
+
+    if (options?.requireActiveTransaction && activeTxs.length === 0) {
+      throw new Error(
+        'FINANCIAL_TRANSACTION_REVERSAL_NO_OP: No eligible active financial transaction matched the required tenant and branch scope.'
+      );
+    }
+
+    const reversalIds: string[] = [];
 
     for (const trx of activeTxs) {
       if (trx.Direction !== 'Debit' && trx.Direction !== 'Credit') {
         throw new Error(`INVALID_FINANCIAL_TRANSACTION_DIRECTION: Transaction ${trx.id} has invalid direction (${String(trx.Direction)}).`);
       }
 
+      const oppositeDirection = trx.Direction === 'Debit' ? 'Credit' : 'Debit';
       const reversalId = idempotencyKey ? `FT-REV-${trx.id}-${idempotencyKey}` : `FT-REV-${trx.id}`;
       
-      // التحقق من وجود العكس مسبقاً لضمان Idempotency (استخدام الجدول المرتبط بالمعاملة لضمان الرؤية)
+      // التحقق من وجود العكس مسبقاً لضمان Idempotency مع التحقق الصارم من سلامة القيد العكسي الموجود
       const existingRev = await table.get(reversalId);
       if (existingRev) {
-        console.log(`[FinancialTransactionRepository] Reversal FT ${reversalId} already exists (idempotent skip)`);
+        const expectedTenant = tenantId ?? trx.tenantId;
+        const expectedBranch = branchId ?? trx.branchId;
+        const isConsistentExistingRev =
+          existingRev.isReversal === true &&
+          existingRev.reversalOf === trx.id &&
+          existingRev.isDeleted !== true &&
+          existingRev.Direction === oppositeDirection &&
+          (!expectedTenant || existingRev.tenantId === expectedTenant) &&
+          (!expectedBranch || existingRev.branchId === expectedBranch);
+
+        if (!isConsistentExistingRev) {
+          throw new Error(
+            'FINANCIAL_TRANSACTION_REVERSAL_INCONSISTENT: Existing reversal record is incomplete or inconsistent with source transaction scope.'
+          );
+        }
+
+        // Ensure original transaction is linked and marked reversed even if an earlier write was interrupted
+        await table.update(trx.id, {
+          isDeleted: true,
+          lastModified: now,
+          reversedBy: reversalId
+        });
+
+        console.log(`[FinancialTransactionRepository] Reversal FT ${reversalId} verified and linked (idempotent reuse)`);
+        reversalIds.push(reversalId);
         continue;
       }
 
@@ -132,11 +175,13 @@ export const FinancialTransactionRepository = {
         ...trx,
         id: reversalId,
         Transaction_ID: reversalId,
-        Direction: trx.Direction === 'Debit' ? 'Credit' : 'Debit',
+        Direction: oppositeDirection,
         Notes: `عكس حركة ${trx.Transaction_ID} للمستند #${refId}`,
         Transaction_Date: now,
         Created_At: now,
         lastModified: now,
+        tenantId: tenantId ?? trx.tenantId,
+        branchId: branchId ?? trx.branchId,
         isReversal: true, // وسم لتمييز القيود العكسية
         reversalOf: trx.id, // ربط صريح بالحركة الأصلية
         isDeleted: false
@@ -150,8 +195,14 @@ export const FinancialTransactionRepository = {
         lastModified: now,
         reversedBy: reversalId
       });
+      reversalIds.push(reversalId);
       console.log(`[FinancialTransactionRepository] REVERSED: FT ${trx.id} linked to new reversal ${reversalId}`);
     }
+
+    return {
+      reversedCount: reversalIds.length,
+      reversalIds
+    };
   },
 
   /**
