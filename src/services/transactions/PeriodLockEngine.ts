@@ -14,8 +14,13 @@ export class PeriodLockEngine {
       });
       return matchingPeriod ? matchingPeriod.Is_Locked : false;
     } catch (error) {
-      ErrorManager.handleError(error, { module: 'ACCOUNTING', action: 'CHECK_PERIOD_LOCK', showToast: false });
-      return false;
+      const normalizedError = ErrorManager.handleError(error, {
+        module: 'ACCOUNTING',
+        action: 'CHECK_PERIOD_LOCK',
+        showToast: false,
+      });
+      // A failed lock lookup must never be interpreted as an unlocked period.
+      throw normalizedError;
     }
   }
 
