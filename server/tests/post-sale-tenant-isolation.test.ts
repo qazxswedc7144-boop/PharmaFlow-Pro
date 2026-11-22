@@ -90,9 +90,6 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       if (text.includes('accounting_periods')) {
         return [{ id: 'period-1', isLocked: false }];
       }
-      if (text.includes('accounting_periods')) {
-        return [{ id: 'period-1', isLocked: false }];
-      }
       if (text.includes('products') || text.includes('stockQuantity')) {
         return [{ id: 'prod-1', stockQuantity: 100, version: 1, tenantId: 'tenant-A' }];
       }
