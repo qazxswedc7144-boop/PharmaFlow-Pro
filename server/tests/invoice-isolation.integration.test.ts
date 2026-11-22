@@ -364,6 +364,61 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(storedInvoice?.documentStatus).toBe("ACTIVE");
   });
 
+  it("bootstraps periods once per tenant and rejects overlapping period creation", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    await prisma.accountingPeriod.deleteMany({ where: { tenantId: ctx.tenantBId } });
+
+    const bootstrap = await request(ctx, "/api/accounting/periods/bootstrap", {
+      method: "POST",
+      token: ctx.tokenB,
+      body: {
+        periods: [{
+          clientId: "LEGACY-PERIOD-B",
+          startDate: "2026-01-01T00:00:00.000Z",
+          endDate: "2026-12-31T23:59:59.999Z",
+          isLocked: false,
+        }],
+      },
+    });
+    expect(bootstrap.status, JSON.stringify(bootstrap.body)).toBe(201);
+    expect(bootstrap.body.periods).toHaveLength(1);
+    expect(bootstrap.body.periods[0].clientId).toBe("LEGACY-PERIOD-B");
+
+    const repeatedBootstrap = await request(ctx, "/api/accounting/periods/bootstrap", {
+      method: "POST",
+      token: ctx.tokenB,
+      body: {
+        periods: [{
+          clientId: "OTHER-PERIOD-B",
+          startDate: "2027-01-01T00:00:00.000Z",
+          endDate: "2027-12-31T23:59:59.999Z",
+          isLocked: false,
+        }],
+      },
+    });
+    expect(repeatedBootstrap.status).toBe(409);
+    expect(repeatedBootstrap.body.error).toBe("ACCOUNTING_PERIODS_ALREADY_INITIALIZED");
+
+    const overlapping = await request(ctx, "/api/accounting/periods", {
+      method: "POST",
+      token: ctx.tokenB,
+      body: {
+        clientId: "OVERLAPPING-PERIOD-B",
+        startDate: "2026-06-01T00:00:00.000Z",
+        endDate: "2027-05-31T23:59:59.999Z",
+        isLocked: false,
+      },
+    });
+    expect(overlapping.status).toBe(409);
+    expect(overlapping.body.error).toBe("ACCOUNTING_PERIOD_OVERLAP");
+
+    const tenantA = await prisma.accountingPeriod.findMany({ where: { tenantId: ctx.tenantAId } });
+    const tenantB = await prisma.accountingPeriod.findMany({ where: { tenantId: ctx.tenantBId } });
+    expect(tenantA.map((period) => period.clientId)).toEqual(["CI-DEFAULT-A"]);
+    expect(tenantB.map((period) => period.clientId)).toEqual(["LEGACY-PERIOD-B"]);
+  });
+
   it("exposes accounting periods only inside the authenticated tenant", async () => {
     const ctx = getContext();
     const [tenantA, tenantB] = await Promise.all([
