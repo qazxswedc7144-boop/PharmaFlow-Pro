@@ -186,6 +186,96 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(journal?.lines.some((line) => line.account.code === "203001" && Number(line.credit) === 1.35)).toBe(true);
   });
 
+
+  it("posts real PURCHASE and SALE invoices, then reports supplier liability and revenue as credit balances over HTTP", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const supplier = await prisma.supplier.create({
+      data: { tenantId: ctx.tenantAId, name: `CI Trial Balance Supplier ${ctx.suffix}` }
+    });
+    const openingSupplierAccount = await prisma.account.findFirst({
+      where: { tenantId: ctx.tenantAId, code: "201001" },
+      select: { balance: true }
+    });
+    const openingRevenueAccount = await prisma.account.findFirst({
+      where: { tenantId: ctx.tenantAId, code: "401001" },
+      select: { balance: true }
+    });
+    const openingSupplierBalance = Number(openingSupplierAccount?.balance ?? 0);
+    const openingRevenueBalance = Number(openingRevenueAccount?.balance ?? 0);
+
+    const purchase = await request(ctx, "/api/invoices/create", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        invoiceNumber: `TB-PUR-${ctx.suffix}`,
+        type: "PURCHASE",
+        partnerId: supplier.id,
+        partnerType: "SUPPLIER",
+        totalAmount: 8,
+        paymentStatus: "UNPAID",
+        items: [{ productId: ctx.productAId, qty: 2, price: 4 }]
+      }
+    });
+    expect(purchase.status, JSON.stringify(purchase.body)).toBe(201);
+    expect(purchase.body.invoice.status).toBe("DRAFT");
+
+    const purchasePost = await request(ctx, "/api/invoices/post", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: { invoiceId: purchase.body.invoice.id }
+    });
+    expect(purchasePost.status, JSON.stringify(purchasePost.body)).toBe(200);
+
+    const sale = await request(ctx, "/api/invoices/create", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        invoiceNumber: `TB-SALE-${ctx.suffix}`,
+        type: "SALE",
+        totalAmount: 10,
+        paymentStatus: "UNPAID",
+        items: [{ productId: ctx.productAId, qty: 1, price: 10 }]
+      }
+    });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(201);
+    const salePost = await request(ctx, "/api/invoices/post", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: { invoiceId: sale.body.invoice.id }
+    });
+    expect(salePost.status, JSON.stringify(salePost.body)).toBe(200);
+
+    const [purchaseJournal, saleJournal] = await Promise.all([
+      prisma.journalEntry.findFirst({
+        where: { tenantId: ctx.tenantAId, sourceId: purchase.body.invoice.id, sourceType: "INVOICE", status: "POSTED" },
+        include: { lines: { include: { account: true } } }
+      }),
+      prisma.journalEntry.findFirst({
+        where: { tenantId: ctx.tenantAId, sourceId: sale.body.invoice.id, sourceType: "INVOICE", status: "POSTED" },
+        include: { lines: { include: { account: true } } }
+      })
+    ]);
+    expect(purchaseJournal).toBeTruthy();
+    expect(saleJournal).toBeTruthy();
+    expect(purchaseJournal?.lines.some(line => line.account.code === "201001" && Number(line.credit) === 8)).toBe(true);
+    expect(saleJournal?.lines.some(line => line.account.code === "401001" && Number(line.credit) === 10)).toBe(true);
+
+    const report = await request(ctx, "/api/accounting/reports/trial-balance", { token: ctx.tokenA });
+    expect(report.status, JSON.stringify(report.body)).toBe(200);
+    const supplierAccount = report.body.accounts.find((account: any) => account.code === "201001");
+    const revenueAccount = report.body.accounts.find((account: any) => account.code === "401001");
+
+    expect(Number(supplierAccount.rawBalance) - openingSupplierBalance).toBe(-8);
+    expect(Number(revenueAccount.rawBalance) - openingRevenueBalance).toBe(-10);
+    expect(supplierAccount.debit).toBe(0);
+    expect(revenueAccount.debit).toBe(0);
+    expect(supplierAccount.credit).toBeCloseTo(Math.abs(openingSupplierBalance - 8));
+    expect(revenueAccount.credit).toBeCloseTo(Math.abs(openingRevenueBalance - 10));
+    expect(report.body.summary.totalDebits).toBeGreaterThan(0);
+    expect(report.body.summary.totalCredits).toBeGreaterThan(0);
+  });
+
   it("persists lock acquire, extend, and release audit events in PostgreSQL", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
@@ -235,5 +325,5 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
       }
     }
   });
-}, { includeInvoiceRoutes: true });
+}, { includeInvoiceRoutes: true, includeAccountingRoutes: true });
 

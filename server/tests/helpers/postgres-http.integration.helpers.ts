@@ -102,7 +102,7 @@ async function login(ctx: PostgresHttpContext, username: string): Promise<string
 
 async function initialize(
   ctx: PostgresHttpContext,
-  options: { includeInvoiceRoutes?: boolean; includeSyncRoutes?: boolean } = {}
+  options: { includeInvoiceRoutes?: boolean; includeSyncRoutes?: boolean; includeAccountingRoutes?: boolean } = {}
 ): Promise<void> {
   // A real connection is mandatory: fail rather than allowing Prisma's offline fallback.
   await prisma.$connect();
@@ -234,6 +234,11 @@ async function initialize(
     const { syncV1Router } = await import("../../../apps/api/src/modules/sync/sync.routes.js");
     logProcessMemory("After production Sync router import");
     app.use("/api/v1/sync", syncV1Router);
+  }
+
+  if (options.includeAccountingRoutes) {
+    const { accountingRouter } = await import("../../routes/accounting.routes.js");
+    app.use("/api/accounting", accountingRouter);
   }
 
   // Load the heavier invoice route tree only for the invoice suite.
