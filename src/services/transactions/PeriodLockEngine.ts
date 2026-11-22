@@ -27,8 +27,10 @@ export class PeriodLockEngine {
       if (matchingPeriods.length !== 1) {
         throw new Error('ACCOUNTING_PERIOD_AMBIGUOUS: تتداخل أكثر من فترة محاسبية مع تاريخ العملية.');
       }
-      const legacy = matchingPeriods[0] as any;
-      return matchingPeriods[0].Is_Locked === true || matchingPeriods[0].isLocked === true || legacy.is_locked === true;
+      const matchingPeriod = matchingPeriods[0];
+      if (!matchingPeriod) throw new Error('ACCOUNTING_PERIOD_NOT_CONFIGURED');
+      const legacy = matchingPeriod as any;
+      return matchingPeriod.Is_Locked === true || matchingPeriod.isLocked === true || legacy.is_locked === true;
     } catch (error) {
       const normalizedError = ErrorManager.handleError(error, {
         module: 'ACCOUNTING',
