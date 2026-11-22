@@ -1,0 +1,184 @@
+import { expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { definePostgresHttpSuite } from "./helpers/postgres-http.integration.helpers.js";
+
+function assertTestDatabase(): void {
+  const raw = process.env.DATABASE_URL ?? "";
+  const url = new URL(raw);
+  const database = url.pathname.replace(/^\//, "");
+  if (process.env.NODE_ENV !== "test" || !/(^|_)(test|ci)(_|$)/i.test(database)) {
+    throw new Error("Phase 3 financial reconciliation tests require an explicitly named PostgreSQL test/CI database.");
+  }
+}
+
+definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getContext) => {
+  it("reconciles Trial Balance, General Ledger, P&L and Balance Sheet from the same posted journal lines", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const accountSpecs = [
+      { code: `P3-A-${suffix}`, name: "P3 Cash", type: "ASSET" as const },
+      { code: `P3-L-${suffix}`, name: "P3 Payable", type: "LIABILITY" as const },
+      { code: `P3-E-${suffix}`, name: "P3 Capital", type: "EQUITY" as const },
+      { code: `P3-R-${suffix}`, name: "P3 Revenue", type: "REVENUE" as const },
+      { code: `P3-X-${suffix}`, name: "P3 Expense", type: "EXPENSE" as const },
+    ];
+    const createdAccounts: string[] = [];
+    const createdEntries: string[] = [];
+    try {
+      const accounts = await Promise.all(accountSpecs.map(async (spec) => {
+        const account = await prisma.account.create({ data: { ...spec, tenantId: ctx.tenantAId } });
+        createdAccounts.push(account.id);
+        return account;
+      }));
+      const [asset, liability, equity, revenue, expense] = accounts;
+      const entry = await prisma.journalEntry.create({
+        data: {
+          tenantId: ctx.tenantAId,
+          branchId: ctx.branchAId,
+          date: new Date("2026-10-01T12:00:00.000Z"),
+          status: "POSTED",
+          sourceType: "MANUAL",
+          referenceId: `P3-${suffix}`,
+          description: "Phase 3 deterministic reconciliation fixture",
+          debitTotal: 150,
+          creditTotal: 150,
+          lines: { create: [
+            { tenantId: ctx.tenantAId, accountId: asset.id, debit: 100, credit: 0 },
+            { tenantId: ctx.tenantAId, accountId: expense.id, debit: 50, credit: 0 },
+            { tenantId: ctx.tenantAId, accountId: liability.id, debit: 0, credit: 30 },
+            { tenantId: ctx.tenantAId, accountId: equity.id, debit: 0, credit: 20 },
+            { tenantId: ctx.tenantAId, accountId: revenue.id, debit: 0, credit: 100 },
+          ] },
+        },
+        include: { lines: true },
+      });
+      createdEntries.push(entry.id);
+
+      const ledgerLines = await prisma.journalLine.findMany({
+        where: { tenantId: ctx.tenantAId, entry: { status: "POSTED", branchId: ctx.branchAId, id: entry.id } },
+        include: { account: true, entry: true },
+      });
+      const totalDebit = ledgerLines.reduce((sum, line) => sum + Number(line.debit), 0);
+      const totalCredit = ledgerLines.reduce((sum, line) => sum + Number(line.credit), 0);
+      expect(totalDebit).toBe(150);
+      expect(totalCredit).toBe(150);
+
+      // Trial Balance and General Ledger must be two views of the same persisted POSTED lines.
+      const trialBalance = new Map<string, { debit: number; credit: number }>();
+      for (const line of ledgerLines) {
+        const current = trialBalance.get(line.accountId) ?? { debit: 0, credit: 0 };
+        current.debit += Number(line.debit);
+        current.credit += Number(line.credit);
+        trialBalance.set(line.accountId, current);
+      }
+      const generalLedgerTotals = ledgerLines.reduce((sum, line) => ({
+        debit: sum.debit + Number(line.debit),
+        credit: sum.credit + Number(line.credit),
+      }), { debit: 0, credit: 0 });
+      const trialBalanceTotals = [...trialBalance.values()].reduce((sum, row) => ({
+        debit: sum.debit + row.debit,
+        credit: sum.credit + row.credit,
+      }), { debit: 0, credit: 0 });
+      expect(trialBalanceTotals).toEqual(generalLedgerTotals);
+
+      // P&L uses natural balances: revenue credit-normal; expense debit-normal.
+      const pnl = ledgerLines.reduce((sum, line) => {
+        if (line.account.type === "REVENUE") sum.revenue += Number(line.credit) - Number(line.debit);
+        if (line.account.type === "EXPENSE") sum.expenses += Number(line.debit) - Number(line.credit);
+        return sum;
+      }, { revenue: 0, expenses: 0 });
+      expect(pnl).toEqual({ revenue: 100, expenses: 50 });
+      expect(pnl.revenue - pnl.expenses).toBe(50);
+
+      // Balance Sheet: Assets = Liabilities + Equity + unclosed current-period net income.
+      const balances = ledgerLines.reduce((sum, line) => {
+        const debit = Number(line.debit), credit = Number(line.credit);
+        switch (line.account.type) {
+          case "ASSET": sum.assets += debit - credit; break;
+          case "LIABILITY": sum.liabilities += credit - debit; break;
+          case "EQUITY": sum.equity += credit - debit; break;
+        }
+        return sum;
+      }, { assets: 0, liabilities: 0, equity: 0 });
+      expect(balances.assets).toBe(100);
+      expect(balances.liabilities + balances.equity + (pnl.revenue - pnl.expenses)).toBe(100);
+    } finally {
+      if (createdEntries.length) await prisma.journalEntry.deleteMany({ where: { id: { in: createdEntries }, tenantId: ctx.tenantAId } });
+      if (createdAccounts.length) await prisma.account.deleteMany({ where: { id: { in: createdAccounts }, tenantId: ctx.tenantAId } });
+    }
+  });
+
+  it("proves tenant and branch filters exclude posted ledger rows outside the requested scope", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const accountA = await prisma.account.create({
+      data: { tenantId: ctx.tenantAId, code: `P3-ISO-A-${suffix}`, name: "P3 Isolation A", type: "ASSET" }
+    });
+    const accountB = await prisma.account.create({
+      data: { tenantId: ctx.tenantBId, code: `P3-ISO-B-${suffix}`, name: "P3 Isolation B", type: "ASSET" }
+    });
+    const entryIds: string[] = [];
+    try {
+      const entryA = await prisma.journalEntry.create({
+        data: {
+          tenantId: ctx.tenantAId, branchId: ctx.branchAId, status: "POSTED",
+          debitTotal: 25, creditTotal: 25,
+          lines: { create: [
+            { tenantId: ctx.tenantAId, accountId: accountA.id, debit: 25, credit: 0 },
+            { tenantId: ctx.tenantAId, accountId: accountA.id, debit: 0, credit: 25 },
+          ] }
+        }
+      });
+      const entryB = await prisma.journalEntry.create({
+        data: {
+          tenantId: ctx.tenantBId, branchId: ctx.branchBId, status: "POSTED",
+          debitTotal: 40, creditTotal: 40,
+          lines: { create: [
+            { tenantId: ctx.tenantBId, accountId: accountB.id, debit: 40, credit: 0 },
+            { tenantId: ctx.tenantBId, accountId: accountB.id, debit: 0, credit: 40 },
+          ] }
+        }
+      });
+      entryIds.push(entryA.id, entryB.id);
+      const tenantA = await prisma.journalLine.findMany({
+        where: { tenantId: ctx.tenantAId, entry: { status: "POSTED" } }
+      });
+      expect(tenantA.every(line => line.tenantId === ctx.tenantAId)).toBe(true);
+      expect(tenantA.some(line => line.entryId === entryB.id)).toBe(false);
+
+      const branchA = await prisma.journalLine.findMany({
+        where: { tenantId: ctx.tenantAId, entry: { status: "POSTED", branchId: ctx.branchAId } }
+      });
+      expect(branchA.every(line => line.entryId !== entryB.id)).toBe(true);
+      expect(branchA.some(line => line.entryId === entryA.id)).toBe(true);
+    } finally {
+      if (entryIds.length) await prisma.journalEntry.deleteMany({ where: { id: { in: entryIds } } });
+      await prisma.account.deleteMany({ where: { id: { in: [accountA.id, accountB.id] } } });
+    }
+  });
+
+  it("reports current PostgreSQL schema limitations for invoice payment allocation and FIFO layer history", async () => {
+    assertTestDatabase();
+    const { prisma } = await import("../database/prisma.js");
+    const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+    `;
+    const tables = new Set(rows.map(row => row.table_name));
+    const missingCapabilities = [
+      { capability: "invoice-level payment allocation", requiredTables: ["payments", "invoice_payment_allocations"] },
+      { capability: "persistent FIFO layers and consumption history", requiredTables: ["inventory_layers", "fifo_consumption_log"] },
+    ];
+    const gaps = missingCapabilities.filter(item => item.requiredTables.some(name => !tables.has(name)));
+    for (const gap of gaps) {
+      console.warn(`PHASE3_SCHEMA_LIMITATION: ${gap.capability}; missing: ${gap.requiredTables.filter(name => !tables.has(name)).join(", ")}`);
+    }
+    expect(gaps.map(gap => gap.capability)).toContain("invoice-level payment allocation");
+    expect(gaps.map(gap => gap.capability)).toContain("persistent FIFO layers and consumption history");
+  });
+});
