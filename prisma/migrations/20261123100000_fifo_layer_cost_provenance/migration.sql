@@ -66,8 +66,9 @@ CREATE TABLE "fifo_consumption_log" (
     "id" TEXT NOT NULL,
     "layerId" TEXT NOT NULL,
     "productId" TEXT NOT NULL,
-    "invoiceId" TEXT NOT NULL,
-    "invoiceItemId" TEXT NOT NULL,
+    "referenceId" TEXT NOT NULL,
+    "referenceType" TEXT NOT NULL,
+    "referenceLineId" TEXT,
     "quantity" INTEGER NOT NULL,
     "unitCost" DECIMAL(18,4) NOT NULL,
     "totalCost" DECIMAL(18,4) NOT NULL,
@@ -85,8 +86,8 @@ CREATE UNIQUE INDEX "fifo_consumption_log_id_tenantId_key"
   ON "fifo_consumption_log"("id", "tenantId");
 CREATE UNIQUE INDEX "fifo_consumption_log_tenantId_idempotencyKey_key"
   ON "fifo_consumption_log"("tenantId", "idempotencyKey");
-CREATE INDEX "fifo_consumption_log_tenantId_invoiceId_idx"
-  ON "fifo_consumption_log"("tenantId", "invoiceId");
+CREATE INDEX "fifo_consumption_log_tenantId_referenceId_referenceType_idx"
+  ON "fifo_consumption_log"("tenantId", "referenceId", "referenceType");
 CREATE INDEX "fifo_consumption_log_tenantId_layerId_idx"
   ON "fifo_consumption_log"("tenantId", "layerId");
 CREATE INDEX "fifo_consumption_log_tenantId_productId_idx"
@@ -112,10 +113,6 @@ ALTER TABLE "fifo_consumption_log"
 ALTER TABLE "fifo_consumption_log"
   ADD CONSTRAINT "fifo_consumption_log_productId_tenantId_fkey"
   FOREIGN KEY ("productId", "tenantId") REFERENCES "products"("id", "tenantId")
-  ON DELETE RESTRICT ON UPDATE CASCADE;
-ALTER TABLE "fifo_consumption_log"
-  ADD CONSTRAINT "fifo_consumption_log_invoiceId_tenantId_fkey"
-  FOREIGN KEY ("invoiceId", "tenantId") REFERENCES "invoices"("id", "tenantId")
   ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "fifo_consumption_log"
   ADD CONSTRAINT "fifo_consumption_log_tenantId_fkey"
