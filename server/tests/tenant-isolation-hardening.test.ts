@@ -192,6 +192,7 @@ describe('Hardening: Tenant Isolation & Integrity Tests', () => {
       expect(isTenantOwnedModel('userRole')).toBe(true);
       expect(isTenantOwnedModel('branchUser')).toBe(true);
       expect(isTenantOwnedModel('userPermissionOverride')).toBe(true);
+      expect(isTenantOwnedModel('accountingPeriod')).toBe(true);
     });
 
     it('NEGATIVE & POSITIVE: tenantPrisma injects tenantId on DeviceRegistration and BranchTransferItem writes', async () => {
