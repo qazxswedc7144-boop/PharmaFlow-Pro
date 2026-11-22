@@ -258,8 +258,14 @@ export class FifoService {
     );
     const tenantId = lockedProducts[0]?.tenantId as string | undefined;
     const forbiddenTenants = ["TEN-DEV-001", "tenant_default", "default", "default-tenant"];
-    if (!tenantId || tenantId !== expectedTenantId || forbiddenTenants.includes(tenantId)) {
-      throw new Error("PRODUCT_NOT_FOUND_OR_FORBIDDEN: Product does not belong to the authenticated tenant.");
+    if (!tenantId) {
+      throw new Error("PRODUCT_NOT_FOUND_OR_FORBIDDEN: Product does not exist in the authenticated tenant.");
+    }
+    if (tenantId !== expectedTenantId) {
+      throw new Error("CROSS_TENANT_VIOLATION: Product does not belong to the authenticated tenant.");
+    }
+    if (forbiddenTenants.includes(tenantId)) {
+      throw new Error("TRUSTED_TENANT_CONTEXT_REQUIRED: Product has an invalid tenant context for stock addition.");
     }
 
     const normalizedLineId = sourceLineId?.trim() || productId;
