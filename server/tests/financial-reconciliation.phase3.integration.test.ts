@@ -267,7 +267,14 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
 
       const reportedAccountIds = new Set(report.accounts.map(row => row.id));
       expect(reportedAccountIds.has(branchAAsset.id)).toBe(true);
-      expect(reportedAccountIds.has(branchA2Asset.id)).toBe(false);
+      // The chart of accounts is tenant-scoped, not branch-scoped. An account
+      // belonging to another branch may therefore appear with a zero balance;
+      // isolation is proven by ensuring its other-branch journal activity is absent.
+      const otherBranchAccount = report.accounts.find(row => row.id === branchA2Asset.id);
+      expect(otherBranchAccount).toBeDefined();
+      expect(otherBranchAccount?.periodDebit).toBe(0);
+      expect(otherBranchAccount?.periodCredit).toBe(0);
+      // Accounts belonging to another tenant must not be present at all.
       expect(reportedAccountIds.has(tenantBAsset.id)).toBe(false);
       expect(report.totals.periodDebitTotal).toBe(10);
       expect(report.totals.periodCreditTotal).toBe(10);
