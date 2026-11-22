@@ -224,5 +224,12 @@ jobs:
       - name: Run PostgreSQL HTTP Tenant Isolation + Invoice integration tests
         if: always()
         run: npx vitest run server/tests/invoice-isolation.integration.test.ts --reporter=verbose --maxWorkers=1
+
+      # Phase 3 reconciliation suite — isolated PostgreSQL test database only.
+      - name: Run PostgreSQL Phase 3 Financial Reconciliation tests
+        if: always()
+        run: npx vitest run server/tests/financial-reconciliation.phase3.integration.test.ts --reporter=verbose --maxWorkers=1
+        env:
+          NODE_OPTIONS: "--max-old-space-size=5120"
         env:
           NODE_OPTIONS: "--max-old-space-size=5120"
