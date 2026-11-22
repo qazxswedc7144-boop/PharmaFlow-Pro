@@ -123,7 +123,7 @@ export const SupplierRepository = {
         id: voucher.id,
         voucherId: voucher.voucher_id || voucher.voucherId || voucher.voucherNumber || voucher.id,
         date: voucher.date,
-        amount: link.Paid_Amount ?? link.amount ?? voucher.amount ?? 0
+        amount: link.Paid_Amount ?? link.amount ?? 0
       }];
     });
   }
