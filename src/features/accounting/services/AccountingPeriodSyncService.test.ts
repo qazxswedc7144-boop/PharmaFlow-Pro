@@ -90,7 +90,7 @@ describe('AccountingPeriodSyncService', () => {
         isLocked: true,
       }],
     }, expect.objectContaining({ profile: 'FINANCIAL', retries: 0 }));
-    expect(periods[0].Is_Locked).toBe(true);
+    expect(periods[0]?.Is_Locked).toBe(true);
   });
 
   it('fails closed if neither PostgreSQL nor tenant-owned local periods are configured', async () => {
