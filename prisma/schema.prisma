@@ -498,9 +498,9 @@ model FifoConsumption {
   layer          InventoryLayer @relation(fields: [layerId, tenantId], references: [id, tenantId], onDelete: Restrict)
   productId      String
   product        Product        @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
-  invoiceId      String
-  invoice        Invoice        @relation(fields: [invoiceId, tenantId], references: [id, tenantId], onDelete: Restrict)
-  invoiceItemId  String
+  referenceId    String
+  referenceType  String
+  referenceLineId String?
   quantity       Int
   unitCost       Decimal        @db.Decimal(18, 4)
   totalCost      Decimal        @db.Decimal(18, 4)
@@ -512,7 +512,7 @@ model FifoConsumption {
 
   @@unique([id, tenantId])
   @@unique([tenantId, idempotencyKey])
-  @@index([tenantId, invoiceId])
+  @@index([tenantId, referenceId, referenceType])
   @@index([tenantId, layerId])
   @@index([tenantId, productId])
   @@map("fifo_consumption_log")
