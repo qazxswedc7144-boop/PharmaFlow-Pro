@@ -10,7 +10,7 @@ export class PeriodLockEngine {
         throw new Error('ACCOUNTING_PERIOD_DATE_INVALID: تاريخ العملية المحاسبية غير صالح.');
       }
 
-      const periods = await AccountingPeriodSyncService.getPeriods();
+      const periods = await AccountingPeriodSyncService.getPeriods({ forceRefresh: true });
       const matchingPeriods = periods.filter((period) => {
         const legacy = period as any;
         const start = new Date(period.Start_Date || period.startDate || legacy.start_date || '');
