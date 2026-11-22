@@ -124,6 +124,24 @@ async function initialize(
   ctx.tenantAId = tenantA.id;
   ctx.tenantBId = tenantB.id;
 
+  // Each integration tenant starts with one explicit, open authoritative period.
+  await prisma.accountingPeriod.createMany({
+    data: [
+      {
+        tenantId: ctx.tenantAId,
+        clientId: "CI-DEFAULT-A",
+        startDate: new Date("2000-01-01T00:00:00.000Z"),
+        endDate: new Date("2100-12-31T23:59:59.999Z"),
+      },
+      {
+        tenantId: ctx.tenantBId,
+        clientId: "CI-DEFAULT-B",
+        startDate: new Date("2000-01-01T00:00:00.000Z"),
+        endDate: new Date("2100-12-31T23:59:59.999Z"),
+      },
+    ],
+  });
+
   const passwordHash = await bcrypt.hash(password, 4);
   const userA = await prisma.user.create({
     data: { username: ctx.usernameA, passwordHash, role: "ADMIN", isActive: true },
@@ -295,6 +313,9 @@ async function cleanup(ctx: PostgresHttpContext): Promise<void> {
               ],
             },
           });
+
+          // Remove accounting-period fixtures explicitly before tenant cleanup.
+          await tx.accountingPeriod.deleteMany({ where: tenantScope });
 
           // Remove restrictive children before their parents using the actual
           // Prisma FK graph. No constraints are disabled and no broad CASCADE is used.
