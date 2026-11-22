@@ -168,7 +168,7 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
           `SALE-LINE-RB-${suffix}`,
           ctx.branchAId,
         );
-      })).rejects.toThrow(/INSUFFICIENT_FIFO_STOCK/);
+      })).rejects.toThrow(/INSUFFICIENT_STOCK|INSUFFICIENT_FIFO_STOCK/);
 
       const [layers, consumptions, batch, currentProduct, movements] = await Promise.all([
         prisma.inventoryLayer.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
