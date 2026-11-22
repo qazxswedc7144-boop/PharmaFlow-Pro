@@ -359,6 +359,15 @@ invoiceRouter.post("/post", authenticateToken, requireRoles([Role.PLATFORM_OWNER
       await LockingService.releaseLock(key, lock.id, branchId, userId);
     }
   } catch (err: any) {
+    if (err.code === "ACCOUNTING_PERIOD_LOCKED") {
+      return res.status(423).json({ error: "ACCOUNTING_PERIOD_LOCKED", message: "الفترة المحاسبية لتاريخ الفاتورة مغلقة، ولا يمكن ترحيلها." });
+    }
+    if (err.code === "ACCOUNTING_PERIOD_NOT_CONFIGURED") {
+      return res.status(409).json({ error: "ACCOUNTING_PERIOD_NOT_CONFIGURED", message: "لا توجد فترة محاسبية معتمدة تغطي تاريخ الفاتورة. قم بمزامنة أو إنشاء الفترة أولاً." });
+    }
+    if (err.code === "ACCOUNTING_PERIOD_AMBIGUOUS") {
+      return res.status(409).json({ error: "ACCOUNTING_PERIOD_AMBIGUOUS", message: "تتداخل أكثر من فترة محاسبية مع تاريخ الفاتورة. يلزم تصحيح الفترات قبل الترحيل." });
+    }
     if (err.code === "PRICE_OVERRIDE_FORBIDDEN") return res.status(403).json({ error: "PRICE_OVERRIDE_FORBIDDEN", message: "لا تملك صلاحية تعديل سعر البيع." });
     if (err.message === "DISCOUNT_LIMIT_EXCEEDED") return res.status(422).json({ error: "DISCOUNT_LIMIT_EXCEEDED", message: "نسبة الخصم تتجاوز الحد المسموح للمؤسسة." });
     if (err.code === "SALES_PRICE_POLICY_MISMATCH") return res.status(422).json({ error: "SALES_PRICE_POLICY_MISMATCH", message: "إجمالي الفاتورة لا يطابق سياسة التسعير المعتمدة." });
