@@ -69,6 +69,7 @@ jobs:
           src/database/repositories/invoice.repository.p2.test.ts
           src/services/reports/reportEngine.refresh.test.ts
           src/services/integrity/periodService.test.ts
+          src/features/accounting/services/AccountingPeriodSyncService.test.ts
           src/services/transactions/PeriodLockEngine.test.ts
           src/features/catalog/workflows/ProductApplicationWorkflow.test.ts
           src/features/purchases/workflows/PurchaseWorkflow.sync.test.ts
@@ -89,6 +90,7 @@ jobs:
           src/features/inventory/utils/newPurchaseProduct.test.ts
           server/tests/purchase-integrity-phase2.test.ts
           server/tests/atomic-post-sale-price-policy.test.ts
+          server/tests/post-sale-tenant-isolation.test.ts
           server/tests/sales-lifecycle-financial-integrity.test.ts
           server/tests/payment-idempotency-tenant-isolation.test.ts
           server/tests/financial-transaction-sales-price-policy.test.ts
