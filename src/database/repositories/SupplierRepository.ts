@@ -97,17 +97,34 @@ export const SupplierRepository = {
   },
 
   getInvoicePaymentHistory: async (invoiceId: string): Promise<any[]> => {
-    const links = await db.vouchers.where('invoiceId').equals(invoiceId).toArray();
+    // Invoice-to-voucher allocations are persisted in the link table, not vouchers.
+    const links = await db.voucherInvoiceLinks.where('invoiceId').equals(invoiceId).toArray();
     if (links.length === 0) return [];
 
-    const voucherIds = links.map((l: any) => l.voucherId);
-    const vouchers = await db.vouchers.where('id').anyOf(voucherIds).toArray();
+    const voucherIds = [...new Set(
+      links
+        .map((link: any) => link.voucherId)
+        .filter((voucherId: unknown): voucherId is string =>
+          typeof voucherId === 'string' && voucherId.length > 0
+        )
+    )];
+    if (voucherIds.length === 0) return [];
 
-    return vouchers.map((v: any) => ({
-      id: v.id,
-      voucherId: v.voucher_id || v.id,
-      date: v.date,
-      amount: v.amount || 0
-    }));
+    const vouchers = await db.vouchers.where('id').anyOf(voucherIds).toArray();
+    const vouchersById = new Map(vouchers.map((voucher: any) => [voucher.id, voucher]));
+
+    // Preserve each invoice allocation amount. A voucher may pay several invoices,
+    // so voucher.amount would overstate the payment shown against this invoice.
+    return links.flatMap((link: any) => {
+      const voucher = vouchersById.get(link.voucherId);
+      if (!voucher) return [];
+
+      return [{
+        id: voucher.id,
+        voucherId: voucher.voucher_id || voucher.voucherId || voucher.voucherNumber || voucher.id,
+        date: voucher.date,
+        amount: link.Paid_Amount ?? link.amount ?? voucher.amount ?? 0
+      }];
+    });
   }
 };
