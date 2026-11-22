@@ -229,7 +229,7 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
           tx, product.id, 1, referenceId, "INVOICE", "Duplicate posting attempt",
           ctx.tenantAId, referenceLineId, ctx.branchAId,
         ),
-      )).rejects.toThrow();
+      )).rejects.toThrow(/Unique constraint failed/);
 
       const [layer, consumptions, batch, currentProduct, movements] = await Promise.all([
         prisma.inventoryLayer.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
