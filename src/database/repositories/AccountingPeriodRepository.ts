@@ -18,8 +18,9 @@ export const AccountingPeriodRepository = {
     }
     const periods = await AccountingPeriodSyncService.getPeriods();
     const matches = periods.filter((period) => {
-      const start = new Date(period.Start_Date || period.startDate || '');
-      const end = new Date(period.End_Date || period.endDate || '');
+      const legacy = period as any;
+      const start = new Date(period.Start_Date || period.startDate || legacy.start_date || '');
+      const end = new Date(period.End_Date || period.endDate || legacy.end_date || '');
       return Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) &&
         date >= start && date <= end;
     });
@@ -28,7 +29,8 @@ export const AccountingPeriodRepository = {
         ? 'ACCOUNTING_PERIOD_NOT_CONFIGURED: لا توجد فترة محاسبية تغطي التاريخ.'
         : 'ACCOUNTING_PERIOD_AMBIGUOUS: توجد فترات محاسبية متداخلة.');
     }
-    return matches[0].Is_Locked === true || matches[0].isLocked === true;
+    const legacy = matches[0] as any;
+    return matches[0].Is_Locked === true || matches[0].isLocked === true || legacy.is_locked === true;
   },
 
   closePeriod: async (periodId: string, _userId: string) => {
