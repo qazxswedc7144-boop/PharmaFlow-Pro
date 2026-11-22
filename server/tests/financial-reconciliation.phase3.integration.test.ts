@@ -144,8 +144,11 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
         { tenantId: ctx.tenantAId, branchId: ctx.branchAId, asOfDate: "2026-10-02" },
         "phase3-ci"
       );
-      expect(reportBalanceSheet.totalAssets).toBe(100);
-      expect(reportBalanceSheet.totalLiabilities + reportBalanceSheet.totalEquity).toBe(100);
+      // BalanceSheetReport exposes totals under its documented nested sections.
+      expect(reportBalanceSheet.assets.totalAssets).toBe(100);
+      expect(
+        reportBalanceSheet.liabilities.totalLiabilities + reportBalanceSheet.equity.totalEquity
+      ).toBe(100);
       expect(reportBalanceSheet.isBalanced).toBe(true);
     } finally {
       if (createdEntries.length) await prisma.journalEntry.deleteMany({ where: { id: { in: createdEntries }, tenantId: ctx.tenantAId } });
