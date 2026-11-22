@@ -178,7 +178,13 @@ export class FinancialTransactionService {
       throw error;
     }
 
-    if (matchingPeriods[0].isLocked) {
+    const matchingPeriod = matchingPeriods[0];
+    if (!matchingPeriod) {
+      const error: any = new Error("ACCOUNTING_PERIOD_NOT_CONFIGURED");
+      error.code = "ACCOUNTING_PERIOD_NOT_CONFIGURED";
+      throw error;
+    }
+    if (matchingPeriod.isLocked) {
       const error: any = new Error(
         "ACCOUNTING_PERIOD_LOCKED: الفترة المحاسبية لتاريخ الفاتورة مغلقة، ولا يمكن ترحيلها."
       );
