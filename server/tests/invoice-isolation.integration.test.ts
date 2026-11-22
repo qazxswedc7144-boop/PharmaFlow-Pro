@@ -235,5 +235,51 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
       }
     }
   });
+
+  it("persists the submitted supplier unit cost and uses it for the received FIFO batch", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+
+    const created = await request(ctx, "/api/invoices/create", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        invoiceNumber: `PURCHASE-COST-${ctx.suffix}`,
+        type: "PURCHASE",
+        totalAmount: 999,
+        paymentStatus: "UNPAID",
+        partnerType: "SUPPLIER",
+        items: [{ productId: ctx.productAId, qty: 2, price: 12 }],
+      },
+    });
+
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect(created.body.success).toBe(true);
+    expect(Number(created.body.invoice.totalAmount)).toBe(24);
+    expect(Number(created.body.invoice.items[0].price)).toBe(12);
+    expect(Number(created.body.invoice.items[0].cost)).toBe(12);
+
+    const posted = await request(ctx, "/api/invoices/post", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: { invoiceId: created.body.invoice.id },
+    });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(200);
+    expect(posted.body.success).toBe(true);
+
+    const receivedBatch = await prisma.inventoryBatch.findFirst({
+      where: {
+        tenantId: ctx.tenantAId,
+        productId: ctx.productAId,
+        batchNumber: { startsWith: "BATCH-" },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(receivedBatch).toBeTruthy();
+    expect(Number(receivedBatch?.cost)).toBe(12);
+    expect(receivedBatch?.initialQty).toBe(2);
+    expect(receivedBatch?.stockQuantity).toBe(2);
+  });
+
 }, { includeInvoiceRoutes: true });
 
