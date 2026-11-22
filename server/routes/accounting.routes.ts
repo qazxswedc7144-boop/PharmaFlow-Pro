@@ -66,7 +66,9 @@ function periodDto(period: any) {
 function periodsDoNotOverlap(periods: AccountingPeriodInput[]): boolean {
   const ordered = [...periods].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
   for (let index = 1; index < ordered.length; index += 1) {
-    if (ordered[index].startDate <= ordered[index - 1].endDate) return false;
+    const current = ordered[index];
+    const previous = ordered[index - 1];
+    if (current && previous && current.startDate <= previous.endDate) return false;
   }
   return true;
 }
