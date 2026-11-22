@@ -23,6 +23,7 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
       { code: `P3-E-${suffix}`, name: "P3 Capital", type: "EQUITY" as const },
       { code: `P3-R-${suffix}`, name: "P3 Revenue", type: "REVENUE" as const },
       { code: `P3-X-${suffix}`, name: "P3 Expense", type: "EXPENSE" as const },
+      { code: `P3-501-${suffix}`, name: "P3 Cost of Goods Sold", type: "EXPENSE" as const },
     ];
     const createdAccounts: string[] = [];
     const createdEntries: string[] = [];
@@ -32,7 +33,7 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
         createdAccounts.push(account.id);
         return account;
       }));
-      const [asset, liability, equity, revenue, expense] = accounts;
+      const [asset, liability, equity, revenue, expense, cogs] = accounts;
       const entry = await prisma.journalEntry.create({
         data: {
           tenantId: ctx.tenantAId,
@@ -42,14 +43,15 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
           sourceType: "MANUAL",
           referenceId: `P3-${suffix}`,
           description: "Phase 3 deterministic reconciliation fixture",
-          debitTotal: 150,
-          creditTotal: 150,
+          debitTotal: 175,
+          creditTotal: 175,
           lines: { create: [
             { tenantId: ctx.tenantAId, accountId: asset.id, debit: 100, credit: 0 },
             { tenantId: ctx.tenantAId, accountId: expense.id, debit: 50, credit: 0 },
+            { tenantId: ctx.tenantAId, accountId: cogs.id, debit: 25, credit: 0 },
             { tenantId: ctx.tenantAId, accountId: liability.id, debit: 0, credit: 30 },
             { tenantId: ctx.tenantAId, accountId: equity.id, debit: 0, credit: 20 },
-            { tenantId: ctx.tenantAId, accountId: revenue.id, debit: 0, credit: 100 },
+            { tenantId: ctx.tenantAId, accountId: revenue.id, debit: 0, credit: 125 },
           ] },
         },
         include: { lines: true },
@@ -62,8 +64,8 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
       });
       const totalDebit = ledgerLines.reduce((sum, line) => sum + Number(line.debit), 0);
       const totalCredit = ledgerLines.reduce((sum, line) => sum + Number(line.credit), 0);
-      expect(totalDebit).toBe(150);
-      expect(totalCredit).toBe(150);
+      expect(totalDebit).toBe(175);
+      expect(totalCredit).toBe(175);
 
       // Trial Balance and General Ledger must be two views of the same persisted POSTED lines.
       const trialBalance = new Map<string, { debit: number; credit: number }>();
@@ -89,7 +91,7 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
         if (line.account.type === "EXPENSE") sum.expenses += Number(line.debit) - Number(line.credit);
         return sum;
       }, { revenue: 0, expenses: 0 });
-      expect(pnl).toEqual({ revenue: 100, expenses: 50 });
+      expect(pnl).toEqual({ revenue: 125, expenses: 75 });
       expect(pnl.revenue - pnl.expenses).toBe(50);
 
       // Balance Sheet: Assets = Liabilities + Equity + unclosed current-period net income.
@@ -119,8 +121,9 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
       const reportRevenue = reportTrialBalance.accounts.find(row => row.id === revenue.id);
       const reportExpense = reportTrialBalance.accounts.find(row => row.id === expense.id);
       expect(reportAsset?.periodDebit).toBe(100);
-      expect(reportRevenue?.periodCredit).toBe(100);
+      expect(reportRevenue?.periodCredit).toBe(125);
       expect(reportExpense?.periodDebit).toBe(50);
+      expect(reportTrialBalance.accounts.find(row => row.id === cogs.id)?.periodDebit).toBe(25);
       expect(reportTrialBalance.totals.periodDebitTotal).toBe(reportTrialBalance.totals.periodCreditTotal);
 
       const reportLedger = await FinancialReportEngine.generateGeneralLedger(
@@ -132,8 +135,9 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
       expect(reportLedger.accounts[0]?.transactions).toHaveLength(1);
 
       const reportPnl = await FinancialReportEngine.generateProfitLoss(filters, "phase3-ci");
-      expect(reportPnl.totalRevenue).toBe(100);
-      expect(reportPnl.totalOperatingExpenses).toBe(50);
+      expect(reportPnl.revenue.totalRevenue).toBe(125);
+      expect(reportPnl.costOfGoodsSold.cogsAmount).toBe(25);
+      expect(reportPnl.operatingExpenses.totalExpenses).toBe(50);
       expect(reportPnl.netProfit).toBe(50);
 
       const reportBalanceSheet = await FinancialReportEngine.generateBalanceSheet(
