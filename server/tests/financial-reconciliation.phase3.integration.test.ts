@@ -207,6 +207,81 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
     }
   });
 
+  it("enforces tenant and branch isolation through the production Trial Balance report engine", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const { FinancialReportEngine } = await import("../services/reporting/financial-report.engine.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const branchA2 = await prisma.branch.create({
+      data: { tenantId: ctx.tenantAId, code: `P3-A2-${suffix}`, name: "Phase 3 Branch A2", isActive: true },
+    });
+    const accountSpecs = [
+      { code: `P3-RA-${suffix}`, name: "P3 Report Branch A", type: "ASSET" as const, tenantId: ctx.tenantAId },
+      { code: `P3-RAC-${suffix}`, name: "P3 Report Branch A Contra", type: "LIABILITY" as const, tenantId: ctx.tenantAId },
+      { code: `P3-RA2-${suffix}`, name: "P3 Report Other Branch", type: "ASSET" as const, tenantId: ctx.tenantAId },
+      { code: `P3-RB-${suffix}`, name: "P3 Report Other Tenant", type: "ASSET" as const, tenantId: ctx.tenantBId },
+      { code: `P3-RBC-${suffix}`, name: "P3 Report Other Tenant Contra", type: "LIABILITY" as const, tenantId: ctx.tenantBId },
+    ];
+    const createdAccounts: string[] = [];
+    const createdEntries: string[] = [];
+    try {
+      const accounts = await Promise.all(accountSpecs.map(async (spec) => {
+        const account = await prisma.account.create({ data: spec });
+        createdAccounts.push(account.id);
+        return account;
+      }));
+      const [branchAAsset, branchAContra, branchA2Asset, tenantBAsset, tenantBContra] = accounts;
+      const fixtures = [
+        { tenantId: ctx.tenantAId, branchId: ctx.branchAId, debitAccountId: branchAAsset.id, creditAccountId: branchAContra.id, amount: 10 },
+        { tenantId: ctx.tenantAId, branchId: branchA2.id, debitAccountId: branchA2Asset.id, creditAccountId: branchAContra.id, amount: 20 },
+        { tenantId: ctx.tenantBId, branchId: ctx.branchBId, debitAccountId: tenantBAsset.id, creditAccountId: tenantBContra.id, amount: 30 },
+      ];
+      for (const fixture of fixtures) {
+        const entry = await prisma.journalEntry.create({
+          data: {
+            tenantId: fixture.tenantId,
+            branchId: fixture.branchId,
+            date: new Date("2026-10-01T12:00:00.000Z"),
+            status: "POSTED",
+            sourceType: "MANUAL",
+            referenceId: `P3-REPORT-SCOPE-${suffix}`,
+            description: "Phase 3 report-engine scope fixture",
+            debitTotal: fixture.amount,
+            creditTotal: fixture.amount,
+            lines: { create: [
+              { accountId: fixture.debitAccountId, debit: fixture.amount, credit: 0 },
+              { accountId: fixture.creditAccountId, debit: 0, credit: fixture.amount },
+            ] },
+          },
+        });
+        createdEntries.push(entry.id);
+      }
+
+      const report = await FinancialReportEngine.generateTrialBalance({
+        tenantId: ctx.tenantAId,
+        branchId: ctx.branchAId,
+        startDate: "2026-10-01",
+        endDate: "2026-10-02",
+      }, "phase3-ci");
+
+      const reportedAccountIds = new Set(report.accounts.map(row => row.id));
+      expect(reportedAccountIds.has(branchAAsset.id)).toBe(true);
+      expect(reportedAccountIds.has(branchA2Asset.id)).toBe(false);
+      expect(reportedAccountIds.has(tenantBAsset.id)).toBe(false);
+      expect(report.totals.periodDebitTotal).toBe(10);
+      expect(report.totals.periodCreditTotal).toBe(10);
+    } finally {
+      if (createdEntries.length) {
+        await prisma.journalEntry.deleteMany({ where: { id: { in: createdEntries } } });
+      }
+      if (createdAccounts.length) {
+        await prisma.account.deleteMany({ where: { id: { in: createdAccounts } } });
+      }
+      await prisma.branch.deleteMany({ where: { id: branchA2.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
   it("reconciles persisted batch valuation with the stock movement quantity ledger", async () => {
     assertTestDatabase();
     const ctx = getContext();
