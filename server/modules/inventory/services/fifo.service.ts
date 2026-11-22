@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 
 export interface DepletionResult {
   allocations: {
+    layerId: string;
     batchId: string;
     batchNumber: string;
     qtyAllocated: number;
@@ -13,8 +14,9 @@ export interface DepletionResult {
 
 export class FifoService {
   /**
-   * Deplete product stock using FIFO/FEFO priority rules with Row-Level Locking (SELECT FOR UPDATE)
-   * to guarantee multi-user concurrency protection and prevent overselling or negative stock.
+   * Deplete immutable receipt layers using FEFO, then FIFO as a deterministic
+   * tie-breaker. InventoryBatch remains the aggregate/UI projection; the layer
+   * and consumption tables are the authoritative cost-provenance records.
    */
   static async depleteStock(
     tx: Prisma.TransactionClient,
@@ -23,139 +25,204 @@ export class FifoService {
     referenceId: string,
     referenceType: string,
     reason: string | undefined,
-    expectedTenantId: string
+    expectedTenantId: string,
+    referenceLineId?: string,
+    branchId?: string | null
   ): Promise<DepletionResult> {
     if (!expectedTenantId || !expectedTenantId.trim()) {
       throw new Error("TRUSTED_TENANT_CONTEXT_REQUIRED: Expected tenantId is mandatory for stock depletion.");
     }
-    if (!Number.isFinite(quantityToDeplete) || quantityToDeplete <= 0) {
-      throw new Error("INVALID_STOCK_QUANTITY: Depletion quantity must be a finite positive number.");
+    if (!Number.isSafeInteger(quantityToDeplete) || quantityToDeplete <= 0) {
+      throw new Error("INVALID_STOCK_QUANTITY: Depletion quantity must be a positive safe integer.");
+    }
+    if (!referenceId?.trim() || !referenceType?.trim()) {
+      throw new Error("FIFO_REFERENCE_REQUIRED: A stable source reference and type are required.");
     }
 
-    // 1. Lock the tenant-owned Product row; the tenant must come from trusted auth context.
+    // The product row serializes every stock mutation for this tenant/product.
     const lockedProducts = await tx.$queryRaw<any[]>(
-      Prisma.sql`SELECT id, "stockQuantity", version, "tenantId" FROM products WHERE id = ${productId} AND "tenantId" = ${expectedTenantId} FOR UPDATE`
+      Prisma.sql`SELECT id, "stockQuantity", version, "tenantId"
+        FROM products
+        WHERE id = ${productId} AND "tenantId" = ${expectedTenantId}
+        FOR UPDATE`
     );
-
-    if (!lockedProducts || lockedProducts.length === 0) {
+    if (!lockedProducts?.length) {
       throw new Error(`PRODUCT_NOT_FOUND_OR_FORBIDDEN: Product ${productId} does not exist in the authenticated tenant.`);
     }
 
-    const mainProduct = lockedProducts[0];
-    const tenantId = mainProduct.tenantId;
-    if (tenantId !== expectedTenantId) {
+    const product = lockedProducts[0];
+    const tenantId = product.tenantId as string;
+    const forbiddenTenants = ["TEN-DEV-001", "tenant_default", "default", "default-tenant"];
+    if (tenantId !== expectedTenantId || forbiddenTenants.includes(tenantId)) {
       throw new Error("CROSS_TENANT_VIOLATION: Product does not belong to the authenticated tenant.");
     }
-    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
-
-    if (!tenantId || forbiddenTenants.includes(tenantId)) {
-      throw new Error(`TRUSTED_TENANT_CONTEXT_REQUIRED: Product ${productId} has invalid or missing tenant context for depletion.`);
-    }
-
-    if (mainProduct.stockQuantity < quantityToDeplete) {
+    if (Number(product.stockQuantity) < quantityToDeplete) {
       throw new Error(
-        `INSUFFICIENT_STOCK: Required ${quantityToDeplete} units of product "${productId}", but only ${mainProduct.stockQuantity} is available.`
+        `INSUFFICIENT_STOCK: Required ${quantityToDeplete} units of product "${productId}", but only ${product.stockQuantity} are available.`
       );
     }
 
-    // 2. Fetch and lock candidate inventory batches that are in stock
-    // Sorted by expiryDate ascending (FEFO first) and createdAt ascending (FIFO backup)
-    const activeBatches = await tx.$queryRaw<any[]>(
+    // Lock the exact receipt layers. Expired stock is excluded; undated layers
+    // remain eligible but are always considered after dated layers.
+    const activeLayers = await tx.$queryRaw<any[]>(
       Prisma.sql`
-        SELECT id, "batchNumber", "stockQuantity", cost, "expiryDate", version 
-        FROM inventory_batches 
+        SELECT id, "batchId", "batchNumber", "quantityRemaining", "unitCost", "expiryDate", "createdAt"
+        FROM inventory_layers
         WHERE "productId" = ${productId}
-          AND "tenantId" = ${expectedTenantId}
-          AND "stockQuantity" > 0
+          AND "tenantId" = ${tenantId}
+          AND "quantityRemaining" > 0
           AND ("expiryDate" IS NULL OR "expiryDate" > NOW())
-        ORDER BY "expiryDate" ASC NULLS LAST, "createdAt" ASC 
+        ORDER BY "expiryDate" ASC NULLS LAST, "createdAt" ASC, id ASC
         FOR UPDATE
       `
     );
 
-    const eligibleBatchQuantity = activeBatches.reduce(
-      (sum, batch) => sum + Math.max(0, Number(batch.stockQuantity) || 0),
+    const eligibleQuantity = activeLayers.reduce(
+      (sum, layer) => sum + Math.max(0, Number(layer.quantityRemaining) || 0),
       0
     );
-    if (eligibleBatchQuantity < quantityToDeplete) {
+    if (eligibleQuantity < quantityToDeplete) {
       throw new Error(
-        `INSUFFICIENT_FIFO_STOCK: Only ${eligibleBatchQuantity} units remain in non-expired eligible batches for product ${productId}; ${quantityToDeplete} required.`
+        `INSUFFICIENT_FIFO_STOCK: Only ${eligibleQuantity} units remain in non-expired eligible layers for product ${productId}; ${quantityToDeplete} required.`
       );
     }
 
+    const lineIdentity = referenceLineId?.trim() || productId;
     let remainingNeeded = quantityToDeplete;
+    let accumulatedCost = new Prisma.Decimal(0);
     const allocations: DepletionResult["allocations"] = [];
-    let accumulatedCost = 0;
+    const touchedBatchIds = new Set<string>();
 
-    for (const batch of activeBatches) {
+    for (const layer of activeLayers) {
       if (remainingNeeded <= 0) break;
+      const available = Number(layer.quantityRemaining);
+      if (!Number.isSafeInteger(available) || available <= 0) continue;
 
-      const availableInBatch = Number(batch.stockQuantity);
-      const toTake = Math.min(availableInBatch, remainingNeeded);
+      const quantity = Math.min(available, remainingNeeded);
+      const unitCost = new Prisma.Decimal(String(layer.unitCost));
+      const totalCost = unitCost.mul(quantity);
+      const newLayerQuantity = available - quantity;
 
-      const updatedBatchStock = availableInBatch - toTake;
-      const batchCost = Number(batch.cost);
+      const batch = await tx.inventoryBatch.findFirst({
+        where: { id: layer.batchId, tenantId, productId },
+        select: { id: true, batchNumber: true, stockQuantity: true }
+      });
+      if (!batch || batch.batchNumber !== layer.batchNumber) {
+        throw new Error("FIFO_BATCH_LAYER_LINK_INVALID: A FIFO layer is not linked to its tenant-owned aggregate batch.");
+      }
+      if (batch.stockQuantity < quantity) {
+        throw new Error(
+          `FIFO_BATCH_STOCK_MISMATCH: Batch ${batch.id} has ${batch.stockQuantity} units but layer ${layer.id} requires ${quantity}.`
+        );
+      }
 
-      // Decrement batch stock via prisma update (and checking the version for optimistic locking)
+      await tx.inventoryLayer.update({
+        where: { id: layer.id },
+        data: { quantityRemaining: newLayerQuantity }
+      });
       await tx.inventoryBatch.update({
         where: { id: batch.id },
-        data: {
-          stockQuantity: updatedBatchStock,
-          version: { increment: 1 }
-        }
+        data: { stockQuantity: batch.stockQuantity - quantity, version: { increment: 1 } }
       });
 
-      // Record inventory movement for each depleted batch layer
       await tx.inventoryMovement.create({
         data: {
           tenantId,
           productId,
           batchId: batch.id,
-          qty: -toTake,
+          qty: -quantity,
           type: "STOCK_OUT",
           referenceId,
           referenceType,
-          reason: reason || "FIFO/FEFO Depletion",
-          previousStock: availableInBatch,
-          currentStock: updatedBatchStock
+          reason: reason || "FEFO/FIFO Depletion",
+          previousStock: batch.stockQuantity,
+          currentStock: batch.stockQuantity - quantity,
+          branchId: branchId || null
+        }
+      });
+
+      const idempotencyKey = [
+        referenceType,
+        referenceId,
+        lineIdentity,
+        layer.id
+      ].join(":");
+      await tx.fifoConsumption.create({
+        data: {
+          tenantId,
+          productId,
+          layerId: layer.id,
+          referenceId,
+          referenceType,
+          referenceLineId: referenceLineId || null,
+          quantity,
+          unitCost,
+          totalCost,
+          idempotencyKey,
+          branchId: branchId || null
         }
       });
 
       allocations.push({
+        layerId: layer.id,
         batchId: batch.id,
         batchNumber: batch.batchNumber,
-        qtyAllocated: toTake,
-        cost: batchCost
+        qtyAllocated: quantity,
+        cost: unitCost.toNumber()
       });
-
-      accumulatedCost += toTake * batchCost;
-      remainingNeeded -= toTake;
+      accumulatedCost = accumulatedCost.plus(totalCost);
+      remainingNeeded -= quantity;
+      touchedBatchIds.add(batch.id);
     }
 
     if (remainingNeeded > 0) {
       throw new Error(
-        `FIFO_DEPLETION_MISMATCH: The actual sum of batches' stock for product ${productId} was insufficient to deplete ${quantityToDeplete}.`
+        `FIFO_DEPLETION_MISMATCH: The eligible receipt layers could not satisfy ${quantityToDeplete} units of product ${productId}.`
       );
     }
 
-    // 3. Update the global aggregate product stock
-    const newGlobalStock = mainProduct.stockQuantity - quantityToDeplete;
+    // Reconcile the aggregate batch projection from the exact remaining layers.
+    // Its cost is a weighted current-stock average; each layer retains its own
+    // immutable unit cost and is the source used for future COGS.
+    for (const batchId of touchedBatchIds) {
+      const remainingLayers = await tx.inventoryLayer.findMany({
+        where: { batchId, tenantId, quantityRemaining: { gt: 0 } },
+        select: { quantityRemaining: true, unitCost: true }
+      });
+      const layerQuantity = remainingLayers.reduce((sum, row) => sum + row.quantityRemaining, 0);
+      const layerValue = remainingLayers.reduce(
+        (sum, row) => sum.plus(new Prisma.Decimal(row.unitCost.toString()).mul(row.quantityRemaining)),
+        new Prisma.Decimal(0)
+      );
+      const batch = await tx.inventoryBatch.findFirst({
+        where: { id: batchId, tenantId, productId },
+        select: { stockQuantity: true }
+      });
+      if (!batch || batch.stockQuantity !== layerQuantity) {
+        throw new Error(
+          `FIFO_BATCH_LAYER_QUANTITY_MISMATCH: Batch ${batchId} stock ${batch?.stockQuantity ?? "missing"} does not match remaining layer quantity ${layerQuantity}.`
+        );
+      }
+      if (layerQuantity > 0) {
+        await tx.inventoryBatch.update({
+          where: { id: batchId },
+          data: { cost: layerValue.div(layerQuantity) }
+        });
+      }
+    }
+
+    const newGlobalStock = Number(product.stockQuantity) - quantityToDeplete;
     await tx.product.update({
       where: { id: productId },
-      data: {
-        stockQuantity: newGlobalStock,
-        version: { increment: 1 }
-      }
+      data: { stockQuantity: newGlobalStock, version: { increment: 1 } }
     });
 
-    return {
-      allocations,
-      totalCost: accumulatedCost
-    };
+    return { allocations, totalCost: accumulatedCost.toNumber() };
   }
 
   /**
-   * Safe Stock Inward (Stock Additions) with Batch Creation & Movement Logging
+   * Add one immutable cost layer per source line. InventoryBatch remains a
+   * batch-number aggregate for current stock and UI display.
    */
   static async addStock(
     tx: Prisma.TransactionClient,
@@ -168,51 +235,77 @@ export class FifoService {
     referenceType: string,
     reason: string | undefined,
     expectedTenantId: string,
-    branchId?: string | null
+    branchId?: string | null,
+    sourceLineId?: string
   ): Promise<void> {
     if (!expectedTenantId || !expectedTenantId.trim()) {
       throw new Error("TRUSTED_TENANT_CONTEXT_REQUIRED: Expected tenantId is mandatory for stock addition.");
     }
-    if (!Number.isFinite(qty) || qty <= 0) {
-      throw new Error("INVALID_STOCK_QUANTITY: Addition quantity must be a finite positive number.");
+    if (!Number.isSafeInteger(qty) || qty <= 0) {
+      throw new Error("INVALID_STOCK_QUANTITY: Addition quantity must be a positive safe integer.");
+    }
+    if (!Number.isFinite(cost) || cost < 0) {
+      throw new Error("INVALID_STOCK_COST: Unit cost must be finite and non-negative.");
+    }
+    if (!batchNumber?.trim() || !referenceId?.trim() || !referenceType?.trim()) {
+      throw new Error("FIFO_SOURCE_REQUIRED: Batch number and source reference are required.");
     }
 
-    // 1. Pessimistic lock on product row scoped to the authenticated tenant.
     const lockedProducts = await tx.$queryRaw<any[]>(
-      Prisma.sql`SELECT id, "tenantId" FROM products WHERE id = ${productId} AND "tenantId" = ${expectedTenantId} FOR UPDATE`
+      Prisma.sql`SELECT id, "tenantId" FROM products
+        WHERE id = ${productId} AND "tenantId" = ${expectedTenantId}
+        FOR UPDATE`
     );
-    const tenantId = lockedProducts[0]?.tenantId;
+    const tenantId = lockedProducts[0]?.tenantId as string | undefined;
+    const forbiddenTenants = ["TEN-DEV-001", "tenant_default", "default", "default-tenant"];
     if (!tenantId) {
-      throw new Error(`PRODUCT_NOT_FOUND_OR_FORBIDDEN: Product ${productId} does not exist in the authenticated tenant.`);
+      throw new Error("PRODUCT_NOT_FOUND_OR_FORBIDDEN: Product does not exist in the authenticated tenant.");
     }
     if (tenantId !== expectedTenantId) {
       throw new Error("CROSS_TENANT_VIOLATION: Product does not belong to the authenticated tenant.");
     }
-    const forbiddenTenants = ['TEN-DEV-001', 'tenant_default', 'default', 'default-tenant'];
-    if (!tenantId || forbiddenTenants.includes(tenantId)) {
-      throw new Error(`TRUSTED_TENANT_CONTEXT_REQUIRED: Product ${productId} has invalid or missing tenant context for addition.`);
+    if (forbiddenTenants.includes(tenantId)) {
+      throw new Error("TRUSTED_TENANT_CONTEXT_REQUIRED: Product has an invalid tenant context for stock addition.");
     }
 
-    // 2. Add or upsert inventory batch layer
+    const normalizedLineId = sourceLineId?.trim() || productId;
+    const sourceKey = [referenceType, referenceId, normalizedLineId, batchNumber].join(":");
+    const existingLayer = await tx.inventoryLayer.findFirst({
+      where: { tenantId, sourceKey },
+      select: { id: true }
+    });
+    if (existingLayer) {
+      throw new Error("DUPLICATE_FIFO_SOURCE_LAYER: This purchase/adjustment line has already created a FIFO layer.");
+    }
+
     const existingBatch = await tx.inventoryBatch.findUnique({
-      where: {
-        productId_batchNumber_tenantId: {
-          productId,
-          batchNumber,
-          tenantId
-        }
-      }
+      where: { productId_batchNumber_tenantId: { productId, batchNumber, tenantId } }
     });
 
     let targetBatchId: string;
-
     if (existingBatch) {
+      if (
+        existingBatch.expiryDate &&
+        expiryDate &&
+        existingBatch.expiryDate.getTime() !== expiryDate.getTime()
+      ) {
+        throw new Error("BATCH_EXPIRY_MISMATCH: The same batch number cannot be reused with a different expiry date.");
+      }
+
+      const previousQty = existingBatch.stockQuantity;
+      const nextQty = previousQty + qty;
+      const weightedValue = new Prisma.Decimal(existingBatch.cost.toString())
+        .mul(previousQty)
+        .plus(new Prisma.Decimal(cost).mul(qty));
+      const weightedCost = nextQty > 0 ? weightedValue.div(nextQty) : new Prisma.Decimal(cost);
+
       const updatedBatch = await tx.inventoryBatch.update({
         where: { id: existingBatch.id },
         data: {
-          stockQuantity: existingBatch.stockQuantity + qty,
-          cost: cost, // update to latest cost
-          expiryDate: expiryDate || existingBatch.expiryDate,
+          initialQty: { increment: qty },
+          stockQuantity: nextQty,
+          cost: weightedCost,
+          expiryDate: existingBatch.expiryDate || expiryDate,
           version: { increment: 1 }
         }
       });
@@ -225,19 +318,38 @@ export class FifoService {
           batchNumber,
           initialQty: qty,
           stockQuantity: qty,
-          cost: cost,
-          expiryDate: expiryDate
+          cost: new Prisma.Decimal(cost),
+          expiryDate
         }
       });
       targetBatchId = newBatch.id;
     }
 
-    // 3. Create stock in movement log
-    const prevProductStockObj = await tx.product.findUnique({
-      where: { id: productId },
+    await tx.inventoryLayer.create({
+      data: {
+        tenantId,
+        productId,
+        batchId: targetBatchId,
+        batchNumber,
+        sourceReferenceId: referenceId,
+        sourceReferenceType: referenceType,
+        sourceLineId: sourceLineId || null,
+        sourceKey,
+        quantityInitial: qty,
+        quantityRemaining: qty,
+        unitCost: new Prisma.Decimal(cost),
+        expiryDate,
+        branchId: branchId || null
+      }
+    });
+
+    const previousProduct = await tx.product.findFirst({
+      where: { id: productId, tenantId },
       select: { stockQuantity: true }
     });
-    const prevProductStock = prevProductStockObj?.stockQuantity || 0;
+    if (!previousProduct) {
+      throw new Error("PRODUCT_NOT_FOUND_OR_FORBIDDEN: Product disappeared during stock addition.");
+    }
 
     await tx.inventoryMovement.create({
       data: {
@@ -250,17 +362,16 @@ export class FifoService {
         referenceType,
         branchId: branchId || null,
         reason: reason || "Batch Procurement Addition",
-        previousStock: prevProductStock,
-        currentStock: prevProductStock + qty
+        previousStock: previousProduct.stockQuantity,
+        currentStock: previousProduct.stockQuantity + qty
       }
     });
 
-    // 4. Increment global aggregate product stock
     await tx.product.update({
       where: { id: productId },
       data: {
         stockQuantity: { increment: qty },
-        cost: cost, // update current purchase cost
+        cost: new Prisma.Decimal(cost),
         version: { increment: 1 }
       }
     });

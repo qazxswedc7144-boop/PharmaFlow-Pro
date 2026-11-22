@@ -7,7 +7,7 @@ vi.mock('../core/database/transactionGuard', () => ({
   runInTransaction: vi.fn((name, cb) => cb(fakeTx)),
 }));
 
-vi.mock('../../inventory/services/fifo.service', () => ({
+vi.mock('../modules/inventory/services/fifo.service.js', () => ({
   FifoService: {
     depleteStock: vi.fn(async () => ({ totalCost: 50 })),
     addStock: vi.fn(),

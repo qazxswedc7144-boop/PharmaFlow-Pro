@@ -201,7 +201,7 @@ async function initialize(
   });
   ctx.productAId = product.id;
 
-  await prisma.inventoryBatch.create({
+  const fixtureBatch = await prisma.inventoryBatch.create({
     data: {
       tenantId: ctx.tenantAId,
       productId: ctx.productAId,
@@ -210,6 +210,26 @@ async function initialize(
       stockQuantity: 6,
       cost: 3,
       expiryDate: new Date(Date.now() + 180 * 86400000),
+    },
+  });
+  // Keep the shared PostgreSQL fixture aligned with the authoritative FIFO
+  // layer ledger; migrations baseline existing stock, but test fixtures are
+  // inserted after migrations have already run.
+  await prisma.inventoryLayer.create({
+    data: {
+      tenantId: ctx.tenantAId,
+      productId: ctx.productAId,
+      batchId: fixtureBatch.id,
+      batchNumber: fixtureBatch.batchNumber,
+      sourceReferenceId: `CI-BASELINE-${ctx.suffix}`,
+      sourceReferenceType: "TEST_FIXTURE",
+      sourceKey: `ci-fixture:${ctx.suffix}`,
+      quantityInitial: 6,
+      quantityRemaining: 6,
+      unitCost: 3,
+      expiryDate: fixtureBatch.expiryDate,
+      isLegacyBaseline: true,
+      branchId: ctx.branchAId,
     },
   });
 
@@ -326,10 +346,12 @@ async function cleanup(ctx: PostgresHttpContext): Promise<void> {
           await tx.invoice.deleteMany({ where: tenantScope });
 
           await tx.inventoryMovement.deleteMany({ where: tenantScope });
+          await tx.fifoConsumption.deleteMany({ where: tenantScope });
           await tx.reservation.deleteMany({ where: tenantScope });
           await tx.branchTransferItem.deleteMany({ where: tenantScope });
           await tx.branchTransfer.deleteMany({ where: tenantScope });
           await tx.branchInventory.deleteMany({ where: tenantScope });
+          await tx.inventoryLayer.deleteMany({ where: tenantScope });
           await tx.inventoryBatch.deleteMany({ where: tenantScope });
 
           await tx.product.deleteMany({ where: tenantScope });

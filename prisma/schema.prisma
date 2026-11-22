@@ -325,6 +325,8 @@ model Product {
   updatedAt           DateTime             @updatedAt
   inventoryBatches    InventoryBatch[]
   inventoryMovements  InventoryMovement[]
+  inventoryLayers     InventoryLayer[]
+  fifoConsumptions    FifoConsumption[]
   reservations        Reservation[]
   invoiceItems        InvoiceItem[]        @relation("ProductInvoiceItems")
   branchInventories   BranchInventory[]    @relation("ProductBranchInventories")
@@ -445,6 +447,7 @@ model InventoryBatch {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
   inventoryMovements InventoryMovement[]
+  fifoLayers         InventoryLayer[]
   reservations       Reservation[]
   tenantId           String
   tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -457,6 +460,61 @@ model InventoryBatch {
   @@index([tenantId])
   @@index([productId])
   @@map("inventory_batches")
+}
+
+model InventoryLayer {
+  id                   String            @id @default(uuid())
+  batchId              String
+  batch                InventoryBatch    @relation(fields: [batchId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  productId            String
+  product              Product           @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  batchNumber          String
+  sourceReferenceId    String
+  sourceReferenceType  String
+  sourceLineId         String?
+  sourceKey            String
+  quantityInitial      Int
+  quantityRemaining    Int
+  unitCost             Decimal           @db.Decimal(18, 4)
+  expiryDate           DateTime?
+  createdAt            DateTime          @default(now())
+  isLegacyBaseline     Boolean           @default(false)
+  tenantId             String
+  tenant               Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId             String?
+  consumptions         FifoConsumption[]
+
+  @@unique([id, tenantId])
+  @@unique([tenantId, sourceKey])
+  @@index([tenantId, productId, expiryDate, createdAt])
+  @@index([batchId, tenantId])
+  @@map("inventory_layers")
+}
+
+model FifoConsumption {
+  id             String         @id @default(uuid())
+  layerId        String
+  layer          InventoryLayer @relation(fields: [layerId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  productId      String
+  product        Product        @relation(fields: [productId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  referenceId    String
+  referenceType  String
+  referenceLineId String?
+  quantity       Int
+  unitCost       Decimal        @db.Decimal(18, 4)
+  totalCost      Decimal        @db.Decimal(18, 4)
+  idempotencyKey String
+  createdAt      DateTime       @default(now())
+  tenantId       String
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId       String?
+
+  @@unique([id, tenantId])
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, referenceId, referenceType])
+  @@index([tenantId, layerId])
+  @@index([tenantId, productId])
+  @@map("fifo_consumption_log")
 }
 
 model InventoryMovement {
@@ -800,6 +858,8 @@ model Tenant {
   branchTransfers     BranchTransfer[]
   inventoryMovements  InventoryMovement[]
   inventoryBatches    InventoryBatch[]
+  inventoryLayers     InventoryLayer[]
+  fifoConsumptions    FifoConsumption[]
   payments            Payment[]
   expenses            Expense[]
   roles               CustomRole[]

@@ -34,8 +34,8 @@ async function runVerification() {
     }
   });
 
-  // Create an initial batch
-  await prisma.inventoryBatch.create({
+  // Create an initial aggregate batch and its matching durable FIFO layer.
+  const initialBatch = await prisma.inventoryBatch.create({
     data: {
       productId,
       batchNumber: "B999",
@@ -44,6 +44,23 @@ async function runVerification() {
       cost: 60,
       expiryDate: new Date("2030-01-01"),
       tenantId
+    }
+  });
+  await prisma.inventoryLayer.create({
+    data: {
+      tenantId,
+      productId,
+      batchId: initialBatch.id,
+      batchNumber: initialBatch.batchNumber,
+      sourceReferenceId: "VERIFY-PHASE9-BASELINE",
+      sourceReferenceType: "TEST_FIXTURE",
+      sourceKey: "verify-phase9:initial-batch",
+      quantityInitial: 100,
+      quantityRemaining: 100,
+      unitCost: 60,
+      expiryDate: initialBatch.expiryDate,
+      isLegacyBaseline: true,
+      branchId
     }
   });
 

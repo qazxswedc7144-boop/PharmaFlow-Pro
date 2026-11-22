@@ -1,0 +1,376 @@
+import { expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { definePostgresHttpSuite } from "./helpers/postgres-http.integration.helpers.js";
+import { FifoService } from "../modules/inventory/services/fifo.service.js";
+
+function assertTestDatabase(): void {
+  const raw = process.env.DATABASE_URL ?? "";
+  const url = new URL(raw);
+  const database = url.pathname.replace(/^\//, "");
+  if (process.env.NODE_ENV !== "test" || !/(^|_)(test|ci)(_|$)/i.test(database)) {
+    throw new Error("FIFO provenance tests require an explicitly named PostgreSQL test/CI database.");
+  }
+}
+
+definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (getContext) => {
+  it("keeps repeated receipts as separate cost layers and records exact FEFO/FIFO consumption", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 FIFO ${suffix}`,
+        sku: `P4-FIFO-${suffix}`,
+        barcode: `P4-FIFO-${suffix}`,
+        price: 30,
+        cost: 10,
+        stockQuantity: 0,
+      },
+    });
+
+    try {
+      const expiry = new Date("2099-12-31T00:00:00.000Z");
+      await prisma.$transaction(async (tx) => {
+        await FifoService.addStock(
+          tx, product.id, `BATCH-P4-${suffix}`, 10, 10, expiry,
+          `PUR-P4-A-${suffix}`, "INVOICE", "Phase 4 FIFO receipt A",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-A-${suffix}`,
+        );
+        await FifoService.addStock(
+          tx, product.id, `BATCH-P4-${suffix}`, 5, 20, expiry,
+          `PUR-P4-B-${suffix}`, "INVOICE", "Phase 4 FIFO receipt B",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-B-${suffix}`,
+        );
+      });
+
+      const batchBefore = await prisma.inventoryBatch.findFirst({
+        where: { tenantId: ctx.tenantAId, productId: product.id },
+      });
+      const layersBefore = await prisma.inventoryLayer.findMany({
+        where: { tenantId: ctx.tenantAId, productId: product.id },
+      });
+      expect(batchBefore).toBeDefined();
+      expect(batchBefore?.initialQty).toBe(15);
+      expect(batchBefore?.stockQuantity).toBe(15);
+      expect(Number(batchBefore?.cost)).toBeCloseTo(13.3333, 4);
+      expect(layersBefore).toHaveLength(2);
+      expect(layersBefore.map((layer) => Number(layer.unitCost)).sort((a, b) => a - b)).toEqual([10, 20]);
+      expect(layersBefore.every((layer) => layer.quantityInitial === 10 || layer.quantityInitial === 5)).toBe(true);
+
+      // Calculate the expected result using the same documented order: FEFO,
+      // then receipt creation time, then stable layer ID for exact ties.
+      const orderedLayers = [...layersBefore].sort((a, b) => {
+        const expiryA = a.expiryDate?.getTime() ?? Number.POSITIVE_INFINITY;
+        const expiryB = b.expiryDate?.getTime() ?? Number.POSITIVE_INFINITY;
+        if (expiryA !== expiryB) return expiryA - expiryB;
+        const created = a.createdAt.getTime() - b.createdAt.getTime();
+        return created || a.id.localeCompare(b.id);
+      });
+      let needed = 12;
+      let expectedCost = 0;
+      for (const layer of orderedLayers) {
+        const take = Math.min(layer.quantityRemaining, needed);
+        expectedCost += take * Number(layer.unitCost);
+        needed -= take;
+        if (needed === 0) break;
+      }
+      expect(needed).toBe(0);
+
+      let depletion: Awaited<ReturnType<typeof FifoService.depleteStock>> | undefined;
+      await prisma.$transaction(async (tx) => {
+        depletion = await FifoService.depleteStock(
+          tx,
+          product.id,
+          12,
+          `SALE-P4-${suffix}`,
+          "INVOICE",
+          "Phase 4 FIFO sale",
+          ctx.tenantAId,
+          `SALE-LINE-P4-${suffix}`,
+          ctx.branchAId,
+        );
+      });
+
+      expect(depletion?.totalCost).toBeCloseTo(expectedCost, 4);
+      expect(depletion?.allocations.reduce((sum, allocation) => sum + allocation.qtyAllocated, 0)).toBe(12);
+
+      const [layersAfter, consumptions, batchAfter, productAfter, movements] = await Promise.all([
+        prisma.inventoryLayer.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.fifoConsumption.findMany({ where: { tenantId: ctx.tenantAId, referenceId: `SALE-P4-${suffix}` } }),
+        prisma.inventoryBatch.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
+        prisma.inventoryMovement.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+      ]);
+      const remainingLayerQty = layersAfter.reduce((sum, layer) => sum + layer.quantityRemaining, 0);
+      const consumedQty = consumptions.reduce((sum, row) => sum + row.quantity, 0);
+      const consumedCost = consumptions.reduce((sum, row) => sum + Number(row.totalCost), 0);
+      const remainingValue = layersAfter.reduce(
+        (sum, layer) => sum + layer.quantityRemaining * Number(layer.unitCost),
+        0,
+      );
+
+      expect(consumedQty).toBe(12);
+      expect(consumedCost).toBeCloseTo(expectedCost, 4);
+      expect(remainingLayerQty).toBe(3);
+      expect(batchAfter?.stockQuantity).toBe(remainingLayerQty);
+      expect(batchAfter?.initialQty).toBe(15);
+      expect(Number(batchAfter?.cost)).toBeCloseTo(remainingValue / remainingLayerQty, 4);
+      expect(productAfter?.stockQuantity).toBe(3);
+      expect(movements.reduce((sum, movement) => sum + movement.qty, 0)).toBe(3);
+      expect(consumptions.every((row) => row.tenantId === ctx.tenantAId)).toBe(true);
+      expect(new Set(consumptions.map((row) => row.idempotencyKey)).size).toBe(consumptions.length);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
+  it("prioritizes the earliest expiry before receipt age when both layers are eligible", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 FIFO FEFO ${suffix}`,
+        sku: `P4-FIFO-FEFO-${suffix}`,
+        barcode: `P4-FIFO-FEFO-${suffix}`,
+        price: 30,
+        cost: 10,
+        stockQuantity: 0,
+      },
+    });
+
+    try {
+      // The later-expiring receipt is deliberately inserted first.
+      await prisma.$transaction(async (tx) => {
+        await FifoService.addStock(
+          tx, product.id, `BATCH-LATE-${suffix}`, 1, 50, new Date("2099-12-31T00:00:00.000Z"),
+          `PUR-LATE-${suffix}`, "INVOICE", "Older receipt with later expiry",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-LATE-${suffix}`,
+        );
+        await FifoService.addStock(
+          tx, product.id, `BATCH-EARLY-${suffix}`, 1, 10, new Date("2028-12-31T00:00:00.000Z"),
+          `PUR-EARLY-${suffix}`, "INVOICE", "Newer receipt with earlier expiry",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-EARLY-${suffix}`,
+        );
+      });
+
+      const earliestExpiryLayer = await prisma.inventoryLayer.findFirst({
+        where: { tenantId: ctx.tenantAId, productId: product.id, batchNumber: `BATCH-EARLY-${suffix}` },
+      });
+      expect(earliestExpiryLayer).toBeDefined();
+
+      const result = await prisma.$transaction((tx) =>
+        FifoService.depleteStock(
+          tx, product.id, 1, `SALE-FEFO-${suffix}`, "INVOICE",
+          "FEFO priority verification", ctx.tenantAId,
+          `SALE-LINE-FEFO-${suffix}`, ctx.branchAId,
+        ),
+      );
+
+      const consumption = await prisma.fifoConsumption.findFirst({
+        where: { tenantId: ctx.tenantAId, referenceId: `SALE-FEFO-${suffix}` },
+      });
+      expect(consumption?.layerId).toBe(earliestExpiryLayer?.id);
+      expect(result.totalCost).toBe(10);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
+  it("rejects a repeated consumption identity without decrementing stock twice", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 FIFO idempotency ${suffix}`,
+        sku: `P4-FIFO-IDEM-${suffix}`,
+        barcode: `P4-FIFO-IDEM-${suffix}`,
+        price: 20,
+        cost: 7,
+        stockQuantity: 0,
+      },
+    });
+
+    try {
+      await prisma.$transaction((tx) =>
+        FifoService.addStock(
+          tx, product.id, `BATCH-IDEM-${suffix}`, 2, 7, null,
+          `PUR-IDEM-${suffix}`, "INVOICE", "Idempotency fixture",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-IDEM-${suffix}`,
+        ),
+      );
+
+      const referenceId = `SALE-IDEM-${suffix}`;
+      const referenceLineId = `SALE-LINE-IDEM-${suffix}`;
+      await prisma.$transaction((tx) =>
+        FifoService.depleteStock(
+          tx, product.id, 1, referenceId, "INVOICE", "First posting",
+          ctx.tenantAId, referenceLineId, ctx.branchAId,
+        ),
+      );
+
+      await expect(prisma.$transaction((tx) =>
+        FifoService.depleteStock(
+          tx, product.id, 1, referenceId, "INVOICE", "Duplicate posting attempt",
+          ctx.tenantAId, referenceLineId, ctx.branchAId,
+        ),
+      )).rejects.toThrow(/Unique constraint failed/);
+
+      const [layer, consumptions, batch, currentProduct, movements] = await Promise.all([
+        prisma.inventoryLayer.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.fifoConsumption.findMany({ where: { tenantId: ctx.tenantAId, referenceId } }),
+        prisma.inventoryBatch.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
+        prisma.inventoryMovement.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+      ]);
+      expect(layer?.quantityRemaining).toBe(1);
+      expect(consumptions).toHaveLength(1);
+      expect(batch?.stockQuantity).toBe(1);
+      expect(currentProduct?.stockQuantity).toBe(1);
+      expect(movements.reduce((sum, movement) => sum + movement.qty, 0)).toBe(1);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
+  it("rolls back every layer, batch, movement and consumption write when stock is insufficient", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 FIFO rollback ${suffix}`,
+        sku: `P4-FIFO-RB-${suffix}`,
+        barcode: `P4-FIFO-RB-${suffix}`,
+        price: 20,
+        cost: 8,
+        stockQuantity: 0,
+      },
+    });
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await FifoService.addStock(
+          tx, product.id, `BATCH-RB-VALID-${suffix}`, 2, 8, null,
+          `PUR-RB-VALID-${suffix}`, "INVOICE", "Valid rollback fixture",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-RB-VALID-${suffix}`,
+        );
+        await FifoService.addStock(
+          tx, product.id, `BATCH-RB-EXPIRED-${suffix}`, 1, 9, new Date("2000-01-01T00:00:00.000Z"),
+          `PUR-RB-EXPIRED-${suffix}`, "INVOICE", "Expired rollback fixture",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-RB-EXPIRED-${suffix}`,
+        );
+      });
+
+      // The product projection includes the expired unit, but only two units
+      // are eligible for sale. The full request must be rejected pre-write.
+      await expect(prisma.$transaction(async (tx) => {
+        await FifoService.depleteStock(
+          tx,
+          product.id,
+          3,
+          `SALE-RB-${suffix}`,
+          "INVOICE",
+          "Expected insufficient eligible FIFO stock",
+          ctx.tenantAId,
+          `SALE-LINE-RB-${suffix}`,
+          ctx.branchAId,
+        );
+      })).rejects.toThrow(/INSUFFICIENT_FIFO_STOCK/);
+
+      const [layers, consumptions, batches, currentProduct, movements] = await Promise.all([
+        prisma.inventoryLayer.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.fifoConsumption.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.inventoryBatch.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
+        prisma.inventoryMovement.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+      ]);
+      expect(layers).toHaveLength(2);
+      expect(layers.reduce((sum, layer) => sum + layer.quantityRemaining, 0)).toBe(3);
+      expect(consumptions).toHaveLength(0);
+      expect(batches.reduce((sum, batch) => sum + batch.stockQuantity, 0)).toBe(3);
+      expect(currentProduct?.stockQuantity).toBe(3);
+      expect(movements.reduce((sum, movement) => sum + movement.qty, 0)).toBe(3);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
+  it("does not consume expired layers even when product stock projection reports enough units", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 FIFO expired ${suffix}`,
+        sku: `P4-FIFO-EX-${suffix}`,
+        barcode: `P4-FIFO-EX-${suffix}`,
+        price: 20,
+        cost: 8,
+        stockQuantity: 0,
+      },
+    });
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await FifoService.addStock(
+          tx, product.id, `BATCH-EX-${suffix}`, 4, 8, new Date("2000-01-01T00:00:00.000Z"),
+          `PUR-EX-${suffix}`, "INVOICE", "Expired stock fixture",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-EX-${suffix}`,
+        );
+      });
+
+      await expect(prisma.$transaction(async (tx) => {
+        await FifoService.depleteStock(
+          tx, product.id, 1, `SALE-EX-${suffix}`, "INVOICE",
+          "Expired layer must not be consumed", ctx.tenantAId,
+          `SALE-LINE-EX-${suffix}`, ctx.branchAId,
+        );
+      })).rejects.toThrow(/INSUFFICIENT_FIFO_STOCK/);
+
+      const [layer, consumption, batch, currentProduct] = await Promise.all([
+        prisma.inventoryLayer.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.fifoConsumption.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.inventoryBatch.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
+      ]);
+      expect(layer?.quantityRemaining).toBe(4);
+      expect(consumption).toHaveLength(0);
+      expect(batch?.stockQuantity).toBe(4);
+      expect(currentProduct?.stockQuantity).toBe(4);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+});

@@ -347,7 +347,7 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
     }
   });
 
-  it("reports current PostgreSQL schema limitations for invoice payment allocation and FIFO layer history", async () => {
+  it("confirms durable FIFO schema while reporting the remaining invoice payment allocation gap", async () => {
     assertTestDatabase();
     const { prisma } = await import("../database/prisma.js");
     const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
@@ -356,15 +356,23 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
     `;
     const tables = new Set(rows.map(row => row.table_name));
+    // The payments table already exists. The outstanding payment gap is the
+    // missing durable payment-to-invoice allocation relation.
+    expect(tables.has("payments")).toBe(true);
+    expect(tables.has("inventory_batches")).toBe(true);
+    expect(tables.has("inventory_movements")).toBe(true);
+    expect(tables.has("inventory_layers")).toBe(true);
+    expect(tables.has("fifo_consumption_log")).toBe(true);
+    expect(tables.has("invoice_payment_allocations")).toBe(false);
+
     const missingCapabilities = [
-      { capability: "invoice-level payment allocation", requiredTables: ["payments", "invoice_payment_allocations"] },
-      { capability: "persistent FIFO layers and consumption history", requiredTables: ["inventory_layers", "fifo_consumption_log"] },
+      { capability: "invoice-level payment allocation", requiredTables: ["invoice_payment_allocations"] },
     ];
     const gaps = missingCapabilities.filter(item => item.requiredTables.some(name => !tables.has(name)));
     for (const gap of gaps) {
       console.warn(`PHASE3_SCHEMA_LIMITATION: ${gap.capability}; missing: ${gap.requiredTables.filter(name => !tables.has(name)).join(", ")}`);
     }
     expect(gaps.map(gap => gap.capability)).toContain("invoice-level payment allocation");
-    expect(gaps.map(gap => gap.capability)).toContain("persistent FIFO layers and consumption history");
+    expect(gaps.map(gap => gap.capability)).not.toContain("persistent FIFO layers and consumption history");
   });
 });
