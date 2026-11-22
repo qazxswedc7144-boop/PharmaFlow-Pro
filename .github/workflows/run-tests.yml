@@ -231,3 +231,10 @@ jobs:
         run: npx vitest run server/tests/financial-reconciliation.phase3.integration.test.ts --reporter=verbose --maxWorkers=1
         env:
           NODE_OPTIONS: "--max-old-space-size=5120"
+
+      # Phase 4A FIFO provenance suite — isolated PostgreSQL test database only.
+      - name: Run PostgreSQL Phase 4A FIFO Layer Cost Provenance tests
+        if: always()
+        run: npx vitest run server/tests/fifo-layer-cost-provenance.integration.test.ts --reporter=verbose --maxWorkers=1
+        env:
+          NODE_OPTIONS: "--max-old-space-size=5120"
