@@ -1,73 +1,45 @@
-
-import { db } from '@/core/db';
 import { AccountingPeriod } from '@/types';
+import { AccountingPeriodSyncService } from '@/features/accounting/services/AccountingPeriodSyncService';
 
-/**
- * AccountingPeriod Repository - حارس الفترات الزمنية
- */
 export const AccountingPeriodRepository = {
-  /**
-   * جلب كافة سجلات الفترات من قاعدة البيانات
-   */
   getAll: async (): Promise<AccountingPeriod[]> => {
-    return await db.getAccountingPeriods();
+    return await AccountingPeriodSyncService.getPeriods();
   },
 
-  /**
-   * جلب الفترة النشطة حالياً (غير المقفلة)
-   */
   getActivePeriod: async (): Promise<AccountingPeriod | undefined> => {
-    const all = await db.getAccountingPeriods();
-    return all.find(p => !p.Is_Locked);
+    const all = await AccountingPeriodSyncService.getPeriods();
+    return all.find((period) => !period.Is_Locked && !period.isLocked);
   },
 
-  /**
-   * الفحص الأساسي: هل يقع التاريخ ضمن نطاق فترة مقفلة؟
-   */
   isDateClosed: async (dateStr: string): Promise<boolean> => {
-    return await db.isDateLocked(dateStr);
-  },
-
-  /**
-   * قفل فترة محددة وتوثيق المسؤول عن القفل
-   */
-  closePeriod: async (periodId: string, userId: string) => {
-    const periods = await db.getAccountingPeriods();
-    const period = periods.find(p => p.id === periodId);
-    if (period) {
-      period.Is_Locked = true;
-      period.Locked_By = userId;
-      period.Locked_At = new Date().toISOString();
-      period.lastModified = new Date().toISOString();
-      await db.saveAccountingPeriod(period);
+    const date = new Date(dateStr);
+    if (!dateStr?.trim() || !Number.isFinite(date.getTime())) {
+      throw new Error('ACCOUNTING_PERIOD_DATE_INVALID: تاريخ العملية المحاسبية غير صالح.');
     }
+    const periods = await AccountingPeriodSyncService.getPeriods();
+    const matches = periods.filter((period) => {
+      const start = new Date(period.Start_Date || period.startDate || '');
+      const end = new Date(period.End_Date || period.endDate || '');
+      return Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()) &&
+        date >= start && date <= end;
+    });
+    if (matches.length !== 1) {
+      throw new Error(matches.length === 0
+        ? 'ACCOUNTING_PERIOD_NOT_CONFIGURED: لا توجد فترة محاسبية تغطي التاريخ.'
+        : 'ACCOUNTING_PERIOD_AMBIGUOUS: توجد فترات محاسبية متداخلة.');
+    }
+    return matches[0].Is_Locked === true || matches[0].isLocked === true;
   },
 
-  /**
-   * فتح فترة مقفلة (للمسؤولين)
-   */
+  closePeriod: async (periodId: string, _userId: string) => {
+    await AccountingPeriodSyncService.setLocked(periodId, true);
+  },
+
   openPeriod: async (periodId: string) => {
-    const periods = await db.getAccountingPeriods();
-    const period = periods.find(p => p.id === periodId);
-    if (period) {
-      period.Is_Locked = false;
-      period.lastModified = new Date().toISOString();
-      await db.saveAccountingPeriod(period);
-    }
+    await AccountingPeriodSyncService.setLocked(periodId, false);
   },
 
-  /**
-   * إنشاء فترة محاسبية جديدة
-   */
   createPeriod: async (startDate: string, endDate: string) => {
-    const period: AccountingPeriod = {
-      id: db.generateId('PER'),
-      Start_Date: startDate,
-      End_Date: endDate,
-      Is_Locked: false,
-      lastModified: new Date().toISOString()
-    };
-    await db.saveAccountingPeriod(period);
-    return period.id;
+    return await AccountingPeriodSyncService.createPeriod(startDate, endDate);
   }
 };
