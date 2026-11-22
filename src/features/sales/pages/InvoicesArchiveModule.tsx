@@ -9,6 +9,7 @@ import { Card, Badge, Modal } from '@/components/shared/SharedUI';
 import AdjustmentForm from '@features/inventory/pages/AdjustmentForm';
 import { authService } from '@features/auth/services/authService';
 import { db } from '@/core/db';
+import { PeriodLockEngine } from '@/services/transactions/PeriodLockEngine';
 import { transactionOrchestrator } from '@/services/transactions/transactionOrchestrator';
 import { 
   Search, Edit3, ArrowRight, Tag, History, Filter, Fingerprint,
@@ -357,7 +358,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
         if (nextLocks[id] === undefined) {
           const invDate = inv.date || inv.Date;
-          nextLocks[id] = await db.isDateLocked(invDate);
+          nextLocks[id] = await PeriodLockEngine.isPeriodLocked(invDate || '');
           updated = true;
         }
       }));
@@ -397,7 +398,7 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
     const invDate = inv.date || inv.Date;
     const recordId = inv.entityType === 'SALE' ? (inv.SaleID || inv.id) : (inv.invoiceId || inv.purchase_id || inv.id);
     
-    if (invDate && await db.isDateLocked(invDate) && !isAdmin) {
+    if (invDate && await PeriodLockEngine.isPeriodLocked(invDate || '') && !isAdmin) {
       addToast("خطأ حماية: لا يمكن إلغاء مستند يقع ضمن فترة محاسبية مغلقة 🔒", "error");
       return;
     }
