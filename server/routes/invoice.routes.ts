@@ -150,7 +150,9 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           product: { connect: { id_tenantId: { id: item.productId, tenantId } } },
           qty: item.qty,
           price,
-          cost: new Prisma.Decimal(0),
+          // PURCHASE item.price is the supplier unit cost; persist it for FIFO receipt.
+          // SALE cost is populated later from the actual FIFO depletion result.
+          cost: data.type === "PURCHASE" ? price : new Prisma.Decimal(0),
           total: lineTotal,
           expiryDate: item.expiryDate,
           note: item.note
