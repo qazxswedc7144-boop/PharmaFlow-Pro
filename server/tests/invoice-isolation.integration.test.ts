@@ -295,6 +295,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
       body: {
         invoiceNumber: `PERIOD-CLOSED-${ctx.suffix}`,
         type: "SALE",
+        totalAmount: 10,
         paymentStatus: "UNPAID",
         items: [{ productId: ctx.productAId, qty: 1, price: 10 }],
       },
