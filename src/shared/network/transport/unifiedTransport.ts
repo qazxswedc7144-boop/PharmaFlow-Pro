@@ -63,7 +63,8 @@ export function createNetworkError(
 function mapStatusToErrorCode(status: number): NetworkErrorCode {
   switch (status) {
     case 401: return 'UNAUTHORIZED';
-    case 403: return 'FORBIDDEN';
+    case 403:
+    case 423: return 'FORBIDDEN';
     case 409: return 'CONFLICT';
     case 422: return 'VALIDATION_ERROR';
     case 429: return 'RATE_LIMITED';
