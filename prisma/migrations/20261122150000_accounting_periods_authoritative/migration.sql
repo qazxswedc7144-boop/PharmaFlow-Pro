@@ -3,6 +3,7 @@
 -- no historical financial rows are modified by this migration.
 CREATE TABLE "accounting_periods" (
     "id" TEXT NOT NULL,
+    "clientId" TEXT NOT NULL,
     "startDate" TIMESTAMP(3) NOT NULL,
     "endDate" TIMESTAMP(3) NOT NULL,
     "isLocked" BOOLEAN NOT NULL DEFAULT false,
@@ -14,6 +15,9 @@ CREATE TABLE "accounting_periods" (
     CONSTRAINT "accounting_periods_pkey" PRIMARY KEY ("id"),
     CONSTRAINT "accounting_periods_valid_range_check" CHECK ("endDate" >= "startDate")
 );
+
+CREATE UNIQUE INDEX "accounting_periods_tenantId_clientId_key"
+    ON "accounting_periods"("tenantId", "clientId");
 
 CREATE INDEX "accounting_periods_tenantId_startDate_endDate_idx"
     ON "accounting_periods"("tenantId", "startDate", "endDate");
