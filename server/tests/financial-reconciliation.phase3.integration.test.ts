@@ -347,7 +347,7 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
     }
   });
 
-  it("reports current PostgreSQL schema limitations for invoice payment allocation and FIFO layer history", async () => {
+  it("confirms durable FIFO schema while reporting the remaining invoice payment allocation gap", async () => {
     assertTestDatabase();
     const { prisma } = await import("../database/prisma.js");
     const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
