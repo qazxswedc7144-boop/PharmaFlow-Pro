@@ -68,7 +68,7 @@ export class PeriodLockEngine {
     if (count === 0) {
       const now = new Date();
       await db.accountingPeriods.add({
-        id: 'DEFAULT-PERIOD',
+        id: `DEFAULT-PERIOD-${tenantId}`,
         tenantId,
         Start_Date: new Date(now.getFullYear(), 0, 1).toISOString(),
         End_Date: new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999).toISOString(),
