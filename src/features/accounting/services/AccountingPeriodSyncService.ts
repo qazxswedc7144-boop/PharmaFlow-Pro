@@ -88,8 +88,9 @@ export class AccountingPeriodSyncService {
 
     const payload = tenantPeriods.map((period) => {
       const clientId = String(period.id || '').trim();
-      const startDate = String(period.Start_Date || period.startDate || '').trim();
-      const endDate = String(period.End_Date || period.endDate || '').trim();
+      const legacy = period as any;
+      const startDate = String(period.Start_Date || period.startDate || legacy.start_date || '').trim();
+      const endDate = String(period.End_Date || period.endDate || legacy.end_date || '').trim();
       const start = new Date(startDate);
       const end = new Date(endDate);
       if (!clientId || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) {
@@ -99,7 +100,7 @@ export class AccountingPeriodSyncService {
         clientId,
         startDate: start.toISOString(),
         endDate: end.toISOString(),
-        isLocked: period.Is_Locked === true || period.isLocked === true,
+        isLocked: period.Is_Locked === true || period.isLocked === true || legacy.is_locked === true,
       };
     });
 
