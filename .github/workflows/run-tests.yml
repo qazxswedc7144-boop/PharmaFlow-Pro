@@ -231,5 +231,3 @@ jobs:
         run: npx vitest run server/tests/financial-reconciliation.phase3.integration.test.ts --reporter=verbose --maxWorkers=1
         env:
           NODE_OPTIONS: "--max-old-space-size=5120"
-        env:
-          NODE_OPTIONS: "--max-old-space-size=5120"
