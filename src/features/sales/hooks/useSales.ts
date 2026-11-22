@@ -342,6 +342,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
         const locked = await PeriodLockEngine.isPeriodLocked(header.date || "");
         setIsPeriodLockedStatus(locked);
       } catch (e) {
+        setIsPeriodLockedStatus(true);
         console.error("checkLock failed:", e);
       }
     };
