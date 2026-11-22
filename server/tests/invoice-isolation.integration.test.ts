@@ -343,6 +343,79 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     }
   });
 
+  it("blocks direct manual journal posting in a locked period without changing ledger rows or account balances", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const [debitAccount, creditAccount] = await Promise.all([
+      prisma.account.create({
+        data: {
+          tenantId: ctx.tenantAId,
+          code: `MANUAL-D-${ctx.suffix}`,
+          name: "CI Manual Journal Debit",
+          type: "ASSET",
+          balance: 125,
+        },
+      }),
+      prisma.account.create({
+        data: {
+          tenantId: ctx.tenantAId,
+          code: `MANUAL-C-${ctx.suffix}`,
+          name: "CI Manual Journal Credit",
+          type: "EQUITY",
+          balance: 250,
+        },
+      }),
+    ]);
+    const before = {
+      debitBalance: Number(debitAccount.balance),
+      creditBalance: Number(creditAccount.balance),
+      journalEntries: await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId } }),
+      journalLines: await prisma.journalLine.count({ where: { tenantId: ctx.tenantAId } }),
+    };
+
+    const locked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/lock", {
+      method: "PATCH",
+      token: ctx.tokenA,
+    });
+    expect(locked.status, JSON.stringify(locked.body)).toBe(200);
+    expect(locked.body.period.isLocked).toBe(true);
+
+    try {
+      const rejected = await request(ctx, "/api/accounting/journal", {
+        method: "POST",
+        token: ctx.tokenA,
+        body: {
+          date: "2026-11-22T12:00:00.000Z",
+          description: "CI direct manual journal against locked period",
+          lines: [
+            { accountId: debitAccount.id, debit: 25, credit: 0 },
+            { accountId: creditAccount.id, debit: 0, credit: 25 },
+          ],
+        },
+      });
+
+      expect(rejected.status).toBe(423);
+      expect(rejected.body.error).toBe("ACCOUNTING_PERIOD_LOCKED");
+
+      const [afterDebit, afterCredit, journalEntries, journalLines] = await Promise.all([
+        prisma.account.findFirst({ where: { id: debitAccount.id, tenantId: ctx.tenantAId } }),
+        prisma.account.findFirst({ where: { id: creditAccount.id, tenantId: ctx.tenantAId } }),
+        prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId } }),
+        prisma.journalLine.count({ where: { tenantId: ctx.tenantAId } }),
+      ]);
+      expect(Number(afterDebit?.balance)).toBe(before.debitBalance);
+      expect(Number(afterCredit?.balance)).toBe(before.creditBalance);
+      expect(journalEntries).toBe(before.journalEntries);
+      expect(journalLines).toBe(before.journalLines);
+    } finally {
+      const unlocked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/unlock", {
+        method: "PATCH",
+        token: ctx.tokenA,
+      });
+      expect(unlocked.status).toBe(200);
+    }
+  });
+
   it("fails closed when the authenticated tenant has no configured accounting period", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");
