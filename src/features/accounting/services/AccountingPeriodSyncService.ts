@@ -142,8 +142,19 @@ export class AccountingPeriodSyncService {
     return localPeriods;
   }
 
+  private static async ensureExistingPeriodsForMutation(): Promise<AccountingPeriod[]> {
+    try {
+      return await this.getPeriods({ forceRefresh: true });
+    } catch (error: any) {
+      if (String(error?.message || '').includes('ACCOUNTING_PERIOD_NOT_CONFIGURED')) return [];
+      throw error;
+    }
+  }
+
   static async createPeriod(startDate: string, endDate: string): Promise<string> {
     const tenantId = this.getTenantId();
+    // Bootstrap tenant-owned local history before creating the first new server period.
+    await this.ensureExistingPeriodsForMutation();
     const clientId = db.generateId('PER');
     await unifiedTransport.post('/api/accounting/periods', {
       clientId,
@@ -159,6 +170,10 @@ export class AccountingPeriodSyncService {
   static async setLocked(clientId: string, isLocked: boolean): Promise<void> {
     const tenantId = this.getTenantId();
     if (!clientId?.trim()) throw new Error('ACCOUNTING_PERIOD_ID_REQUIRED');
+    const existingPeriods = await this.ensureExistingPeriodsForMutation();
+    if (!existingPeriods.some((period) => period.id === clientId)) {
+      throw new Error('ACCOUNTING_PERIOD_NOT_FOUND: The requested tenant period is not configured.');
+    }
     await unifiedTransport.patch(
       `/api/accounting/periods/${encodeURIComponent(clientId)}/${isLocked ? 'lock' : 'unlock'}`,
       {},
