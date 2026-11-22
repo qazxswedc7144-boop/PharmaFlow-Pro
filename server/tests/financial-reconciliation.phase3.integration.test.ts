@@ -200,6 +200,64 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
     }
   });
 
+  it("reconciles persisted batch valuation with the stock movement quantity ledger", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P3 Inventory ${suffix}`,
+        sku: `P3-${suffix}`,
+        barcode: `P3-${suffix}`,
+        price: 8,
+        cost: 5,
+        stockQuantity: 10,
+      }
+    });
+    try {
+      const batch = await prisma.inventoryBatch.create({
+        data: {
+          tenantId: ctx.tenantAId,
+          productId: product.id,
+          batchNumber: `P3-BATCH-${suffix}`,
+          initialQty: 12,
+          stockQuantity: 10,
+          cost: 5,
+        }
+      });
+      await prisma.inventoryMovement.createMany({
+        data: [
+          {
+            tenantId: ctx.tenantAId, productId: product.id, batchId: batch.id,
+            qty: 12, type: "STOCK_IN", previousStock: 0, currentStock: 12,
+            branchId: ctx.branchAId, referenceType: "PHASE3_TEST"
+          },
+          {
+            tenantId: ctx.tenantAId, productId: product.id, batchId: batch.id,
+            qty: -2, type: "STOCK_OUT", previousStock: 12, currentStock: 10,
+            branchId: ctx.branchAId, referenceType: "PHASE3_TEST"
+          }
+        ]
+      });
+      const [batches, movements] = await Promise.all([
+        prisma.inventoryBatch.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.inventoryMovement.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id, branchId: ctx.branchAId } }),
+      ]);
+      const batchQuantity = batches.reduce((sum, row) => sum + row.stockQuantity, 0);
+      const batchValue = batches.reduce((sum, row) => sum + row.stockQuantity * Number(row.cost), 0);
+      const movementQuantity = movements.reduce((sum, row) => sum + row.qty, 0);
+      expect(batchQuantity).toBe(10);
+      expect(movementQuantity).toBe(batchQuantity);
+      expect(batchValue).toBe(50);
+    } finally {
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
   it("reports current PostgreSQL schema limitations for invoice payment allocation and FIFO layer history", async () => {
     assertTestDatabase();
     const { prisma } = await import("../database/prisma.js");
