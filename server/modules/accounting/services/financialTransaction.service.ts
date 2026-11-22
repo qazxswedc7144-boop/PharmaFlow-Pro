@@ -117,9 +117,9 @@ export class FinancialTransactionService {
     }
 
     const invoiceLockRows = await tx.$queryRaw<
-      Array<{ id: string; documentStatus: string; status: string }>
+      Array<{ id: string; documentStatus: string; status: string; date: Date }>
     >`
-      SELECT id, "documentStatus", status
+      SELECT id, "documentStatus", status, date
         FROM "invoices"
        WHERE id = ${invoice.id} AND "tenantId" = ${tenantId}
        FOR UPDATE
@@ -131,6 +131,10 @@ export class FinancialTransactionService {
         `INVOICE_NOT_FOUND: Invoice ${invoice.id} vanished during posting.`
       );
     }
+
+    // Use the date read under the invoice row lock; a concurrent draft edit
+    // must not make the period check and the posted journal use different dates.
+    const invoiceDate = lockedInvoice.date;
 
     // Re-check inside the lock. No race is possible from this point on.
     if (
@@ -152,8 +156,8 @@ export class FinancialTransactionService {
       SELECT id, "isLocked"
         FROM "accounting_periods"
        WHERE "tenantId" = ${tenantId}
-         AND "startDate" <= ${invoice.date}
-         AND "endDate" >= ${invoice.date}
+         AND "startDate" <= ${invoiceDate}
+         AND "endDate" >= ${invoiceDate}
        ORDER BY "startDate" DESC
        FOR UPDATE
     `;
@@ -409,7 +413,7 @@ export class FinancialTransactionService {
     // 5. Create general ledger Journal Entry
     const journalEntry = await tx.journalEntry.create({
       data: {
-        date: invoice.date,
+        date: invoiceDate,
         sourceId: invoice.id,
         sourceType: "INVOICE",
         referenceId: invoice.invoiceNumber,
