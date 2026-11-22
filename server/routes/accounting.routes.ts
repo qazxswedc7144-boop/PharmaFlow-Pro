@@ -311,6 +311,39 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
     const data = req.body; // sanitized and verified by validateRequestBody
 
     const result = await runInTransaction("AccountingService", async (tx) => {
+      const journalDate = data.date ?? new Date();
+      if (!Number.isFinite(journalDate.getTime())) {
+        const error: any = new Error("INVALID_JOURNAL_DATE");
+        error.code = "INVALID_JOURNAL_DATE";
+        throw error;
+      }
+
+      // Serialize manual posting against period lock/unlock operations. The period
+      // row lock is held until this journal transaction commits or rolls back.
+      const matchingPeriods = await tx.$queryRaw<Array<{ id: string; isLocked: boolean }>>(
+        Prisma.sql`SELECT id, "isLocked"
+          FROM "accounting_periods"
+          WHERE "tenantId" = ${tenantId}
+            AND "startDate" <= ${journalDate}
+            AND "endDate" >= ${journalDate}
+          FOR UPDATE`
+      );
+      if (matchingPeriods.length === 0) {
+        const error: any = new Error("ACCOUNTING_PERIOD_NOT_CONFIGURED");
+        error.code = "ACCOUNTING_PERIOD_NOT_CONFIGURED";
+        throw error;
+      }
+      if (matchingPeriods.length !== 1) {
+        const error: any = new Error("ACCOUNTING_PERIOD_OVERLAP");
+        error.code = "ACCOUNTING_PERIOD_OVERLAP";
+        throw error;
+      }
+      if (matchingPeriods[0]?.isLocked) {
+        const error: any = new Error("ACCOUNTING_PERIOD_LOCKED");
+        error.code = "ACCOUNTING_PERIOD_LOCKED";
+        throw error;
+      }
+
       const sumDebits = data.lines.reduce((sum: number, l: any) => sum + l.debit, 0);
       const sumCredits = data.lines.reduce((sum: number, l: any) => sum + l.credit, 0);
 
@@ -346,7 +379,7 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
       const entry = await tx.journalEntry.create({
         data: {
           tenantId,
-          date: new Date(),
+          date: journalDate,
           sourceType: "MANUAL",
           status: "POSTED",
           description: data.description || "قيد محاسبي يدوي",
@@ -411,6 +444,18 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
     });
   } catch (err: any) {
     if (err instanceof OfflineDatabaseError) return res.status(503).json({ success: false, offline: true, message: "Database unavailable." });
+    if (err?.code === "ACCOUNTING_PERIOD_NOT_CONFIGURED") {
+      return res.status(409).json({ success: false, error: err.code });
+    }
+    if (err?.code === "ACCOUNTING_PERIOD_LOCKED") {
+      return res.status(423).json({ success: false, error: err.code });
+    }
+    if (err?.code === "ACCOUNTING_PERIOD_OVERLAP") {
+      return res.status(409).json({ success: false, error: err.code });
+    }
+    if (err?.code === "INVALID_JOURNAL_DATE") {
+      return res.status(400).json({ success: false, error: err.code });
+    }
     return res.status(400).json({
       error: "JOURNAL_FAILED",
       message: err.message || err
