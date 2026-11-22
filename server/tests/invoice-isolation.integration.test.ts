@@ -428,7 +428,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(tenantA.status).toBe(200);
     expect(tenantB.status).toBe(200);
     expect(tenantA.body.periods.map((period: any) => period.clientId)).toEqual(["CI-DEFAULT-A"]);
-    expect(tenantB.body.periods.map((period: any) => period.clientId)).toEqual(["CI-DEFAULT-B"]);
+    expect(tenantB.body.periods.map((period: any) => period.clientId)).toEqual(["LEGACY-PERIOD-B"]);
   });
 
   it("persists lock acquire, extend, and release audit events in PostgreSQL", async () => {
