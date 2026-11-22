@@ -46,12 +46,12 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
           debitTotal: 175,
           creditTotal: 175,
           lines: { create: [
-            { tenantId: ctx.tenantAId, accountId: asset.id, debit: 100, credit: 0 },
-            { tenantId: ctx.tenantAId, accountId: expense.id, debit: 50, credit: 0 },
-            { tenantId: ctx.tenantAId, accountId: cogs.id, debit: 25, credit: 0 },
-            { tenantId: ctx.tenantAId, accountId: liability.id, debit: 0, credit: 30 },
-            { tenantId: ctx.tenantAId, accountId: equity.id, debit: 0, credit: 20 },
-            { tenantId: ctx.tenantAId, accountId: revenue.id, debit: 0, credit: 125 },
+            { accountId: asset.id, debit: 100, credit: 0 },
+            { accountId: expense.id, debit: 50, credit: 0 },
+            { accountId: cogs.id, debit: 25, credit: 0 },
+            { accountId: liability.id, debit: 0, credit: 30 },
+            { accountId: equity.id, debit: 0, credit: 20 },
+            { accountId: revenue.id, debit: 0, credit: 125 },
           ] },
         },
         include: { lines: true },
@@ -171,8 +171,8 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
           tenantId: ctx.tenantAId, branchId: ctx.branchAId, status: "POSTED",
           debitTotal: 25, creditTotal: 25,
           lines: { create: [
-            { tenantId: ctx.tenantAId, accountId: accountA.id, debit: 25, credit: 0 },
-            { tenantId: ctx.tenantAId, accountId: accountA.id, debit: 0, credit: 25 },
+            { accountId: accountA.id, debit: 25, credit: 0 },
+            { accountId: accountA.id, debit: 0, credit: 25 },
           ] }
         }
       });
@@ -181,8 +181,8 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
           tenantId: ctx.tenantBId, branchId: ctx.branchBId, status: "POSTED",
           debitTotal: 40, creditTotal: 40,
           lines: { create: [
-            { tenantId: ctx.tenantBId, accountId: accountB.id, debit: 40, credit: 0 },
-            { tenantId: ctx.tenantBId, accountId: accountB.id, debit: 0, credit: 40 },
+            { accountId: accountB.id, debit: 40, credit: 0 },
+            { accountId: accountB.id, debit: 0, credit: 40 },
           ] }
         }
       });
