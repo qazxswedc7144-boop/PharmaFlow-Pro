@@ -150,12 +150,19 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
     try {
       await prisma.$transaction(async (tx) => {
         await FifoService.addStock(
-          tx, product.id, `BATCH-RB-${suffix}`, 2, 8, null,
-          `PUR-RB-${suffix}`, "INVOICE", "Rollback fixture",
-          ctx.tenantAId, ctx.branchAId, `PUR-LINE-RB-${suffix}`,
+          tx, product.id, `BATCH-RB-VALID-${suffix}`, 2, 8, null,
+          `PUR-RB-VALID-${suffix}`, "INVOICE", "Valid rollback fixture",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-RB-VALID-${suffix}`,
+        );
+        await FifoService.addStock(
+          tx, product.id, `BATCH-RB-EXPIRED-${suffix}`, 1, 9, new Date("2000-01-01T00:00:00.000Z"),
+          `PUR-RB-EXPIRED-${suffix}`, "INVOICE", "Expired rollback fixture",
+          ctx.tenantAId, ctx.branchAId, `PUR-LINE-RB-EXPIRED-${suffix}`,
         );
       });
 
+      // The product projection includes the expired unit, but only two units
+      // are eligible for sale. The full request must be rejected pre-write.
       await expect(prisma.$transaction(async (tx) => {
         await FifoService.depleteStock(
           tx,
@@ -163,26 +170,26 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
           3,
           `SALE-RB-${suffix}`,
           "INVOICE",
-          "Expected insufficient FIFO stock",
+          "Expected insufficient eligible FIFO stock",
           ctx.tenantAId,
           `SALE-LINE-RB-${suffix}`,
           ctx.branchAId,
         );
-      })).rejects.toThrow(/INSUFFICIENT_STOCK|INSUFFICIENT_FIFO_STOCK/);
+      })).rejects.toThrow(/INSUFFICIENT_FIFO_STOCK/);
 
-      const [layers, consumptions, batch, currentProduct, movements] = await Promise.all([
+      const [layers, consumptions, batches, currentProduct, movements] = await Promise.all([
         prisma.inventoryLayer.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
         prisma.fifoConsumption.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
-        prisma.inventoryBatch.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.inventoryBatch.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
         prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
         prisma.inventoryMovement.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
       ]);
-      expect(layers).toHaveLength(1);
-      expect(layers[0].quantityRemaining).toBe(2);
+      expect(layers).toHaveLength(2);
+      expect(layers.reduce((sum, layer) => sum + layer.quantityRemaining, 0)).toBe(3);
       expect(consumptions).toHaveLength(0);
-      expect(batch?.stockQuantity).toBe(2);
-      expect(currentProduct?.stockQuantity).toBe(2);
-      expect(movements.reduce((sum, movement) => sum + movement.qty, 0)).toBe(2);
+      expect(batches.reduce((sum, batch) => sum + batch.stockQuantity, 0)).toBe(3);
+      expect(currentProduct?.stockQuantity).toBe(3);
+      expect(movements.reduce((sum, movement) => sum + movement.qty, 0)).toBe(3);
     } finally {
       await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
