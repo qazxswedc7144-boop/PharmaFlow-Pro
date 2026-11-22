@@ -1842,12 +1842,12 @@ export class PharmaFlowDB extends Dexie {
     }
   }
 
-  async isDateLocked(date: string) {
-    const period = await this.accountingPeriods
-      .where('Start_Date').belowOrEqual(date)
-      .and(p => !!p.End_Date && p.End_Date >= date && !!p.Is_Locked)
-      .first();
-    return !!period;
+  /**
+   * @deprecated Use PeriodLockEngine.isPeriodLocked(), which verifies the
+   * authoritative PostgreSQL state. A local-only read cannot authorize posting.
+   */
+  async isDateLocked(_date: string): Promise<boolean> {
+    throw new Error('AUTHORITATIVE_PERIOD_CHECK_REQUIRED: Use PeriodLockEngine.isPeriodLocked().');
   }
 
   // --- SETTINGS HELPERS ---
@@ -3084,7 +3084,7 @@ export const dbProxy = new Proxy({} as any, {
     if (prop === 'saveAccountingEntry') return async (entry: any) => dbProxy.journalEntries.add(entry);
     if (prop === 'saveAccountingPeriod') return async (period: any) => dbProxy.accountingPeriods.put(period);
     if (prop === 'getValidationRules') return async () => [];
-    if (prop === 'isDateLocked') return async (_date: string) => false;
+    if (prop === 'isDateLocked') return async (_date: string) => { throw new Error('AUTHORITATIVE_PERIOD_CHECK_REQUIRED: Use PeriodLockEngine.isPeriodLocked().'); };
     if (prop === 'addAuditLog') {
   return async (userId: string, action: string, targetType: string, details: string, tx?: any) => {
     const auditTable = tx?.auditLogs ?? dbProxy.auditLogs;

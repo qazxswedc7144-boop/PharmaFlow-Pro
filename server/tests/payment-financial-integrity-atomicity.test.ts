@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { db } from '../../src/core/db';
 import { UnifiedBusinessWorkflowOrchestrator } from '../../src/services/orchestration/UnifiedBusinessWorkflowOrchestrator';
@@ -8,6 +8,19 @@ import { FinancialTransactionRepository } from '../../src/database/repositories/
 import { useAuthStore } from '@/store/authStore';
 import { IdempotencyRegistry } from '../../src/core/workflow/idempotency';
 import { voucherWorkflow } from '../../src/features/accounting/workflows/VoucherWorkflow';
+
+vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
+  AccountingPeriodSyncService: {
+    getPeriods: vi.fn().mockResolvedValue([{
+      id: 'TEST-OPEN-PERIOD',
+      Start_Date: '1900-01-01T00:00:00.000Z',
+      End_Date: '2200-12-31T23:59:59.999Z',
+      Is_Locked: false,
+    }]),
+    setLocked: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 
 describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite', () => {
   const tenantId = 'TENANT-FIN-01';

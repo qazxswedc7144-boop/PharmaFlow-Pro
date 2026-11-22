@@ -22,6 +22,257 @@ export function toTrialBalanceColumns(rawBalance: number): { debit: number; cred
     : { debit: 0, credit: Math.abs(rawBalance) };
 }
 
+type AccountingPeriodInput = {
+  clientId: string;
+  startDate: Date;
+  endDate: Date;
+  isLocked: boolean;
+};
+
+function parseAccountingPeriodInput(value: any): AccountingPeriodInput | null {
+  if (!value || typeof value !== "object" ||
+      typeof value.clientId !== "string" || !value.clientId.trim() ||
+      value.clientId.length > 128 ||
+      typeof value.startDate !== "string" ||
+      typeof value.endDate !== "string" ||
+      (value.isLocked !== undefined && typeof value.isLocked !== "boolean")) {
+    return null;
+  }
+  const startDate = new Date(value.startDate);
+  const endDate = new Date(value.endDate);
+  if (!Number.isFinite(startDate.getTime()) || !Number.isFinite(endDate.getTime()) || endDate < startDate) {
+    return null;
+  }
+  return {
+    clientId: value.clientId.trim(),
+    startDate,
+    endDate,
+    isLocked: value.isLocked === true
+  };
+}
+
+function periodDto(period: any) {
+  return {
+    id: period.clientId,
+    clientId: period.clientId,
+    startDate: period.startDate.toISOString(),
+    endDate: period.endDate.toISOString(),
+    isLocked: period.isLocked,
+    lockedBy: period.lockedBy,
+    lockedAt: period.lockedAt?.toISOString() ?? null
+  };
+}
+
+function periodsDoNotOverlap(periods: AccountingPeriodInput[]): boolean {
+  const ordered = [...periods].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+  for (let index = 1; index < ordered.length; index += 1) {
+    const current = ordered[index];
+    const previous = ordered[index - 1];
+    if (current && previous && current.startDate <= previous.endDate) return false;
+  }
+  return true;
+}
+
+function getTrustedPeriodTenant(req: AuthenticatedRequest, res: Response): string | null {
+  const tenantId = req.user?.tenantId?.trim();
+  const requestTenantId = (req as any).tenantId;
+  if (!tenantId || (requestTenantId && requestTenantId !== tenantId)) {
+    res.status(403).json({ error: "TRUSTED_TENANT_CONTEXT_REQUIRED" });
+    return null;
+  }
+  return tenantId;
+}
+
+/**
+ * GET /api/accounting/periods
+ * Returns the authenticated tenant's authoritative accounting periods.
+ */
+accountingRouter.get("/periods", authenticateToken, async (req: AuthenticatedRequest, res: Response) => {
+  const tenantId = getTrustedPeriodTenant(req, res);
+  if (!tenantId) return;
+  try {
+    const periods = await prisma.accountingPeriod.findMany({
+      where: { tenantId },
+      orderBy: { startDate: "asc" }
+    });
+    return res.json({ success: true, periods: periods.map(periodDto) });
+  } catch (error: any) {
+    if (error instanceof OfflineDatabaseError) return res.status(503).json({ error: "DATABASE_UNAVAILABLE" });
+    return res.status(500).json({ error: "ACCOUNTING_PERIODS_UNAVAILABLE" });
+  }
+});
+
+/**
+ * POST /api/accounting/periods/bootstrap
+ * One-time import of tenant-owned Dexie periods into PostgreSQL.
+ * Only tenant administrators may establish the initial authoritative set.
+ */
+accountingRouter.post("/periods/bootstrap", authenticateToken,
+  requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]),
+  async (req: AuthenticatedRequest, res: Response) => {
+    const tenantId = getTrustedPeriodTenant(req, res);
+    if (!tenantId) return;
+    const rawPeriods = req.body?.periods;
+    if (!Array.isArray(rawPeriods) || rawPeriods.length < 1 || rawPeriods.length > 100) {
+      return res.status(400).json({ error: "INVALID_ACCOUNTING_PERIODS" });
+    }
+    const periods = rawPeriods.map(parseAccountingPeriodInput);
+    if (periods.some((period) => !period) ||
+        new Set(periods.map((period) => period!.clientId)).size !== periods.length ||
+        !periodsDoNotOverlap(periods as AccountingPeriodInput[])) {
+      return res.status(422).json({ error: "INVALID_OR_OVERLAPPING_ACCOUNTING_PERIODS" });
+    }
+
+    try {
+      const created = await runInTransaction("AccountingPeriodBootstrap", async (tx) => {
+        await tx.$queryRaw`SELECT 1 AS lock_acquired FROM pg_advisory_xact_lock(hashtextextended(${tenantId}, 0))`;
+        const existingCount = await tx.accountingPeriod.count({ where: { tenantId } });
+        if (existingCount > 0) {
+          const error: any = new Error("ACCOUNTING_PERIODS_ALREADY_INITIALIZED");
+          error.code = "ACCOUNTING_PERIODS_ALREADY_INITIALIZED";
+          throw error;
+        }
+        const now = new Date();
+        await tx.accountingPeriod.createMany({
+          data: (periods as AccountingPeriodInput[]).map((period) => ({
+            tenantId,
+            clientId: period.clientId,
+            startDate: period.startDate,
+            endDate: period.endDate,
+            isLocked: period.isLocked,
+            lockedBy: period.isLocked ? (req.user?.userId || null) : null,
+            lockedAt: period.isLocked ? now : null
+          }))
+        });
+        const rows = await tx.accountingPeriod.findMany({ where: { tenantId }, orderBy: { startDate: "asc" } });
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: req.user?.userId || null,
+            action: "CREATE",
+            entity: "AccountingPeriodBootstrap",
+            entityId: tenantId,
+            after: JSON.stringify(rows.map(periodDto)),
+            ipAddress: req.ip
+          }
+        });
+        return rows;
+      });
+      return res.status(201).json({ success: true, periods: created.map(periodDto) });
+    } catch (error: any) {
+      if (error.code === "ACCOUNTING_PERIODS_ALREADY_INITIALIZED") {
+        return res.status(409).json({ error: error.code });
+      }
+      if (error instanceof OfflineDatabaseError) return res.status(503).json({ error: "DATABASE_UNAVAILABLE" });
+      return res.status(500).json({ error: "ACCOUNTING_PERIOD_BOOTSTRAP_FAILED" });
+    }
+  }
+);
+
+/**
+ * POST /api/accounting/periods
+ * Creates a tenant-wide period without overlapping an existing period.
+ */
+accountingRouter.post("/periods", authenticateToken,
+  requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]),
+  async (req: AuthenticatedRequest, res: Response) => {
+    const tenantId = getTrustedPeriodTenant(req, res);
+    if (!tenantId) return;
+    const period = parseAccountingPeriodInput(req.body);
+    if (!period || period.isLocked) return res.status(400).json({ error: "INVALID_ACCOUNTING_PERIOD" });
+    try {
+      const created = await runInTransaction("AccountingPeriodCreate", async (tx) => {
+        await tx.$queryRaw`SELECT 1 AS lock_acquired FROM pg_advisory_xact_lock(hashtextextended(${tenantId}, 0))`;
+        const overlap = await tx.accountingPeriod.findFirst({
+          where: { tenantId, startDate: { lte: period.endDate }, endDate: { gte: period.startDate } },
+          select: { id: true }
+        });
+        if (overlap) {
+          const error: any = new Error("ACCOUNTING_PERIOD_OVERLAP");
+          error.code = "ACCOUNTING_PERIOD_OVERLAP";
+          throw error;
+        }
+        const row = await tx.accountingPeriod.create({
+          data: { ...period, tenantId, lockedBy: null, lockedAt: null }
+        });
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            userId: req.user?.userId || null,
+            action: "CREATE",
+            entity: "AccountingPeriod",
+            entityId: row.id,
+            after: JSON.stringify(periodDto(row)),
+            ipAddress: req.ip
+          }
+        });
+        return row;
+      });
+      return res.status(201).json({ success: true, period: periodDto(created) });
+    } catch (error: any) {
+      if (error.code === "ACCOUNTING_PERIOD_OVERLAP") return res.status(409).json({ error: error.code });
+      if (error instanceof OfflineDatabaseError) return res.status(503).json({ error: "DATABASE_UNAVAILABLE" });
+      return res.status(500).json({ error: "ACCOUNTING_PERIOD_CREATE_FAILED" });
+    }
+  }
+);
+
+async function setAccountingPeriodLock(
+  req: AuthenticatedRequest,
+  res: Response,
+  isLocked: boolean
+) {
+  const tenantId = getTrustedPeriodTenant(req, res);
+  if (!tenantId) return;
+  const clientId = typeof req.params.clientId === "string" ? req.params.clientId.trim() : "";
+  if (!clientId) return res.status(400).json({ error: "INVALID_ACCOUNTING_PERIOD_ID" });
+  try {
+    const updated = await runInTransaction("AccountingPeriodLock", async (tx) => {
+      const before = await tx.accountingPeriod.findFirst({ where: { tenantId, clientId } });
+      if (!before) {
+        const error: any = new Error("ACCOUNTING_PERIOD_NOT_FOUND");
+        error.code = "ACCOUNTING_PERIOD_NOT_FOUND";
+        throw error;
+      }
+      const after = await tx.accountingPeriod.update({
+        where: { id: before.id },
+        data: {
+          isLocked,
+          lockedBy: isLocked ? (req.user?.userId || null) : null,
+          lockedAt: isLocked ? new Date() : null
+        }
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: req.user?.userId || null,
+          action: "UPDATE",
+          entity: "AccountingPeriod",
+          entityId: after.id,
+          before: JSON.stringify(periodDto(before)),
+          after: JSON.stringify(periodDto(after)),
+          ipAddress: req.ip
+        }
+      });
+      return after;
+    });
+    return res.json({ success: true, period: periodDto(updated) });
+  } catch (error: any) {
+    if (error.code === "ACCOUNTING_PERIOD_NOT_FOUND") return res.status(404).json({ error: error.code });
+    if (error instanceof OfflineDatabaseError) return res.status(503).json({ error: "DATABASE_UNAVAILABLE" });
+    return res.status(500).json({ error: "ACCOUNTING_PERIOD_LOCK_UPDATE_FAILED" });
+  }
+}
+
+accountingRouter.patch("/periods/:clientId/lock", authenticateToken,
+  requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]),
+  (req: AuthenticatedRequest, res: Response) => setAccountingPeriodLock(req, res, true)
+);
+accountingRouter.patch("/periods/:clientId/unlock", authenticateToken,
+  requireRoles([Role.PLATFORM_OWNER, Role.TENANT_ADMIN, Role.ADMIN]),
+  (req: AuthenticatedRequest, res: Response) => setAccountingPeriodLock(req, res, false)
+);
+
 /**
  * POST /api/accounting/journal
  * Manually posts a multi-line general journal entry directly to the Ledger.
@@ -60,6 +311,39 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
     const data = req.body; // sanitized and verified by validateRequestBody
 
     const result = await runInTransaction("AccountingService", async (tx) => {
+      const journalDate = data.date ?? new Date();
+      if (!Number.isFinite(journalDate.getTime())) {
+        const error: any = new Error("INVALID_JOURNAL_DATE");
+        error.code = "INVALID_JOURNAL_DATE";
+        throw error;
+      }
+
+      // Serialize manual posting against period lock/unlock operations. The period
+      // row lock is held until this journal transaction commits or rolls back.
+      const matchingPeriods = await tx.$queryRaw<Array<{ id: string; isLocked: boolean }>>(
+        Prisma.sql`SELECT id, "isLocked"
+          FROM "accounting_periods"
+          WHERE "tenantId" = ${tenantId}
+            AND "startDate" <= ${journalDate}
+            AND "endDate" >= ${journalDate}
+          FOR UPDATE`
+      );
+      if (matchingPeriods.length === 0) {
+        const error: any = new Error("ACCOUNTING_PERIOD_NOT_CONFIGURED");
+        error.code = "ACCOUNTING_PERIOD_NOT_CONFIGURED";
+        throw error;
+      }
+      if (matchingPeriods.length !== 1) {
+        const error: any = new Error("ACCOUNTING_PERIOD_OVERLAP");
+        error.code = "ACCOUNTING_PERIOD_OVERLAP";
+        throw error;
+      }
+      if (matchingPeriods[0]?.isLocked) {
+        const error: any = new Error("ACCOUNTING_PERIOD_LOCKED");
+        error.code = "ACCOUNTING_PERIOD_LOCKED";
+        throw error;
+      }
+
       const sumDebits = data.lines.reduce((sum: number, l: any) => sum + l.debit, 0);
       const sumCredits = data.lines.reduce((sum: number, l: any) => sum + l.credit, 0);
 
@@ -95,7 +379,7 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
       const entry = await tx.journalEntry.create({
         data: {
           tenantId,
-          date: new Date(),
+          date: journalDate,
           sourceType: "MANUAL",
           status: "POSTED",
           description: data.description || "قيد محاسبي يدوي",
@@ -160,6 +444,18 @@ accountingRouter.post("/journal", authenticateToken, requireRoles([Role.PLATFORM
     });
   } catch (err: any) {
     if (err instanceof OfflineDatabaseError) return res.status(503).json({ success: false, offline: true, message: "Database unavailable." });
+    if (err?.code === "ACCOUNTING_PERIOD_NOT_CONFIGURED") {
+      return res.status(409).json({ success: false, error: err.code });
+    }
+    if (err?.code === "ACCOUNTING_PERIOD_LOCKED") {
+      return res.status(423).json({ success: false, error: err.code });
+    }
+    if (err?.code === "ACCOUNTING_PERIOD_OVERLAP") {
+      return res.status(409).json({ success: false, error: err.code });
+    }
+    if (err?.code === "INVALID_JOURNAL_DATE") {
+      return res.status(400).json({ success: false, error: err.code });
+    }
     return res.status(400).json({
       error: "JOURNAL_FAILED",
       message: err.message || err

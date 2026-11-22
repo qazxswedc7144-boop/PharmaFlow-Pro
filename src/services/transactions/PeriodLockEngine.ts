@@ -1,26 +1,49 @@
-
 import { db, getCurrentUserSession } from '@/core/db';
 import { PeriodLockedError, ErrorManager } from '@/core/errors';
+import { AccountingPeriodSyncService } from '@/features/accounting/services/AccountingPeriodSyncService';
 
 export class PeriodLockEngine {
   static async isPeriodLocked(dateStr: string): Promise<boolean> {
     try {
       const date = new Date(dateStr);
-      const periods = await db.accountingPeriods.toArray();
-      const matchingPeriod = periods.find(p => {
-        const start = new Date(p.Start_Date);
-        const end = new Date(p.End_Date);
-        return date >= start && date <= end;
+      if (typeof dateStr !== 'string' || !dateStr.trim() || !Number.isFinite(date.getTime())) {
+        throw new Error('ACCOUNTING_PERIOD_DATE_INVALID: تاريخ العملية المحاسبية غير صالح.');
+      }
+
+      const periods = await AccountingPeriodSyncService.getPeriods({ forceRefresh: true });
+      const matchingPeriods = periods.filter((period) => {
+        const legacy = period as any;
+        const start = new Date(period.Start_Date || period.startDate || legacy.start_date || '');
+        const end = new Date(period.End_Date || period.endDate || legacy.end_date || '');
+        return Number.isFinite(start.getTime()) &&
+          Number.isFinite(end.getTime()) &&
+          date >= start &&
+          date <= end;
       });
-      return matchingPeriod ? matchingPeriod.Is_Locked : false;
+
+      if (matchingPeriods.length === 0) {
+        throw new Error('ACCOUNTING_PERIOD_NOT_CONFIGURED: لا توجد فترة محاسبية معتمدة تغطي تاريخ العملية.');
+      }
+      if (matchingPeriods.length !== 1) {
+        throw new Error('ACCOUNTING_PERIOD_AMBIGUOUS: تتداخل أكثر من فترة محاسبية مع تاريخ العملية.');
+      }
+      const matchingPeriod = matchingPeriods[0];
+      if (!matchingPeriod) throw new Error('ACCOUNTING_PERIOD_NOT_CONFIGURED');
+      const legacy = matchingPeriod as any;
+      return matchingPeriod.Is_Locked === true || matchingPeriod.isLocked === true || legacy.is_locked === true;
     } catch (error) {
-      ErrorManager.handleError(error, { module: 'ACCOUNTING', action: 'CHECK_PERIOD_LOCK', showToast: false });
-      return false;
+      const normalizedError = ErrorManager.handleError(error, {
+        module: 'ACCOUNTING',
+        action: 'CHECK_PERIOD_LOCK',
+        showToast: false,
+      });
+      // A failed authoritative lookup must never be interpreted as an open period.
+      throw normalizedError;
     }
   }
 
   static async lockPeriod(periodId: string) {
-    return await db.accountingPeriods.update(periodId, { Is_Locked: true, Locked_At: new Date().toISOString() });
+    return await AccountingPeriodSyncService.setLocked(periodId, true);
   }
 
   static async validateOperation(dateStr: string, operationName?: string) {
@@ -44,14 +67,15 @@ export class PeriodLockEngine {
       console.warn('[PeriodLockEngine] Skipping seedDefaultPeriod: No active tenant session.');
       return;
     }
-    
+
     const count = await db.accountingPeriods.count();
     if (count === 0) {
       const now = new Date();
       await db.accountingPeriods.add({
-        id: 'DEFAULT-PERIOD',
+        id: `DEFAULT-PERIOD-${tenantId}`,
+        tenantId,
         Start_Date: new Date(now.getFullYear(), 0, 1).toISOString(),
-        End_Date: new Date(now.getFullYear(), 11, 31).toISOString(),
+        End_Date: new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999).toISOString(),
         Is_Locked: false
       });
     }

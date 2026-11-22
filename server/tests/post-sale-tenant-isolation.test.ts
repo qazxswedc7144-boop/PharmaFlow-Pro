@@ -85,7 +85,10 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
         expect(text).toContain('tenantId');
         expect(values).toContain('INV-1');
         expect(values).toContain('tenant-A');
-        return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
+        return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT', date: new Date() }];
+      }
+      if (text.includes('accounting_periods')) {
+        return [{ id: 'period-1', isLocked: false }];
       }
       if (text.includes('products') || text.includes('stockQuantity')) {
         return [{ id: 'prod-1', stockQuantity: 100, version: 1, tenantId: 'tenant-A' }];
@@ -93,7 +96,7 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       if (text.includes('inventory_batches')) {
         return [{ id: 'batch-1', batchNumber: 'B-001', stockQuantity: 200, cost: 10, expiryDate: new Date(Date.now() + 864000000), version: 1 }];
       }
-      return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
+      return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT', date: new Date() }];
     });
     fakeTx.account.findFirst.mockResolvedValue({ id: 'ACC-1', version: 1, name: 'Cash' });
     fakeTx.account.findUnique.mockResolvedValue({ id: 'ACC-1', version: 1, name: 'Cash' });
@@ -160,7 +163,10 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
         expect(text).toContain('tenantId');
         expect(values).toContain('INV-1');
         expect(values).toContain('tenant-A');
-        return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
+        return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT', date: new Date() }];
+      }
+      if (text.includes('accounting_periods')) {
+        return [{ id: 'period-1', isLocked: false }];
       }
       if (text.includes('products') || text.includes('stockQuantity')) {
         return [{ id: 'prod-1', stockQuantity: 100, version: 1, tenantId: 'tenant-A' }];
@@ -168,7 +174,7 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
       if (text.includes('inventory_batches')) {
         return [{ id: 'batch-1', batchNumber: 'B-001', stockQuantity: 200, cost: 10, expiryDate: new Date(Date.now() + 864000000), version: 1 }];
       }
-      return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
+      return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT', date: new Date() }];
     });
     fakeTx.account.findFirst.mockResolvedValue({ id: 'ACC-1', version: 1, name: 'Cash' });
     fakeTx.account.findUnique.mockResolvedValue({ id: 'ACC-1', version: 1, name: 'Cash' });

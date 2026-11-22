@@ -1,6 +1,7 @@
 
 import { useState, useMemo, useEffect, useRef, useCallback, KeyboardEvent } from 'react';
 import { db } from '@/core/db';
+import { PeriodLockEngine } from '@/services/transactions/PeriodLockEngine';
 import { Product, InvoiceStatus, InvoiceItem, PaymentStatus, Supplier } from '@/types';
 import { useUI, useInventory, useAccounting } from '@/contexts/AppContext';
 import { useUIStore } from '@/store/useUIStore';
@@ -338,9 +339,11 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
   useEffect(() => {
     const checkLock = async () => {
       try {
-        const locked = await db.isDateLocked(header.date || "");
+        const locked = await PeriodLockEngine.isPeriodLocked(header.date || "");
         setIsPeriodLockedStatus(locked);
       } catch (e) {
+        // Draft editing remains available offline; authoritative posting still fails closed on the server.
+        setIsPeriodLockedStatus(typeof navigator === 'undefined' || navigator.onLine !== false);
         console.error("checkLock failed:", e);
       }
     };
@@ -522,7 +525,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
 
   const persistToDB = useCallback(async () => {
     try {
-      const isPeriodLocked = await db.isDateLocked(header.date || "") && !isAdmin;
+      const isPeriodLocked = isPeriodLockedStatus && !isAdmin;
       if (isPeriodLocked || isDuplicate || !salesPolicy || !pricingState.result || pricingState.error) return;
       
       setIsAutoSaving(true);
@@ -561,7 +564,7 @@ export const useSales = (onNavigate?: (view: string, params?: Record<string, unk
     } finally {
       setIsAutoSaving(false);
     }
-  }, [header, items, vTotalSum, isDuplicate, isAdmin, isLocked, editingInvoiceId, currency, salesPolicy, pricingState]);
+  }, [header, items, vTotalSum, isDuplicate, isAdmin, isLocked, isPeriodLockedStatus, editingInvoiceId, currency, salesPolicy, pricingState]);
 
   const selectProduct = useCallback(async (p: Product) => {
     try {

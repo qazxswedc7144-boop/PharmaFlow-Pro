@@ -117,9 +117,9 @@ export class FinancialTransactionService {
     }
 
     const invoiceLockRows = await tx.$queryRaw<
-      Array<{ id: string; documentStatus: string; status: string }>
+      Array<{ id: string; documentStatus: string; status: string; date: Date }>
     >`
-      SELECT id, "documentStatus", status
+      SELECT id, "documentStatus", status, date
         FROM "invoices"
        WHERE id = ${invoice.id} AND "tenantId" = ${tenantId}
        FOR UPDATE
@@ -132,6 +132,10 @@ export class FinancialTransactionService {
       );
     }
 
+    // Use the date read under the invoice row lock; a concurrent draft edit
+    // must not make the period check and the posted journal use different dates.
+    const invoiceDate = lockedInvoice.date;
+
     // Re-check inside the lock. No race is possible from this point on.
     if (
       lockedInvoice.documentStatus === 'POSTED' ||
@@ -143,6 +147,49 @@ export class FinancialTransactionService {
         `ALREADY_POSTED: Invoice ${invoice.invoiceNumber} is already posted ` +
         `(status=${lockedInvoice.status}, documentStatus=${lockedInvoice.documentStatus}).`
       );
+    }
+
+    // PUR-006: PostgreSQL is the authoritative period-lock source.
+    // Lock the matching period row in the same transaction as invoice, stock,
+    // and ledger writes so a concurrent close cannot race this posting.
+    const matchingPeriods = await tx.$queryRaw<Array<{ id: string; isLocked: boolean }>>`
+      SELECT id, "isLocked"
+        FROM "accounting_periods"
+       WHERE "tenantId" = ${tenantId}
+         AND "startDate" <= ${invoiceDate}
+         AND "endDate" >= ${invoiceDate}
+       ORDER BY "startDate" DESC
+       FOR UPDATE
+    `;
+
+    if (matchingPeriods.length === 0) {
+      const error: any = new Error(
+        "ACCOUNTING_PERIOD_NOT_CONFIGURED: لا توجد فترة محاسبية معتمدة تغطي تاريخ الفاتورة. قم بمزامنة أو إنشاء الفترة أولاً."
+      );
+      error.code = "ACCOUNTING_PERIOD_NOT_CONFIGURED";
+      throw error;
+    }
+
+    if (matchingPeriods.length !== 1) {
+      const error: any = new Error(
+        "ACCOUNTING_PERIOD_AMBIGUOUS: تتداخل أكثر من فترة محاسبية مع تاريخ الفاتورة. يلزم تصحيح الفترات قبل الترحيل."
+      );
+      error.code = "ACCOUNTING_PERIOD_AMBIGUOUS";
+      throw error;
+    }
+
+    const matchingPeriod = matchingPeriods[0];
+    if (!matchingPeriod) {
+      const error: any = new Error("ACCOUNTING_PERIOD_NOT_CONFIGURED");
+      error.code = "ACCOUNTING_PERIOD_NOT_CONFIGURED";
+      throw error;
+    }
+    if (matchingPeriod.isLocked) {
+      const error: any = new Error(
+        "ACCOUNTING_PERIOD_LOCKED: الفترة المحاسبية لتاريخ الفاتورة مغلقة، ولا يمكن ترحيلها."
+      );
+      error.code = "ACCOUNTING_PERIOD_LOCKED";
+      throw error;
     }
 
     // Revalidate sale pricing at the posting boundary. A draft must not become
@@ -372,7 +419,7 @@ export class FinancialTransactionService {
     // 5. Create general ledger Journal Entry
     const journalEntry = await tx.journalEntry.create({
       data: {
-        date: invoice.date,
+        date: invoiceDate,
         sourceId: invoice.id,
         sourceType: "INVOICE",
         referenceId: invoice.invoiceNumber,

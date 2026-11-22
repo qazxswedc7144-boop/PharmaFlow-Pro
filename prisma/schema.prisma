@@ -794,6 +794,7 @@ model Tenant {
   customers           Customer[]
   suppliers           Supplier[]
   invoices            Invoice[]
+  accountingPeriods   AccountingPeriod[]
   accounts            Account[]
   journalEntries      JournalEntry[]
   branchTransfers     BranchTransfer[]
@@ -815,6 +816,25 @@ model Tenant {
   salesPolicy         TenantSalesPolicy?
 
   @@map("tenants")
+}
+
+model AccountingPeriod {
+  id        String   @id @default(uuid())
+  clientId  String
+  startDate DateTime
+  endDate   DateTime
+  isLocked  Boolean  @default(false)
+  lockedBy  String?
+  lockedAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, clientId])
+  @@index([tenantId, startDate, endDate])
+  @@index([tenantId, isLocked])
+  @@map("accounting_periods")
 }
 
 model TenantSalesPolicy {

@@ -43,6 +43,7 @@ function createTx() {
       id: "invoice-financial-price-policy",
       documentStatus: "DRAFT",
       status: "DRAFT",
+      date: new Date("2026-11-22T10:00:00.000Z"),
     }]),
     tenantSalesPolicy: {
       findUnique: vi.fn().mockResolvedValue({

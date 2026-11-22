@@ -276,6 +276,235 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(report.body.summary.totalCredits).toBeGreaterThan(0);
   });
 
+  it("blocks posting in a locked tenant period before inventory or ledger writes", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const period = await prisma.accountingPeriod.findUnique({
+      where: { tenantId_clientId: { tenantId: ctx.tenantAId, clientId: "CI-DEFAULT-A" } },
+    });
+    expect(period).toBeTruthy();
+
+    const beforeProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
+    const beforeBatch = await prisma.inventoryBatch.findFirst({
+      where: { tenantId: ctx.tenantAId, productId: ctx.productAId },
+    });
+
+    const created = await request(ctx, "/api/invoices/create", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        invoiceNumber: `PERIOD-CLOSED-${ctx.suffix}`,
+        type: "SALE",
+        totalAmount: 10,
+        paymentStatus: "UNPAID",
+        items: [{ productId: ctx.productAId, qty: 1, price: 10 }],
+      },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+
+    const locked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/lock", {
+      method: "PATCH",
+      token: ctx.tokenA,
+    });
+    expect(locked.status, JSON.stringify(locked.body)).toBe(200);
+    expect(locked.body.period.isLocked).toBe(true);
+
+    try {
+      const rejected = await request(ctx, "/api/invoices/post", {
+        method: "POST",
+        token: ctx.tokenA,
+        body: { invoiceId: created.body.invoice.id },
+      });
+      expect(rejected.status).toBe(423);
+      expect(rejected.body.error).toBe("ACCOUNTING_PERIOD_LOCKED");
+
+      const storedInvoice = await prisma.invoice.findFirst({
+        where: { id: created.body.invoice.id, tenantId: ctx.tenantAId },
+      });
+      expect(storedInvoice?.status).toBe("DRAFT");
+      expect(storedInvoice?.documentStatus).toBe("ACTIVE");
+
+      const [journalCount, movementCount, afterProduct, afterBatch] = await Promise.all([
+        prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId, sourceId: created.body.invoice.id } }),
+        prisma.inventoryMovement.count({ where: { tenantId: ctx.tenantAId, referenceId: created.body.invoice.id } }),
+        prisma.product.findUnique({ where: { id: ctx.productAId } }),
+        prisma.inventoryBatch.findFirst({ where: { tenantId: ctx.tenantAId, productId: ctx.productAId } }),
+      ]);
+      expect(journalCount).toBe(0);
+      expect(movementCount).toBe(0);
+      expect(afterProduct?.stockQuantity).toBe(beforeProduct?.stockQuantity);
+      expect(afterBatch?.stockQuantity).toBe(beforeBatch?.stockQuantity);
+    } finally {
+      const unlocked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/unlock", {
+        method: "PATCH",
+        token: ctx.tokenA,
+      });
+      expect(unlocked.status).toBe(200);
+    }
+  });
+
+  it("blocks direct manual journal posting in a locked period without changing ledger rows or account balances", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const [debitAccount, creditAccount] = await Promise.all([
+      prisma.account.create({
+        data: {
+          tenantId: ctx.tenantAId,
+          code: `MANUAL-D-${ctx.suffix}`,
+          name: "CI Manual Journal Debit",
+          type: "ASSET",
+          balance: 125,
+        },
+      }),
+      prisma.account.create({
+        data: {
+          tenantId: ctx.tenantAId,
+          code: `MANUAL-C-${ctx.suffix}`,
+          name: "CI Manual Journal Credit",
+          type: "EQUITY",
+          balance: 250,
+        },
+      }),
+    ]);
+    const before = {
+      debitBalance: Number(debitAccount.balance),
+      creditBalance: Number(creditAccount.balance),
+      journalEntries: await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId } }),
+      journalLines: await prisma.journalLine.count({ where: { tenantId: ctx.tenantAId } }),
+    };
+
+    const locked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/lock", {
+      method: "PATCH",
+      token: ctx.tokenA,
+    });
+    expect(locked.status, JSON.stringify(locked.body)).toBe(200);
+    expect(locked.body.period.isLocked).toBe(true);
+
+    try {
+      const rejected = await request(ctx, "/api/accounting/journal", {
+        method: "POST",
+        token: ctx.tokenA,
+        body: {
+          date: "2026-11-22T12:00:00.000Z",
+          description: "CI direct manual journal against locked period",
+          lines: [
+            { accountId: debitAccount.id, debit: 25, credit: 0 },
+            { accountId: creditAccount.id, debit: 0, credit: 25 },
+          ],
+        },
+      });
+
+      expect(rejected.status).toBe(423);
+      expect(rejected.body.error).toBe("ACCOUNTING_PERIOD_LOCKED");
+
+      const [afterDebit, afterCredit, journalEntries, journalLines] = await Promise.all([
+        prisma.account.findFirst({ where: { id: debitAccount.id, tenantId: ctx.tenantAId } }),
+        prisma.account.findFirst({ where: { id: creditAccount.id, tenantId: ctx.tenantAId } }),
+        prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId } }),
+        prisma.journalLine.count({ where: { tenantId: ctx.tenantAId } }),
+      ]);
+      expect(Number(afterDebit?.balance)).toBe(before.debitBalance);
+      expect(Number(afterCredit?.balance)).toBe(before.creditBalance);
+      expect(journalEntries).toBe(before.journalEntries);
+      expect(journalLines).toBe(before.journalLines);
+    } finally {
+      const unlocked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/unlock", {
+        method: "PATCH",
+        token: ctx.tokenA,
+      });
+      expect(unlocked.status).toBe(200);
+    }
+  });
+
+  it("fails closed when the authenticated tenant has no configured accounting period", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    await prisma.accountingPeriod.deleteMany({ where: { tenantId: ctx.tenantBId } });
+
+    const rejected = await request(ctx, "/api/invoices/post", {
+      method: "POST",
+      token: ctx.tokenB,
+      body: { invoiceId: ctx.invoiceBId },
+    });
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.error).toBe("ACCOUNTING_PERIOD_NOT_CONFIGURED");
+
+    const [journalCount, storedInvoice] = await Promise.all([
+      prisma.journalEntry.count({ where: { tenantId: ctx.tenantBId, sourceId: ctx.invoiceBId } }),
+      prisma.invoice.findFirst({ where: { id: ctx.invoiceBId, tenantId: ctx.tenantBId } }),
+    ]);
+    expect(journalCount).toBe(0);
+    expect(storedInvoice?.status).toBe("DRAFT");
+    expect(storedInvoice?.documentStatus).toBe("ACTIVE");
+  });
+
+  it("bootstraps periods once per tenant and rejects overlapping period creation", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    await prisma.accountingPeriod.deleteMany({ where: { tenantId: ctx.tenantBId } });
+
+    const bootstrap = await request(ctx, "/api/accounting/periods/bootstrap", {
+      method: "POST",
+      token: ctx.tokenB,
+      body: {
+        periods: [{
+          clientId: "LEGACY-PERIOD-B",
+          startDate: "2026-01-01T00:00:00.000Z",
+          endDate: "2026-12-31T23:59:59.999Z",
+          isLocked: false,
+        }],
+      },
+    });
+    expect(bootstrap.status, JSON.stringify(bootstrap.body)).toBe(201);
+    expect(bootstrap.body.periods).toHaveLength(1);
+    expect(bootstrap.body.periods[0].clientId).toBe("LEGACY-PERIOD-B");
+
+    const repeatedBootstrap = await request(ctx, "/api/accounting/periods/bootstrap", {
+      method: "POST",
+      token: ctx.tokenB,
+      body: {
+        periods: [{
+          clientId: "OTHER-PERIOD-B",
+          startDate: "2027-01-01T00:00:00.000Z",
+          endDate: "2027-12-31T23:59:59.999Z",
+          isLocked: false,
+        }],
+      },
+    });
+    expect(repeatedBootstrap.status).toBe(409);
+    expect(repeatedBootstrap.body.error).toBe("ACCOUNTING_PERIODS_ALREADY_INITIALIZED");
+
+    const overlapping = await request(ctx, "/api/accounting/periods", {
+      method: "POST",
+      token: ctx.tokenB,
+      body: {
+        clientId: "OVERLAPPING-PERIOD-B",
+        startDate: "2026-06-01T00:00:00.000Z",
+        endDate: "2027-05-31T23:59:59.999Z",
+        isLocked: false,
+      },
+    });
+    expect(overlapping.status).toBe(409);
+    expect(overlapping.body.error).toBe("ACCOUNTING_PERIOD_OVERLAP");
+
+    const tenantA = await prisma.accountingPeriod.findMany({ where: { tenantId: ctx.tenantAId } });
+    const tenantB = await prisma.accountingPeriod.findMany({ where: { tenantId: ctx.tenantBId } });
+    expect(tenantA.map((period) => period.clientId)).toEqual(["CI-DEFAULT-A"]);
+    expect(tenantB.map((period) => period.clientId)).toEqual(["LEGACY-PERIOD-B"]);
+  });
+
+  it("exposes accounting periods only inside the authenticated tenant", async () => {
+    const ctx = getContext();
+    const [tenantA, tenantB] = await Promise.all([
+      request(ctx, "/api/accounting/periods", { token: ctx.tokenA }),
+      request(ctx, "/api/accounting/periods", { token: ctx.tokenB }),
+    ]);
+    expect(tenantA.status).toBe(200);
+    expect(tenantB.status).toBe(200);
+    expect(tenantA.body.periods.map((period: any) => period.clientId)).toEqual(["CI-DEFAULT-A"]);
+    expect(tenantB.body.periods.map((period: any) => period.clientId)).toEqual(["LEGACY-PERIOD-B"]);
+  });
+
   it("persists lock acquire, extend, and release audit events in PostgreSQL", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");

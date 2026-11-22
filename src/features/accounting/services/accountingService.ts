@@ -274,7 +274,7 @@ export const accountingService = {
   recordVoucher: async (type: 'دخل' | 'خرج', name: string, amount: number, category: string, notes: string, partnerId?: string, allocations?: Record<string, number | { amount: number, note?: string }>) => {
     const today = new Date().toISOString();
     authService.assertPermission('CREATE_VOUCHER', 'إنشاء سند مالي (قبض/صرف)');
-    periodService.validatePeriod(today);
+    await periodService.validatePeriod(today);
     
     // Normalize allocations to handle both number and object formats
     const normalizedAllocations: Record<string, { amount: number, note?: string }> = {};
@@ -398,7 +398,7 @@ export const accountingService = {
   performAutoAdjustment: async (pointId: string, diff: number) => {
     const today = new Date().toISOString();
     authService.assertPermission('FULL_ACCESS', 'إجراء تسوية آلية للحسابات');
-    periodService.validatePeriod(today);
+    await periodService.validatePeriod(today);
 
     return await db.runTransaction(async () => {
       const entryId = db.generateId('ADJ');
