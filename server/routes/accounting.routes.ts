@@ -125,7 +125,7 @@ accountingRouter.post("/periods/bootstrap", authenticateToken,
 
     try {
       const created = await runInTransaction("AccountingPeriodBootstrap", async (tx) => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${tenantId}, 0))`;
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${tenantId}, 0))::text AS lock_acquired`;
         const existingCount = await tx.accountingPeriod.count({ where: { tenantId } });
         if (existingCount > 0) {
           const error: any = new Error("ACCOUNTING_PERIODS_ALREADY_INITIALIZED");
@@ -182,7 +182,7 @@ accountingRouter.post("/periods", authenticateToken,
     if (!period || period.isLocked) return res.status(400).json({ error: "INVALID_ACCOUNTING_PERIOD" });
     try {
       const created = await runInTransaction("AccountingPeriodCreate", async (tx) => {
-        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${tenantId}, 0))`;
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${tenantId}, 0))::text AS lock_acquired`;
         const overlap = await tx.accountingPeriod.findFirst({
           where: { tenantId, startDate: { lte: period.endDate }, endDate: { gte: period.startDate } },
           select: { id: true }
