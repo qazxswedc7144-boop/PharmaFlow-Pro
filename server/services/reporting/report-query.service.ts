@@ -119,11 +119,10 @@ export class ReportQueryService {
     try {
       if (prisma && prisma.account) {
         const rows = await prisma.account.findMany({
+          // Account.tenantId is required by the PostgreSQL schema.
+// System accounts are tenant-scoped too; tenantId: null is not a valid filter.
           where: {
-            OR: [
-              { tenantId: filters.tenantId },
-              { tenantId: null } // System default accounts
-            ]
+            tenantId: filters.tenantId
           },
           orderBy: { code: "asc" }
         });
