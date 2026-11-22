@@ -87,6 +87,9 @@ describe('FinancialTransactionService - Tenant Isolation', () => {
         expect(values).toContain('tenant-A');
         return [{ id: 'INV-1', documentStatus: 'ACTIVE', status: 'DRAFT' }];
       }
+      if (text.includes('accounting_periods')) {
+        return [{ id: 'period-1', isLocked: false }];
+      }
       if (text.includes('products') || text.includes('stockQuantity')) {
         return [{ id: 'prod-1', stockQuantity: 100, version: 1, tenantId: 'tenant-A' }];
       }
