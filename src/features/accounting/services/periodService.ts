@@ -31,6 +31,14 @@ export const periodService = {
    */
   getPeriods: async () => await AccountingPeriodRepository.getAll(),
 
+  /** إنشاء فترة محاسبية جديدة عبر الخادم */
+  createPeriod: async (startDate: string, endDate: string) =>
+    await AccountingPeriodRepository.createPeriod(startDate, endDate),
+
+  /** إعادة فتح فترة محاسبية بصلاحية إدارية */
+  openPeriod: async (periodId: string) =>
+    await AccountingPeriodRepository.openPeriod(periodId),
+
   /**
    * إغلاق فترة مالية بشكل نهائي
    */
