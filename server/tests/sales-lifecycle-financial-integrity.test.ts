@@ -8,6 +8,19 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 import { configurationService } from '@/services/config/configurationService';
 import { FIFOEngine } from '@/features/inventory/services/fifoEngine';
 
+vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
+  AccountingPeriodSyncService: {
+    getPeriods: vi.fn().mockResolvedValue([{
+      id: 'TEST-OPEN-PERIOD',
+      Start_Date: '1900-01-01T00:00:00.000Z',
+      End_Date: '2200-12-31T23:59:59.999Z',
+      Is_Locked: false,
+    }]),
+    setLocked: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+
 describe('Sales Lifecycle Integrity Audit & Verification Suite', () => {
   const tenantId = 'TENANT-SALES-PROD-01';
   const branchId = 'BRH-SALES-MAIN-01';
