@@ -12,6 +12,17 @@ import { validateRequestBody } from "../middleware/validate.js";
 export const accountingRouter = Router();
 
 /**
+ * Stored account balances use the universal debit-minus-credit convention.
+ * Positive values are debit balances; negative values are credit balances,
+ * regardless of the account's normal balance type.
+ */
+export function toTrialBalanceColumns(rawBalance: number): { debit: number; credit: number } {
+  return rawBalance >= 0
+    ? { debit: rawBalance, credit: 0 }
+    : { debit: 0, credit: Math.abs(rawBalance) };
+}
+
+/**
  * POST /api/accounting/journal
  * Manually posts a multi-line general journal entry directly to the Ledger.
  * Uses Row-Level Locking, version checks, and Double-entry balancing enforcement.
@@ -173,23 +184,7 @@ accountingRouter.get("/reports/trial-balance", authenticateToken, async (_req: A
 
     const trialEntries = rawAccounts.map(acc => {
       const balance = Number(acc.balance);
-      let debitSummary = 0;
-      let creditSummary = 0;
-
-      // Depending on account type asset/expense debit increases balance, otherwise credit
-      if (acc.type === "ASSET" || acc.type === "EXPENSE") {
-        if (balance >= 0) {
-          debitSummary = balance;
-        } else {
-          creditSummary = Math.abs(balance);
-        }
-      } else {
-        if (balance >= 0) {
-          creditSummary = balance;
-        } else {
-          debitSummary = Math.abs(balance);
-        }
-      }
+      const { debit: debitSummary, credit: creditSummary } = toTrialBalanceColumns(balance);
 
       cumulativeDebitSum += debitSummary;
       cumulativeCreditSum += creditSummary;
