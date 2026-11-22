@@ -145,6 +145,43 @@ export class FinancialTransactionService {
       );
     }
 
+    // PUR-006: PostgreSQL is the authoritative period-lock source.
+    // Lock the matching period row in the same transaction as invoice, stock,
+    // and ledger writes so a concurrent close cannot race this posting.
+    const matchingPeriods = await tx.$queryRaw<Array<{ id: string; isLocked: boolean }>>`
+      SELECT id, "isLocked"
+        FROM "accounting_periods"
+       WHERE "tenantId" = ${tenantId}
+         AND "startDate" <= ${invoice.date}
+         AND "endDate" >= ${invoice.date}
+       ORDER BY "startDate" DESC
+       FOR UPDATE
+    `;
+
+    if (matchingPeriods.length === 0) {
+      const error: any = new Error(
+        "ACCOUNTING_PERIOD_NOT_CONFIGURED: لا توجد فترة محاسبية معتمدة تغطي تاريخ الفاتورة. قم بمزامنة أو إنشاء الفترة أولاً."
+      );
+      error.code = "ACCOUNTING_PERIOD_NOT_CONFIGURED";
+      throw error;
+    }
+
+    if (matchingPeriods.length !== 1) {
+      const error: any = new Error(
+        "ACCOUNTING_PERIOD_AMBIGUOUS: تتداخل أكثر من فترة محاسبية مع تاريخ الفاتورة. يلزم تصحيح الفترات قبل الترحيل."
+      );
+      error.code = "ACCOUNTING_PERIOD_AMBIGUOUS";
+      throw error;
+    }
+
+    if (matchingPeriods[0].isLocked) {
+      const error: any = new Error(
+        "ACCOUNTING_PERIOD_LOCKED: الفترة المحاسبية لتاريخ الفاتورة مغلقة، ولا يمكن ترحيلها."
+      );
+      error.code = "ACCOUNTING_PERIOD_LOCKED";
+      throw error;
+    }
+
     // Revalidate sale pricing at the posting boundary. A draft must not become
     // postable after its override permission or tenant discount ceiling changes.
     if (invoice.type === InvoiceType.SALE) {
