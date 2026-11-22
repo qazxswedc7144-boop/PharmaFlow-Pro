@@ -111,7 +111,7 @@ export const SupplierRepository = {
     if (voucherIds.length === 0) return [];
 
     const vouchers = await db.vouchers.where('id').anyOf(voucherIds).toArray();
-    const vouchersById = new Map(vouchers.map((voucher: any) => [voucher.id, voucher]));
+    const vouchersById = new Map<string, any>(vouchers.map((voucher: any) => [voucher.id, voucher]));
 
     // Preserve each invoice allocation amount. A voucher may pay several invoices,
     // so voucher.amount would overstate the payment shown against this invoice.
@@ -121,7 +121,7 @@ export const SupplierRepository = {
 
       return [{
         id: voucher.id,
-        voucherId: voucher.voucher_id || voucher.voucherId || voucher.voucherNumber || voucher.id,
+        voucherId: voucher.voucher_id || voucher.voucherNumber || voucher.voucherId || voucher.id,
         date: voucher.date,
         amount: link.Paid_Amount ?? link.amount ?? 0
       }];
