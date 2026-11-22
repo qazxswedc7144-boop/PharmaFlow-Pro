@@ -1,18 +1,30 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { validateOperation } = vi.hoisted(() => ({
+const { validateOperation, getPeriods } = vi.hoisted(() => ({
   validateOperation: vi.fn(),
+  getPeriods: vi.fn(),
+}));
+
+vi.mock('@/core/db', () => ({
+  db: { accountingPeriods: { toArray: getPeriods } },
 }));
 
 vi.mock('@/services/transactions/PeriodLockEngine', () => ({
   PeriodLockEngine: { validateOperation },
 }));
 
-import { periodService } from './periodService';
+import { periodService, PeriodService } from './periodService';
 
 describe('Integrity PeriodService', () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('preserves the existing current-period accessor', async () => {
+    const currentPeriod = { id: 'period-current', Is_Locked: false };
+    getPeriods.mockResolvedValueOnce([currentPeriod]);
+
+    await expect(PeriodService.getCurrentPeriod()).resolves.toBe(currentPeriod);
   });
 
   it('rejects an empty or invalid invoice date before consulting the lock engine', async () => {
