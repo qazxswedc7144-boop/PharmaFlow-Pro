@@ -104,6 +104,45 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
       }, { assets: 0, liabilities: 0, equity: 0 });
       expect(balances.assets).toBe(100);
       expect(balances.liabilities + balances.equity + (pnl.revenue - pnl.expenses)).toBe(100);
+
+      // Exercise the application's report engine against these exact persisted PostgreSQL rows.
+      const { FinancialReportEngine } = await import("../services/reporting/financial-report.engine.js");
+      const filters = {
+        tenantId: ctx.tenantAId,
+        branchId: ctx.branchAId,
+        startDate: "2026-10-01",
+        endDate: "2026-10-02",
+        asOfDate: "2026-10-02",
+      };
+      const reportTrialBalance = await FinancialReportEngine.generateTrialBalance(filters, "phase3-ci");
+      const reportAsset = reportTrialBalance.accounts.find(row => row.id === asset.id);
+      const reportRevenue = reportTrialBalance.accounts.find(row => row.id === revenue.id);
+      const reportExpense = reportTrialBalance.accounts.find(row => row.id === expense.id);
+      expect(reportAsset?.periodDebit).toBe(100);
+      expect(reportRevenue?.periodCredit).toBe(100);
+      expect(reportExpense?.periodDebit).toBe(50);
+      expect(reportTrialBalance.totals.periodDebitTotal).toBe(reportTrialBalance.totals.periodCreditTotal);
+
+      const reportLedger = await FinancialReportEngine.generateGeneralLedger(
+        { ...filters, accountId: asset.id },
+        "phase3-ci"
+      );
+      expect(reportLedger.summary.overallDebits).toBe(100);
+      expect(reportLedger.summary.overallCredits).toBe(0);
+      expect(reportLedger.accounts[0]?.transactions).toHaveLength(1);
+
+      const reportPnl = await FinancialReportEngine.generateProfitLoss(filters, "phase3-ci");
+      expect(reportPnl.totalRevenue).toBe(100);
+      expect(reportPnl.totalOperatingExpenses).toBe(50);
+      expect(reportPnl.netProfit).toBe(50);
+
+      const reportBalanceSheet = await FinancialReportEngine.generateBalanceSheet(
+        { tenantId: ctx.tenantAId, branchId: ctx.branchAId, asOfDate: "2026-10-02" },
+        "phase3-ci"
+      );
+      expect(reportBalanceSheet.totalAssets).toBe(100);
+      expect(reportBalanceSheet.totalLiabilities + reportBalanceSheet.totalEquity).toBe(100);
+      expect(reportBalanceSheet.isBalanced).toBe(true);
     } finally {
       if (createdEntries.length) await prisma.journalEntry.deleteMany({ where: { id: { in: createdEntries }, tenantId: ctx.tenantAId } });
       if (createdAccounts.length) await prisma.account.deleteMany({ where: { id: { in: createdAccounts }, tenantId: ctx.tenantAId } });
