@@ -193,6 +193,16 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const supplier = await prisma.supplier.create({
       data: { tenantId: ctx.tenantAId, name: `CI Trial Balance Supplier ${ctx.suffix}` }
     });
+    const openingSupplierAccount = await prisma.account.findFirst({
+      where: { tenantId: ctx.tenantAId, code: "201001" },
+      select: { balance: true }
+    });
+    const openingRevenueAccount = await prisma.account.findFirst({
+      where: { tenantId: ctx.tenantAId, code: "401001" },
+      select: { balance: true }
+    });
+    const openingSupplierBalance = Number(openingSupplierAccount?.balance ?? 0);
+    const openingRevenueBalance = Number(openingRevenueAccount?.balance ?? 0);
 
     const purchase = await request(ctx, "/api/invoices/create", {
       method: "POST",
@@ -256,8 +266,12 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const supplierAccount = report.body.accounts.find((account: any) => account.code === "201001");
     const revenueAccount = report.body.accounts.find((account: any) => account.code === "401001");
 
-    expect(supplierAccount).toMatchObject({ debit: 0, credit: 8, rawBalance: -8 });
-    expect(revenueAccount).toMatchObject({ debit: 0, credit: 10, rawBalance: -10 });
+    expect(Number(supplierAccount.rawBalance) - openingSupplierBalance).toBe(-8);
+    expect(Number(revenueAccount.rawBalance) - openingRevenueBalance).toBe(-10);
+    expect(supplierAccount.debit).toBe(0);
+    expect(revenueAccount.debit).toBe(0);
+    expect(supplierAccount.credit).toBeCloseTo(Math.abs(openingSupplierBalance - 8));
+    expect(revenueAccount.credit).toBeCloseTo(Math.abs(openingRevenueBalance - 10));
     expect(report.body.summary.totalDebits).toBeGreaterThan(0);
     expect(report.body.summary.totalCredits).toBeGreaterThan(0);
   });
