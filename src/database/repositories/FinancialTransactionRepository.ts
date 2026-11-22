@@ -1,8 +1,26 @@
+import Decimal from 'decimal.js-light';
 import { db } from '@/core/db';
 import { FinancialTransaction } from '@/types';
 import { authService } from '@features/auth/services/authService';
 import { useAuthStore } from '@/store/authStore';
 import { generateTransactionUuid } from '@/utils/uuid';
+
+const MONETARY_TOLERANCE = '0.001';
+
+function extractFinitePositiveAmount(ft: any): number | null {
+  if (!ft || typeof ft !== 'object') return null;
+  const raw = ft.Amount !== undefined
+    ? ft.Amount
+    : (ft.amount !== undefined ? ft.amount : ft.Paid_Amount);
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) {
+    return null;
+  }
+  return raw;
+}
+
+function amountsMatch(a: number, b: number): boolean {
+  return new Decimal(a).minus(b).abs().lessThanOrEqualTo(MONETARY_TOLERANCE);
+}
 
 function resolveFinancialTransactionsTable(tx?: any) {
   if (tx !== undefined) {
@@ -137,6 +155,11 @@ export const FinancialTransactionRepository = {
         throw new Error(`INVALID_FINANCIAL_TRANSACTION_DIRECTION: Transaction ${trx.id} has invalid direction (${String(trx.Direction)}).`);
       }
 
+      const origAmount = extractFinitePositiveAmount(trx);
+      if (origAmount === null) {
+        throw new Error(`INVALID_FINANCIAL_TRANSACTION_AMOUNT: Transaction ${trx.id} has missing or invalid positive amount.`);
+      }
+
       const oppositeDirection = trx.Direction === 'Debit' ? 'Credit' : 'Debit';
       const reversalId = idempotencyKey ? `FT-REV-${trx.id}-${idempotencyKey}` : `FT-REV-${trx.id}`;
       
@@ -145,17 +168,42 @@ export const FinancialTransactionRepository = {
       if (existingRev) {
         const expectedTenant = tenantId ?? trx.tenantId;
         const expectedBranch = branchId ?? trx.branchId;
+        const revAmount = extractFinitePositiveAmount(existingRev);
+        const paidAmountMatches = trx.Paid_Amount !== undefined
+          ? (
+              typeof existingRev.Paid_Amount === 'number' &&
+              Number.isFinite(existingRev.Paid_Amount) &&
+              amountsMatch(existingRev.Paid_Amount, trx.Paid_Amount)
+            )
+          : (
+              existingRev.Paid_Amount === undefined ||
+              (
+                typeof existingRev.Paid_Amount === 'number' &&
+                Number.isFinite(existingRev.Paid_Amount) &&
+                amountsMatch(existingRev.Paid_Amount, origAmount)
+              )
+            );
+
         const isConsistentExistingRev =
           existingRev.isReversal === true &&
           existingRev.reversalOf === trx.id &&
           existingRev.isDeleted !== true &&
           existingRev.Direction === oppositeDirection &&
+          revAmount !== null &&
+          amountsMatch(revAmount, origAmount) &&
+          paidAmountMatches &&
+          existingRev.Reference_ID === trx.Reference_ID &&
+          (existingRev.Reference_Table ?? null) === (trx.Reference_Table ?? null) &&
+          (!options?.referenceTable || existingRev.Reference_Table === options.referenceTable) &&
+          (existingRev.Transaction_Type ?? null) === (trx.Transaction_Type ?? null) &&
+          (existingRev.Entity_Type ?? null) === (trx.Entity_Type ?? null) &&
+          (existingRev.Entity_Name ?? null) === (trx.Entity_Name ?? null) &&
           (!expectedTenant || existingRev.tenantId === expectedTenant) &&
           (!expectedBranch || existingRev.branchId === expectedBranch);
 
         if (!isConsistentExistingRev) {
           throw new Error(
-            'FINANCIAL_TRANSACTION_REVERSAL_INCONSISTENT: Existing reversal record is incomplete or inconsistent with source transaction scope.'
+            'FINANCIAL_TRANSACTION_REVERSAL_INCONSISTENT: Existing reversal record is incomplete or inconsistent with source transaction identity, amount, reference, or scope.'
           );
         }
 

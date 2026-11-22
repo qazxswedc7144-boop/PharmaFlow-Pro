@@ -1814,4 +1814,579 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
     expect(rev.branchId).toBe(branchId);
     expect(rev.Amount).toBe(325);
   });
+
+  // 40. Receipt with incorrect Transaction_Type
+  it('40. Rejects receipt cancellation when FinancialTransaction has incorrect or missing Transaction_Type and rolls back all tables', async () => {
+    const fixtureWrong = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-WRONG-TX-TYPE',
+      invoiceId: 'INV-FT-WRONG-TX-TYPE'
+    });
+    await db.financialTransactions.update(fixtureWrong.ftId, { Transaction_Type: 'Payment' as any });
+    const beforeWrong = await captureDbSnapshot();
+
+    const resWrong = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixtureWrong.id,
+      type: 'RECEIPT',
+      partnerId: fixtureWrong.partnerId,
+      amount: fixtureWrong.amount
+    });
+
+    expect(resWrong.success).toBe(false);
+    expect(resWrong.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_TYPE_MISMATCH/i);
+    expect(await captureDbSnapshot()).toEqual(beforeWrong);
+
+    const fixtureMissing = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-MISSING-TX-TYPE',
+      partnerId: 'CUST-MISSING-TX',
+      invoiceId: 'INV-FT-MISSING-TX-TYPE'
+    });
+    await db.financialTransactions.update(fixtureMissing.ftId, { Transaction_Type: undefined as any });
+    const beforeMissing = await captureDbSnapshot();
+
+    const resMissing = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixtureMissing.id,
+      type: 'RECEIPT',
+      partnerId: fixtureMissing.partnerId,
+      amount: fixtureMissing.amount
+    });
+
+    expect(resMissing.success).toBe(false);
+    expect(resMissing.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_TYPE_MISMATCH/i);
+    expect(await captureDbSnapshot()).toEqual(beforeMissing);
+  });
+
+  // 41. Payment with incorrect Transaction_Type
+  it('41. Rejects payment cancellation when FinancialTransaction has incorrect or missing Transaction_Type and rolls back all tables', async () => {
+    const fixtureWrong = await seedCompletePaymentFixture({
+      id: 'PYMT-FT-WRONG-TX-TYPE',
+      invoiceId: 'PUR-FT-WRONG-TX-TYPE'
+    });
+    await db.financialTransactions.update(fixtureWrong.ftId, { Transaction_Type: 'Receipt' as any });
+    const beforeWrong = await captureDbSnapshot();
+
+    const resWrong = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixtureWrong.id,
+      type: 'PAYMENT',
+      partnerId: fixtureWrong.partnerId,
+      amount: fixtureWrong.amount
+    });
+
+    expect(resWrong.success).toBe(false);
+    expect(resWrong.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_TYPE_MISMATCH/i);
+    expect(await captureDbSnapshot()).toEqual(beforeWrong);
+
+    const fixtureMissing = await seedCompletePaymentFixture({
+      id: 'PYMT-FT-MISSING-TX-TYPE',
+      partnerId: 'SUPP-MISSING-TX',
+      invoiceId: 'PUR-FT-MISSING-TX-TYPE'
+    });
+    await db.financialTransactions.update(fixtureMissing.ftId, { Transaction_Type: '' as any });
+    const beforeMissing = await captureDbSnapshot();
+
+    const resMissing = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: fixtureMissing.id,
+      type: 'PAYMENT',
+      partnerId: fixtureMissing.partnerId,
+      amount: fixtureMissing.amount
+    });
+
+    expect(resMissing.success).toBe(false);
+    expect(resMissing.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_TYPE_MISMATCH/i);
+    expect(await captureDbSnapshot()).toEqual(beforeMissing);
+  });
+
+  // 42. Incorrect Entity_Type on original FinancialTransaction
+  it('42. Rejects cancellation when FinancialTransaction has incorrect Entity_Type for receipt or payment and rolls back all tables', async () => {
+    const receiptFixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-WRONG-ENT-TYPE',
+      invoiceId: 'INV-FT-WRONG-ENT-TYPE'
+    });
+    await db.financialTransactions.update(receiptFixture.ftId, { Entity_Type: 'Supplier' as any });
+    const beforeReceipt = await captureDbSnapshot();
+
+    const resReceipt = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: receiptFixture.id,
+      type: 'RECEIPT',
+      partnerId: receiptFixture.partnerId,
+      amount: receiptFixture.amount
+    });
+
+    expect(resReceipt.success).toBe(false);
+    expect(resReceipt.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_ENTITY_TYPE_MISMATCH/i);
+    expect(await captureDbSnapshot()).toEqual(beforeReceipt);
+
+    const paymentFixture = await seedCompletePaymentFixture({
+      id: 'PYMT-FT-WRONG-ENT-TYPE',
+      invoiceId: 'PUR-FT-WRONG-ENT-TYPE'
+    });
+    await db.financialTransactions.update(paymentFixture.ftId, { Entity_Type: 'Customer' as any });
+    const beforePayment = await captureDbSnapshot();
+
+    const resPayment = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: paymentFixture.id,
+      type: 'PAYMENT',
+      partnerId: paymentFixture.partnerId,
+      amount: paymentFixture.amount
+    });
+
+    expect(resPayment.success).toBe(false);
+    expect(resPayment.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_ENTITY_TYPE_MISMATCH/i);
+    expect(await captureDbSnapshot()).toEqual(beforePayment);
+  });
+
+  // 43. Incorrect Entity_Name on original FinancialTransaction
+  it('43. Rejects cancellation when FinancialTransaction Entity_Name does not match persisted voucher partner and rolls back all tables', async () => {
+    const receiptFixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-FT-WRONG-ENT-NAME',
+      partnerId: 'CUST-AUTH-01',
+      invoiceId: 'INV-FT-WRONG-ENT-NAME'
+    });
+    await db.financialTransactions.update(receiptFixture.ftId, { Entity_Name: 'CUST-IMPERSONATOR' });
+    const beforeReceipt = await captureDbSnapshot();
+
+    const resReceipt = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: receiptFixture.id,
+      type: 'RECEIPT',
+      partnerId: receiptFixture.partnerId,
+      amount: receiptFixture.amount
+    });
+
+    expect(resReceipt.success).toBe(false);
+    expect(resReceipt.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_ENTITY_NAME_MISMATCH/i);
+    expect(await captureDbSnapshot()).toEqual(beforeReceipt);
+
+    const paymentFixture = await seedCompletePaymentFixture({
+      id: 'PYMT-FT-WRONG-ENT-NAME',
+      partnerId: 'SUPP-AUTH-01',
+      invoiceId: 'PUR-FT-WRONG-ENT-NAME'
+    });
+    await db.financialTransactions.update(paymentFixture.ftId, { Entity_Name: 'SUPP-OTHER-99' });
+    const beforePayment = await captureDbSnapshot();
+
+    const resPayment = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: paymentFixture.id,
+      type: 'PAYMENT',
+      partnerId: paymentFixture.partnerId,
+      amount: paymentFixture.amount
+    });
+
+    expect(resPayment.success).toBe(false);
+    expect(resPayment.error?.message).toMatch(/VOUCHER_FINANCIAL_TRANSACTION_ENTITY_NAME_MISMATCH/i);
+    expect(await captureDbSnapshot()).toEqual(beforePayment);
+  });
+
+  // 44. Existing deterministic reversal with a different amount
+  it('44. Rejects pre-existing reversal with mismatched Amount or Paid_Amount and rolls back all tables', async () => {
+    const fixtureAmt = await seedCompleteReceiptFixture({
+      id: 'RCPT-EXISTING-REV-BAD-AMT',
+      amount: 400,
+      invoiceId: 'INV-EXISTING-REV-BAD-AMT'
+    });
+    const idemKeyAmt = 'IDEM-EXISTING-REV-BAD-AMT';
+    const existingRevIdAmt = `FT-REV-${fixtureAmt.ftId}-${idemKeyAmt}`;
+
+    await db.financialTransactions.put({
+      id: existingRevIdAmt,
+      Transaction_ID: existingRevIdAmt,
+      Transaction_Type: 'Receipt',
+      Reference_ID: fixtureAmt.id,
+      Reference_Table: 'Vouchers',
+      Entity_Type: 'Customer',
+      Entity_Name: fixtureAmt.partnerId,
+      Amount: 150, // Tampered amount (original is 400)
+      Paid_Amount: 150,
+      Direction: 'Debit',
+      Transaction_Date: '2026-01-16',
+      tenantId,
+      branchId,
+      isReversal: true,
+      reversalOf: fixtureAmt.ftId,
+      isDeleted: false
+    } as any);
+
+    const beforeAmt = await captureDbSnapshot();
+
+    const resAmt = await WorkflowOrchestrator.execute(
+      voucherCancellationWorkflow,
+      {
+        id: fixtureAmt.id,
+        type: 'RECEIPT',
+        partnerId: fixtureAmt.partnerId,
+        amount: fixtureAmt.amount
+      },
+      { idempotencyKey: idemKeyAmt }
+    );
+
+    expect(resAmt.success).toBe(false);
+    expect(resAmt.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_INCONSISTENT/i);
+    expect(await captureDbSnapshot()).toEqual(beforeAmt);
+
+    // Also reject when Amount matches but Paid_Amount differs
+    const fixturePaid = await seedCompletePaymentFixture({
+      id: 'PYMT-EXISTING-REV-BAD-PAID',
+      amount: 300,
+      invoiceId: 'PUR-EXISTING-REV-BAD-PAID'
+    });
+    const idemKeyPaid = 'IDEM-EXISTING-REV-BAD-PAID';
+    const existingRevIdPaid = `FT-REV-${fixturePaid.ftId}-${idemKeyPaid}`;
+
+    await db.financialTransactions.put({
+      id: existingRevIdPaid,
+      Transaction_ID: existingRevIdPaid,
+      Transaction_Type: 'Payment',
+      Reference_ID: fixturePaid.id,
+      Reference_Table: 'Vouchers',
+      Entity_Type: 'Supplier',
+      Entity_Name: fixturePaid.partnerId,
+      Amount: 300,
+      Paid_Amount: 290, // Tampered Paid_Amount
+      Direction: 'Credit',
+      Transaction_Date: '2026-01-16',
+      tenantId,
+      branchId,
+      isReversal: true,
+      reversalOf: fixturePaid.ftId,
+      isDeleted: false
+    } as any);
+
+    const beforePaid = await captureDbSnapshot();
+
+    const resPaid = await WorkflowOrchestrator.execute(
+      voucherCancellationWorkflow,
+      {
+        id: fixturePaid.id,
+        type: 'PAYMENT',
+        partnerId: fixturePaid.partnerId,
+        amount: fixturePaid.amount
+      },
+      { idempotencyKey: idemKeyPaid }
+    );
+
+    expect(resPaid.success).toBe(false);
+    expect(resPaid.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_INCONSISTENT/i);
+    expect(await captureDbSnapshot()).toEqual(beforePaid);
+  });
+
+  // 45. Existing deterministic reversal with incorrect Reference_Table (both repository-level and workflow-level rollback)
+  it('45. Rejects pre-existing reversal with incorrect Reference_Table at both repository and workflow layers with full rollback', async () => {
+    const fixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-EXISTING-REV-BAD-REFTBL',
+      amount: 400,
+      invoiceId: 'INV-EXISTING-REV-BAD-REFTBL'
+    });
+    const idemKey = 'IDEM-EXISTING-REV-BAD-REFTBL';
+    const existingRevId = `FT-REV-${fixture.ftId}-${idemKey}`;
+
+    // Use a different Reference_ID so workflow Phase 1 does not short-circuit before hitting reverseTransactions reuse guard
+    await db.financialTransactions.put({
+      id: existingRevId,
+      Transaction_ID: existingRevId,
+      Transaction_Type: 'Receipt',
+      Reference_ID: 'OTHER-DOC-REF',
+      Reference_Table: 'Sales_Invoices',
+      Entity_Type: 'Customer',
+      Entity_Name: fixture.partnerId,
+      Amount: fixture.amount,
+      Paid_Amount: fixture.amount,
+      Direction: 'Debit',
+      Transaction_Date: '2026-01-16',
+      tenantId,
+      branchId,
+      isReversal: true,
+      reversalOf: fixture.ftId,
+      isDeleted: false
+    } as any);
+
+    const beforeWorkflow = await captureDbSnapshot();
+
+    const resWorkflow = await WorkflowOrchestrator.execute(
+      voucherCancellationWorkflow,
+      {
+        id: fixture.id,
+        type: 'RECEIPT',
+        partnerId: fixture.partnerId,
+        amount: fixture.amount
+      },
+      { idempotencyKey: idemKey }
+    );
+
+    expect(resWorkflow.success).toBe(false);
+    expect(resWorkflow.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_INCONSISTENT/i);
+    expect(await captureDbSnapshot()).toEqual(beforeWorkflow);
+
+    // Direct repository test where Reference_ID matches but ONLY Reference_Table is wrong
+    await db.financialTransactions.update(existingRevId, {
+      Reference_ID: fixture.id,
+      Reference_Table: 'Sales_Invoices'
+    });
+    const beforeRepo = await captureDbSnapshot();
+
+    await expect(
+      db.transaction('rw', [db.financialTransactions], async (tx) => {
+        await FinancialTransactionRepository.reverseTransactions(
+          fixture.id,
+          tx,
+          idemKey,
+          tenantId,
+          branchId,
+          { requireActiveTransaction: true, referenceTable: 'Vouchers' }
+        );
+      })
+    ).rejects.toThrow(/FINANCIAL_TRANSACTION_REVERSAL_INCONSISTENT/i);
+
+    expect(await captureDbSnapshot()).toEqual(beforeRepo);
+  });
+
+  // 46. Existing deterministic reversal with mismatched transaction identity fields (Transaction_Type, Entity_Type, Entity_Name)
+  it('46. Rejects pre-existing reversal with mismatched Transaction_Type, Entity_Type, or Entity_Name and rolls back all tables', async () => {
+    const cases: Array<{
+      label: string;
+      voucherId: string;
+      invoiceId: string;
+      partnerId: string;
+      overrides: Record<string, any>;
+    }> = [
+      {
+        label: 'Transaction_Type',
+        voucherId: 'RCPT-REV-BAD-TXTYPE',
+        invoiceId: 'INV-REV-BAD-TXTYPE',
+        partnerId: 'CUST-REV-ID-1',
+        overrides: { Transaction_Type: 'Payment' }
+      },
+      {
+        label: 'Entity_Type',
+        voucherId: 'RCPT-REV-BAD-ENTTYPE',
+        invoiceId: 'INV-REV-BAD-ENTTYPE',
+        partnerId: 'CUST-REV-ID-2',
+        overrides: { Entity_Type: 'Supplier' }
+      },
+      {
+        label: 'Entity_Name',
+        voucherId: 'RCPT-REV-BAD-ENTNAME',
+        invoiceId: 'INV-REV-BAD-ENTNAME',
+        partnerId: 'CUST-REV-ID-3',
+        overrides: { Entity_Name: 'CUST-DIFFERENT' }
+      }
+    ];
+
+    for (const c of cases) {
+      const fixture = await seedCompleteReceiptFixture({
+        id: c.voucherId,
+        partnerId: c.partnerId,
+        invoiceId: c.invoiceId
+      });
+      const idemKey = `IDEM-${c.voucherId}`;
+      const existingRevId = `FT-REV-${fixture.ftId}-${idemKey}`;
+
+      await db.financialTransactions.put({
+        id: existingRevId,
+        Transaction_ID: existingRevId,
+        Transaction_Type: 'Receipt',
+        Reference_ID: fixture.id,
+        Reference_Table: 'Vouchers',
+        Entity_Type: 'Customer',
+        Entity_Name: fixture.partnerId,
+        Amount: fixture.amount,
+        Paid_Amount: fixture.amount,
+        Direction: 'Debit',
+        Transaction_Date: '2026-01-16',
+        tenantId,
+        branchId,
+        isReversal: true,
+        reversalOf: fixture.ftId,
+        isDeleted: false,
+        ...c.overrides
+      } as any);
+
+      const before = await captureDbSnapshot();
+
+      const res = await WorkflowOrchestrator.execute(
+        voucherCancellationWorkflow,
+        {
+          id: fixture.id,
+          type: 'RECEIPT',
+          partnerId: fixture.partnerId,
+          amount: fixture.amount
+        },
+        { idempotencyKey: idemKey }
+      );
+
+      expect(res.success, `Expected failure for mismatched ${c.label}`).toBe(false);
+      expect(res.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_INCONSISTENT/i);
+      expect(await captureDbSnapshot()).toEqual(before);
+    }
+  });
+
+  // 47. Postcondition verification rejects compensating reversal with wrong amount, Reference_Table, or identity fields
+  it('47. Rejects cancellation and rolls back all tables if postcondition finds compensating reversal with wrong amount or identity', async () => {
+    const postconditionCases: Array<{
+      label: string;
+      voucherId: string;
+      invoiceId: string;
+      partnerId: string;
+      badFields: Record<string, any>;
+    }> = [
+      {
+        label: 'wrong amount',
+        voucherId: 'RCPT-POST-BAD-AMT',
+        invoiceId: 'INV-POST-BAD-AMT',
+        partnerId: 'CUST-POST-1',
+        badFields: { Amount: 999, Paid_Amount: 999 }
+      },
+      {
+        label: 'wrong Reference_Table',
+        voucherId: 'RCPT-POST-BAD-REFTBL',
+        invoiceId: 'INV-POST-BAD-REFTBL',
+        partnerId: 'CUST-POST-2',
+        badFields: { Reference_Table: 'Sales_Invoices' }
+      },
+      {
+        label: 'wrong Transaction_Type',
+        voucherId: 'RCPT-POST-BAD-TXTYPE',
+        invoiceId: 'INV-POST-BAD-TXTYPE',
+        partnerId: 'CUST-POST-3',
+        badFields: { Transaction_Type: 'Payment' }
+      },
+      {
+        label: 'wrong Entity_Type',
+        voucherId: 'RCPT-POST-BAD-ENTTYPE',
+        invoiceId: 'INV-POST-BAD-ENTTYPE',
+        partnerId: 'CUST-POST-4',
+        badFields: { Entity_Type: 'Supplier' }
+      },
+      {
+        label: 'wrong Entity_Name',
+        voucherId: 'RCPT-POST-BAD-ENTNAME',
+        invoiceId: 'INV-POST-BAD-ENTNAME',
+        partnerId: 'CUST-POST-5',
+        badFields: { Entity_Name: 'CUST-WRONG' }
+      }
+    ];
+
+    for (const pc of postconditionCases) {
+      const fixture = await seedCompleteReceiptFixture({
+        id: pc.voucherId,
+        partnerId: pc.partnerId,
+        invoiceId: pc.invoiceId
+      });
+      const before = await captureDbSnapshot();
+
+      vi.spyOn(FinancialTransactionRepository, 'reverseTransactions').mockImplementationOnce(
+        async (_refId, tx) => {
+          const ftTbl = tx.table('financialTransactions');
+          const revId = `FT-REV-${fixture.ftId}-POST`;
+          await ftTbl.put({
+            id: revId,
+            Transaction_ID: revId,
+            Transaction_Type: 'Receipt',
+            Reference_ID: fixture.id,
+            Reference_Table: 'Vouchers',
+            Entity_Type: 'Customer',
+            Entity_Name: fixture.partnerId,
+            Amount: fixture.amount,
+            Paid_Amount: fixture.amount,
+            Direction: 'Debit',
+            tenantId,
+            branchId,
+            isReversal: true,
+            reversalOf: fixture.ftId,
+            isDeleted: false,
+            ...pc.badFields
+          });
+          await ftTbl.update(fixture.ftId, { isDeleted: true, reversedBy: revId });
+          return { reversedCount: 1, reversalIds: [revId] };
+        }
+      );
+
+      const res = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+        id: fixture.id,
+        type: 'RECEIPT',
+        partnerId: fixture.partnerId,
+        amount: fixture.amount
+      });
+
+      expect(res.success, `Expected postcondition rejection for ${pc.label}`).toBe(false);
+      expect(res.error?.message).toMatch(/FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED/i);
+      expect(await captureDbSnapshot()).toEqual(before);
+    }
+  });
+
+  // 48. Successful receipt and payment cancellations each create exactly one valid compensating reversal with full identity & amount integrity
+  it('48. Successful receipt and payment cancellations each create exactly one valid compensating reversal with matching identity and amount', async () => {
+    const receiptFixture = await seedCompleteReceiptFixture({
+      id: 'RCPT-IDENTITY-OK',
+      partnerId: 'CUST-IDENTITY-OK',
+      amount: 425.5,
+      invoiceId: 'INV-IDENTITY-OK'
+    });
+
+    const receiptRes = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: receiptFixture.id,
+      type: 'RECEIPT',
+      partnerId: receiptFixture.partnerId,
+      amount: receiptFixture.amount
+    });
+    expect(receiptRes.success).toBe(true);
+
+    const receiptFts = await db.financialTransactions.where('Reference_ID').equals(receiptFixture.id).toArray();
+    expect(receiptFts).toHaveLength(2);
+    const receiptOrig = receiptFts.find((f: any) => f.id === receiptFixture.ftId)!;
+    const receiptRevs = receiptFts.filter((f: any) => f.isReversal === true);
+    expect(receiptRevs).toHaveLength(1);
+    const receiptRev = receiptRevs[0]!;
+
+    expect(receiptOrig.isDeleted).toBe(true);
+    expect(receiptOrig.reversedBy).toBe(receiptRev.id);
+    expect(receiptRev.isReversal).toBe(true);
+    expect(receiptRev.reversalOf).toBe(receiptOrig.id);
+    expect(receiptRev.isDeleted).toBe(false);
+    expect(receiptRev.Direction).toBe('Debit');
+    expect(receiptRev.Amount).toBe(425.5);
+    expect(receiptRev.Paid_Amount).toBe(425.5);
+    expect(receiptRev.Reference_ID).toBe(receiptFixture.id);
+    expect(receiptRev.Reference_Table).toBe('Vouchers');
+    expect(receiptRev.Transaction_Type).toBe('Receipt');
+    expect(receiptRev.Entity_Type).toBe('Customer');
+    expect(receiptRev.Entity_Name).toBe(receiptFixture.partnerId);
+    expect(receiptRev.tenantId).toBe(tenantId);
+    expect(receiptRev.branchId).toBe(branchId);
+
+    const paymentFixture = await seedCompletePaymentFixture({
+      id: 'PYMT-IDENTITY-OK',
+      partnerId: 'SUPP-IDENTITY-OK',
+      amount: 310.75,
+      invoiceId: 'PUR-IDENTITY-OK'
+    });
+
+    const paymentRes = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
+      id: paymentFixture.id,
+      type: 'PAYMENT',
+      partnerId: paymentFixture.partnerId,
+      amount: paymentFixture.amount
+    });
+    expect(paymentRes.success).toBe(true);
+
+    const paymentFts = await db.financialTransactions.where('Reference_ID').equals(paymentFixture.id).toArray();
+    expect(paymentFts).toHaveLength(2);
+    const paymentOrig = paymentFts.find((f: any) => f.id === paymentFixture.ftId)!;
+    const paymentRevs = paymentFts.filter((f: any) => f.isReversal === true);
+    expect(paymentRevs).toHaveLength(1);
+    const paymentRev = paymentRevs[0]!;
+
+    expect(paymentOrig.isDeleted).toBe(true);
+    expect(paymentOrig.reversedBy).toBe(paymentRev.id);
+    expect(paymentRev.isReversal).toBe(true);
+    expect(paymentRev.reversalOf).toBe(paymentOrig.id);
+    expect(paymentRev.isDeleted).toBe(false);
+    expect(paymentRev.Direction).toBe('Credit');
+    expect(paymentRev.Amount).toBe(310.75);
+    expect(paymentRev.Paid_Amount).toBe(310.75);
+    expect(paymentRev.Reference_ID).toBe(paymentFixture.id);
+    expect(paymentRev.Reference_Table).toBe('Vouchers');
+    expect(paymentRev.Transaction_Type).toBe('Payment');
+    expect(paymentRev.Entity_Type).toBe('Supplier');
+    expect(paymentRev.Entity_Name).toBe(paymentFixture.partnerId);
+    expect(paymentRev.tenantId).toBe(tenantId);
+    expect(paymentRev.branchId).toBe(branchId);
+  });
 });

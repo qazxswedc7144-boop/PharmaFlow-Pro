@@ -1,9 +1,27 @@
+import Decimal from 'decimal.js-light';
 import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
 import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
+
+const MONETARY_TOLERANCE = '0.001';
+
+function extractFinitePositiveAmount(ft: any): number | null {
+  if (!ft || typeof ft !== 'object') return null;
+  const raw = ft.Amount !== undefined
+    ? ft.Amount
+    : (ft.amount !== undefined ? ft.amount : ft.Paid_Amount);
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) {
+    return null;
+  }
+  return raw;
+}
+
+function amountsMatch(a: number, b: number): boolean {
+  return new Decimal(a).minus(b).abs().lessThanOrEqualTo(MONETARY_TOLERANCE);
+}
 
 export interface VoucherCancellationInput {
   id: string;
@@ -118,8 +136,9 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     if (payment) persistedRecords.push({ source: 'payments', record: payment });
 
     // 2. Validate mandatory persisted type, authoritative amount, and partner across every persisted record
-    const persistedTypes: string[] = [];
+    const persistedTypes: Array<'RECEIPT' | 'PAYMENT'> = [];
     const persistedAmounts: number[] = [];
+    const persistedPartners: string[] = [];
     for (const { source, record } of persistedRecords) {
       const rawType = record.type ?? record.voucherType;
       if (typeof rawType !== 'string' || rawType.trim().length === 0) {
@@ -154,7 +173,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       persistedAmounts.push(rawAmount);
 
       const rawPartner =
-        input.type === 'RECEIPT'
+        normalizedType === 'RECEIPT'
           ? (record.partnerId ?? record.customer_id ?? record.customerId ?? record.partner_id)
           : (record.partnerId ?? record.supplier_id ?? record.supplierId ?? record.partner_id);
       const persistedPartnerId = typeof rawPartner === 'string' ? rawPartner.trim() : '';
@@ -168,20 +187,40 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
           `VOUCHER_PARTNER_MISMATCH: Persisted ${source} partner (${persistedPartnerId}) does not match requested partner (${inputPartnerId}).`
         );
       }
+      persistedPartners.push(persistedPartnerId);
     }
 
     const authoritativeType = persistedTypes[0];
+    if (authoritativeType === undefined) {
+      throw new Error(
+        `VOUCHER_TYPE_MISSING: Persisted voucher [${voucherId}] has no authoritative type.`
+      );
+    }
     for (let i = 1; i < persistedTypes.length; i++) {
       if (persistedTypes[i] !== authoritativeType) {
         throw new Error(
-          `VOUCHER_TYPE_CONFLICT: Persisted records for voucher [${voucherId}] have conflicting types (${String(authoritativeType)} vs ${String(persistedTypes[i])}).`
+          `VOUCHER_TYPE_CONFLICT: Persisted records for voucher [${voucherId}] have conflicting types (${authoritativeType} vs ${String(persistedTypes[i])}).`
         );
       }
     }
     if (authoritativeType !== input.type) {
       throw new Error(
-        `VOUCHER_TYPE_MISMATCH: Persisted voucher type (${String(authoritativeType)}) does not match requested type (${input.type}).`
+        `VOUCHER_TYPE_MISMATCH: Persisted voucher type (${authoritativeType}) does not match requested type (${input.type}).`
       );
+    }
+
+    const authoritativePartnerId = persistedPartners[0];
+    if (authoritativePartnerId === undefined) {
+      throw new Error(
+        `VOUCHER_PARTNER_MISSING: Persisted voucher [${voucherId}] has no authoritative partner identifier.`
+      );
+    }
+    for (let i = 1; i < persistedPartners.length; i++) {
+      if (persistedPartners[i] !== authoritativePartnerId) {
+        throw new Error(
+          `VOUCHER_PARTNER_MISMATCH: Persisted records for voucher [${voucherId}] have conflicting partners (${authoritativePartnerId} vs ${String(persistedPartners[i])}).`
+        );
+      }
     }
 
     const authoritativeAmount = persistedAmounts[0];
@@ -192,7 +231,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     }
     for (let i = 1; i < persistedAmounts.length; i++) {
       const candidateAmount = persistedAmounts[i];
-      if (candidateAmount === undefined || Math.abs(candidateAmount - authoritativeAmount) > 0.001) {
+      if (candidateAmount === undefined || !amountsMatch(candidateAmount, authoritativeAmount)) {
         throw new Error(
           `VOUCHER_AMOUNT_INCONSISTENT: Persisted records for voucher [${voucherId}] have conflicting amounts (${authoritativeAmount} vs ${String(candidateAmount)}).`
         );
@@ -207,27 +246,27 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
 
     // 3. Validate partner existence & balance (preserve cash customer / cash supplier behavior)
     let partnerNextBalance: number | null = null;
-    if (input.type === 'RECEIPT') {
-      if (inputPartnerId !== 'عميل نقدي') {
-        const customer = await customersTbl.get(inputPartnerId);
+    if (authoritativeType === 'RECEIPT') {
+      if (authoritativePartnerId !== 'عميل نقدي') {
+        const customer = await customersTbl.get(authoritativePartnerId);
         if (!customer) {
-          throw new Error(`CUSTOMER_NOT_FOUND: Customer ${inputPartnerId} for receipt cancellation does not exist.`);
+          throw new Error(`CUSTOMER_NOT_FOUND: Customer ${authoritativePartnerId} for receipt cancellation does not exist.`);
         }
         const currentBalance = customer.balance ?? 0;
         if (typeof currentBalance !== 'number' || !Number.isFinite(currentBalance)) {
-          throw new Error(`INVALID_PARTNER_BALANCE: Customer ${inputPartnerId} has a non-finite balance.`);
+          throw new Error(`INVALID_PARTNER_BALANCE: Customer ${authoritativePartnerId} has a non-finite balance.`);
         }
         partnerNextBalance = Math.round((currentBalance + authoritativeAmount) * 100) / 100;
       }
     } else {
-      if (inputPartnerId !== 'مورد نقدي') {
-        const supplier = await suppliersTbl.get(inputPartnerId);
+      if (authoritativePartnerId !== 'مورد نقدي') {
+        const supplier = await suppliersTbl.get(authoritativePartnerId);
         if (!supplier) {
-          throw new Error(`SUPPLIER_NOT_FOUND: Supplier ${inputPartnerId} for payment cancellation does not exist.`);
+          throw new Error(`SUPPLIER_NOT_FOUND: Supplier ${authoritativePartnerId} for payment cancellation does not exist.`);
         }
         const currentBalance = supplier.balance ?? 0;
         if (typeof currentBalance !== 'number' || !Number.isFinite(currentBalance)) {
-          throw new Error(`INVALID_PARTNER_BALANCE: Supplier ${inputPartnerId} has a non-finite balance.`);
+          throw new Error(`INVALID_PARTNER_BALANCE: Supplier ${authoritativePartnerId} has a non-finite balance.`);
         }
         partnerNextBalance = Math.round((currentBalance + authoritativeAmount) * 100) / 100;
       }
@@ -408,24 +447,51 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     }
 
     const activeFt = activeFts[0];
-    const rawFtAmount = activeFt.Amount !== undefined
-      ? activeFt.Amount
-      : (activeFt.amount !== undefined ? activeFt.amount : activeFt.Paid_Amount);
-    if (
-      typeof rawFtAmount !== 'number' ||
-      !Number.isFinite(rawFtAmount) ||
-      rawFtAmount <= 0 ||
-      Math.abs(rawFtAmount - authoritativeAmount) > 0.01
-    ) {
+    if (activeFt.Reference_ID !== voucherId) {
+      throw new Error(
+        `VOUCHER_FINANCIAL_TRANSACTION_REFERENCE_MISMATCH: Financial transaction [${activeFt.id}] Reference_ID (${String(activeFt.Reference_ID)}) does not match voucher [${voucherId}].`
+      );
+    }
+
+    const rawFtAmount = extractFinitePositiveAmount(activeFt);
+    const activeFtPaidAmountValid =
+      activeFt.Paid_Amount === undefined ||
+      (
+        typeof activeFt.Paid_Amount === 'number' &&
+        Number.isFinite(activeFt.Paid_Amount) &&
+        amountsMatch(activeFt.Paid_Amount, authoritativeAmount)
+      );
+    if (rawFtAmount === null || !amountsMatch(rawFtAmount, authoritativeAmount) || !activeFtPaidAmountValid) {
       throw new Error(
         `VOUCHER_FINANCIAL_TRANSACTION_AMOUNT_MISMATCH: Financial transaction [${activeFt.id}] amount (${String(rawFtAmount)}) does not match voucher amount (${authoritativeAmount}).`
       );
     }
 
-    const expectedFtDirection = input.type === 'RECEIPT' ? 'Credit' : 'Debit';
+    const expectedTransactionType = authoritativeType === 'RECEIPT' ? 'Receipt' : 'Payment';
+    if (activeFt.Transaction_Type !== expectedTransactionType) {
+      throw new Error(
+        `VOUCHER_FINANCIAL_TRANSACTION_TYPE_MISMATCH: Financial transaction [${activeFt.id}] Transaction_Type (${String(activeFt.Transaction_Type)}) does not match expected type (${expectedTransactionType}) for ${authoritativeType}.`
+      );
+    }
+
+    const expectedEntityType = authoritativeType === 'RECEIPT' ? 'Customer' : 'Supplier';
+    if (activeFt.Entity_Type !== expectedEntityType) {
+      throw new Error(
+        `VOUCHER_FINANCIAL_TRANSACTION_ENTITY_TYPE_MISMATCH: Financial transaction [${activeFt.id}] Entity_Type (${String(activeFt.Entity_Type)}) does not match expected entity type (${expectedEntityType}) for ${authoritativeType}.`
+      );
+    }
+
+    const actualEntityName = typeof activeFt.Entity_Name === 'string' ? activeFt.Entity_Name.trim() : '';
+    if (!actualEntityName || actualEntityName !== authoritativePartnerId) {
+      throw new Error(
+        `VOUCHER_FINANCIAL_TRANSACTION_ENTITY_NAME_MISMATCH: Financial transaction [${activeFt.id}] Entity_Name (${String(activeFt.Entity_Name)}) does not match persisted voucher partner (${authoritativePartnerId}).`
+      );
+    }
+
+    const expectedFtDirection = authoritativeType === 'RECEIPT' ? 'Credit' : 'Debit';
     if (activeFt.Direction !== expectedFtDirection) {
       throw new Error(
-        `VOUCHER_FINANCIAL_TRANSACTION_DIRECTION_MISMATCH: Financial transaction [${activeFt.id}] direction (${String(activeFt.Direction)}) does not match expected direction (${expectedFtDirection}) for ${input.type}.`
+        `VOUCHER_FINANCIAL_TRANSACTION_DIRECTION_MISMATCH: Financial transaction [${activeFt.id}] direction (${String(activeFt.Direction)}) does not match expected direction (${expectedFtDirection}) for ${authoritativeType}.`
       );
     }
 
@@ -434,12 +500,12 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     // =========================================================================
     const now = new Date().toISOString();
 
-    if (input.type === 'RECEIPT') {
+    if (authoritativeType === 'RECEIPT') {
       if (receipt) {
         await receiptsTbl.delete(voucherId);
       }
       if (partnerNextBalance !== null) {
-        await customersTbl.update(inputPartnerId, {
+        await customersTbl.update(authoritativePartnerId, {
           balance: partnerNextBalance,
           updatedAt: now
         });
@@ -449,7 +515,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
         await paymentsTbl.delete(voucherId);
       }
       if (partnerNextBalance !== null) {
-        await suppliersTbl.update(inputPartnerId, {
+        await suppliersTbl.update(authoritativePartnerId, {
           balance: partnerNextBalance,
           updatedAt: now
         });
@@ -513,21 +579,40 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       );
     }
     if (
-      reversalRecord.isReversal !== true ||
-      reversalRecord.reversalOf !== activeFt.id ||
-      reversalRecord.isDeleted === true ||
-      reversalRecord.Direction !== expectedReversalDirection
-    ) {
-      throw new Error(
-        'FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED: Compensating reversal record failed integrity postconditions.'
-      );
-    }
-    if (
       reversalRecord.tenantId !== expectedTenantId ||
       reversalRecord.branchId !== expectedBranchId
     ) {
       throw new Error(
         'FINANCIAL_TRANSACTION_REVERSAL_SCOPE_VIOLATION: Compensating reversal record does not match expected tenant and branch scope.'
+      );
+    }
+    const reversalAmount = extractFinitePositiveAmount(reversalRecord);
+    const reversalPaidAmountValid =
+      reversalRecord.Paid_Amount === undefined ||
+      (
+        typeof reversalRecord.Paid_Amount === 'number' &&
+        Number.isFinite(reversalRecord.Paid_Amount) &&
+        amountsMatch(reversalRecord.Paid_Amount, rawFtAmount)
+      );
+    const reversalEntityName =
+      typeof reversalRecord.Entity_Name === 'string' ? reversalRecord.Entity_Name.trim() : '';
+
+    if (
+      reversalRecord.isReversal !== true ||
+      reversalRecord.reversalOf !== activeFt.id ||
+      reversalRecord.isDeleted === true ||
+      reversalRecord.Direction !== expectedReversalDirection ||
+      reversalAmount === null ||
+      !amountsMatch(reversalAmount, rawFtAmount) ||
+      !reversalPaidAmountValid ||
+      reversalRecord.Reference_ID !== voucherId ||
+      reversalRecord.Reference_Table !== 'Vouchers' ||
+      reversalRecord.Transaction_Type !== expectedTransactionType ||
+      reversalRecord.Entity_Type !== expectedEntityType ||
+      reversalEntityName !== authoritativePartnerId
+    ) {
+      throw new Error(
+        'FINANCIAL_TRANSACTION_REVERSAL_VERIFICATION_FAILED: Compensating reversal record failed integrity, amount, reference, or identity postconditions.'
       );
     }
 
@@ -544,23 +629,23 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       recordId: voucherId,
       before: {
         id: voucherId,
-        type: input.type,
-        partnerId: inputPartnerId,
+        type: authoritativeType,
+        partnerId: authoritativePartnerId,
         amount: authoritativeAmount
       },
       after: {
         cancelled: true,
         id: voucherId,
-        type: input.type,
-        partnerId: inputPartnerId,
+        type: authoritativeType,
+        partnerId: authoritativePartnerId,
         amount: authoritativeAmount,
         reason: input.reason
       }
     }, tx);
 
     await ProjectionEventBus.publish('VOUCHER_CANCELLED', voucherId, {
-      type: input.type,
-      partnerId: inputPartnerId,
+      type: authoritativeType,
+      partnerId: authoritativePartnerId,
       amount: authoritativeAmount,
       correlationId: ctx.correlationId
     }, tx);
