@@ -358,7 +358,12 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
 
         if (nextLocks[id] === undefined) {
           const invDate = inv.date || inv.Date;
-          nextLocks[id] = await PeriodLockEngine.isPeriodLocked(invDate || '');
+          try {
+            nextLocks[id] = await PeriodLockEngine.isPeriodLocked(invDate || '');
+          } catch {
+            // Unknown lock state is treated as locked in the archive UI.
+            nextLocks[id] = true;
+          }
           updated = true;
         }
       }));
@@ -398,9 +403,16 @@ const InvoicesArchiveModule: React.FC<InvoicesArchiveModuleProps> = ({
     const invDate = inv.date || inv.Date;
     const recordId = inv.entityType === 'SALE' ? (inv.SaleID || inv.id) : (inv.invoiceId || inv.purchase_id || inv.id);
     
-    if (invDate && await PeriodLockEngine.isPeriodLocked(invDate || '') && !isAdmin) {
-      addToast("خطأ حماية: لا يمكن إلغاء مستند يقع ضمن فترة محاسبية مغلقة 🔒", "error");
-      return;
+    if (invDate && !isAdmin) {
+      try {
+        if (await PeriodLockEngine.isPeriodLocked(invDate)) {
+          addToast("خطأ حماية: لا يمكن إلغاء مستند يقع ضمن فترة محاسبية مغلقة 🔒", "error");
+          return;
+        }
+      } catch {
+        addToast("تعذر التحقق من حالة الفترة المحاسبية. أوقف النظام الإلغاء لحماية البيانات.", "error");
+        return;
+      }
     }
 
     const status = inv.InvoiceStatus || inv.invoiceStatus;
