@@ -19,6 +19,15 @@ function extractFinitePositiveAmount(ft: any): number | null {
   return raw;
 }
 
+function extractFinitePositivePaidAmount(ft: any): number | null {
+  if (!ft || typeof ft !== 'object') return null;
+  const raw = ft.Paid_Amount;
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) {
+    return null;
+  }
+  return raw;
+}
+
 function amountsMatch(a: number, b: number): boolean {
   return new Decimal(a).minus(b).abs().lessThanOrEqualTo(MONETARY_TOLERANCE);
 }
@@ -454,16 +463,15 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
     }
 
     const rawFtAmount = extractFinitePositiveAmount(activeFt);
-    const activeFtPaidAmountValid =
-      activeFt.Paid_Amount === undefined ||
-      (
-        typeof activeFt.Paid_Amount === 'number' &&
-        Number.isFinite(activeFt.Paid_Amount) &&
-        amountsMatch(activeFt.Paid_Amount, authoritativeAmount)
-      );
-    if (rawFtAmount === null || !amountsMatch(rawFtAmount, authoritativeAmount) || !activeFtPaidAmountValid) {
+    const activeFtPaidAmount = extractFinitePositivePaidAmount(activeFt);
+    if (
+      rawFtAmount === null ||
+      !amountsMatch(rawFtAmount, authoritativeAmount) ||
+      activeFtPaidAmount === null ||
+      !amountsMatch(activeFtPaidAmount, authoritativeAmount)
+    ) {
       throw new Error(
-        `VOUCHER_FINANCIAL_TRANSACTION_AMOUNT_MISMATCH: Financial transaction [${activeFt.id}] amount (${String(rawFtAmount)}) does not match voucher amount (${authoritativeAmount}).`
+        `VOUCHER_FINANCIAL_TRANSACTION_AMOUNT_MISMATCH: Financial transaction [${activeFt.id}] amount (${String(rawFtAmount)}) or Paid_Amount (${String(activeFt.Paid_Amount)}) is missing, invalid, or does not match voucher amount (${authoritativeAmount}).`
       );
     }
 
@@ -587,13 +595,11 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       );
     }
     const reversalAmount = extractFinitePositiveAmount(reversalRecord);
+    const reversalPaidAmount = extractFinitePositivePaidAmount(reversalRecord);
     const reversalPaidAmountValid =
-      reversalRecord.Paid_Amount === undefined ||
-      (
-        typeof reversalRecord.Paid_Amount === 'number' &&
-        Number.isFinite(reversalRecord.Paid_Amount) &&
-        amountsMatch(reversalRecord.Paid_Amount, rawFtAmount)
-      );
+      reversalPaidAmount !== null &&
+      amountsMatch(reversalPaidAmount, activeFtPaidAmount) &&
+      amountsMatch(reversalPaidAmount, authoritativeAmount);
     const reversalEntityName =
       typeof reversalRecord.Entity_Name === 'string' ? reversalRecord.Entity_Name.trim() : '';
 
@@ -604,6 +610,7 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       reversalRecord.Direction !== expectedReversalDirection ||
       reversalAmount === null ||
       !amountsMatch(reversalAmount, rawFtAmount) ||
+      !amountsMatch(reversalAmount, authoritativeAmount) ||
       !reversalPaidAmountValid ||
       reversalRecord.Reference_ID !== voucherId ||
       reversalRecord.Reference_Table !== 'Vouchers' ||
