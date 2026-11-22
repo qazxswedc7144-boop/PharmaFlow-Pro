@@ -406,7 +406,7 @@ async function cleanup(ctx: PostgresHttpContext): Promise<void> {
 export function definePostgresHttpSuite(
   name: string,
   registerTests: (getContext: () => PostgresHttpContext) => void,
-  options: { includeInvoiceRoutes?: boolean; includeSyncRoutes?: boolean } = {}
+  options: { includeInvoiceRoutes?: boolean; includeSyncRoutes?: boolean; includeAccountingRoutes?: boolean } = {}
 ): void {
   const suite = enabled ? describe : describe.skip;
   suite(name, { concurrent: false }, () => {
