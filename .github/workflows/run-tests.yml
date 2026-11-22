@@ -68,6 +68,7 @@ jobs:
           src/features/sales/hooks/useSales.save-failure.test.ts
           src/features/sales/utils/saleStockAvailability.test.ts
           src/database/repositories/invoice.repository.p2.test.ts
+          src/database/repositories/SupplierRepository.payment-history.test.ts
           src/services/reports/reportEngine.refresh.test.ts
           src/services/integrity/periodService.test.ts
           src/features/accounting/services/AccountingPeriodSyncService.test.ts
