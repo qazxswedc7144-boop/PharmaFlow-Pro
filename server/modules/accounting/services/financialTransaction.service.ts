@@ -296,7 +296,9 @@ export class FinancialTransactionService {
           invoice.id,
           "INVOICE",
           `صرف مبيعات - فاتورة #${invoice.invoiceNumber}`,
-          tenantId
+          tenantId,
+          item.id,
+          invoice.branchId
         );
         
         const fifoCost = new Prisma.Decimal(fifoResult.totalCost.toString());
@@ -374,7 +376,8 @@ export class FinancialTransactionService {
           "INVOICE",
           `توريد مشتريات - فاتورة #${invoice.invoiceNumber}`,
           tenantId,
-          invoice.branchId
+          invoice.branchId,
+          item.id
         );
       }
 
