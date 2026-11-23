@@ -883,19 +883,8 @@ export class SyncProcessorService {
       );
     }
 
-    for (const item of normalizedItems) {
-      await tx.branchInventory.upsert({
-        where: { branchId_productId: { branchId, productId: item.productId } },
-        create: {
-          tenantId,
-          branchId,
-          productId: item.productId,
-          stockQuantity: item.qty
-        },
-        update: { stockQuantity: { increment: item.qty } }
-      });
-    }
-
+    // FifoService.addStock updates BranchInventory from the resulting
+    // branch-scoped layer total inside this same transaction.
     return {
       id: mutationId,
       mutationId,
