@@ -1,0 +1,78 @@
+name: Phase C - Omitted Test Execution
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/phase-c-omitted-tests.yml'
+      - 'app/applet/server/tests/security-patch-2.test.ts'
+      - 'server/tests/idempotency-middleware-security.test.ts'
+      - 'server/tests/p0-hotfix-inventory-isolation.test.ts'
+      - 'server/tests/p0-hotfix-metrics-backup.test.ts'
+      - 'server/tests/p0-hotfix-validation-fifo-isolation.test.ts'
+      - 'server/tests/prisma-recovery.test.ts'
+      - 'server/tests/purchase-lifecycle-financial-integrity.test.ts'
+      - 'server/tests/purchase-phase1-contract-integrity.test.ts'
+      - 'server/tests/purchase-phase2-accounting-integrity.test.ts'
+      - 'server/tests/purchase-phase2-reversal-precision.test.ts'
+      - 'server/tests/purchase-total-enforcement.test.ts'
+      - 'server/tests/supplier-payment-financial-integrity.test.ts'
+      - 'server/tests/sync-cross-tenant-security.test.ts'
+      - 'src/features/catalog/utils/productApplicationPermission.test.ts'
+      - 'src/features/inventory/services/UnifiedInventoryMutationEngine.purchase-transaction.test.ts'
+      - 'src/features/inventory/services/fifoEngine.transactional.test.ts'
+      - 'src/features/sales/services/salesDraftRecovery.service.test.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  omitted-tests:
+    name: Run all 17 previously omitted Vitest files
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+      JWT_SECRET: ci-only-access-secret-32-characters-minimum
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-32-characters-minimum
+      ENCRYPTION_KEY: ci-only-encryption-key-32-characters-minimum
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install exact locked dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Execute all 17 omitted test files
+        run: >-
+          npx vitest run --reporter=verbose --maxWorkers=1 --minWorkers=1
+          app/applet/server/tests/security-patch-2.test.ts
+          server/tests/idempotency-middleware-security.test.ts
+          server/tests/p0-hotfix-inventory-isolation.test.ts
+          server/tests/p0-hotfix-metrics-backup.test.ts
+          server/tests/p0-hotfix-validation-fifo-isolation.test.ts
+          server/tests/prisma-recovery.test.ts
+          server/tests/purchase-lifecycle-financial-integrity.test.ts
+          server/tests/purchase-phase1-contract-integrity.test.ts
+          server/tests/purchase-phase2-accounting-integrity.test.ts
+          server/tests/purchase-phase2-reversal-precision.test.ts
+          server/tests/purchase-total-enforcement.test.ts
+          server/tests/supplier-payment-financial-integrity.test.ts
+          server/tests/sync-cross-tenant-security.test.ts
+          src/features/catalog/utils/productApplicationPermission.test.ts
+          src/features/inventory/services/UnifiedInventoryMutationEngine.purchase-transaction.test.ts
+          src/features/inventory/services/fifoEngine.transactional.test.ts
+          src/features/sales/services/salesDraftRecovery.service.test.ts
