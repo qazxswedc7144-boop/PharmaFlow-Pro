@@ -6,6 +6,7 @@ import { ProductRepository } from '@/features/inventory/services/ProductReposito
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { useAuthStore } from '@/store/authStore';
 import { PriceHistoryRepository } from '@/database/repositories/PriceHistoryRepository';
+import { FIFOEngine } from '@/features/inventory/services/fifoEngine';
 
 describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   const validTenant = 'REAL-TENANT-001';
@@ -14,7 +15,17 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
   const setSessionFixture = (user: any, token: string, refresh: string) => {
     if (!user) {
-      TokenProvider.setSession(user, token, refresh);
+      TokenProvider.setSession(null as any, token, refresh);
+      useAuthStore.setState({
+        user: null,
+        token: token || null,
+        refreshToken: refresh || null,
+        tenantId: null,
+        branchId: null,
+        roles: [],
+        permissions: [],
+        isAuthenticated: false
+      } as any);
       return;
     }
     const normalized = { ...user };
@@ -26,6 +37,29 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     if (normalized.branchId === undefined && normalized.branch_id !== undefined) normalized.branchId = normalized.branch_id;
     if (normalized.branch_id === undefined && normalized.branchId !== undefined) normalized.branch_id = normalized.branchId;
     TokenProvider.setSession(normalized, token, refresh);
+    useAuthStore.setState({
+      user: normalized,
+      token: token || null,
+      refreshToken: refresh || null,
+      tenantId: normalized.tenantId || null,
+      branchId: normalized.branchId || null,
+      roles: normalized.roles || [normalized.role || normalized.Role].filter(Boolean),
+      permissions: normalized.permissions || [],
+      isAuthenticated: Boolean(token && userId)
+    } as any);
+  };
+
+  // Seed pre-existing ownerless legacy rows without triggering current creation hooks.
+  // This models records created before tenant enforcement; production writes stay guarded.
+  const seedLegacyRecord = async (tableName: string, record: Record<string, any>) => {
+    const nativeDb = (db as any).backendDB();
+    const transaction = nativeDb.transaction(tableName, 'readwrite');
+    transaction.objectStore(tableName).put(record);
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('LEGACY_FIXTURE_SEED_FAILED'));
+      transaction.onabort = () => reject(transaction.error || new Error('LEGACY_FIXTURE_SEED_ABORTED'));
+    });
   };
 
   const setTestSession = (tenantId: string, branchId: string) => {
@@ -96,6 +130,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       tenantId: validTenant,
       branchId: validBranch
     } as any);
+    await FIFOEngine.addPurchaseLayer(productId, 100, 10, 'PHASE-C-INITIAL-STOCK', validTenant);
   });
 
   it('1. resetStock without trusted tenant context (forbidden value) throws error', async () => {
@@ -533,6 +568,14 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     const productUnbound = 'PROD-SEC-UNBOUND';
 
     beforeEach(async () => {
+      // Reset both tenant partitions so repeated tests cannot inherit foreign ownership.
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.priceHistory.clear();
+      setSessionFixture({ tenantId: tenantB } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.priceHistory.clear();
+
       setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
       await db.products.put({
         id: productA,
@@ -541,12 +584,11 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         isActive: true
       } as any);
 
-      await db.products.put({
+      await seedLegacyRecord('products', {
         id: productUnbound,
         name: 'Sec Product Unbound',
-        // Intentionally unbound legacy fixture: do not synthesize tenant ownership.
         isActive: true
-      } as any);
+      });
 
       await db.priceHistory.put({
         id: 'PH-SEC-A-1',
@@ -717,8 +759,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
       // Return to Tenant A to seed the intentionally unbound legacy row and Alpha data.
       setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
-      // Seed Unbound Product (no tenantId)
-      await db.products.put({
+      // Seed a pre-existing ownerless legacy product outside current Dexie creation hooks.
+      await seedLegacyRecord('products', {
         id: productUnbound,
         name: 'Unbound Legacy Aspirin',
         barcode: 'BAR-UNBOUND',
@@ -729,7 +771,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         ExpiryDate: expirySoon,
         Is_Active: true,
         is_active: true
-      } as any);
+      });
 
       // Seed Inventory Transactions for productA1:
       // Valid Tenant Alpha transactions (+20, +30)
@@ -759,15 +801,14 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         TransactionType: 'PURCHASE'
       } as any);
 
-      // Return to Tenant Alpha for intentionally unbound legacy rows.
+      // Return to Tenant Alpha; preserve the ownerless legacy transaction as-is.
       setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
-      // Unbound transaction (+50) referencing productA1 without tenantId
-      await db.inventoryTransactions.put({
+      await seedLegacyRecord('inventoryTransactions', {
         id: 'ITX-UNBOUND-1',
         productId: productA1,
         QuantityChange: 50,
         TransactionType: 'ADJUSTMENT'
-      } as any);
+      });
 
       // Seed purchasesByItem for productA1:
       await db.purchasesByItem.put({
@@ -790,13 +831,13 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       } as any);
 
       setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
-      await db.purchasesByItem.put({
+      await seedLegacyRecord('purchasesByItem', {
         id: 'PBI-UNBOUND-1',
         productId: productA1,
         unitCost: 888.0,
         supplierId: 'SUP-ROGUE',
         supplierName: 'Rogue Supplier'
-      } as any);
+      });
     });
 
     // 1. getAll
