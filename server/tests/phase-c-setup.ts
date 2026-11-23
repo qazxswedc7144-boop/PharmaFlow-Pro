@@ -15,11 +15,13 @@ vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     : requestUrl.split('?')[0];
 
   if (pathname === '/api/accounting/periods') {
+    const tenantId = new Headers(init?.headers).get('X-Tenant-ID') || 'anonymous';
+    const periodId = `phase-c-open-period-${tenantId.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
     return new Response(JSON.stringify({
       success: true,
       periods: [{
-        id: 'phase-c-open-period',
-        clientId: 'phase-c-open-period',
+        id: periodId,
+        clientId: periodId,
         startDate: '2000-01-01T00:00:00.000Z',
         endDate: '2100-12-31T23:59:59.999Z',
         isLocked: false,
