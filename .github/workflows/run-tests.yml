@@ -2,7 +2,7 @@ name: Run Tests
 
 on:
   push:
-    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state ]
+    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state, phase-c/omitted-test-execution ]
   pull_request:
     branches: [ main, fix/sync-outbox-ownership-phase3 ]
   workflow_dispatch:
