@@ -345,7 +345,7 @@ export class SyncProcessorService {
           const details = await VoucherPostingService.cancel(scope, data as any);
           return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details };
         }
-        return reject("VOUCHER_OPERATION_NOT_SUPPORTED", "Voucher synchronization accepts CREATE and CANCEL only.");
+        return reject("UNKNOWN_SYNC_OPERATION", "Voucher synchronization accepts CREATE and CANCEL only.");
       } catch (err: any) {
         const errorCode = err?.code || err?.message || "VOUCHER_POSTING_FAILED";
         return {
