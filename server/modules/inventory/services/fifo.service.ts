@@ -87,6 +87,21 @@ export class FifoService {
       );
     }
     if (branchInventory.stockQuantity < quantityToDeplete) {
+      const unassignedLayers = await tx.inventoryLayer.aggregate({
+        where: {
+          tenantId,
+          productId,
+          branchId: null,
+          quantityRemaining: { gt: 0 },
+          OR: [{ expiryDate: null }, { expiryDate: { gt: new Date() } }]
+        },
+        _sum: { quantityRemaining: true }
+      });
+      if ((unassignedLayers._sum.quantityRemaining ?? 0) > 0) {
+        throw new Error(
+          "FIFO_UNASSIGNED_STOCK_REQUIRES_RECONCILIATION: Legacy stock is not assigned to this branch and cannot be consumed automatically."
+        );
+      }
       throw new Error(
         `INSUFFICIENT_BRANCH_STOCK: Branch ${trustedBranchId} has ${branchInventory.stockQuantity} units; ${quantityToDeplete} required.`
       );
