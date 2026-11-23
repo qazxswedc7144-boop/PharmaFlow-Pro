@@ -39,12 +39,12 @@ function createTx() {
   };
 }
 
-function payload(price: number, totalAmount: number, discountPercent = 0) {
+function payload(price: number, totalAmount: number, discountPercent = 0, paymentStatus = "UNPAID") {
   return {
     invoiceNumber: "SALE-ATOMIC-001",
     type: "SALE",
     totalAmount,
-    paymentStatus: "UNPAID",
+    paymentStatus,
     discountPercent,
     items: [{ productId, qty: 1, price }],
   };
@@ -109,5 +109,16 @@ describe("AtomicPostSaleService manual price policy", () => {
     });
     expect(mockAuthorization.can).not.toHaveBeenCalled();
     expect(tx.invoice.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves partial payment status without inventing an unknown paid amount", async () => {
+    const tx = createTx();
+    await AtomicPostSaleService.executePostSaleCommand({
+      payload: payload(30, 34.5, 0, "PARTIALLY_PAID"),
+      tenantId, userId, userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
+    });
+    const createArgs = tx.invoice.create.mock.calls[0][0];
+    expect(createArgs.data.paymentStatus).toBe("PARTIALLY_PAID");
+    expect(createArgs.data.paidAmount).toBeNull();
   });
 });
