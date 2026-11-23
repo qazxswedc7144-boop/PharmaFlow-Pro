@@ -66,6 +66,7 @@ async function invokeCreate(payload: Record<string, unknown>) {
   const req: any = {
     body: payload,
     user: { tenantId, userId: "user-sales-a", role: "ADMIN", branchId: "branch-sales-a" },
+    headers: {},
     ip: "127.0.0.1",
   };
   const res = makeResponse();
