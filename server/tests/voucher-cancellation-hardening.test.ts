@@ -23,6 +23,8 @@ interface FullDbSnapshot {
   accounts: any[];
   auditLogs: any[];
   projectionEvents: any[];
+  syncQueue: any[];
+  outbox: any[];
 }
 
 async function captureDbSnapshot(): Promise<FullDbSnapshot> {
@@ -46,7 +48,9 @@ async function captureDbSnapshot(): Promise<FullDbSnapshot> {
     ),
     projectionEvents: sortById(
       (await db.projectionEvents.toArray()).filter((e: any) => e.eventType === 'VOUCHER_CANCELLED')
-    )
+    ),
+    syncQueue: sortById(await db.syncQueue.toArray()),
+    outbox: sortById(await db.outbox.toArray())
   };
 }
 
@@ -313,6 +317,8 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
     await db.voucherInvoiceLinks.clear();
     await db.auditLogs.clear();
     await db.projectionEvents.clear();
+    await db.syncQueue.clear();
+    await db.outbox.clear();
     await db.idempotencyKeys.clear();
 
     await db.accounts.put({
@@ -439,6 +445,17 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
     const voucherEvents = (await db.projectionEvents.toArray()).filter((e: any) => e.eventType === 'VOUCHER_CANCELLED');
     expect(voucherAudits).toHaveLength(1);
     expect(voucherEvents).toHaveLength(1);
+
+    const syncRows = await db.syncQueue.toArray();
+    const outboxRows = await db.outbox.toArray();
+    expect(syncRows).toHaveLength(1);
+    expect(outboxRows).toHaveLength(1);
+    expect(syncRows[0].entityType).toBe('VOUCHER');
+    expect(syncRows[0].operationType).toBe('CANCEL');
+    expect(syncRows[0].payload?.id).toBe(fixture.id);
+    expect(outboxRows[0].entityType).toBe('VOUCHER');
+    expect(outboxRows[0].operation).toBe('CANCEL');
+    expect(outboxRows[0].payload?.id).toBe(fixture.id);
   });
 
   // 4. Mismatched debit/credit amounts & invalid/generic account IDs
