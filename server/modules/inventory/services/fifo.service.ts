@@ -244,8 +244,11 @@ export class FifoService {
     if (!Number.isSafeInteger(qty) || qty <= 0) {
       throw new Error("INVALID_STOCK_QUANTITY: Addition quantity must be a positive safe integer.");
     }
-    if (!Number.isFinite(cost) || cost < 0) {
-      throw new Error("INVALID_STOCK_COST: Unit cost must be finite and non-negative.");
+    // TODO: F-22 - inventory.routes.ts must pass valid cost (separate PR).
+    if (!Number.isFinite(cost) || cost <= 0) {
+      throw new Error(
+        `FIFO_INVALID_COST: Cannot create inventory layer with cost ${cost} for product ${productId}. Cost must be a finite number > 0.`
+      );
     }
     if (!batchNumber?.trim() || !referenceId?.trim() || !referenceType?.trim()) {
       throw new Error("FIFO_SOURCE_REQUIRED: Batch number and source reference are required.");
