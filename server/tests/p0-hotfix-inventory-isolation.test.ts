@@ -696,7 +696,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         is_active: true
       } as any);
 
-      // Seed Tenant B Products (with matching overlapping barcode)
+      // Seed Tenant B Products (with matching overlapping barcode) in Tenant B context.
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       await db.products.put({
         id: productB1,
         name: 'Ibuprofen 400mg',
@@ -714,6 +715,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         is_active: true
       } as any);
 
+      // Return to Tenant A to seed the intentionally unbound legacy row and Alpha data.
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
       // Seed Unbound Product (no tenantId)
       await db.products.put({
         id: productUnbound,
@@ -746,7 +749,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         TransactionType: 'PURCHASE'
       } as any);
 
-      // Foreign Tenant Beta transaction (+100) referencing productA1
+      // Foreign Tenant Beta transaction (+100) referencing productA1.
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       await db.inventoryTransactions.put({
         id: 'ITX-B-1',
         productId: productA1,
@@ -755,6 +759,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         TransactionType: 'PURCHASE'
       } as any);
 
+      // Return to Tenant Alpha for intentionally unbound legacy rows.
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
       // Unbound transaction (+50) referencing productA1 without tenantId
       await db.inventoryTransactions.put({
         id: 'ITX-UNBOUND-1',
@@ -773,6 +779,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         tenantId: tenantAlpha
       } as any);
 
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       await db.purchasesByItem.put({
         id: 'PBI-B-1',
         productId: productA1,
@@ -782,6 +789,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         tenantId: tenantBeta
       } as any);
 
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
       await db.purchasesByItem.put({
         id: 'PBI-UNBOUND-1',
         productId: productA1,
