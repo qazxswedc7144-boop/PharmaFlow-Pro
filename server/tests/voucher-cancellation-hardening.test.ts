@@ -317,8 +317,8 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
     await db.voucherInvoiceLinks.clear();
     await db.auditLogs.clear();
     await db.projectionEvents.clear();
-    await db.syncQueue.clear();
-    await db.outbox.clear();
+    await db.syncQueue.filter((row: any) => row.tenantId === tenantId && row.userId === 'usr-accountant').delete();
+    await db.outbox.filter((row: any) => row.tenantId === tenantId && row.userId === 'usr-accountant').delete();
     await db.idempotencyKeys.clear();
 
     await db.accounts.put({
