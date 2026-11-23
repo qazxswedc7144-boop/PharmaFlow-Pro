@@ -21,6 +21,24 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
     (globalThis as any).__FAIL_AT_STAGE__ = undefined;
     IdempotencyRegistry.clearInMemory();
 
+    // Authenticated session
+    const userSession = {
+      id: 'usr-p0-auditor',
+      user_id: 'usr-p0-auditor',
+      User_Name: 'P0 Security Auditor',
+      User_Email: 'auditor@pharmaflow.test',
+      Role: 'SuperAdmin',
+      User_Role: 'SuperAdmin',
+      tenantId,
+      tenant_id: tenantId,
+      branchId,
+      branch_id: branchId,
+      permissions: ['ALL', 'sales.create', 'sales.edit', 'purchases.create', 'purchases.edit']
+    };
+
+    TokenProvider.setSession(userSession as any, 'mock-jwt-p0-audit', 'mock-refresh-p0-audit');
+
+
     // Reset database tables
     await db.invoices.clear();
     await db.sales.clear();
@@ -41,22 +59,6 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
     await db.idempotencyKeys.clear();
     await db.auditLogs.clear();
 
-    // Authenticated session
-    const userSession = {
-      id: 'usr-p0-auditor',
-      user_id: 'usr-p0-auditor',
-      User_Name: 'P0 Security Auditor',
-      User_Email: 'auditor@pharmaflow.test',
-      Role: 'SuperAdmin',
-      User_Role: 'SuperAdmin',
-      tenantId,
-      tenant_id: tenantId,
-      branchId,
-      branch_id: branchId,
-      permissions: ['ALL', 'sales.create', 'sales.edit', 'purchases.create', 'purchases.edit']
-    };
-
-    TokenProvider.setSession(userSession as any, 'mock-jwt-p0-audit', 'mock-refresh-p0-audit');
 
     // Seed test master records
     await db.customers.add({
