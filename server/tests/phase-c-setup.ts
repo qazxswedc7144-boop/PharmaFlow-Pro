@@ -16,8 +16,13 @@ vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     : requestUrl.split('?')[0];
   const headers = new Headers(init?.headers);
   const session = TokenProvider.getCurrentSession();
-  const tenantId = headers.get('X-Tenant-ID') || headers.get('x-tenant-id') || session.tenantId || '';
-  const branchId = headers.get('X-Branch-ID') || headers.get('x-branch-id') || session.branchId || '';
+  // UnifiedTransport currently emits both canonical and lower-case spellings.
+  // Fetch coalesces identical names into comma-separated values; preserve and
+  // validate every value, then use the authenticated session as the authority.
+  const tenantHeaderValues = (headers.get('X-Tenant-ID') || '').split(',').map(value => value.trim()).filter(Boolean);
+  const branchHeaderValues = (headers.get('X-Branch-ID') || '').split(',').map(value => value.trim()).filter(Boolean);
+  const tenantId = tenantHeaderValues[0] || session.tenantId || '';
+  const branchId = branchHeaderValues[0] || session.branchId || '';
 
   if (pathname === '/api/accounting/periods') {
     const scopedTenant = tenantId || 'anonymous';
@@ -49,8 +54,8 @@ vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       !session.token ||
       !trustedTenantId ||
       !trustedBranchId ||
-      (tenantId && tenantId !== trustedTenantId) ||
-      (branchId && branchId !== trustedBranchId)
+      tenantHeaderValues.some(value => value !== trustedTenantId) ||
+      branchHeaderValues.some(value => value !== trustedBranchId)
     ) {
       return new Response(JSON.stringify({
         success: false,
