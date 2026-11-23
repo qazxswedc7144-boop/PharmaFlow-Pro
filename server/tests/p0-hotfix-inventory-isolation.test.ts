@@ -279,6 +279,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('B. tenant A + branch B belonging to tenant B => rejected (CROSS_TENANT_VIOLATION)', async () => {
+    // Create the foreign branch while Tenant B is active so its ownership is genuine.
+    setTestSession('TENANT-B', 'BRANCH-B');
     await db.branches.put({
       id: 'BRANCH-B',
       code: 'BRANCH-B',
@@ -286,9 +288,28 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       tenantId: 'TENANT-B',
       isActive: true
     } as any);
-    setTestSession('TENANT-A', 'BRANCH-B');
 
-    await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+    // The product belongs to Tenant A, allowing the test to reach branch validation.
+    setTestSession('TENANT-A', 'BRANCH-B');
+    const tenantAProductId = 'PROD-TENANT-A-BRANCH-CHECK';
+    await db.products.put({
+      id: tenantAProductId,
+      name: 'Tenant A Branch Check Product',
+      stock: 50,
+      tenantId: 'TENANT-A',
+      branchId: 'BRANCH-A',
+      isActive: true
+    } as any);
+    await db.warehouseStock.put({
+      id: 'WHS-TENANT-A-BRANCH-CHECK',
+      warehouseId: 'WH-MAIN',
+      productId: tenantAProductId,
+      quantity: 50,
+      tenantId: 'TENANT-A',
+      branchId: 'BRANCH-A'
+    } as any);
+
+    await expect(InventoryService.updateStock(tenantAProductId, 10)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
   });
 
   it('C. missing branchId where required => rejected', async () => {
@@ -1053,8 +1074,9 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       const deletedProd = await db.products.get(productA2);
       expect(deletedProd?.is_active).toBe(false);
 
-      // Delete cross-tenant product refused
+      // Delete cross-tenant product refused; verify it from its owning tenant context.
       await ProductRepository.delete(productB1);
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       const foreignProd = await db.products.get(productB1);
       expect(foreignProd?.is_active).not.toBe(false);
     });
