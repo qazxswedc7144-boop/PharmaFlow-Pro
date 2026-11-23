@@ -138,7 +138,6 @@ export class VoucherPostingService {
       type: VoucherType;
       tenantId: string;
       branchId: string;
-      userId: string;
       reversalOfId?: string;
       reversal?: boolean;
     }
@@ -263,7 +262,7 @@ export class VoucherPostingService {
       const expectedInvoiceType = type === "PAYMENT" ? "PURCHASE" : "SALE";
       if (String(invoice.type) !== expectedInvoiceType) fail("INVOICE_TYPE_MISMATCH");
       if (invoice.partnerId !== input.partnerId) fail("INVOICE_PARTNER_MISMATCH");
-      if (invoice.branchId !== branchId) fail("INVOICE_BRANCH_MISMATCH");
+      if (invoice.branchId && invoice.branchId !== branchId) fail("INVOICE_BRANCH_MISMATCH");
       if (invoice.documentStatus !== "POSTED") fail("INVOICE_NOT_POSTED");
 
       const total = new Prisma.Decimal(String(invoice.totalAmount));
@@ -282,10 +281,10 @@ export class VoucherPostingService {
         fail("INVOICE_OVER_ALLOCATION");
       }
       const nextPaid = currentPaid.plus(allocation.amount);
-      const paymentStatus = nextPaid.plus(TOLERANCE).greaterThanOrEqualTo(total)
-        ? "PAID"
-        : "PARTIALLY_PAID";
-      invoiceUpdates.push({ invoiceId: allocation.invoiceId, paidAmount: nextPaid, paymentStatus });
+      const isFullyPaid = nextPaid.plus(TOLERANCE).greaterThanOrEqualTo(total);
+      const normalizedPaid = isFullyPaid ? total : nextPaid;
+      const paymentStatus = isFullyPaid ? "PAID" : "PARTIALLY_PAID";
+      invoiceUpdates.push({ invoiceId: allocation.invoiceId, paidAmount: normalizedPaid, paymentStatus });
     }
 
     const payment = await tx.payment.create({
@@ -349,7 +348,6 @@ export class VoucherPostingService {
       type,
       tenantId,
       branchId,
-      userId
     });
 
     return {
@@ -383,19 +381,23 @@ export class VoucherPostingService {
     const requestedAmount = decimal(input.amount, "VOUCHER_AMOUNT_INVALID");
     if (amount.minus(requestedAmount).abs().greaterThan(TOLERANCE)) fail("VOUCHER_AMOUNT_MISMATCH");
 
+    await this.assertOpenPeriod(tx, tenantId, new Date());
+
     const allocations = await tx.invoicePaymentAllocation.findMany({
       where: { paymentId: payment.id, tenantId, status: "ACTIVE" },
       orderBy: { invoiceId: "asc" }
     });
     for (const allocation of allocations) {
       const lockedRows = await tx.$queryRaw<any[]>(
-        Prisma.sql`SELECT id, "totalAmount", "paidAmount", "paymentStatus", "branchId"
+        Prisma.sql`SELECT id, "totalAmount", "paidAmount", "paymentStatus", "branchId", type, "partnerId"
           FROM "invoices"
           WHERE id = ${allocation.invoiceId} AND "tenantId" = ${tenantId}
           FOR UPDATE`
       );
       const invoice = lockedRows[0];
-      if (!invoice || invoice.branchId !== branchId) fail("INVOICE_NOT_FOUND_OR_FORBIDDEN");
+      if (!invoice || (invoice.branchId && invoice.branchId !== branchId)) fail("INVOICE_NOT_FOUND_OR_FORBIDDEN");
+      const expectedInvoiceType = type === "PAYMENT" ? "PURCHASE" : "SALE";
+      if (invoice.type !== expectedInvoiceType || invoice.partnerId !== payment.partnerId) fail("INVOICE_ALLOCATION_PARTNER_MISMATCH");
       if (invoice.paidAmount === null || invoice.paidAmount === undefined) {
         fail("INVOICE_PAID_AMOUNT_UNKNOWN");
       }
@@ -498,7 +500,7 @@ export class VoucherPostingService {
     await tx.auditLog.create({
       data: {
         userId,
-        action: "CANCEL_VOUCHER",
+        action: "DELETE",
         entity: "Payment",
         entityId: payment.id,
         before: JSON.stringify({ status: payment.status, amount: payment.amount }),
