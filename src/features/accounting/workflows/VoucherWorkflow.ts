@@ -414,6 +414,8 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
       await this.enqueueSync(result, ctx, tx);
       return result;
     }
+  }
+
   private async enqueueSync(
     result: VoucherWorkflowResult,
     ctx: WorkflowContext,
@@ -468,8 +470,6 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
     ) {
       throw new Error('VOUCHER_SYNC_DURABILITY_FAILED: Tenant-bound syncQueue and outbox records must exist before commit.');
     }
-  }
-
   }
 }
 
