@@ -626,7 +626,20 @@ export class SyncProcessorService {
     }
 
     const cashSupplierLabels = new Set(["مورد نقدي", "CASH", "CASH_SUPPLIER", "SUPP-GEN"]);
-    const isCashPayment = rawPaymentStatus === "CASH" || rawFinancialStatus === "PAID";
+    const rawPaymentMethod = String(purchase.paymentMethod ?? purchase.payment_method ?? "CASH").trim().toUpperCase();
+    if (!["CASH", "TRANSFER", "BANK_TRANSFER", "BANK", "WIRE"].includes(rawPaymentMethod)) {
+      return reject("PURCHASE_PAYMENT_METHOD_INVALID", "Purchase payment method must be CASH or a supported bank transfer.");
+    }
+    const paymentMethod = rawPaymentMethod === "CASH" ? "CASH" : "TRANSFER";
+    const paymentFlaggedPaid = rawPaymentStatus === "CASH" || rawPaymentStatus === "PAID" || rawFinancialStatus === "PAID";
+    const rawPaidAmount = purchase.paidAmount ?? purchase.paid_amount;
+    const paidAmountHint = rawPaidAmount === undefined || rawPaidAmount === null
+      ? (paymentFlaggedPaid ? totalAmount : 0)
+      : Number(rawPaidAmount);
+    if (!Number.isFinite(paidAmountHint) || paidAmountHint < 0 || paidAmountHint > totalAmount) {
+      return reject("PURCHASE_PAID_AMOUNT_INVALID", "Purchase paidAmount must be between zero and totalAmount.");
+    }
+    const isCashPayment = paidAmountHint >= totalAmount && totalAmount > 0 && paymentMethod === "CASH";
     const isCashSupplierPlaceholder = cashSupplierLabels.has(supplierId) && isCashPayment;
     if (!isCashSupplierPlaceholder) {
       const supplier = await tx.supplier.findFirst({
@@ -748,14 +761,12 @@ export class SyncProcessorService {
       return reject("PURCHASE_TOTAL_MISMATCH", "Purchase item totals, discounts, tax and totalAmount are inconsistent.");
     }
 
-    const paidAmount = Number(purchase.paidAmount ?? purchase.paid_amount ?? 0);
+    const paidAmount = paidAmountHint;
     const remainingAmount = Number(purchase.remainingAmount ?? purchase.remaining_amount ?? Math.max(0, totalAmount - paidAmount));
-    const paymentStatus = rawPaymentStatus === "CASH" || rawPaymentStatus === "PAID" ||
-      rawFinancialStatus === "PAID" || (paidAmount >= totalAmount && totalAmount > 0)
-      ? "PAID"
-      : rawPaymentStatus === "PARTIALLY_PAID" || (paidAmount > 0 && remainingAmount > 0)
-        ? "PARTIALLY_PAID"
-        : "UNPAID";
+    if (!Number.isFinite(remainingAmount) || remainingAmount < 0 ||
+        Math.abs(totalAmount - paidAmount - remainingAmount) > 0.02) {
+      return reject("PURCHASE_REMAINING_AMOUNT_INVALID", "Purchase paidAmount and remainingAmount must reconcile to totalAmount.");
+    }
 
     await tx.invoice.create({
       data: {
@@ -772,7 +783,10 @@ export class SyncProcessorService {
         taxAmount,
         totalAmount,
         status: "DRAFT",
-        paymentStatus,
+        // Purchase posting initially credits AP unless fully settled in cash.
+        // Partial and bank-transfer settlement is posted as a durable voucher below.
+        paymentStatus: isCashPayment ? "PAID" : "UNPAID",
+        paidAmount: isCashPayment ? totalAmount : 0,
         documentStatus: "ACTIVE",
         isSynced: true,
         branchId,
@@ -814,6 +828,25 @@ export class SyncProcessorService {
       tenantId,
       params.userRole
     );
+
+    if (paidAmount > 0 && !isCashPayment) {
+      const { VoucherPostingService } = await import("../accounting/services/voucherPosting.service.js");
+      await VoucherPostingService.create(
+        { tx, tenantId, branchId, userId: params.userId },
+        {
+          id: `PURCHASE-PAYMENT-${invoiceId}`,
+          paymentNumber: `${invoiceNumber}-PAY`,
+          date: invoiceDate,
+          amount: paidAmount,
+          type: "PAYMENT",
+          partnerType: "SUPPLIER",
+          partnerId: supplierId,
+          paymentMethod,
+          notes: "Initial purchase settlement synchronized with purchase invoice",
+          allocations: [{ invoiceId, amount: paidAmount }]
+        }
+      );
+    }
 
     for (const item of normalizedItems) {
       await tx.branchInventory.upsert({
