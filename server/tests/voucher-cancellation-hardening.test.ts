@@ -9,6 +9,19 @@ import { WorkflowOrchestrator } from '@/core/workflow';
 import { useAuthStore } from '@/store/authStore';
 import { db } from '@/core/db';
 
+vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
+  AccountingPeriodSyncService: {
+    getPeriods: vi.fn().mockResolvedValue([{
+      id: 'TEST-OPEN-PERIOD',
+      Start_Date: '1900-01-01T00:00:00.000Z',
+      End_Date: '2200-12-31T23:59:59.999Z',
+      Is_Locked: false,
+    }]),
+    setLocked: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+
 interface FullDbSnapshot {
   vouchers: any[];
   receipts: any[];
@@ -23,6 +36,8 @@ interface FullDbSnapshot {
   accounts: any[];
   auditLogs: any[];
   projectionEvents: any[];
+  syncQueue: any[];
+  outbox: any[];
 }
 
 async function captureDbSnapshot(): Promise<FullDbSnapshot> {
@@ -46,7 +61,9 @@ async function captureDbSnapshot(): Promise<FullDbSnapshot> {
     ),
     projectionEvents: sortById(
       (await db.projectionEvents.toArray()).filter((e: any) => e.eventType === 'VOUCHER_CANCELLED')
-    )
+    ),
+    syncQueue: sortById(await db.syncQueue.toArray()),
+    outbox: sortById(await db.outbox.toArray())
   };
 }
 
@@ -295,6 +312,7 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
       } as any,
       tenantId,
       branchId,
+      token: 'test-access-token',
       roles: ['accountant'],
       permissions: ['vouchers.manage', 'vouchers.delete'],
       isAuthenticated: true
@@ -313,6 +331,8 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
     await db.voucherInvoiceLinks.clear();
     await db.auditLogs.clear();
     await db.projectionEvents.clear();
+    await db.syncQueue.filter((row: any) => row.tenantId === tenantId && row.userId === 'usr-accountant').delete();
+    await db.outbox.filter((row: any) => row.tenantId === tenantId && row.userId === 'usr-accountant').delete();
     await db.idempotencyKeys.clear();
 
     await db.accounts.put({
@@ -439,6 +459,17 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
     const voucherEvents = (await db.projectionEvents.toArray()).filter((e: any) => e.eventType === 'VOUCHER_CANCELLED');
     expect(voucherAudits).toHaveLength(1);
     expect(voucherEvents).toHaveLength(1);
+
+    const syncRows = await db.syncQueue.toArray();
+    const outboxRows = await db.outbox.toArray();
+    expect(syncRows).toHaveLength(1);
+    expect(outboxRows).toHaveLength(1);
+    expect(syncRows[0].entityType).toBe('VOUCHER');
+    expect(syncRows[0].operationType).toBe('CANCEL');
+    expect(syncRows[0].payload?.id).toBe(fixture.id);
+    expect(outboxRows[0].entityType).toBe('VOUCHER');
+    expect(outboxRows[0].operation).toBe('CANCEL');
+    expect(outboxRows[0].payload?.id).toBe(fixture.id);
   });
 
   // 4. Mismatched debit/credit amounts & invalid/generic account IDs

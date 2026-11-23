@@ -141,7 +141,15 @@ export class AtomicPostSaleService {
           taxAmount: salesPricing.taxAmount,
           taxMode: salesPricing.taxMode,
           status: InvoiceStatus.DRAFT,
+          // The sales DTO does not carry an authoritative partial paid amount.
+          // Preserve PARTIALLY_PAID but keep the amount unknown until a durable
+          // voucher allocation or an explicit reconciliation supplies evidence.
           paymentStatus: validated.paymentStatus,
+          paidAmount: validated.paymentStatus === "PAID"
+            ? calculatedTotal
+            : validated.paymentStatus === "UNPAID"
+              ? new Prisma.Decimal(0)
+              : null,
           documentStatus: DocumentStatus.ACTIVE,
           tenantId,
           items: {

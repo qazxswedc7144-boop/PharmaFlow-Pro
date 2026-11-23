@@ -5,6 +5,7 @@ import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
+import { DistributedSyncEngine } from '@features/sync/sync.engine';
 
 const MONETARY_TOLERANCE = '0.001';
 
@@ -43,24 +44,39 @@ export interface VoucherCancellationInput {
 export interface VoucherCancellationResult {
   success: boolean;
   id: string;
+  type: 'RECEIPT' | 'PAYMENT';
+  partnerId: string;
+  amount: number;
+  reason?: string;
 }
 
 export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCancellationInput, VoucherCancellationResult> {
   public id = 'accounting.voucher.cancel';
   public name = 'إلغاء وحذف سند قبض / صرف';
   public operationType = 'VOUCHER_CANCEL';
-  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
   public syncContract: SyncContract = {
     entityType: 'VOUCHER',
     operation: 'CANCEL',
-    buildPayload: (result) => result as Record<string, unknown>
+    buildPayload: (result, ctx) => {
+      const cancellation = result as VoucherCancellationResult;
+      return {
+        id: cancellation.id,
+        type: cancellation.type,
+        partnerId: cancellation.partnerId,
+        amount: cancellation.amount,
+        reason: cancellation.reason || null,
+        tenantId: ctx.tenantId,
+        branchId: ctx.branchId
+      };
+    }
   };
+  public syncHandledInDomainTransaction = true;
   public requiredPermissions = ['vouchers.delete', 'vouchers.manage'];
   public tables = [
     'vouchers', 'receipts', 'payments', 'suppliers', 'customers',
     'journalEntries', 'journalLines', 'accounts', 'financialTransactions',
     'auditLogs', 'idempotencyKeys', 'projectionEvents', 'voucherInvoiceLinks',
-    'invoices'
+    'invoices', 'syncQueue', 'outbox'
   ];
 
   public async validateInput(input: VoucherCancellationInput): Promise<void> {
@@ -657,10 +673,72 @@ export class VoucherCancellationWorkflow implements BusinessWorkflow<VoucherCanc
       correlationId: ctx.correlationId
     }, tx);
 
-    return {
+    const result: VoucherCancellationResult = {
       success: true,
-      id: voucherId
+      id: voucherId,
+      type: authoritativeType,
+      partnerId: authoritativePartnerId,
+      amount: authoritativeAmount,
+      reason: input.reason
     };
+    await this.enqueueSync(result, ctx, tx);
+    return result;
+  }
+
+  private async enqueueSync(
+    result: VoucherCancellationResult,
+    ctx: WorkflowContext,
+    tx?: any
+  ): Promise<void> {
+    if (!tx || typeof tx.table !== 'function') {
+      throw new Error('VOUCHER_CANCEL_SYNC_TRANSACTION_REQUIRED: Cancellation sync must be persisted inside the domain transaction.');
+    }
+    if (!ctx.idempotencyKey || !ctx.tenantId || !ctx.branchId) {
+      throw new Error('VOUCHER_CANCEL_SYNC_SCOPE_REQUIRED: Tenant, branch and idempotency context are mandatory.');
+    }
+
+    const payload = {
+      ...this.syncContract.buildPayload(result, ctx),
+      id: result.id,
+      tenantId: ctx.tenantId,
+      branchId: ctx.branchId
+    };
+    const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
+      this.syncContract.operation,
+      payload,
+      this.syncContract.entityType,
+      ctx.idempotencyKey,
+      { tenantId: ctx.tenantId, branchId: ctx.branchId }
+    );
+    if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
+      throw new Error('VOUCHER_CANCEL_SYNC_ENQUEUE_FAILED: Cancellation was not paired with a durable sync mutation.');
+    }
+
+    const syncQueueTable = tx.table('syncQueue');
+    const outboxTable = tx.table('outbox');
+    if (!syncQueueTable || !outboxTable) {
+      throw new Error('VOUCHER_CANCEL_SYNC_STORES_UNAVAILABLE: syncQueue and outbox must be part of the cancellation transaction.');
+    }
+    const [queueRow, outboxRow] = await Promise.all([
+      syncQueueTable.where('idempotencyKey').equals(ctx.idempotencyKey).first(),
+      outboxTable.where('idempotencyKey').equals(ctx.idempotencyKey).first()
+    ]);
+    if (
+      !queueRow ||
+      !outboxRow ||
+      queueRow.entityType !== this.syncContract.entityType ||
+      queueRow.operationType !== this.syncContract.operation ||
+      queueRow.payload?.id !== result.id ||
+      queueRow.tenantId !== ctx.tenantId ||
+      queueRow.branchId !== ctx.branchId ||
+      outboxRow.entityType !== this.syncContract.entityType ||
+      outboxRow.operation !== this.syncContract.operation ||
+      outboxRow.payload?.id !== result.id ||
+      outboxRow.tenantId !== ctx.tenantId ||
+      outboxRow.branchId !== ctx.branchId
+    ) {
+      throw new Error('VOUCHER_CANCEL_SYNC_DURABILITY_FAILED: Tenant-bound cancellation queue and outbox records must exist before commit.');
+    }
   }
 }
 

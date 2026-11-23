@@ -275,6 +275,7 @@ model JournalEntry {
   description String?
   debitTotal  Decimal       @default(0.00) @db.Decimal(18, 4)
   creditTotal Decimal       @default(0.00) @db.Decimal(18, 4)
+  reversalOfId String?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
   lines       JournalLine[]
@@ -284,6 +285,7 @@ model JournalEntry {
 
   @@unique([id, tenantId])
   @@index([sourceId, sourceType])
+  @@index([tenantId, reversalOfId])
   @@index([date])
   @@index([branchId])
   @@index([tenantId])
@@ -390,6 +392,7 @@ model Invoice {
   taxAmount       Decimal        @default(0.00) @db.Decimal(18, 4)
   taxMode         SalesTaxMode   @default(NONE)
   totalAmount     Decimal        @default(0.00) @db.Decimal(18, 4)
+  paidAmount      Decimal?       @db.Decimal(18, 4)
   status         InvoiceStatus  @default(DRAFT)
   paymentStatus  PaymentStatus  @default(UNPAID)
   documentStatus DocumentStatus @default(ACTIVE)
@@ -397,6 +400,7 @@ model Invoice {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   items          InvoiceItem[]
+  paymentAllocations InvoicePaymentAllocation[]
   branchId       String?
   tenantId       String
   tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -795,25 +799,53 @@ model BranchUser {
 }
 
 model Payment {
-  id            String   @id @default(uuid())
-  paymentNumber String?
-  date          DateTime @default(now())
-  amount        Decimal  @default(0.00) @db.Decimal(18, 4)
-  partnerId     String?
-  partnerType   String? // "CUSTOMER" or "SUPPLIER"
-  paymentMethod String   @default("CASH")
-  referenceId   String?
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  tenantId      String
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  branchId      String?
+  id                String   @id @default(uuid())
+  paymentNumber     String?
+  date              DateTime @default(now())
+  amount            Decimal  @default(0.00) @db.Decimal(18, 4)
+  partnerId         String?
+  partnerType       String? // "CUSTOMER" or "SUPPLIER"
+  paymentMethod     String   @default("CASH")
+  referenceId       String?
+  notes             String?
+  status            String   @default("LEGACY_UNVERIFIED") // POSTED, CANCELLED, LEGACY_UNVERIFIED
+  cancelledAt       DateTime?
+  cancellationReason String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId          String?
+  allocations       InvoicePaymentAllocation[]
 
+  @@unique([id, tenantId])
   @@index([tenantId])
+  @@index([tenantId, status])
   @@index([branchId])
   @@index([date])
   @@map("payments")
+}
+
+model InvoicePaymentAllocation {
+  id          String   @id @default(uuid())
+  paymentId   String
+  payment     Payment  @relation(fields: [paymentId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  amount      Decimal  @db.Decimal(18, 4)
+  note        String?
+  status      String   @default("ACTIVE") // ACTIVE, REVERSED
+  reversedAt  DateTime?
+  createdAt   DateTime @default(now())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  branchId    String?
+
+  @@unique([id, tenantId])
+  @@unique([tenantId, paymentId, invoiceId])
+  @@index([tenantId, invoiceId, status])
+  @@index([tenantId, paymentId])
+  @@map("invoice_payment_allocations")
 }
 
 model Expense {
@@ -861,6 +893,7 @@ model Tenant {
   inventoryLayers     InventoryLayer[]
   fifoConsumptions    FifoConsumption[]
   payments            Payment[]
+  invoicePaymentAllocations InvoicePaymentAllocation[]
   expenses            Expense[]
   roles               CustomRole[]
   userRoles           UserRole[]

@@ -40,6 +40,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
       } as any,
       tenantId,
       branchId,
+      token: 'test-access-token',
       roles: ['accountant'],
       permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage'],
       isAuthenticated: true
@@ -53,6 +54,8 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     await db.invoices.clear();
     await db.suppliers.clear();
     await db.voucherInvoiceLinks.clear();
+    await db.syncQueue.filter((row: any) => row.tenantId === tenantId && row.userId === 'usr-fin-tester').delete();
+    await db.outbox.filter((row: any) => row.tenantId === tenantId && row.userId === 'usr-fin-tester').delete();
     await db.idempotencyRecords.clear();
     await db.auditLogs.clear();
 
@@ -177,6 +180,20 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     expect((await db.suppliers.get(supplierId))?.balance).toBe(1150);
     expect((await db.invoices.get('PUR-001'))?.paidAmount).toBe(550);
     expect((await db.invoices.get('PUR-001'))?.paymentStatus).toBe('PARTIAL');
+
+    const syncRows = await db.syncQueue.toArray();
+    const outboxRows = await db.outbox.toArray();
+    expect(syncRows).toHaveLength(1);
+    expect(outboxRows).toHaveLength(1);
+    expect(syncRows[0].entityType).toBe('VOUCHER');
+    expect(syncRows[0].operationType).toBe('CREATE');
+    expect(syncRows[0].payload?.id).toBe(result.payment.id);
+    expect(syncRows[0].payload?.allocations).toEqual([
+      expect.objectContaining({ invoiceId: 'PUR-001', amount: paymentAmount })
+    ]);
+    expect(outboxRows[0].entityType).toBe('VOUCHER');
+    expect(outboxRows[0].operation).toBe('CREATE');
+    expect(outboxRows[0].payload?.id).toBe(result.payment.id);
   });
 
   it('6, 7, 8. Produces exactly ONE FinancialTransaction, ONE JournalEntry, and Balanced Lines', async () => {
@@ -239,7 +256,11 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     // 7. JournalLine must not exist
     expect((await db.journalLines.toArray()).length).toBe(0);
 
-    // 8. AuditLog check
+    // 8. No sync mutation or outbox event may survive a failed voucher transaction.
+    expect((await db.syncQueue.toArray()).length).toBe(0);
+    expect((await db.outbox.toArray()).length).toBe(0);
+
+    // 9. AuditLog check
     // auditLogs may record attempt
   }
 
@@ -383,5 +404,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     expect((await db.vouchers.toArray()).length).toBe(1);
     expect((await db.financialTransactions.toArray()).length).toBe(1);
     expect((await db.journalEntries.toArray()).length).toBe(1);
+    expect((await db.syncQueue.toArray()).length).toBe(1);
+    expect((await db.outbox.toArray()).length).toBe(1);
   });
 });

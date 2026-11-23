@@ -100,6 +100,7 @@ describe('DistributedSyncEngine transactional sale enqueue', () => {
           type: 'SALE',
           totalAmount: 100,
           items: [{ productId: '11111111-1111-4111-8111-111111111111', qty: 1, price: 100 }],
+          allocations: [{ invoiceId: 'invoice-atomic-2', amount: 35 }],
         },
         'SALE',
         'sale-idempotency-atomic-2',
@@ -113,6 +114,11 @@ describe('DistributedSyncEngine transactional sale enqueue', () => {
     expect(outboxRows).toHaveLength(1);
     expect(outboxRows[0].operation).toBe('POST');
     expect(outboxRows[0].type).toBe('POST');
+    const queueRows = await localDb.table('syncQueue').toArray();
+    expect(Array.isArray(queueRows[0].payload.allocations)).toBe(true);
+    expect(queueRows[0].payload.allocations).toEqual([{ invoiceId: 'invoice-atomic-2', amount: 35 }]);
+    expect(Array.isArray(outboxRows[0].payload.allocations)).toBe(true);
+    expect(outboxRows[0].payload.allocations).toEqual([{ invoiceId: 'invoice-atomic-2', amount: 35 }]);
   });
 
   it('fails closed when called without an active transaction containing both sync stores', async () => {
