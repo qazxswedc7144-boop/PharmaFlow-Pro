@@ -40,6 +40,7 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
       } as any,
       tenantId,
       branchId,
+      token: 'test-access-token',
       roles: ['accountant'],
       permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage'],
       isAuthenticated: true
