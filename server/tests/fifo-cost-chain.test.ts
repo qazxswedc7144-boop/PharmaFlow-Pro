@@ -1,6 +1,8 @@
 import express from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import { FifoService } from "../modules/inventory/services/fifo.service.js";
+import { FinancialTransactionService } from "../modules/accounting/services/financialTransaction.service.js";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -56,6 +58,35 @@ function createAddStockTx() {
       findFirst: vi.fn().mockResolvedValue({ stockQuantity: 0 }),
       update: vi.fn()
     }
+  } as any;
+}
+
+
+function createPurchasePostingTx() {
+  let nextAccountId = 0;
+  return {
+    $queryRaw: vi.fn()
+      .mockResolvedValueOnce([{
+        id: "invoice-purchase-1",
+        documentStatus: "ACTIVE",
+        status: "DRAFT",
+        date: new Date("2026-11-23T00:00:00.000Z")
+      }])
+      .mockResolvedValueOnce([{ id: "period-1", isLocked: false }]),
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    account: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockImplementation(async ({ data }: any) => ({
+        id: `account-${++nextAccountId}`,
+        ...data,
+        version: 0
+      })),
+      findUnique: vi.fn().mockResolvedValue({ version: 0, name: "Test Account" }),
+      update: vi.fn().mockResolvedValue({ id: "updated-account" })
+    },
+    journalEntry: { create: vi.fn().mockResolvedValue({ id: "journal-purchase-1" }) },
+    invoice: { update: vi.fn().mockResolvedValue({ id: "invoice-purchase-1", documentStatus: "POSTED" }) },
+    auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-post-1" }) }
   } as any;
 }
 
@@ -213,6 +244,55 @@ describe("P0-01 purchase-to-FIFO cost chain", () => {
     const layerWrite = addTx.inventoryLayer.create.mock.calls[0][0].data;
     expect(Number(layerWrite.unitCost)).toBe(25);
     expect(layerWrite.quantityInitial).toBe(10);
+
+    const postingTx = createPurchasePostingTx();
+    const addStockSpy = vi.spyOn(FifoService, "addStock").mockResolvedValue(undefined);
+    try {
+      await FinancialTransactionService.executeInvoiceLedgerPosting(
+        postingTx,
+        {
+          id: "invoice-purchase-1",
+          invoiceNumber: "PUR-P0-01-POSTED",
+          type: "PURCHASE",
+          date: new Date("2026-11-23T00:00:00.000Z"),
+          documentStatus: "ACTIVE",
+          status: "DRAFT",
+          totalAmount: new Prisma.Decimal(250),
+          paymentStatus: "UNPAID",
+          tenantId: TENANT_ID,
+          branchId: "BRANCH-P0-01",
+          items: [{
+            id: "PUR-LINE-P0-01",
+            productId: PRODUCT_ID,
+            qty: 10,
+            cost: new Prisma.Decimal(25),
+            price: new Prisma.Decimal(25),
+            expiryDate: null,
+            note: "BATCH-25",
+            product: { price: new Prisma.Decimal(40) }
+          }]
+        } as any,
+        null,
+        null,
+        TENANT_ID
+      );
+      expect(addStockSpy).toHaveBeenCalledWith(
+        postingTx,
+        PRODUCT_ID,
+        "BATCH-25",
+        10,
+        25,
+        null,
+        "invoice-purchase-1",
+        "INVOICE",
+        expect.any(String),
+        TENANT_ID,
+        "BRANCH-P0-01",
+        "PUR-LINE-P0-01"
+      );
+    } finally {
+      addStockSpy.mockRestore();
+    }
 
     const saleTx = createDepleteTx();
     const result = await FifoService.depleteStock(
