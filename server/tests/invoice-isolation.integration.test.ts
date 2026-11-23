@@ -54,6 +54,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const created = await request(ctx, "/api/invoices/create", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: {
         invoiceNumber: `FIFO-SALE-${ctx.suffix}`,
         type: "SALE",
@@ -73,6 +74,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const posted = await request(ctx, "/api/invoices/post", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: { invoiceId: draft.id },
     });
     expect(posted.status, JSON.stringify(posted.body)).toBe(200);
@@ -115,6 +117,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const retry = await request(ctx, "/api/invoices/post", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: { invoiceId: draft.id },
     });
     expect(retry.status).toBe(400);
@@ -152,6 +155,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const created = await request(ctx, "/api/invoices/create", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: {
         invoiceNumber: `TAX-SALE-${ctx.suffix}`,
         type: "SALE",
@@ -170,6 +174,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const posted = await request(ctx, "/api/invoices/post", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: { invoiceId: created.body.invoice.id },
     });
     expect(posted.status, JSON.stringify(posted.body)).toBe(200);
@@ -207,6 +212,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const purchase = await request(ctx, "/api/invoices/create", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: {
         invoiceNumber: `TB-PUR-${ctx.suffix}`,
         type: "PURCHASE",
@@ -223,6 +229,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const purchasePost = await request(ctx, "/api/invoices/post", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: { invoiceId: purchase.body.invoice.id }
     });
     expect(purchasePost.status, JSON.stringify(purchasePost.body)).toBe(200);
@@ -230,6 +237,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const sale = await request(ctx, "/api/invoices/create", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: {
         invoiceNumber: `TB-SALE-${ctx.suffix}`,
         type: "SALE",
@@ -242,6 +250,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const salePost = await request(ctx, "/api/invoices/post", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: { invoiceId: sale.body.invoice.id }
     });
     expect(salePost.status, JSON.stringify(salePost.body)).toBe(200);
@@ -292,6 +301,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const created = await request(ctx, "/api/invoices/create", {
       method: "POST",
       token: ctx.tokenA,
+      branchId: ctx.branchAId,
       body: {
         invoiceNumber: `PERIOD-CLOSED-${ctx.suffix}`,
         type: "SALE",
@@ -313,6 +323,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
       const rejected = await request(ctx, "/api/invoices/post", {
         method: "POST",
         token: ctx.tokenA,
+      branchId: ctx.branchAId,
         body: { invoiceId: created.body.invoice.id },
       });
       expect(rejected.status).toBe(423);
