@@ -136,16 +136,17 @@ export class VoucherPostingService {
       date: Date;
       amount: Prisma.Decimal;
       type: VoucherType;
+      paymentMethod: "CASH" | "TRANSFER";
       tenantId: string;
       branchId: string;
       reversalOfId?: string;
       reversal?: boolean;
     }
   ) {
-    const { id, paymentNumber, date, amount, type, tenantId, branchId, reversalOfId, reversal } = params;
-    const cash = await this.getOrCreateAccount(
-      tx, tenantId, "101001", "الصندوق والبنك (النقدية)", "ASSET"
-    );
+    const { id, paymentNumber, date, amount, type, paymentMethod, tenantId, branchId, reversalOfId, reversal } = params;
+    const funds = paymentMethod === "TRANSFER"
+      ? await this.getOrCreateAccount(tx, tenantId, "101004", "البنك", "ASSET")
+      : await this.getOrCreateAccount(tx, tenantId, "101001", "الصندوق النقدي", "ASSET");
     const receivables = type === "RECEIPT"
       ? await this.getOrCreateAccount(tx, tenantId, "101002", "ذمم العملاء المدينة", "ASSET")
       : null;
@@ -153,8 +154,8 @@ export class VoucherPostingService {
       ? await this.getOrCreateAccount(tx, tenantId, "201001", "ذمم الموردين الدائنة", "LIABILITY")
       : null;
 
-    const debitAccountId = type === "RECEIPT" ? cash.id : payables!.id;
-    const creditAccountId = type === "RECEIPT" ? receivables!.id : cash.id;
+    const debitAccountId = type === "RECEIPT" ? funds.id : payables!.id;
+    const creditAccountId = type === "RECEIPT" ? receivables!.id : funds.id;
     const lines = reversal
       ? [
           { accountId: debitAccountId, debit: ZERO, credit: amount, description: "عكس سند" },
@@ -346,6 +347,7 @@ export class VoucherPostingService {
       date,
       amount,
       type,
+      paymentMethod: input.paymentMethod,
       tenantId,
       branchId,
     });
