@@ -44,6 +44,7 @@ jobs:
         run: >-
           npx vitest run --reporter=verbose
           server/tests/fifo-tenant-boundary.test.ts
+          server/tests/p0-02-tenant-autolink.test.ts
           server/tests/fifo-cost-chain.test.ts
           server/tests/manual-journal-tenant-isolation.test.ts
           server/tests/manual-journal-persistence-integrity.test.ts
@@ -224,6 +225,11 @@ jobs:
             await client.end();
           }
           NODE
+
+      - name: Run PostgreSQL HTTP P0-02 tenant Auto-Link regression tests
+        run: npx vitest run server/tests/p0-02-tenant-autolink.test.ts --reporter=verbose --maxWorkers=1
+        env:
+          NODE_OPTIONS: "--max-old-space-size=5120"
 
       - name: Run PostgreSQL HTTP Authentication integration tests
         run: npx vitest run server/tests/auth.integration.test.ts --reporter=verbose --maxWorkers=1

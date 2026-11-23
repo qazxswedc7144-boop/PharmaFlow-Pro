@@ -23,6 +23,7 @@ import rbacRouter from "./routes/rbac.routes.js";
 import { reportingRouter } from "./routes/reporting.routes.js";
 import { platformRouter } from "./modules/platform/platform.router.js";
 import { prisma } from "./database/prisma.js";
+import adminRouter from "./routes/admin.routes.js";
 
 export interface BuildAppOptions {
   logHttp?: boolean;
@@ -215,6 +216,8 @@ export function buildApp(options: BuildAppOptions = {}): express.Express {
   // 🚨 SEC-01 FIX: Global authentication applied to ALL /api routes below.
   // =========================================================================
   app.use("/api", authenticateToken);
+  // PLATFORM_OWNER admin operations must run before tenantContextMiddleware; that middleware rejects missing tenantId.
+  app.use("/api/admin", adminRouter);
   app.use("/api", tenantContextMiddleware);
   app.use("/api", subscriptionGuard);
 

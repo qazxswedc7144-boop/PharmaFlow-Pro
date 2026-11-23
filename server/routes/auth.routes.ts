@@ -435,7 +435,35 @@ authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, a
     // A valid password must not consume a failed-login reservation.
     await releaseLoginAttempt(req);
 
-    // 3. Reject inactive users
+    // Tenant membership is checked only after password verification and guard release.
+    const tUser = await prisma.tenantUser.findFirst({
+      where: { userId: user.id }
+    });
+
+    if (!tUser) {
+      await prisma.auditLog.create({
+        data: {
+          userId: user.id,
+          action: "CREATE",
+          entity: "LOGIN_REJECTED_NO_TENANT",
+          entityId: user.id,
+          after: JSON.stringify({
+            eventType: "LOGIN_REJECTED_NO_TENANT",
+            userId: user.id,
+            ip: req.ip
+          }),
+          ipAddress: req.ip
+        }
+      });
+      return res.status(403).json({
+        error: "TENANT_UNASSIGNED",
+        message: "This user is not assigned to a tenant. Contact a platform owner."
+      });
+    }
+
+    const tenantId = tUser.tenantId;
+
+    // 3. Reject inactive users after credentials and tenant membership are verified.
     if (!user.isActive) {
       return res.status(403).json({
         error: "ACCOUNT_DISABLED",
@@ -443,33 +471,7 @@ authRouter.post("/login", validateRequestBody(LoginSchema), loginAttemptGuard, a
       });
     }
 
-    // Look up tenant registration link for isolation support (with dynamic self-healing)
-    let tUser = await prisma.tenantUser.findFirst({
-      where: { userId: user.id }
-    });
-    let tenantId = tUser?.tenantId || null;
-
-    if (!tenantId) {
-      console.warn(`⚠️ User "${username}" lacks tenant association. Securing default tenant...`);
-      let tenant = await prisma.tenant.findFirst();
-      if (!tenant) {
-        tenant = await prisma.tenant.create({
-          data: {
-            name: "المؤسسة الدوائية المركزية",
-            isActive: true,
-          }
-        });
-      }
-      tenantId = tenant.id;
-      await prisma.tenantUser.create({
-        data: {
-          tenantId: tenant.id,
-          userId: user.id,
-          role: user.role === Role.ADMIN ? "TENANT_ADMIN" : "STAFF",
-        }
-      }).catch((err) => console.error(`⚠️ Tenant link create error: ${err.message}`));
-    }
-
+    // TODO: P0-06 - Branch Auto-Link requires separate analysis
     // Look up branch registration link for isolation support (with dynamic self-healing)
     let bUser = await prisma.branchUser.findFirst({
       where: { userId: user.id, tenantId }
