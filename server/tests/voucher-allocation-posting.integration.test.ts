@@ -191,7 +191,7 @@ definePostgresHttpSuite("Phase 4B — PostgreSQL voucher allocation and reversal
       expect(Number(updatedCustomer?.balance)).toBe(70);
       expect(Number(journal?.debitTotal)).toBe(30);
       expect(Number(journal?.creditTotal)).toBe(30);
-      expect(journal?.lines.find((line) => Number(line.debit) > 0)?.account.code).toBe("101001");
+      expect(journal?.lines.find((line) => Number(line.debit) > 0)?.account.code).toBe("101004");
       expect(journal?.lines.find((line) => Number(line.credit) > 0)?.account.code).toBe("101002");
     } finally {
       await prisma.auditLog.deleteMany({ where: { tenantId: ctx.tenantAId, entityId: receiptId } });
@@ -200,7 +200,7 @@ definePostgresHttpSuite("Phase 4B — PostgreSQL voucher allocation and reversal
       await prisma.payment.deleteMany({ where: { tenantId: ctx.tenantAId, id: receiptId } });
       await prisma.invoice.deleteMany({ where: { tenantId: ctx.tenantAId, id: invoice.id } });
       await prisma.customer.deleteMany({ where: { tenantId: ctx.tenantAId, id: customer.id } });
-      await prisma.account.deleteMany({ where: { tenantId: ctx.tenantAId, code: { in: ["101001", "101002"] } } });
+      await prisma.account.deleteMany({ where: { tenantId: ctx.tenantAId, code: { in: ["101001", "101002", "101004"] } } });
     }
   });
 
