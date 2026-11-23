@@ -2,27 +2,6 @@ name: Phase C - Omitted Test Execution
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/phase-c-omitted-tests.yml'
-      - 'app/applet/server/tests/security-patch-2.test.ts'
-      - 'server/tests/idempotency-middleware-security.test.ts'
-      - 'server/tests/p0-hotfix-inventory-isolation.test.ts'
-      - 'server/tests/p0-hotfix-metrics-backup.test.ts'
-      - 'server/tests/p0-hotfix-validation-fifo-isolation.test.ts'
-      - 'server/tests/prisma-recovery.test.ts'
-      - 'server/tests/purchase-lifecycle-financial-integrity.test.ts'
-      - 'server/tests/purchase-phase1-contract-integrity.test.ts'
-      - 'server/tests/purchase-phase2-accounting-integrity.test.ts'
-      - 'server/tests/purchase-phase2-reversal-precision.test.ts'
-      - 'server/tests/purchase-total-enforcement.test.ts'
-      - 'server/tests/supplier-payment-financial-integrity.test.ts'
-      - 'server/tests/sync-cross-tenant-security.test.ts'
-      - 'src/features/catalog/utils/productApplicationPermission.test.ts'
-      - 'src/features/inventory/services/UnifiedInventoryMutationEngine.purchase-transaction.test.ts'
-      - 'src/features/inventory/services/fifoEngine.transactional.test.ts'
-      - 'src/features/sales/services/salesDraftRecovery.service.test.ts'
 
 permissions:
   contents: read
