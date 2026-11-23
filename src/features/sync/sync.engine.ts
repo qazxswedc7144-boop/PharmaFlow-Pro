@@ -1106,10 +1106,21 @@ export class DistributedSyncEngine {
     });
   }
 
-  private sanitizePayload(payload: Record<string, unknown> | null | undefined): Record<string, unknown> | null | undefined {
+  private sanitizePayload(payload: Record<string, unknown> | unknown[] | null | undefined): any {
     if (!payload || typeof payload !== 'object') return payload;
+
+    // Preserve array identity and ordering. Treating an array as an object via
+    // spread converts it to {"0": ...}, which silently drops server-side
+    // allocation arrays after JSON serialization.
+    if (Array.isArray(payload)) {
+      return payload
+        .filter((value) => typeof value !== 'function')
+        .map((value) => value && typeof value === 'object'
+          ? this.sanitizePayload(value as Record<string, unknown> | unknown[])
+          : value);
+    }
+
     const sanitized: Record<string, unknown> = { ...payload };
-    
     const forbiddenKeys = ['password', 'token', 'apiKey', 'secret', 'credentials'];
     for (const key of Object.keys(sanitized)) {
       if (forbiddenKeys.some(fk => key.toLowerCase().includes(fk))) {
@@ -1117,7 +1128,7 @@ export class DistributedSyncEngine {
       } else if (typeof sanitized[key] === 'function') {
         delete sanitized[key];
       } else if (typeof sanitized[key] === 'object' && sanitized[key] !== null) {
-        sanitized[key] = this.sanitizePayload(sanitized[key] as Record<string, unknown>);
+        sanitized[key] = this.sanitizePayload(sanitized[key] as Record<string, unknown> | unknown[]);
       }
     }
     return sanitized;
