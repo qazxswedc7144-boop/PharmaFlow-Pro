@@ -12,7 +12,7 @@ function assertTestDatabase(): void {
   }
 }
 
-definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (getContext) => {
+definePostgresHttpSuite("Phase 4C — PostgreSQL branch-scoped FIFO layer cost provenance", (getContext) => {
   it("keeps repeated receipts as separate cost layers and records exact FEFO/FIFO consumption", async () => {
     assertTestDatabase();
     const ctx = getContext();
