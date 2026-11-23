@@ -83,3 +83,11 @@ ALTER TABLE fifo_consumption_log
   FOREIGN KEY ("branchId", "tenantId")
   REFERENCES branches (id, "tenantId")
   ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- All four tables are server-managed and live in Supabase's exposed public schema.
+-- Enable RLS with no client policies: browser roles remain denied by default;
+-- the trusted Prisma server connection is the only application access path.
+ALTER TABLE accounting_periods ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_layers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE fifo_consumption_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoice_payment_allocations ENABLE ROW LEVEL SECURITY;
