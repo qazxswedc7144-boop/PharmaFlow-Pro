@@ -42,6 +42,7 @@ export class SyncProcessorService {
       "VOUCHER:CREATE": "accounting.voucher.create",
       "VOUCHER:UPDATE": "accounting.voucher.create",
       "VOUCHER:DELETE": "accounting.voucher.create",
+      "VOUCHER:CANCEL": "vouchers.delete",
       "JOURNAL_ENTRY:CREATE": "accounting.journal.create",
       "JOURNAL_ENTRY:UPDATE": "accounting.journal.post",
       "JOURNAL_ENTRY:DELETE": "accounting.journal.post",
@@ -323,6 +324,40 @@ export class SyncProcessorService {
     const entityId = mutation.entityId || data.id || mutationId;
     const operation = (mutation.operation || "CREATE").toUpperCase();
     const upperEntity = entity.toUpperCase();
+
+    if (upperEntity === "VOUCHER") {
+      const reject = (errorCode: string, message: string): PerMutationResult => ({
+        id: mutationId, mutationId, status: "REJECTED", success: false, errorCode, message
+      });
+      if (!branchId) return reject("VOUCHER_BRANCH_REQUIRED", "A trusted branch context is required for voucher synchronization.");
+      if (data.tenantId && data.tenantId !== tenantId) return reject("TENANT_MISMATCH", "Voucher payload tenant does not match the authenticated tenant.");
+      if (data.branchId && data.branchId !== branchId) return reject("BRANCH_MISMATCH", "Voucher payload branch does not match the authenticated branch.");
+      if (data.id && entityId !== data.id) return reject("VOUCHER_ENTITY_ID_MISMATCH", "Mutation entityId does not match the voucher identifier.");
+
+      try {
+        const { VoucherPostingService } = await import("../accounting/services/voucherPosting.service.js");
+        const scope = { tx, tenantId, branchId, userId: params.userId };
+        if (operation === "CREATE") {
+          const details = await VoucherPostingService.create(scope, data as any);
+          return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details };
+        }
+        if (operation === "CANCEL") {
+          const details = await VoucherPostingService.cancel(scope, data as any);
+          return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details };
+        }
+        return reject("VOUCHER_OPERATION_NOT_SUPPORTED", "Voucher synchronization accepts CREATE and CANCEL only.");
+      } catch (err: any) {
+        const errorCode = err?.code || err?.message || "VOUCHER_POSTING_FAILED";
+        return {
+          id: mutationId,
+          mutationId,
+          status: errorCode === "PERMISSION_DENIED" ? "UNAUTHORIZED" : "REJECTED",
+          success: false,
+          errorCode,
+          message: err?.message || "Voucher posting failed"
+        };
+      }
+    }
 
     if (upperEntity === "PURCHASE") {
       return this.handlePurchaseCreate({
