@@ -219,6 +219,87 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
     }
   });
 
+  it("fails closed when eligible legacy stock has no verified branch assignment", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 Unassigned Legacy ${suffix}`,
+        sku: `P4-UNASSIGNED-${suffix}`,
+        price: 20,
+        cost: 8,
+        stockQuantity: 1
+      }
+    });
+    const batch = await prisma.inventoryBatch.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        productId: product.id,
+        batchNumber: `LEGACY-UNASSIGNED-${suffix}`,
+        initialQty: 1,
+        stockQuantity: 1,
+        cost: 8
+      }
+    });
+    await prisma.inventoryLayer.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        productId: product.id,
+        batchId: batch.id,
+        batchNumber: batch.batchNumber,
+        sourceReferenceId: `LEGACY-UNASSIGNED-${suffix}`,
+        sourceReferenceType: "LEGACY_BASELINE",
+        sourceKey: `legacy-unassigned:${suffix}`,
+        quantityInitial: 1,
+        quantityRemaining: 1,
+        unitCost: 8,
+        isLegacyBaseline: true,
+        branchId: null
+      }
+    });
+    await prisma.branchInventory.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        branchId: ctx.branchAId,
+        productId: product.id,
+        stockQuantity: 0
+      }
+    });
+
+    try {
+      await expect(prisma.$transaction((tx) =>
+        FifoService.depleteStock(
+          tx, product.id, 1, `SALE-UNASSIGNED-${suffix}`, "INVOICE",
+          "Unassigned stock must not be consumed by a branch", ctx.tenantAId,
+          `SALE-LINE-UNASSIGNED-${suffix}`, ctx.branchAId
+        )
+      )).rejects.toThrow(/FIFO_UNASSIGNED_STOCK_REQUIRES_RECONCILIATION/);
+
+      const [layer, productAfter, branchStock, consumptions] = await Promise.all([
+        prisma.inventoryLayer.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
+        prisma.branchInventory.findUnique({
+          where: { branchId_productId: { branchId: ctx.branchAId, productId: product.id } }
+        }),
+        prisma.fifoConsumption.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } })
+      ]);
+      expect(layer?.quantityRemaining).toBe(1);
+      expect(productAfter?.stockQuantity).toBe(1);
+      expect(branchStock?.stockQuantity).toBe(0);
+      expect(consumptions).toHaveLength(0);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
   it("prioritizes the earliest expiry before receipt age when both layers are eligible", async () => {
     assertTestDatabase();
     const ctx = getContext();
