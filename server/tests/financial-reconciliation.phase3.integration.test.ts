@@ -347,7 +347,7 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
     }
   });
 
-  it("confirms durable FIFO schema while reporting the remaining invoice payment allocation gap", async () => {
+  it("confirms durable FIFO and invoice payment allocation schemas", async () => {
     assertTestDatabase();
     const { prisma } = await import("../database/prisma.js");
     const rows = await prisma.$queryRaw<Array<{ table_name: string }>>`
@@ -356,23 +356,25 @@ definePostgresHttpSuite("Phase 3 — PostgreSQL financial reconciliation", (getC
       WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
     `;
     const tables = new Set(rows.map(row => row.table_name));
-    // The payments table already exists. The outstanding payment gap is the
-    // missing durable payment-to-invoice allocation relation.
+    // Payment records and invoice allocations are now both durable server entities.
     expect(tables.has("payments")).toBe(true);
     expect(tables.has("inventory_batches")).toBe(true);
     expect(tables.has("inventory_movements")).toBe(true);
     expect(tables.has("inventory_layers")).toBe(true);
     expect(tables.has("fifo_consumption_log")).toBe(true);
-    expect(tables.has("invoice_payment_allocations")).toBe(false);
+    expect(tables.has("invoice_payment_allocations")).toBe(true);
 
-    const missingCapabilities = [
-      { capability: "invoice-level payment allocation", requiredTables: ["invoice_payment_allocations"] },
-    ];
-    const gaps = missingCapabilities.filter(item => item.requiredTables.some(name => !tables.has(name)));
-    for (const gap of gaps) {
-      console.warn(`PHASE3_SCHEMA_LIMITATION: ${gap.capability}; missing: ${gap.requiredTables.filter(name => !tables.has(name)).join(", ")}`);
-    }
-    expect(gaps.map(gap => gap.capability)).toContain("invoice-level payment allocation");
-    expect(gaps.map(gap => gap.capability)).not.toContain("persistent FIFO layers and consumption history");
+    const columnRows = await prisma.$queryRaw<Array<{ table_name: string; column_name: string }>>`
+      SELECT table_name, column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name IN ('invoices', 'payments', 'invoice_payment_allocations', 'journal_entries')
+    `;
+    const columns = new Set(columnRows.map(row => `${row.table_name}.${row.column_name}`));
+    expect(columns.has("invoices.paidAmount")).toBe(true);
+    expect(columns.has("payments.status")).toBe(true);
+    expect(columns.has("invoice_payment_allocations.amount")).toBe(true);
+    expect(columns.has("invoice_payment_allocations.status")).toBe(true);
+    expect(columns.has("journal_entries.reversalOfId")).toBe(true);
   });
 });
