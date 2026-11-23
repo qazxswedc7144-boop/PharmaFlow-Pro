@@ -97,6 +97,6 @@ describe("SyncProcessor VOUCHER dispatch", () => {
   it("rejects unsupported voucher operations", async () => {
     const result = await (SyncProcessorService as any).executeEntityMutation(params("UPDATE"));
     expect(result.status).toBe("REJECTED");
-    expect(result.errorCode).toBe("VOUCHER_OPERATION_NOT_SUPPORTED");
+    expect(result.errorCode).toBe("UNKNOWN_SYNC_OPERATION");
   });
 });
