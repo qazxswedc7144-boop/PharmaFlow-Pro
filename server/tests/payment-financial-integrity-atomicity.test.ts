@@ -53,8 +53,8 @@ describe('Supplier Payment - Financial Integrity & Atomicity Verification Suite'
     await db.invoices.clear();
     await db.suppliers.clear();
     await db.voucherInvoiceLinks.clear();
-    await db.syncQueue.clear();
-    await db.outbox.clear();
+    await db.syncQueue.filter((row: any) => row.tenantId === tenantId && row.userId === 'usr-fin-tester').delete();
+    await db.outbox.filter((row: any) => row.tenantId === tenantId && row.userId === 'usr-fin-tester').delete();
     await db.idempotencyRecords.clear();
     await db.auditLogs.clear();
 
