@@ -178,17 +178,25 @@ export class VoucherPostingService {
         creditTotal: amount,
         reversalOfId: reversalOfId || null,
         tenantId,
-        branchId,
-        lines: {
-          create: lines.map((line) => ({
-            tenantId,
-            accountId: line.accountId,
-            debit: line.debit,
-            credit: line.credit,
-            description: line.description
-          }))
-        }
-      },
+        branchId
+      }
+    });
+
+    // Create journal lines explicitly so their tenant-scoped composite foreign
+    // keys are supplied as scalar fields; Prisma's nested create input hides
+    // shared relation scalars when the parent relation is already connected.
+    await tx.journalLine.createMany({
+      data: lines.map((line) => ({
+        tenantId,
+        entryId: entry.id,
+        accountId: line.accountId,
+        debit: line.debit,
+        credit: line.credit,
+        description: line.description
+      }))
+    });
+    const entryWithLines = await tx.journalEntry.findFirstOrThrow({
+      where: { id: entry.id, tenantId },
       include: { lines: true }
     });
 
@@ -198,7 +206,7 @@ export class VoucherPostingService {
       deltas.set(line.accountId, (deltas.get(line.accountId) || ZERO).plus(delta));
     }
     await this.updateAccountBalances(tx, tenantId, deltas);
-    return entry;
+    return entryWithLines;
   }
 
   static async create(scope: VoucherScope, input: VoucherCreateInput) {
