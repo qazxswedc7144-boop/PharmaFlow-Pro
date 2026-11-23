@@ -9,6 +9,7 @@ import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { generateTransactionUuid } from '@/utils/uuid';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { VoucherInvoiceLinkRepository } from '@/database/repositories/VoucherInvoiceLinkRepository';
+import { DistributedSyncEngine } from '@features/sync/sync.engine';
 
 export interface VoucherWorkflowInput {
   type: 'RECEIPT' | 'PAYMENT';
@@ -24,23 +25,41 @@ export interface VoucherWorkflowResult {
   id: string;
   voucher: Voucher;
   document: Receipt | Payment;
+  paymentMethod: 'CASH' | 'TRANSFER';
+  allocations: Array<{ invoiceId: string; amount: number; note?: string }>;
 }
 
 export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, VoucherWorkflowResult> {
   public id = 'accounting.voucher.process';
   public name = 'معالجة سند قبض / صرف';
   public operationType = 'VOUCHER';
-  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
   public syncContract: SyncContract = {
     entityType: 'VOUCHER',
     operation: 'CREATE',
-    buildPayload: (result) => result as Record<string, unknown>
+    buildPayload: (result, ctx) => {
+      const voucherResult = result as VoucherWorkflowResult;
+      return {
+        id: voucherResult.id,
+        paymentNumber: voucherResult.voucher.voucherId,
+        date: voucherResult.voucher.date,
+        amount: voucherResult.voucher.amount,
+        type: voucherResult.voucher.type,
+        partnerType: voucherResult.voucher.type === 'PAYMENT' ? 'SUPPLIER' : 'CUSTOMER',
+        partnerId: voucherResult.voucher.partnerId,
+        paymentMethod: voucherResult.paymentMethod,
+        notes: voucherResult.voucher.notes || null,
+        allocations: voucherResult.allocations,
+        tenantId: ctx.tenantId,
+        branchId: ctx.branchId
+      };
+    }
   };
+  public syncHandledInDomainTransaction = true;
   public requiredPermissions = ['accounting.voucher.create', 'vouchers.create'];
   public tables = [
     'vouchers', 'invoices', 'suppliers', 'customers', 'financialTransactions',
     'journalEntries', 'journalLines', 'accounts', 'auditLogs',
-    'idempotencyKeys', 'projectionEvents', 'voucherInvoiceLinks'
+    'idempotencyKeys', 'projectionEvents', 'voucherInvoiceLinks', 'syncQueue', 'outbox'
   ];
 
   public async validateInput(input: VoucherWorkflowInput): Promise<void> {
@@ -167,6 +186,14 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
     const prefix = isPayment ? 'PYMT' : 'RCPT';
     const id = generateTransactionUuid(prefix);
     const date = input.date || ctx.startedAt;
+    const allocations = Object.entries(input.allocations || {})
+      .map(([invoiceId, item]) => ({
+        invoiceId,
+        amount: typeof item === 'number' ? item : item.amount,
+        note: typeof item === 'number' ? undefined : item.note
+      }))
+      .filter((allocation) => allocation.amount > 0)
+      .sort((a, b) => a.invoiceId.localeCompare(b.invoiceId));
 
     const voucherRecord: Voucher = {
       id,
@@ -279,7 +306,13 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         lastModified: new Date().toISOString()
       };
 
-      return { id, voucher: voucherRecord, document: doc };
+      const result: VoucherWorkflowResult = {
+        id, voucher: voucherRecord, document: doc,
+        paymentMethod: input.paymentMethod || 'CASH',
+        allocations
+      };
+      await this.enqueueSync(result, ctx, tx);
+      return result;
 
     } else {
       // Stage 1: Persist Voucher FIRST
@@ -373,8 +406,70 @@ export class VoucherWorkflow implements BusinessWorkflow<VoucherWorkflowInput, V
         lastModified: new Date().toISOString()
       };
 
-      return { id, voucher: voucherRecord, document: doc };
+      const result: VoucherWorkflowResult = {
+        id, voucher: voucherRecord, document: doc,
+        paymentMethod: input.paymentMethod || 'CASH',
+        allocations
+      };
+      await this.enqueueSync(result, ctx, tx);
+      return result;
     }
+  private async enqueueSync(
+    result: VoucherWorkflowResult,
+    ctx: WorkflowContext,
+    tx?: any
+  ): Promise<void> {
+    if (!tx || typeof tx.table !== 'function') {
+      throw new Error('VOUCHER_SYNC_TRANSACTION_REQUIRED: Voucher sync must be persisted inside the domain transaction.');
+    }
+    if (!ctx.idempotencyKey || !ctx.tenantId || !ctx.branchId) {
+      throw new Error('VOUCHER_SYNC_SCOPE_REQUIRED: Tenant, branch and idempotency context are mandatory.');
+    }
+
+    const syncPayload = {
+      ...this.syncContract.buildPayload(result, ctx),
+      id: result.id,
+      tenantId: ctx.tenantId,
+      branchId: ctx.branchId
+    };
+    const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
+      this.syncContract.operation,
+      syncPayload,
+      this.syncContract.entityType,
+      ctx.idempotencyKey,
+      { tenantId: ctx.tenantId, branchId: ctx.branchId }
+    );
+    if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
+      throw new Error('VOUCHER_SYNC_ENQUEUE_FAILED: Voucher was not paired with a durable sync mutation.');
+    }
+
+    const syncQueueTable = tx.table('syncQueue');
+    const outboxTable = tx.table('outbox');
+    if (!syncQueueTable || !outboxTable) {
+      throw new Error('VOUCHER_SYNC_STORES_UNAVAILABLE: syncQueue and outbox must be part of the voucher transaction.');
+    }
+    const [queueRow, outboxRow] = await Promise.all([
+      syncQueueTable.where('idempotencyKey').equals(ctx.idempotencyKey).first(),
+      outboxTable.where('idempotencyKey').equals(ctx.idempotencyKey).first()
+    ]);
+    if (
+      !queueRow ||
+      !outboxRow ||
+      queueRow.entityType !== this.syncContract.entityType ||
+      queueRow.operationType !== this.syncContract.operation ||
+      queueRow.payload?.id !== result.id ||
+      queueRow.tenantId !== ctx.tenantId ||
+      queueRow.branchId !== ctx.branchId ||
+      outboxRow.entityType !== this.syncContract.entityType ||
+      outboxRow.operation !== this.syncContract.operation ||
+      outboxRow.payload?.id !== result.id ||
+      outboxRow.tenantId !== ctx.tenantId ||
+      outboxRow.branchId !== ctx.branchId
+    ) {
+      throw new Error('VOUCHER_SYNC_DURABILITY_FAILED: Tenant-bound syncQueue and outbox records must exist before commit.');
+    }
+  }
+
   }
 }
 
