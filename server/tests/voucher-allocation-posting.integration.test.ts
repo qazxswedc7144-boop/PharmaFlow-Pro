@@ -194,6 +194,7 @@ definePostgresHttpSuite("Phase 4B — PostgreSQL voucher allocation and reversal
       expect(journal?.lines.find((line) => Number(line.debit) > 0)?.account.code).toBe("101001");
       expect(journal?.lines.find((line) => Number(line.credit) > 0)?.account.code).toBe("101002");
     } finally {
+      await prisma.auditLog.deleteMany({ where: { tenantId: ctx.tenantAId, entityId: receiptId } });
       await prisma.invoicePaymentAllocation.deleteMany({ where: { tenantId: ctx.tenantAId, paymentId: receiptId } });
       await prisma.journalEntry.deleteMany({ where: { tenantId: ctx.tenantAId, sourceId: receiptId } });
       await prisma.payment.deleteMany({ where: { tenantId: ctx.tenantAId, id: receiptId } });
