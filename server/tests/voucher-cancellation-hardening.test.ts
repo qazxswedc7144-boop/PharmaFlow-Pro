@@ -9,6 +9,19 @@ import { WorkflowOrchestrator } from '@/core/workflow';
 import { useAuthStore } from '@/store/authStore';
 import { db } from '@/core/db';
 
+vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
+  AccountingPeriodSyncService: {
+    getPeriods: vi.fn().mockResolvedValue([{
+      id: 'TEST-OPEN-PERIOD',
+      Start_Date: '1900-01-01T00:00:00.000Z',
+      End_Date: '2200-12-31T23:59:59.999Z',
+      Is_Locked: false,
+    }]),
+    setLocked: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+
 interface FullDbSnapshot {
   vouchers: any[];
   receipts: any[];
@@ -299,6 +312,7 @@ describe('Voucher Cancellation Hardening & Financial Integrity Suite', () => {
       } as any,
       tenantId,
       branchId,
+      token: 'test-access-token',
       roles: ['accountant'],
       permissions: ['vouchers.manage', 'vouchers.delete'],
       isAuthenticated: true
