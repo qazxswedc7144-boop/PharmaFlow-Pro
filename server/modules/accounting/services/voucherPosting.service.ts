@@ -264,7 +264,9 @@ export class VoucherPostingService {
       if (!invoice) fail("INVOICE_NOT_FOUND_OR_FORBIDDEN");
       const expectedInvoiceType = type === "PAYMENT" ? "PURCHASE" : "SALE";
       if (String(invoice.type) !== expectedInvoiceType) fail("INVOICE_TYPE_MISMATCH");
-      if (invoice.partnerId !== input.partnerId) fail("INVOICE_PARTNER_MISMATCH");
+      const partnerMatches = invoice.partnerId === input.partnerId ||
+        (type === "RECEIPT" && input.partnerId === CASH_CUSTOMER && invoice.partnerId === null);
+      if (!partnerMatches) fail("INVOICE_PARTNER_MISMATCH");
       if (invoice.branchId && invoice.branchId !== branchId) fail("INVOICE_BRANCH_MISMATCH");
       if (invoice.documentStatus !== "POSTED") fail("INVOICE_NOT_POSTED");
 
@@ -414,7 +416,9 @@ export class VoucherPostingService {
       const invoice = lockedRows[0];
       if (!invoice || (invoice.branchId && invoice.branchId !== branchId)) fail("INVOICE_NOT_FOUND_OR_FORBIDDEN");
       const expectedInvoiceType = type === "PAYMENT" ? "PURCHASE" : "SALE";
-      if (invoice.type !== expectedInvoiceType || invoice.partnerId !== payment.partnerId) fail("INVOICE_ALLOCATION_PARTNER_MISMATCH");
+      const partnerMatches = invoice.partnerId === payment.partnerId ||
+        (type === "RECEIPT" && payment.partnerId === CASH_CUSTOMER && invoice.partnerId === null);
+      if (invoice.type !== expectedInvoiceType || !partnerMatches) fail("INVOICE_ALLOCATION_PARTNER_MISMATCH");
       if (invoice.paidAmount === null || invoice.paidAmount === undefined) {
         fail("INVOICE_PAID_AMOUNT_UNKNOWN");
       }
