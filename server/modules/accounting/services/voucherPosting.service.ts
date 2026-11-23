@@ -208,6 +208,8 @@ export class VoucherPostingService {
     if (input.partnerType !== partnerType) fail("VOUCHER_PARTNER_TYPE_MISMATCH");
     if (!input.id?.trim() || !input.partnerId?.trim() || !branchId?.trim()) fail("VOUCHER_REQUIRED_FIELDS_MISSING");
 
+    const branch = await tx.branch.findFirst({ where: { id: branchId, tenantId }, select: { id: true } });
+    if (!branch) fail("VOUCHER_BRANCH_NOT_FOUND");
     const amount = decimal(input.amount, "VOUCHER_AMOUNT_INVALID");
     if (amount.lessThanOrEqualTo(0)) fail("VOUCHER_AMOUNT_MUST_BE_POSITIVE");
     const date = input.date instanceof Date ? input.date : new Date(input.date);
