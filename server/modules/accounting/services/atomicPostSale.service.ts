@@ -141,14 +141,15 @@ export class AtomicPostSaleService {
           taxAmount: salesPricing.taxAmount,
           taxMode: salesPricing.taxMode,
           status: InvoiceStatus.DRAFT,
-          // Partial settlements are applied through durable voucher allocations.
-          // Start this invoice at zero paid so a later receipt cannot double-count.
-          paymentStatus: validated.paymentStatus === "PAID"
-            ? "PAID"
-            : "UNPAID",
+          // The sales DTO does not carry an authoritative partial paid amount.
+          // Preserve PARTIALLY_PAID but keep the amount unknown until a durable
+          // voucher allocation or an explicit reconciliation supplies evidence.
+          paymentStatus: validated.paymentStatus,
           paidAmount: validated.paymentStatus === "PAID"
             ? calculatedTotal
-            : new Prisma.Decimal(0),
+            : validated.paymentStatus === "UNPAID"
+              ? new Prisma.Decimal(0)
+              : null,
           documentStatus: DocumentStatus.ACTIVE,
           tenantId,
           items: {
