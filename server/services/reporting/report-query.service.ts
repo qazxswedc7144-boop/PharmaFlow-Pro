@@ -59,7 +59,7 @@ export interface QueriedInvoice {
   taxAmount: number;
   totalAmount: number;
   paidAmount: number;
-  paidAmountKnown: boolean;
+  paidAmountKnown?: boolean;
   costAmount: number;
   status: string;
   paymentStatus: string;
