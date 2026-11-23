@@ -82,7 +82,8 @@ inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWN
           refId,
           "ADJUSTMENT",
           data.reason || "Manual Stock Intake Adjustment",
-          tenantId
+          tenantId,
+          branchId
         );
       } else {
         // Stock depletion / write off
