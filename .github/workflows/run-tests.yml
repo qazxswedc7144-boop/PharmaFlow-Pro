@@ -308,7 +308,7 @@ jobs:
             safe_name="${file//\//__}"
             log="phase-c-logs/${safe_name}.log"
             echo "===== START: $file ====="
-            npx vitest run --reporter=verbose --maxWorkers=1 "$file" 2>&1 | tee "$log"
+            npx vitest run --config vitest.phase-c.config.ts --reporter=verbose --maxWorkers=1 "$file" 2>&1 | tee "$log"
             status=${PIPESTATUS[0]}
             if [ "$status" -eq 0 ]; then
               result="PASS"
