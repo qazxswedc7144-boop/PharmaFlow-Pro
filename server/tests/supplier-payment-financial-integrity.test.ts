@@ -9,6 +9,7 @@ import { db } from '@/core/db';
 import { PurchaseRepository } from '@/database/repositories/PurchaseRepository';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+import { TokenProvider } from '@/services/auth/tokenProvider';
 
 describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite', () => {
   const tenantId = 'TENANT-FIN-PROD-01';
@@ -18,15 +19,21 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
     vi.clearAllMocks();
 
     // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
+    const accountant = {
+      id: 'usr-accountant',
+      user_id: 'usr-accountant',
+      tenantId,
+      tenant_id: tenantId,
+      branchId,
+      branch_id: branchId,
+      role: 'accountant',
+      roles: ['accountant'],
+      permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete']
+    };
+    TokenProvider.setSession(accountant as any, 'phase-c-accountant-token', 'phase-c-accountant-refresh');
     useAuthStore.setState({
-      user: {
-        id: 'usr-accountant',
-        tenantId,
-        branchId,
-        role: 'accountant',
-        roles: ['accountant'],
-        permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete']
-      } as any,
+      user: accountant as any,
+      token: 'phase-c-accountant-token',
       tenantId,
       branchId,
       roles: ['accountant'],
