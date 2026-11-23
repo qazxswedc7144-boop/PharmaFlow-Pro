@@ -240,6 +240,7 @@ describe("P0-01 purchase-to-FIFO cost chain", () => {
     const body = await response.json() as any;
     expect(Number(body.invoice.items[0].cost)).toBe(25);
     expect(Number(body.invoice.items[0].price)).toBe(25);
+    expect(body.invoice.branchId).toBe("BRANCH-P0-01");
   });
 
   it("returns HTTP 422 for a PURCHASE with price zero", async () => {
