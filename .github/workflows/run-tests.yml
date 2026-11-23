@@ -1,5 +1,9 @@
 name: Run Tests
 
+concurrency:
+  group: run-tests-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 on:
   push:
     branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state, phase-c/omitted-test-execution ]
