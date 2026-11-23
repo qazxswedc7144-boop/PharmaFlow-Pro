@@ -121,6 +121,9 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
       data: { tenantId: ctx.tenantAId, name: `CI Purchase Supplier ${ctx.suffix}` }
     });
     const invoiceId = randomUUID();
+    const partialInvoiceId = randomUUID();
+    const partialMutationId = randomUUID();
+    const partialIdempotencyKey = randomUUID();
     const mutationId = randomUUID();
     const idempotencyKey = randomUUID();
     const batchNumber = `PURCHASE-BATCH-${ctx.suffix}`;
@@ -178,16 +181,16 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
         timestamp: Date.now(),
         version: 1
       }, {
-        id: randomUUID(),
+        id: partialMutationId,
         entity: "PURCHASE",
-        entityId: randomUUID(),
+        entityId: partialInvoiceId,
         operation: "CREATE" as const,
         payload: {
-          id: randomUUID(),
+          id: partialInvoiceId,
           tenantId: ctx.tenantAId,
           branchId: ctx.branchAId,
           purchase: {
-            id: randomUUID(),
+            id: partialInvoiceId,
             invoiceNumber: `PUR-PARTIAL-NO-METHOD-${ctx.suffix}`,
             date: new Date().toISOString(),
             type: "PURCHASE",
@@ -214,7 +217,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
             }]
           }
         },
-        idempotencyKey: randomUUID(),
+        idempotencyKey: partialIdempotencyKey,
         timestamp: Date.now(),
         version: 1
       }]
