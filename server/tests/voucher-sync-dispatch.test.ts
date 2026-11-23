@@ -17,7 +17,7 @@ import { SyncProcessorService } from "../modules/sync/sync-processor.service.js"
 function mutation(operation: string, payload: Record<string, unknown> = {}) {
   return {
     id: `mutation-${operation.toLowerCase()}`,
-    entityType: "VOUCHER",
+    entity: "VOUCHER",
     entityId: "voucher-001",
     operation,
     payload: { id: "voucher-001", ...payload },
