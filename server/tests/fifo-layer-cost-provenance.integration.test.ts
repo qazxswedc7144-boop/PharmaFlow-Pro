@@ -13,6 +13,32 @@ function assertTestDatabase(): void {
 }
 
 definePostgresHttpSuite("Phase 4C — PostgreSQL branch-scoped FIFO layer cost provenance", (getContext) => {
+  it("enables RLS on every new server-managed finance and FIFO table", async () => {
+    assertTestDatabase();
+    const { prisma } = await import("../database/prisma.js");
+    const rows = await prisma.$queryRaw<Array<{ table_name: string; rls_enabled: boolean }>>`
+      SELECT c.relname AS table_name, c.relrowsecurity AS rls_enabled
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relkind = 'r'
+        AND c.relname IN (
+          'accounting_periods',
+          'inventory_layers',
+          'fifo_consumption_log',
+          'invoice_payment_allocations'
+        )
+      ORDER BY c.relname
+    `;
+    expect(rows.map((row) => row.table_name)).toEqual([
+      "accounting_periods",
+      "fifo_consumption_log",
+      "inventory_layers",
+      "invoice_payment_allocations"
+    ]);
+    expect(rows.every((row) => row.rls_enabled)).toBe(true);
+  });
+
   it("keeps repeated receipts as separate cost layers and records exact FEFO/FIFO consumption", async () => {
     assertTestDatabase();
     const ctx = getContext();
