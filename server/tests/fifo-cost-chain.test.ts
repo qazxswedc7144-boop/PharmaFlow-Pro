@@ -22,7 +22,8 @@ vi.mock("../middleware/auth.middleware.js", () => ({
     req.user = {
       userId: "p0-01-user",
       role: "ACCOUNTANT",
-      tenantId: "TENANT-P0-01"
+      tenantId: "TENANT-P0-01",
+      branchId: "BRANCH-P0-01"
     };
     next();
   },
@@ -183,6 +184,8 @@ describe("P0-01 purchase-to-FIFO cost chain", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const tx = {
+      branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-P0-01" }) },
+      branchUser: { findFirst: vi.fn().mockResolvedValue({ id: "branch-user-p0-01" }) },
       invoice: {
         findFirst: mocks.invoiceFindFirst,
         create: mocks.invoiceCreate
