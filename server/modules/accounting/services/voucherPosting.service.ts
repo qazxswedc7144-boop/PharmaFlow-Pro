@@ -490,9 +490,18 @@ export class VoucherPostingService {
         creditTotal: amount,
         reversalOfId: originalJournal.id,
         tenantId,
-        branchId,
-        lines: { create: reversalLines }
+        branchId
       }
+    });
+    await tx.journalLine.createMany({
+      data: reversalLines.map((line) => ({
+        tenantId,
+        entryId: reversalJournal.id,
+        accountId: line.accountId,
+        debit: line.debit,
+        credit: line.credit,
+        description: line.description
+      }))
     });
 
     const deltas = new Map<string, Prisma.Decimal>();
