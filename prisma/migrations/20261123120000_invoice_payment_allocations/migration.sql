@@ -13,7 +13,7 @@ SET "paidAmount" = CASE
 END;
 
 ALTER TABLE "payments"
-  ADD COLUMN "status" TEXT NOT NULL DEFAULT 'POSTED',
+  ADD COLUMN "status" TEXT NOT NULL DEFAULT 'LEGACY_UNVERIFIED',
   ADD COLUMN "cancelledAt" TIMESTAMP(3),
   ADD COLUMN "cancellationReason" TEXT;
 
