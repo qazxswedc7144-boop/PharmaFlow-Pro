@@ -141,7 +141,14 @@ export class AtomicPostSaleService {
           taxAmount: salesPricing.taxAmount,
           taxMode: salesPricing.taxMode,
           status: InvoiceStatus.DRAFT,
-          paymentStatus: validated.paymentStatus,
+          // Partial settlements are applied through durable voucher allocations.
+          // Start this invoice at zero paid so a later receipt cannot double-count.
+          paymentStatus: validated.paymentStatus === "PAID" || validated.paymentStatus === "CASH"
+            ? "PAID"
+            : "UNPAID",
+          paidAmount: validated.paymentStatus === "PAID" || validated.paymentStatus === "CASH"
+            ? calculatedTotal
+            : new Prisma.Decimal(0),
           documentStatus: DocumentStatus.ACTIVE,
           tenantId,
           items: {
