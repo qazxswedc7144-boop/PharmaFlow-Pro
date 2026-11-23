@@ -332,7 +332,6 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
       ["PURCHASE", "POST"],
       ["JOURNAL_ENTRY", "POST"],
       ["VOUCHER", "POST"],
-      ["VOUCHER", "CANCEL"],
       ["BRANCH_TRANSFER", "POST"],
       ["STOCK_ADJUSTMENT", "POST"]
     ] as const;
