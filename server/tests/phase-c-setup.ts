@@ -40,10 +40,21 @@ vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
   }
 
   if (pathname === '/api/auth/branch-context') {
-    if (!tenantId || !branchId) {
+    // The simulated server derives ownership from the authenticated session,
+    // never by echoing caller-supplied tenant/branch headers.
+    const trustedTenantId = session.tenantId || '';
+    const trustedBranchId = session.branchId || '';
+    if (
+      !session.isAuthenticated ||
+      !session.token ||
+      !trustedTenantId ||
+      !trustedBranchId ||
+      (tenantId && tenantId !== trustedTenantId) ||
+      (branchId && branchId !== trustedBranchId)
+    ) {
       return new Response(JSON.stringify({
         success: false,
-        error: 'TRUSTED_BRANCH_CONTEXT_REQUIRED'
+        error: 'BRANCH_MEMBERSHIP_REQUIRED'
       }), {
         status: 403,
         headers: { 'Content-Type': 'application/json' }
@@ -52,10 +63,10 @@ vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     return new Response(JSON.stringify({
       success: true,
       data: {
-        id: branchId,
-        code: branchId,
+        id: trustedBranchId,
+        code: trustedBranchId,
         name: 'Phase C Test Branch',
-        tenantId,
+        tenantId: trustedTenantId,
         isActive: true
       },
       contextCorrected: false
