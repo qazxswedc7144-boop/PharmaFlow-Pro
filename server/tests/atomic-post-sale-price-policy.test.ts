@@ -17,6 +17,7 @@ import { SYSTEM_ROLE_PERMISSIONS } from "../services/rbac/permission.service.js"
 
 const tenantId = "tenant-atomic-sale";
 const userId = "user-atomic-sale";
+const branchId = "branch-atomic-sale";
 const productId = "11111111-1111-4111-8111-111111111111";
 
 function createTx() {
@@ -27,6 +28,7 @@ function createTx() {
     items: [{ productId, qty: 1, price: 27, total: 27 }],
   };
   return {
+    branch: { findFirst: vi.fn().mockResolvedValue({ id: branchId }) },
     product: { findMany: vi.fn().mockResolvedValue([{ id: productId, price: 30, basePrice: 30 }]) },
     tenantSalesPolicy: { findUnique: vi.fn().mockResolvedValue({ maxDiscountPercent: 10, taxRatePercent: 15, taxMode: "EXCLUSIVE" }) },
     invoice: {
@@ -67,7 +69,7 @@ describe("AtomicPostSaleService manual price policy", () => {
   it("rejects a manual item price when the authenticated user lacks sales.price.override", async () => {
     const tx = createTx();
     await expect(AtomicPostSaleService.executePostSaleCommand({
-      payload: payload(27, 31.05), tenantId, userId, userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
+      payload: payload(27, 31.05), tenantId, branchId, userId, userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
     })).rejects.toThrow("PRICE_OVERRIDE_FORBIDDEN");
     expect(tx.invoice.create).not.toHaveBeenCalled();
   });
@@ -76,19 +78,20 @@ describe("AtomicPostSaleService manual price policy", () => {
     mockAuthorization.can.mockResolvedValue(true);
     const tx = createTx();
     await AtomicPostSaleService.executePostSaleCommand({
-      payload: payload(27, 31.05), tenantId, userId, userRole: "ADMIN", ipAddress: "127.0.0.1", tx,
+      payload: payload(27, 31.05), tenantId, branchId, userId, userRole: "ADMIN", ipAddress: "127.0.0.1", tx,
     });
     const createArgs = tx.invoice.create.mock.calls[0][0];
     expect(createArgs.data.items.create[0].price.toString()).toBe("27");
     expect(createArgs.data.totalAmount.toString()).toBe("31.05");
     expect(createArgs.data.discountAmount.toString()).toBe("0");
+    expect(createArgs.data.branchId).toBe(branchId);
   });
 
   it("rejects a permitted manual price that exceeds the tenant maximum discount", async () => {
     mockAuthorization.can.mockResolvedValue(true);
     const tx = createTx();
     await expect(AtomicPostSaleService.executePostSaleCommand({
-      payload: payload(26, 29.9), tenantId, userId, userRole: "ADMIN", ipAddress: "127.0.0.1", tx,
+      payload: payload(26, 29.9), tenantId, branchId, userId, userRole: "ADMIN", ipAddress: "127.0.0.1", tx,
     })).rejects.toThrow("DISCOUNT_LIMIT_EXCEEDED");
     expect(tx.invoice.create).not.toHaveBeenCalled();
   });
@@ -97,7 +100,7 @@ describe("AtomicPostSaleService manual price policy", () => {
     mockAuthorization.can.mockResolvedValue(true);
     const tx = createTx();
     await expect(AtomicPostSaleService.executePostSaleCommand({
-      payload: payload(28.5, 1, 6), tenantId, userId, userRole: "ADMIN", ipAddress: "127.0.0.1", tx,
+      payload: payload(28.5, 1, 6), tenantId, branchId, userId, userRole: "ADMIN", ipAddress: "127.0.0.1", tx,
     })).rejects.toThrow("DISCOUNT_LIMIT_EXCEEDED");
     expect(tx.invoice.create).not.toHaveBeenCalled();
   });
@@ -105,17 +108,35 @@ describe("AtomicPostSaleService manual price policy", () => {
   it("does not require override permission when submitted price matches the tenant catalog", async () => {
     const tx = createTx();
     await AtomicPostSaleService.executePostSaleCommand({
-      payload: payload(30, 34.5), tenantId, userId, userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
+      payload: payload(30, 34.5), tenantId, branchId, userId, userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
     });
     expect(mockAuthorization.can).not.toHaveBeenCalled();
     expect(tx.invoice.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a missing trusted branch before creating a sale invoice", async () => {
+    const tx = createTx();
+    await expect(AtomicPostSaleService.executePostSaleCommand({
+      payload: payload(30, 34.5), tenantId, branchId: "", userId,
+      userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
+    })).rejects.toThrow("TRUSTED_BRANCH_CONTEXT_REQUIRED");
+    expect(tx.invoice.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects payload branch identity that conflicts with the authenticated branch", async () => {
+    const tx = createTx();
+    await expect(AtomicPostSaleService.executePostSaleCommand({
+      payload: { ...payload(30, 34.5), branchId: "other-branch" },
+      tenantId, branchId, userId, userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
+    })).rejects.toThrow("BRANCH_MISMATCH");
+    expect(tx.invoice.create).not.toHaveBeenCalled();
   });
 
   it("preserves partial payment status without inventing an unknown paid amount", async () => {
     const tx = createTx();
     await AtomicPostSaleService.executePostSaleCommand({
       payload: payload(30, 34.5, 0, "PARTIALLY_PAID"),
-      tenantId, userId, userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
+      tenantId, branchId, userId, userRole: "CASHIER", ipAddress: "127.0.0.1", tx,
     });
     const createArgs = tx.invoice.create.mock.calls[0][0];
     expect(createArgs.data.paymentStatus).toBe("PARTIALLY_PAID");
