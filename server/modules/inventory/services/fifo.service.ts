@@ -359,6 +359,28 @@ export class FifoService {
       throw new Error("BRANCH_NOT_FOUND_OR_FORBIDDEN: Branch does not belong to the authenticated tenant.");
     }
 
+    // Never let a new receipt silently repair or overwrite a divergent legacy
+    // branch projection. The projection must already agree with existing layers.
+    const existingBranchInventory = await tx.branchInventory.findUnique({
+      where: { branchId_productId: { branchId: trustedBranchId, productId } },
+      select: { stockQuantity: true }
+    });
+    const existingBranchLayers = await tx.inventoryLayer.aggregate({
+      where: { tenantId, branchId: trustedBranchId, productId },
+      _sum: { quantityRemaining: true }
+    });
+    const existingLayerQuantity = existingBranchLayers._sum.quantityRemaining ?? 0;
+    if (existingBranchInventory && existingBranchInventory.stockQuantity !== existingLayerQuantity) {
+      throw new Error(
+        `BRANCH_INVENTORY_LAYER_MISMATCH: Existing branch projection ${existingBranchInventory.stockQuantity} does not match ${existingLayerQuantity} remaining FIFO layer units for product ${productId}.`
+      );
+    }
+    if (!existingBranchInventory && existingLayerQuantity > 0) {
+      throw new Error(
+        "BRANCH_INVENTORY_NOT_INITIALIZED: Existing FIFO layers have no branch stock projection; reconcile before receiving more stock."
+      );
+    }
+
     const normalizedLineId = sourceLineId?.trim() || productId;
     const sourceKey = [referenceType, referenceId, normalizedLineId, batchNumber].join(":");
     const existingLayer = await tx.inventoryLayer.findFirst({
