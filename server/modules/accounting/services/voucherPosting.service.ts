@@ -201,7 +201,7 @@ export class VoucherPostingService {
   }
 
   static async create(scope: VoucherScope, input: VoucherCreateInput) {
-    const { tx, tenantId, branchId } = scope;
+    const { tx, tenantId, branchId, userId } = scope;
     const type = normalizedVoucherType(input.type);
     const partnerType = expectedPartnerType(type);
     if (input.partnerType !== partnerType) fail("VOUCHER_PARTNER_TYPE_MISMATCH");
@@ -348,6 +348,19 @@ export class VoucherPostingService {
       type,
       tenantId,
       branchId,
+    });
+    await tx.auditLog.create({
+      data: {
+        userId,
+        action: "POST_JOURNAL",
+        entity: "Payment",
+        entityId: payment.id,
+        before: null,
+        after: JSON.stringify({ status: "POSTED", amount: amount.toString(), allocationCount: normalized.length, journalId: journal.id }),
+        ipAddress: "SYNC",
+        tenantId,
+        branchId
+      }
     });
 
     return {
@@ -505,7 +518,9 @@ export class VoucherPostingService {
         entityId: payment.id,
         before: JSON.stringify({ status: payment.status, amount: payment.amount }),
         after: JSON.stringify({ status: "CANCELLED", reversalJournalId: reversalJournal.id, reason: input.reason || null }),
-        ipAddress: "SYNC"
+        ipAddress: "SYNC",
+        tenantId,
+        branchId
       }
     });
 
