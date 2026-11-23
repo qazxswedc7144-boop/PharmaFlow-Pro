@@ -46,7 +46,10 @@ function createAddStockTx() {
   return {
     $queryRaw: vi.fn().mockResolvedValue([{ id: PRODUCT_ID, tenantId: TENANT_ID }]),
     branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-P0-01" }) },
-    branchInventory: { upsert: vi.fn().mockResolvedValue({ stockQuantity: 10 }) },
+    branchInventory: {
+      findUnique: vi.fn().mockResolvedValue({ stockQuantity: 10 }),
+      upsert: vi.fn().mockResolvedValue({ stockQuantity: 10 })
+    },
     inventoryLayer: {
       findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockResolvedValue({ id: "layer-25" }),
