@@ -364,13 +364,22 @@ export class FinancialTransactionService {
     } else if (invoice.type === InvoiceType.PURCHASE) {
       // PURCHASE: Increase inventory layers
       for (const item of invoice.items) {
+        const itemCost = new Prisma.Decimal(item.cost);
+        if (itemCost.lte(0)) {
+          const error: any = new Error(
+            `PURCHASE_ITEM_COST_MISSING: Item ${item.id} (product ${item.productId}) has cost <= 0 in invoice ${invoice.invoiceNumber}. Refusing to create FIFO layer with zero cost.`
+          );
+          error.code = "PURCHASE_ITEM_COST_MISSING";
+          throw error;
+        }
+
         const batchNumber = item.note || `BATCH-${Date.now()}`;
         await FifoService.addStock(
           tx,
           item.productId,
           batchNumber,
           item.qty,
-          Number(item.cost ?? item.price),
+          itemCost.toNumber(),
           item.expiryDate,
           invoice.id,
           "INVOICE",

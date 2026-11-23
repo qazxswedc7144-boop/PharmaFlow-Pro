@@ -144,13 +144,28 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           throw error;
         }
 
+        const isPurchase = data.type === "PURCHASE";
+        let costValue: Prisma.Decimal;
+        if (isPurchase) {
+          if (!item.price || Number(item.price) <= 0) {
+            const error: any = new Error("INVALID_PURCHASE_COST");
+            error.code = "INVALID_PURCHASE_COST";
+            throw error;
+          }
+          // In a purchase invoice, price is the supplier's actual unit cost.
+          costValue = new Prisma.Decimal(item.price);
+        } else {
+          // SALE: placeholder is replaced by FIFO-derived cost during posting.
+          costValue = new Prisma.Decimal(0);
+        }
+
         const lineTotal = price.mul(item.qty);
         calculatedTotal = calculatedTotal.plus(lineTotal);
         return {
           product: { connect: { id_tenantId: { id: item.productId, tenantId } } },
           qty: item.qty,
           price,
-          cost: new Prisma.Decimal(0),
+          cost: costValue,
           total: lineTotal,
           expiryDate: item.expiryDate,
           note: item.note
@@ -258,6 +273,12 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
     }
     if (err.code === "P2002") {
       return res.status(409).json({ error: "INVOICE_EXISTS", message: "رقم الفاتورة مستخدم مسبقاً داخل المؤسسة." });
+    }
+    if (err.code === "INVALID_PURCHASE_COST") {
+      return res.status(422).json({
+        error: "INVALID_PURCHASE_COST",
+        message: "تكلفة الشراء مفقودة أو غير صالحة. يجب أن تكون أكبر من صفر."
+      });
     }
     if (err.code === "INVALID_SERVER_PRODUCT_PRICE") {
       return res.status(422).json({ error: "INVALID_SERVER_PRODUCT_PRICE", message: "سعر المنتج المحفوظ غير صالح." });
