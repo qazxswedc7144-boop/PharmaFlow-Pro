@@ -421,65 +421,46 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     const productB = 'PROD-READ-B';
 
     beforeEach(async () => {
-      // Seed Product A for Tenant A
+      // Clean both tenant partitions using their own active contexts.
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.priceHistory.clear();
+      await db.invoices.clear();
+      setSessionFixture({ tenantId: tenantB, branchId: 'BR-B' } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.priceHistory.clear();
+      await db.invoices.clear();
+
+      // Seed Tenant A records only while Tenant A is active.
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
       await db.products.put({
-        id: productA,
-        name: 'Product A',
-        price: 100,
-        stock: 50,
-        tenantId: tenantA,
-        isActive: true
+        id: productA, name: 'Product A', price: 100, stock: 50,
+        tenantId: tenantA, isActive: true
+      } as any);
+      await db.priceHistory.put({
+        id: 'PH-A-1', productId: productA, name: 'Product A',
+        partnerId: 'PARTNER-A', Price: 95, date: '2026-01-01', tenantId: tenantA
+      } as any);
+      await db.invoices.put({
+        id: 'INV-PUR-A-1', type: 'PURCHASE', tenantId: tenantA,
+        date: '2026-01-10', items: [{ productId: productA, unitPrice: 90, quantity: 10 }]
       } as any);
 
-      // Seed Product B for Tenant B
+      // Seed Tenant B records in Tenant B context.
+      setSessionFixture({ tenantId: tenantB, branchId: 'BR-B' } as any, 'tok', 'ref');
       await db.products.put({
-        id: productB,
-        name: 'Product B',
-        price: 200,
-        stock: 40,
-        tenantId: tenantB,
-        isActive: true
+        id: productB, name: 'Product B', price: 200, stock: 40,
+        tenantId: tenantB, isActive: true
       } as any);
-
-      // Seed Price History for Product A (Tenant A)
       await db.priceHistory.put({
-        id: 'PH-A-1',
-        productId: productA,
-        name: 'Product A',
-        partnerId: 'PARTNER-A',
-        Price: 95,
-        date: '2026-01-01',
-        tenantId: tenantA
+        id: 'PH-B-1', productId: productB, name: 'Product B',
+        partnerId: 'PARTNER-B', Price: 195, date: '2026-01-02', tenantId: tenantB
       } as any);
-
-      // Seed Price History for Product B (Tenant B)
-      await db.priceHistory.put({
-        id: 'PH-B-1',
-        productId: productB,
-        name: 'Product B',
-        partnerId: 'PARTNER-B',
-        Price: 195,
-        date: '2026-01-02',
-        tenantId: tenantB
-      } as any);
-
-      // Seed Purchase Invoice for Product A (Tenant A)
       await db.invoices.put({
-        id: 'INV-PUR-A-1',
-        type: 'PURCHASE',
-        tenantId: tenantA,
-        date: '2026-01-10',
-        items: [{ productId: productA, unitPrice: 90, quantity: 10 }]
+        id: 'INV-PUR-B-1', type: 'PURCHASE', tenantId: tenantB,
+        date: '2026-01-12', items: [{ productId: productB, unitPrice: 180, quantity: 5 }]
       } as any);
-
-      // Seed Purchase Invoice for Product B (Tenant B)
-      await db.invoices.put({
-        id: 'INV-PUR-B-1',
-        type: 'PURCHASE',
-        tenantId: tenantB,
-        date: '2026-01-12',
-        items: [{ productId: productB, unitPrice: 180, quantity: 5 }]
-      } as any);
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
     });
 
     it('A. Tenant A requests history for Product A belonging to Tenant A => existing records are returned', async () => {
@@ -552,6 +533,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     const productUnbound = 'PROD-SEC-UNBOUND';
 
     beforeEach(async () => {
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
       await db.products.put({
         id: productA,
         name: 'Sec Product A',
@@ -562,7 +544,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       await db.products.put({
         id: productUnbound,
         name: 'Sec Product Unbound',
-        // No tenantId
+        // Intentionally unbound legacy fixture: do not synthesize tenant ownership.
         isActive: true
       } as any);
 
@@ -658,13 +640,22 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
     beforeEach(async () => {
       vi.clearAllMocks();
-      setSessionFixture({ tenantId: undefined, branchId: undefined, user: undefined } as any, '', '');
+      // Clear tenant-owned records under each tenant context; never bypass Dexie guards.
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
       await db.products.clear();
       await db.inventoryTransactions.clear();
       await db.purchasesByItem.clear();
       await db.warehouseStock.clear();
       await db.invoices.clear();
       await db.priceHistory.clear();
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.inventoryTransactions.clear();
+      await db.purchasesByItem.clear();
+      await db.warehouseStock.clear();
+      await db.invoices.clear();
+      await db.priceHistory.clear();
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
 
       const now = new Date();
       const expirySoon = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000).toISOString(); // 10 days
