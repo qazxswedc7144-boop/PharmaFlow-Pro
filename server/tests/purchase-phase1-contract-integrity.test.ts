@@ -6,6 +6,7 @@ import { useAccountingStore } from '@/store/accountingStore';
 import { useAuthStore } from '@/store/authStore';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
+import { configurationService } from '@/services/config/configurationService';
 
 describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => {
   const tenant1 = 'TENANT-PHASE1-A';
@@ -104,6 +105,15 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
     ] as any);
 
     setupUserSession(tenant1, branchId);
+    vi.spyOn(configurationService, 'getSync').mockImplementation((key: string) => {
+      const suffix = TokenProvider.getCurrentSession().tenantId === tenant2 ? '-T2' : '';
+      const accounts: Record<string, string> = {
+        ACCOUNT_CASH: `ACC-101${suffix}`,
+        ACCOUNT_INVENTORY: `ACC-102${suffix}`,
+        ACCOUNT_PAYABLE: `ACC-201${suffix}`
+      };
+      return accounts[key] || null;
+    });
   });
 
   // 1. إنشاء Purchase برقم invoice يدوي
