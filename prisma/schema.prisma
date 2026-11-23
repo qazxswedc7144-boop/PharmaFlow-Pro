@@ -819,6 +819,7 @@ model Payment {
   allocations       InvoicePaymentAllocation[]
 
   @@unique([id, tenantId])
+  @@index([tenantId])
   @@index([tenantId, status])
   @@index([branchId])
   @@index([date])
