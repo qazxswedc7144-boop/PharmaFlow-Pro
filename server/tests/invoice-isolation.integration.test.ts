@@ -435,6 +435,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     const rejected = await request(ctx, "/api/invoices/post", {
       method: "POST",
       token: ctx.tokenB,
+      branchId: ctx.branchBId,
       body: { invoiceId: ctx.invoiceBId },
     });
     expect(rejected.status).toBe(409);
