@@ -177,6 +177,46 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
         idempotencyKey,
         timestamp: Date.now(),
         version: 1
+      }, {
+        id: randomUUID(),
+        entity: "PURCHASE",
+        entityId: randomUUID(),
+        operation: "CREATE" as const,
+        payload: {
+          id: randomUUID(),
+          tenantId: ctx.tenantAId,
+          branchId: ctx.branchAId,
+          purchase: {
+            id: randomUUID(),
+            invoiceNumber: `PUR-PARTIAL-NO-METHOD-${ctx.suffix}`,
+            date: new Date().toISOString(),
+            type: "PURCHASE",
+            status: "CONFIRMED",
+            documentStatus: "POSTED",
+            partnerId: supplier.id,
+            partnerType: "SUPPLIER",
+            paymentStatus: "PARTIALLY_PAID",
+            paidAmount: 2,
+            subtotal: 5,
+            totalAmount: 5,
+            isReturn: false,
+            tenantId: ctx.tenantAId,
+            branchId: ctx.branchAId,
+            items: [{
+              productId: ctx.productAId,
+              quantity: 1,
+              qty: 1,
+              unitPrice: 5,
+              unitCost: 3,
+              total: 5,
+              batchNumber: `PURCHASE-PARTIAL-${ctx.suffix}`,
+              expiryDate
+            }]
+          }
+        },
+        idempotencyKey: randomUUID(),
+        timestamp: Date.now(),
+        version: 1
       }]
     };
 
@@ -195,6 +235,11 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     });
 
     expect(first.results[0]?.status, JSON.stringify(first.results[0])).toBe("SUCCESS");
+    expect(first.results[1]?.status, JSON.stringify(first.results[1])).toBe("REJECTED");
+    expect(first.results[1]?.errorCode).toBe("PURCHASE_PAYMENT_METHOD_REQUIRED");
+    expect(await prisma.invoice.count({
+      where: { tenantId: ctx.tenantAId, invoiceNumber: `PUR-PARTIAL-NO-METHOD-${ctx.suffix}` }
+    })).toBe(0);
 
     const persistedInvoice = await prisma.invoice.findUnique({ where: { id: invoiceId } });
     expect(persistedInvoice?.type).toBe("PURCHASE");
