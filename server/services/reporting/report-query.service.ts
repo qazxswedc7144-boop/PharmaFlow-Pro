@@ -59,6 +59,7 @@ export interface QueriedInvoice {
   taxAmount: number;
   totalAmount: number;
   paidAmount: number;
+  paidAmountKnown: boolean;
   costAmount: number;
   status: string;
   paymentStatus: string;
@@ -332,7 +333,11 @@ export class ReportQueryService {
             subtotal,
             taxAmount: tax,
             totalAmount: total,
-            paidAmount: r.paymentStatus === "PAID" ? total : 0,
+            paidAmount: r.paidAmount !== null && r.paidAmount !== undefined
+              ? Number(r.paidAmount)
+              : r.paymentStatus === "PAID" || r.paymentStatus === "CASH" ? total : 0,
+            paidAmountKnown: r.paidAmount !== null && r.paidAmount !== undefined
+              || r.paymentStatus !== "PARTIALLY_PAID",
             costAmount: subtotal * 0.7, // baseline estimate if not tracked individually
             status: r.status,
             paymentStatus: r.paymentStatus,
