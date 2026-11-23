@@ -1,7 +1,10 @@
--- Phase 4C: make server FIFO provenance and branch stock projections branch-aware.
--- Existing unassigned layers are assigned automatically only when a tenant has
--- exactly one branch. Multi-branch stock is never guessed into a branch.
+-- Phase 4C: add tenant-safe branch provenance to server FIFO records.
+-- This migration deliberately does NOT overwrite existing branch_inventory balances.
+-- Existing balances may include legacy stock that has no complete FIFO layer history;
+-- those mismatches must be reconciled explicitly before branch-scoped posting.
 
+-- A layer can be assigned automatically only when the tenant has exactly one branch.
+-- Multi-branch legacy stock remains unassigned rather than being guessed into a branch.
 WITH single_branch AS (
   SELECT "tenantId", MIN(id) AS "branchId"
   FROM branches
@@ -14,8 +17,39 @@ FROM single_branch
 WHERE layer."tenantId" = single_branch."tenantId"
   AND layer."branchId" IS NULL;
 
--- Rebuild the branch stock projection from branch-assigned FIFO layers.
--- Unassigned legacy layers remain excluded until an explicit reconciliation.
+-- Consumption provenance follows its exact source layer. This is not a heuristic:
+-- the consumed layer is the authoritative record of the branch from which stock came.
+UPDATE fifo_consumption_log AS consumption
+SET "branchId" = layer."branchId"
+FROM inventory_layers AS layer
+WHERE consumption."tenantId" = layer."tenantId"
+  AND consumption."layerId" = layer.id
+  AND consumption."branchId" IS NULL
+  AND layer."branchId" IS NOT NULL;
+
+-- Invalid historical branch references are not trusted. Clear only the invalid
+-- branch identity; quantity/cost/provenance rows remain intact for reconciliation.
+UPDATE inventory_layers AS layer
+SET "branchId" = NULL
+WHERE layer."branchId" IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM branches AS branch
+    WHERE branch.id = layer."branchId"
+      AND branch."tenantId" = layer."tenantId"
+  );
+
+UPDATE fifo_consumption_log AS consumption
+SET "branchId" = NULL
+WHERE consumption."branchId" IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM branches AS branch
+    WHERE branch.id = consumption."branchId"
+      AND branch."tenantId" = consumption."tenantId"
+  );
+
+-- Initialize only missing projection rows. Existing branch_inventory rows are
+-- intentionally preserved byte-for-byte even when they differ from layer totals.
+-- Runtime FIFO posting detects mismatches and fails closed pending reconciliation.
 INSERT INTO branch_inventory (
   id, "tenantId", "branchId", "productId", "stockQuantity", "createdAt", "updatedAt"
 )
@@ -30,21 +64,7 @@ SELECT
 FROM inventory_layers AS layer
 WHERE layer."branchId" IS NOT NULL
 GROUP BY layer."tenantId", layer."branchId", layer."productId"
-ON CONFLICT ("branchId", "productId")
-DO UPDATE SET
-  "stockQuantity" = EXCLUDED."stockQuantity",
-  "updatedAt" = CURRENT_TIMESTAMP;
-
-UPDATE branch_inventory AS projection
-SET
-  "stockQuantity" = COALESCE((
-    SELECT SUM(layer."quantityRemaining")::INTEGER
-    FROM inventory_layers AS layer
-    WHERE layer."tenantId" = projection."tenantId"
-      AND layer."branchId" = projection."branchId"
-      AND layer."productId" = projection."productId"
-  ), 0),
-  "updatedAt" = CURRENT_TIMESTAMP;
+ON CONFLICT ("branchId", "productId") DO NOTHING;
 
 CREATE INDEX "inventory_layers_tenantId_branchId_productId_expiryDate_createdAt_idx"
   ON inventory_layers ("tenantId", "branchId", "productId", "expiryDate", "createdAt");
