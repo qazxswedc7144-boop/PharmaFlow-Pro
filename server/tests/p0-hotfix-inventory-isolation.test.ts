@@ -4,6 +4,7 @@ import { db } from '../../src/core/db';
 import { InventoryService } from '@/features/inventory/services/InventoryService';
 import { ProductRepository } from '@/features/inventory/services/ProductRepository';
 import { TokenProvider } from '@/services/auth/tokenProvider';
+import { useAuthStore } from '@/store/authStore';
 import { PriceHistoryRepository } from '@/database/repositories/PriceHistoryRepository';
 
 describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
@@ -11,16 +12,34 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   const validBranch = 'REAL-BRANCH-001';
   const productId = 'PROD-TEST-001';
 
+  const setTestSession = (tenantId: string, branchId: string) => {
+    const user = {
+      id: 'user-1',
+      user_id: 'user-1',
+      tenantId,
+      tenant_id: tenantId,
+      branchId,
+      branch_id: branchId,
+      role: 'ADMIN',
+      Role: 'ADMIN'
+    };
+    TokenProvider.setSession(user as any, 'token', 'refresh');
+    useAuthStore.setState({
+      user: user as any,
+      token: 'token',
+      tenantId,
+      branchId,
+      roles: ['ADMIN'],
+      permissions: ['ALL'],
+      isAuthenticated: true
+    });
+  };
+
   beforeEach(async () => {
     vi.clearAllMocks();
 
     // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
-    TokenProvider.setSession({
-      id: 'user-1',
-      tenantId: validTenant,
-      branchId: validBranch,
-      role: 'ADMIN'
-    } as any, 'token', 'refresh');
+    setTestSession(validTenant, validBranch);
 
     await db.products.clear();
     await db.inventoryTransactions.clear();
@@ -124,7 +143,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('11. Valid real tenant and branch allows mutation to succeed', async () => {
-    TokenProvider.setSession({ tenantId: 'REAL-ACC-999', branchId: 'REAL-BR-999' } as any, 'token', 'refresh');
+    setTestSession('REAL-ACC-999', 'REAL-BR-999');
     
     await db.branches.add({
       id: 'REAL-BR-999',
@@ -134,27 +153,35 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       isActive: true
     } as any);
 
-    // Update product to match new tenant for test
-    await db.products.update(productId, { tenantId: 'REAL-ACC-999', branchId: 'REAL-BR-999' });
+    // Seed a separate tenant-owned product; tenant ownership is immutable.
+    const realTenantProductId = 'PROD-REAL-999';
+    await db.products.add({
+      id: realTenantProductId,
+      name: 'Real Tenant Product',
+      stock: 100,
+      tenantId: 'REAL-ACC-999',
+      branchId: 'REAL-BR-999',
+      isActive: true
+    } as any);
     await db.warehouseStock.put({
-      id: `WHS-MAIN-${productId}`,
+      id: `WHS-MAIN-${realTenantProductId}`,
       warehouseId: 'WH-MAIN',
-      productId,
+      productId: realTenantProductId,
       quantity: 100,
       tenantId: 'REAL-ACC-999',
       branchId: 'REAL-BR-999'
     } as any);
     await db.branchInventory.put({
-      id: `INV-REAL-BR-999-${productId}`,
+      id: `INV-REAL-BR-999-${realTenantProductId}`,
       branchId: 'REAL-BR-999',
-      productId,
+      productId: realTenantProductId,
       stockQuantity: 100,
       tenantId: 'REAL-ACC-999'
     } as any);
 
-    await InventoryService.updateStock(productId, -5);
+    await InventoryService.updateStock(realTenantProductId, -5);
     
-    const product = await db.products.get(productId);
+    const product = await db.products.get(realTenantProductId);
     expect(product?.stock).toBe(95);
 
     const tx = await db.inventoryTransactions.toArray();
@@ -163,7 +190,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('A. tenant A + branch A => accepted', async () => {
-    TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+    setTestSession('TENANT-A', 'BRANCH-A');
     await db.branches.put({
       id: 'BRANCH-A',
       code: 'BRANCH-A',
@@ -207,7 +234,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       tenantId: 'TENANT-B',
       isActive: true
     } as any);
-    TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-B' } as any, 'token', 'refresh');
+    setTestSession('TENANT-A', 'BRANCH-B');
 
     await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
   });
@@ -231,7 +258,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
   describe('Central Tenant Isolation #2: Product & Warehouse Boundaries', () => {
     it('A. tenant A + product A + warehouse A => mutation succeeds', async () => {
-      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      setTestSession('TENANT-A', 'BRANCH-A');
       await db.branches.put({
         id: 'BRANCH-A',
         code: 'BRANCH-A',
@@ -271,7 +298,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('B. tenant A + product B belonging to tenant B => mutation is rejected with CROSS_TENANT_VIOLATION', async () => {
-      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      setTestSession('TENANT-A', 'BRANCH-A');
       await db.products.put({
         id: 'PROD-B-FOREIGN',
         name: 'Product B Foreign',
@@ -287,7 +314,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('C. tenant A + warehouse context belonging to tenant B => mutation is rejected with CROSS_TENANT_VIOLATION', async () => {
-      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      setTestSession('TENANT-A', 'BRANCH-A');
       await db.branches.put({
         id: 'BRANCH-A',
         code: 'BRANCH-A',
@@ -320,7 +347,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('D. unknown/unbound product or warehouse => fail closed', async () => {
-      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      setTestSession('TENANT-A', 'BRANCH-A');
       await db.branches.put({
         id: 'BRANCH-A',
         code: 'BRANCH-A',
