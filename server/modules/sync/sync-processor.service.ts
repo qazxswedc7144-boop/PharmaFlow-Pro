@@ -761,12 +761,9 @@ export class SyncProcessorService {
       return reject("PURCHASE_TOTAL_MISMATCH", "Purchase item totals, discounts, tax and totalAmount are inconsistent.");
     }
 
+    // The server derives the remaining balance from the validated paid amount;
+    // client-provided remainingAmount is a projection and is not authoritative.
     const paidAmount = paidAmountHint;
-    const remainingAmount = Number(purchase.remainingAmount ?? purchase.remaining_amount ?? Math.max(0, totalAmount - paidAmount));
-    if (!Number.isFinite(remainingAmount) || remainingAmount < 0 ||
-        Math.abs(totalAmount - paidAmount - remainingAmount) > 0.02) {
-      return reject("PURCHASE_REMAINING_AMOUNT_INVALID", "Purchase paidAmount and remainingAmount must reconcile to totalAmount.");
-    }
 
     await tx.invoice.create({
       data: {
