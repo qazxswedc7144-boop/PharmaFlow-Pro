@@ -255,7 +255,7 @@ export class VoucherPostingService {
     const invoiceUpdates: Array<{ invoiceId: string; paidAmount: Prisma.Decimal; paymentStatus: string }> = [];
     for (const allocation of normalized) {
       const lockedRows = await tx.$queryRaw<any[]>(
-        Prisma.sql`SELECT id, "totalAmount", "paidAmount", "paymentStatus", type, "partnerId", "branchId", "documentStatus"
+        Prisma.sql`SELECT id, "totalAmount", "paidAmount", "paymentStatus", type, "partnerId", "partnerType", "branchId", "documentStatus"
           FROM "invoices"
           WHERE id = ${allocation.invoiceId} AND "tenantId" = ${tenantId}
           FOR UPDATE`
@@ -263,7 +263,7 @@ export class VoucherPostingService {
       const invoice = lockedRows[0];
       if (!invoice) fail("INVOICE_NOT_FOUND_OR_FORBIDDEN");
       const expectedInvoiceType = type === "PAYMENT" ? "PURCHASE" : "SALE";
-      if (String(invoice.type) !== expectedInvoiceType) fail("INVOICE_TYPE_MISMATCH");
+      if (String(invoice.type) !== expectedInvoiceType || invoice.partnerType !== partnerType) fail("INVOICE_TYPE_MISMATCH");
       const partnerMatches = invoice.partnerId === input.partnerId ||
         (type === "RECEIPT" && input.partnerId === CASH_CUSTOMER && invoice.partnerId === null);
       if (!partnerMatches) fail("INVOICE_PARTNER_MISMATCH");
@@ -409,7 +409,7 @@ export class VoucherPostingService {
     });
     for (const allocation of allocations) {
       const lockedRows = await tx.$queryRaw<any[]>(
-        Prisma.sql`SELECT id, "totalAmount", "paidAmount", "paymentStatus", "branchId", type, "partnerId"
+        Prisma.sql`SELECT id, "totalAmount", "paidAmount", "paymentStatus", "branchId", type, "partnerId", "partnerType"
           FROM "invoices"
           WHERE id = ${allocation.invoiceId} AND "tenantId" = ${tenantId}
           FOR UPDATE`
@@ -419,7 +419,9 @@ export class VoucherPostingService {
       const expectedInvoiceType = type === "PAYMENT" ? "PURCHASE" : "SALE";
       const partnerMatches = invoice.partnerId === payment.partnerId ||
         (type === "RECEIPT" && payment.partnerId === CASH_CUSTOMER && invoice.partnerId === null);
-      if (invoice.type !== expectedInvoiceType || !partnerMatches) fail("INVOICE_ALLOCATION_PARTNER_MISMATCH");
+      if (invoice.type !== expectedInvoiceType || invoice.partnerType !== expectedPartnerType(type) || !partnerMatches) {
+        fail("INVOICE_ALLOCATION_PARTNER_MISMATCH");
+      }
       if (invoice.paidAmount === null || invoice.paidAmount === undefined) {
         fail("INVOICE_PAID_AMOUNT_UNKNOWN");
       }
