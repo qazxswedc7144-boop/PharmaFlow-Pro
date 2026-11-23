@@ -626,7 +626,10 @@ export class SyncProcessorService {
     }
 
     const cashSupplierLabels = new Set(["مورد نقدي", "CASH", "CASH_SUPPLIER", "SUPP-GEN"]);
-    const rawPaymentMethod = String(purchase.paymentMethod ?? purchase.payment_method ?? "CASH").trim().toUpperCase();
+    const rawPaymentMethodValue = purchase.paymentMethod ?? purchase.payment_method;
+    const paymentMethodProvided = rawPaymentMethodValue !== undefined &&
+      rawPaymentMethodValue !== null && String(rawPaymentMethodValue).trim() !== "";
+    const rawPaymentMethod = String(rawPaymentMethodValue ?? "CASH").trim().toUpperCase();
     if (!["CASH", "TRANSFER", "BANK_TRANSFER", "BANK", "WIRE"].includes(rawPaymentMethod)) {
       return reject("PURCHASE_PAYMENT_METHOD_INVALID", "Purchase payment method must be CASH or a supported bank transfer.");
     }
@@ -638,6 +641,12 @@ export class SyncProcessorService {
       : Number(rawPaidAmount);
     if (!Number.isFinite(paidAmountHint) || paidAmountHint < 0 || paidAmountHint > totalAmount) {
       return reject("PURCHASE_PAID_AMOUNT_INVALID", "Purchase paidAmount must be between zero and totalAmount.");
+    }
+    // Do not guess whether a non-cash settlement was made by cash or bank.
+    // The existing local purchase workflow marks full cash payments as CASH;
+    // partial or externally supplied settlements must carry an explicit method.
+    if (paidAmountHint > 0 && !paymentMethodProvided && rawPaymentStatus !== "CASH") {
+      return reject("PURCHASE_PAYMENT_METHOD_REQUIRED", "An explicit CASH or TRANSFER method is required for a purchase settlement.");
     }
     const isCashPayment = paidAmountHint >= totalAmount && totalAmount > 0 && paymentMethod === "CASH";
     const isCashSupplierPlaceholder = cashSupplierLabels.has(supplierId) && isCashPayment;
