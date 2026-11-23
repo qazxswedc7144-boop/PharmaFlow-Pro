@@ -235,8 +235,8 @@ jobs:
         env:
           NODE_OPTIONS: "--max-old-space-size=5120"
 
-      # Phase 4A FIFO provenance suite — isolated PostgreSQL test database only.
-      - name: Run PostgreSQL Phase 4A FIFO Layer Cost Provenance tests
+      # Phase 4C branch-scoped FIFO provenance suite — isolated PostgreSQL test database only.
+      - name: Run PostgreSQL Phase 4C Branch-Scoped FIFO Layer Cost Provenance tests
         if: always()
         run: npx vitest run server/tests/fifo-layer-cost-provenance.integration.test.ts --reporter=verbose --maxWorkers=1
         env:
