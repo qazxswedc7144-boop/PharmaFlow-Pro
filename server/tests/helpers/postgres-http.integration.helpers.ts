@@ -245,6 +245,7 @@ async function initialize(
     data: {
       tenantId: ctx.tenantBId,
       invoiceNumber: `TENANT-B-${ctx.suffix}`,
+      branchId: ctx.branchBId,
       type: "SALE",
       totalAmount: 7,
       status: "DRAFT",
