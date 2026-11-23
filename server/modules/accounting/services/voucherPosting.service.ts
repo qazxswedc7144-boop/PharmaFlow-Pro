@@ -391,7 +391,8 @@ export class VoucherPostingService {
     );
     const payment = paymentRows[0];
     if (!payment) fail("VOUCHER_NOT_FOUND_OR_FORBIDDEN");
-    if (payment.status !== "POSTED") fail("VOUCHER_ALREADY_CANCELLED");
+    if (payment.status === "CANCELLED") fail("VOUCHER_ALREADY_CANCELLED");
+    if (payment.status !== "POSTED") fail("VOUCHER_NOT_POSTED_OR_LEGACY_UNVERIFIED");
     if (payment.branchId !== branchId) fail("VOUCHER_BRANCH_MISMATCH");
     if (payment.partnerId !== input.partnerId || payment.partnerType !== expectedPartnerType(type)) {
       fail("VOUCHER_PARTNER_MISMATCH");
@@ -446,7 +447,7 @@ export class VoucherPostingService {
     }
 
     const originalJournal = await tx.journalEntry.findFirst({
-      where: { sourceId: payment.id, sourceType: "VOUCHER", tenantId, status: "POSTED" },
+      where: { sourceId: payment.id, sourceType: "VOUCHER", tenantId, branchId, status: "POSTED" },
       include: { lines: true }
     });
     if (!originalJournal || originalJournal.lines.length < 2) fail("VOUCHER_JOURNAL_ENTRY_MISSING");
