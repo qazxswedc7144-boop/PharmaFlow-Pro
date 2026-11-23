@@ -90,6 +90,45 @@ function createPurchasePostingTx() {
   } as any;
 }
 
+function createSalesPostingTx() {
+  let nextAccountId = 0;
+  return {
+    $queryRaw: vi.fn()
+      .mockResolvedValueOnce([{
+        id: "invoice-sale-1",
+        documentStatus: "ACTIVE",
+        status: "DRAFT",
+        date: new Date("2026-11-23T00:00:00.000Z")
+      }])
+      .mockResolvedValueOnce([{ id: "period-1", isLocked: false }]),
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    tenantSalesPolicy: {
+      findUnique: vi.fn().mockResolvedValue({
+        maxDiscountPercent: 0,
+        taxRatePercent: 0,
+        taxMode: "NONE"
+      })
+    },
+    account: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockImplementation(async ({ data }: any) => ({
+        id: `sales-account-${++nextAccountId}`,
+        ...data,
+        version: 0
+      })),
+      findUnique: vi.fn().mockResolvedValue({ version: 0, name: "Test Account" }),
+      update: vi.fn().mockResolvedValue({ id: "updated-account" })
+    },
+    invoiceItem: { update: vi.fn().mockResolvedValue({ id: "SALE-LINE-P0-01" }) },
+    journalEntry: { create: vi.fn().mockImplementation(async ({ data }: any) => ({
+      id: "journal-sale-1",
+      lines: data.lines.create
+    })) },
+    invoice: { update: vi.fn().mockResolvedValue({ id: "invoice-sale-1", documentStatus: "POSTED" }) },
+    auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-sale-1" }) }
+  } as any;
+}
+
 function createDepleteTx() {
   return {
     $queryRaw: vi.fn()
@@ -351,6 +390,78 @@ describe("P0-01 purchase-to-FIFO cost chain", () => {
       cost: 25
     }]);
     expect(Number(saleTx.fifoConsumption.create.mock.calls[0][0].data.totalCost)).toBe(250);
+  });
+
+  it("posts SALE COGS debit and inventory credit from FIFO at exactly 250", async () => {
+    const tx = createSalesPostingTx();
+    const depleteSpy = vi.spyOn(FifoService, "depleteStock").mockResolvedValue({
+      allocations: [{
+        layerId: "layer-25",
+        batchId: "batch-25",
+        batchNumber: "BATCH-25",
+        qtyAllocated: 10,
+        cost: 25
+      }],
+      totalCost: 250
+    });
+
+    try {
+      const result = await FinancialTransactionService.executeInvoiceLedgerPosting(
+        tx,
+        {
+          id: "invoice-sale-1",
+          invoiceNumber: "SALE-P0-01-001",
+          type: "SALE",
+          date: new Date("2026-11-23T00:00:00.000Z"),
+          documentStatus: "ACTIVE",
+          status: "DRAFT",
+          totalAmount: new Prisma.Decimal(400),
+          subtotalAmount: new Prisma.Decimal(400),
+          discountPercent: new Prisma.Decimal(0),
+          discountAmount: new Prisma.Decimal(0),
+          taxAmount: new Prisma.Decimal(0),
+          taxMode: "NONE",
+          paymentStatus: "UNPAID",
+          tenantId: TENANT_ID,
+          branchId: "BRANCH-P0-01",
+          items: [{
+            id: "SALE-LINE-P0-01",
+            productId: PRODUCT_ID,
+            qty: 10,
+            price: new Prisma.Decimal(40),
+            cost: new Prisma.Decimal(0),
+            expiryDate: null,
+            note: null,
+            product: { price: new Prisma.Decimal(40) }
+          }]
+        } as any,
+        null,
+        null,
+        TENANT_ID
+      );
+
+      expect(result.cogs).toBe(250);
+      expect(depleteSpy).toHaveBeenCalledTimes(1);
+      const journalLines = tx.journalEntry.create.mock.calls[0][0].data.lines.create;
+      expect(journalLines).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          accountId: "sales-account-5",
+          debit: expect.objectContaining({ s: 1 }),
+          credit: expect.objectContaining({ s: 0 }),
+          description: expect.stringContaining("تكلفة مبيعات")
+        }),
+        expect.objectContaining({
+          accountId: "sales-account-3",
+          debit: expect.objectContaining({ s: 0 }),
+          credit: expect.objectContaining({ s: 1 }),
+          description: expect.stringContaining("انخفاض المخزون")
+        })
+      ]));
+      expect(Number(journalLines.find((line: any) => line.description.includes("تكلفة مبيعات")).debit)).toBe(250);
+      expect(Number(journalLines.find((line: any) => line.description.includes("انخفاض المخزون")).credit)).toBe(250);
+    } finally {
+      depleteSpy.mockRestore();
+    }
   });
 
   it("rejects zero, negative, NaN and infinite unit costs before any FIFO write", async () => {
