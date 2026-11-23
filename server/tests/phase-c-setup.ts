@@ -42,8 +42,8 @@ vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
   if (pathname === '/api/auth/branch-context') {
     // The simulated server derives ownership from the authenticated session,
     // never by echoing caller-supplied tenant/branch headers.
-    const trustedTenantId = session.tenantId || '';
-    const trustedBranchId = session.branchId || '';
+    const trustedTenantId = session.tenantId || session.user?.tenantId || session.user?.tenant_id || '';
+    const trustedBranchId = session.branchId || session.user?.branchId || session.user?.branch_id || '';
     if (
       !session.isAuthenticated ||
       !session.token ||
