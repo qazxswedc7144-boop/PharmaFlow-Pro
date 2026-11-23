@@ -808,7 +808,7 @@ model Payment {
   paymentMethod     String   @default("CASH")
   referenceId       String?
   notes             String?
-  status            String   @default("POSTED") // POSTED, CANCELLED
+  status            String   @default("LEGACY_UNVERIFIED") // POSTED, CANCELLED, LEGACY_UNVERIFIED
   cancelledAt       DateTime?
   cancellationReason String?
   createdAt         DateTime @default(now())
