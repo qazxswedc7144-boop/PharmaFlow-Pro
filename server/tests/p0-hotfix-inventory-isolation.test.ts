@@ -229,6 +229,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       stockQuantity: 100,
       tenantId: 'REAL-ACC-999'
     } as any);
+    await FIFOEngine.addPurchaseLayer(realTenantProductId, 100, 10, 'REAL-TENANT-INITIAL-STOCK', 'REAL-ACC-999');
 
     await InventoryService.updateStock(realTenantProductId, -5);
     
