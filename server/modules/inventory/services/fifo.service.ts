@@ -56,6 +56,42 @@ export class FifoService {
     if (tenantId !== expectedTenantId || forbiddenTenants.includes(tenantId)) {
       throw new Error("CROSS_TENANT_VIOLATION: Product does not belong to the authenticated tenant.");
     }
+
+    const trustedBranchId = branchId?.trim();
+    if (!trustedBranchId) {
+      throw new Error("TRUSTED_BRANCH_CONTEXT_REQUIRED: Branch ID is mandatory for FIFO depletion.");
+    }
+    const branch = await tx.branch.findFirst({
+      where: { id: trustedBranchId, tenantId },
+      select: { id: true }
+    });
+    if (!branch) {
+      throw new Error("BRANCH_NOT_FOUND_OR_FORBIDDEN: Branch does not belong to the authenticated tenant.");
+    }
+
+    const branchInventory = await tx.branchInventory.findUnique({
+      where: { branchId_productId: { branchId: trustedBranchId, productId } },
+      select: { stockQuantity: true }
+    });
+    if (!branchInventory) {
+      throw new Error("BRANCH_INVENTORY_NOT_INITIALIZED: Branch stock projection is missing; reconcile branch stock before posting.");
+    }
+    const branchLayerTotal = await tx.inventoryLayer.aggregate({
+      where: { tenantId, branchId: trustedBranchId, productId },
+      _sum: { quantityRemaining: true }
+    });
+    const branchLayerQuantity = branchLayerTotal._sum.quantityRemaining ?? 0;
+    if (branchInventory.stockQuantity !== branchLayerQuantity) {
+      throw new Error(
+        `BRANCH_INVENTORY_LAYER_MISMATCH: Branch projection ${branchInventory.stockQuantity} does not match ${branchLayerQuantity} remaining FIFO layer units for product ${productId}.`
+      );
+    }
+    if (branchInventory.stockQuantity < quantityToDeplete) {
+      throw new Error(
+        `INSUFFICIENT_BRANCH_STOCK: Branch ${trustedBranchId} has ${branchInventory.stockQuantity} units; ${quantityToDeplete} required.`
+      );
+    }
+
     if (Number(product.stockQuantity) < quantityToDeplete) {
       throw new Error(
         `INSUFFICIENT_STOCK: Required ${quantityToDeplete} units of product "${productId}", but only ${product.stockQuantity} are available.`
@@ -70,6 +106,7 @@ export class FifoService {
         FROM inventory_layers
         WHERE "productId" = ${productId}
           AND "tenantId" = ${tenantId}
+          AND "branchId" = ${trustedBranchId}
           AND "quantityRemaining" > 0
           AND ("expiryDate" IS NULL OR "expiryDate" > NOW())
         ORDER BY "expiryDate" ASC NULLS LAST, "createdAt" ASC, id ASC
@@ -82,8 +119,23 @@ export class FifoService {
       0
     );
     if (eligibleQuantity < quantityToDeplete) {
+      const unassignedLayers = await tx.inventoryLayer.aggregate({
+        where: {
+          tenantId,
+          productId,
+          branchId: null,
+          quantityRemaining: { gt: 0 },
+          OR: [{ expiryDate: null }, { expiryDate: { gt: new Date() } }]
+        },
+        _sum: { quantityRemaining: true }
+      });
+      if ((unassignedLayers._sum.quantityRemaining ?? 0) > 0) {
+        throw new Error(
+          "FIFO_UNASSIGNED_STOCK_REQUIRES_RECONCILIATION: Eligible legacy stock is not assigned to this branch and cannot be consumed automatically."
+        );
+      }
       throw new Error(
-        `INSUFFICIENT_FIFO_STOCK: Only ${eligibleQuantity} units remain in non-expired eligible layers for product ${productId}; ${quantityToDeplete} required.`
+        `INSUFFICIENT_FIFO_STOCK: Branch ${trustedBranchId} has only ${eligibleQuantity} non-expired eligible units for product ${productId}; ${quantityToDeplete} required.`
       );
     }
 
@@ -137,7 +189,7 @@ export class FifoService {
           reason: reason || "FEFO/FIFO Depletion",
           previousStock: batch.stockQuantity,
           currentStock: batch.stockQuantity - quantity,
-          branchId: branchId || null
+          branchId: trustedBranchId
         }
       });
 
@@ -159,7 +211,7 @@ export class FifoService {
           unitCost,
           totalCost,
           idempotencyKey,
-          branchId: branchId || null
+          branchId: trustedBranchId
         }
       });
 
@@ -217,6 +269,15 @@ export class FifoService {
       data: { stockQuantity: newGlobalStock, version: { increment: 1 } }
     });
 
+    const updatedBranchLayers = await tx.inventoryLayer.aggregate({
+      where: { tenantId, branchId: trustedBranchId, productId },
+      _sum: { quantityRemaining: true }
+    });
+    await tx.branchInventory.update({
+      where: { branchId_productId: { branchId: trustedBranchId, productId } },
+      data: { stockQuantity: updatedBranchLayers._sum.quantityRemaining ?? 0 }
+    });
+
     return { allocations, totalCost: accumulatedCost.toNumber() };
   }
 
@@ -269,6 +330,18 @@ export class FifoService {
     }
     if (forbiddenTenants.includes(tenantId)) {
       throw new Error("TRUSTED_TENANT_CONTEXT_REQUIRED: Product has an invalid tenant context for stock addition.");
+    }
+
+    const trustedBranchId = branchId?.trim();
+    if (!trustedBranchId) {
+      throw new Error("TRUSTED_BRANCH_CONTEXT_REQUIRED: Branch ID is mandatory for FIFO stock addition.");
+    }
+    const branch = await tx.branch.findFirst({
+      where: { id: trustedBranchId, tenantId },
+      select: { id: true }
+    });
+    if (!branch) {
+      throw new Error("BRANCH_NOT_FOUND_OR_FORBIDDEN: Branch does not belong to the authenticated tenant.");
     }
 
     const normalizedLineId = sourceLineId?.trim() || productId;
@@ -342,7 +415,7 @@ export class FifoService {
         quantityRemaining: qty,
         unitCost: new Prisma.Decimal(cost),
         expiryDate,
-        branchId: branchId || null
+        branchId: trustedBranchId
       }
     });
 
@@ -377,6 +450,21 @@ export class FifoService {
         cost: new Prisma.Decimal(cost),
         version: { increment: 1 }
       }
+    });
+
+    const updatedBranchLayers = await tx.inventoryLayer.aggregate({
+      where: { tenantId, branchId: trustedBranchId, productId },
+      _sum: { quantityRemaining: true }
+    });
+    await tx.branchInventory.upsert({
+      where: { branchId_productId: { branchId: trustedBranchId, productId } },
+      create: {
+        tenantId,
+        branchId: trustedBranchId,
+        productId,
+        stockQuantity: updatedBranchLayers._sum.quantityRemaining ?? 0
+      },
+      update: { stockQuantity: updatedBranchLayers._sum.quantityRemaining ?? 0 }
     });
   }
 }
