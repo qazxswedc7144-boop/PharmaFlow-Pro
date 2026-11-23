@@ -277,23 +277,56 @@ jobs:
       - name: Generate Prisma Client
         run: npx prisma generate
 
-      - name: Execute all 17 omitted test files
-        run: >-
-          npx vitest run --reporter=verbose --maxWorkers=1 --minWorkers=1
-          app/applet/server/tests/security-patch-2.test.ts
-          server/tests/idempotency-middleware-security.test.ts
-          server/tests/p0-hotfix-inventory-isolation.test.ts
-          server/tests/p0-hotfix-metrics-backup.test.ts
-          server/tests/p0-hotfix-validation-fifo-isolation.test.ts
-          server/tests/prisma-recovery.test.ts
-          server/tests/purchase-lifecycle-financial-integrity.test.ts
-          server/tests/purchase-phase1-contract-integrity.test.ts
-          server/tests/purchase-phase2-accounting-integrity.test.ts
-          server/tests/purchase-phase2-reversal-precision.test.ts
-          server/tests/purchase-total-enforcement.test.ts
-          server/tests/supplier-payment-financial-integrity.test.ts
-          server/tests/sync-cross-tenant-security.test.ts
-          src/features/catalog/utils/productApplicationPermission.test.ts
-          src/features/inventory/services/UnifiedInventoryMutationEngine.purchase-transaction.test.ts
-          src/features/inventory/services/fifoEngine.transactional.test.ts
-          src/features/sales/services/salesDraftRecovery.service.test.ts
+      - name: Execute all 17 omitted test files independently
+        shell: bash
+        run: |
+          set +e
+          mkdir -p phase-c-logs
+          failed=0
+          : > phase-c-logs/summary.txt
+          TEST_FILES=(
+            app/applet/server/tests/security-patch-2.test.ts
+            server/tests/idempotency-middleware-security.test.ts
+            server/tests/p0-hotfix-inventory-isolation.test.ts
+            server/tests/p0-hotfix-metrics-backup.test.ts
+            server/tests/p0-hotfix-validation-fifo-isolation.test.ts
+            server/tests/prisma-recovery.test.ts
+            server/tests/purchase-lifecycle-financial-integrity.test.ts
+            server/tests/purchase-phase1-contract-integrity.test.ts
+            server/tests/purchase-phase2-accounting-integrity.test.ts
+            server/tests/purchase-phase2-reversal-precision.test.ts
+            server/tests/purchase-total-enforcement.test.ts
+            server/tests/supplier-payment-financial-integrity.test.ts
+            server/tests/sync-cross-tenant-security.test.ts
+            src/features/catalog/utils/productApplicationPermission.test.ts
+            src/features/inventory/services/UnifiedInventoryMutationEngine.purchase-transaction.test.ts
+            src/features/inventory/services/fifoEngine.transactional.test.ts
+            src/features/sales/services/salesDraftRecovery.service.test.ts
+          )
+
+          for file in "${TEST_FILES[@]}"; do
+            safe_name="${file//\//__}"
+            log="phase-c-logs/${safe_name}.log"
+            echo "===== START: $file ====="
+            npx vitest run --reporter=verbose --maxWorkers=1 "$file" 2>&1 | tee "$log"
+            status=${PIPESTATUS[0]}
+            if [ "$status" -eq 0 ]; then
+              result="PASS"
+            else
+              result="FAIL (exit $status)"
+              failed=$((failed + 1))
+            fi
+            echo "$result | $file" | tee -a phase-c-logs/summary.txt
+            echo "===== END: $file | $result ====="
+          done
+
+          echo "Failed files: $failed / ${#TEST_FILES[@]}" | tee -a phase-c-logs/summary.txt
+          exit "$failed"
+
+      - name: Upload Phase C per-file logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-c-omitted-test-logs
+          path: phase-c-logs/
+          if-no-files-found: warn
