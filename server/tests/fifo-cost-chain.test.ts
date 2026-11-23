@@ -294,6 +294,41 @@ describe("P0-01 purchase-to-FIFO cost chain", () => {
       addStockSpy.mockRestore();
     }
 
+    const invalidPostingTx = createPurchasePostingTx();
+    const guardedAddStockSpy = vi.spyOn(FifoService, "addStock").mockResolvedValue(undefined);
+    try {
+      await expect(FinancialTransactionService.executeInvoiceLedgerPosting(
+        invalidPostingTx,
+        {
+          id: "invoice-purchase-zero",
+          invoiceNumber: "PUR-P0-01-ZERO",
+          type: "PURCHASE",
+          date: new Date("2026-11-23T00:00:00.000Z"),
+          documentStatus: "ACTIVE",
+          status: "DRAFT",
+          totalAmount: new Prisma.Decimal(0),
+          paymentStatus: "UNPAID",
+          tenantId: TENANT_ID,
+          branchId: "BRANCH-P0-01",
+          items: [{
+            id: "PUR-LINE-P0-01-ZERO",
+            productId: PRODUCT_ID,
+            qty: 1,
+            cost: new Prisma.Decimal(0),
+            price: new Prisma.Decimal(0),
+            expiryDate: null,
+            note: "BATCH-ZERO"
+          }]
+        } as any,
+        null,
+        null,
+        TENANT_ID
+      )).rejects.toMatchObject({ code: "PURCHASE_ITEM_COST_MISSING" });
+      expect(guardedAddStockSpy).not.toHaveBeenCalled();
+    } finally {
+      guardedAddStockSpy.mockRestore();
+    }
+
     const saleTx = createDepleteTx();
     const result = await FifoService.depleteStock(
       saleTx,
