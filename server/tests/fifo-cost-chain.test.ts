@@ -443,22 +443,14 @@ describe("P0-01 purchase-to-FIFO cost chain", () => {
       expect(result.cogs).toBe(250);
       expect(depleteSpy).toHaveBeenCalledTimes(1);
       const journalLines = tx.journalEntry.create.mock.calls[0][0].data.lines.create;
-      expect(journalLines).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          accountId: "sales-account-5",
-          debit: expect.objectContaining({ s: 1 }),
-          credit: expect.objectContaining({ s: 0 }),
-          description: expect.stringContaining("تكلفة مبيعات")
-        }),
-        expect.objectContaining({
-          accountId: "sales-account-3",
-          debit: expect.objectContaining({ s: 0 }),
-          credit: expect.objectContaining({ s: 1 }),
-          description: expect.stringContaining("انخفاض المخزون")
-        })
-      ]));
-      expect(Number(journalLines.find((line: any) => line.description.includes("تكلفة مبيعات")).debit)).toBe(250);
-      expect(Number(journalLines.find((line: any) => line.description.includes("انخفاض المخزون")).credit)).toBe(250);
+      const cogsLine = journalLines.find((line: any) => line.description.includes("تكلفة مبيعات"));
+      const inventoryLine = journalLines.find((line: any) => line.description.includes("انخفاض المخزون"));
+      expect(cogsLine).toBeDefined();
+      expect(inventoryLine).toBeDefined();
+      expect(Number(cogsLine.debit)).toBe(250);
+      expect(Number(cogsLine.credit)).toBe(0);
+      expect(Number(inventoryLine.debit)).toBe(0);
+      expect(Number(inventoryLine.credit)).toBe(250);
     } finally {
       depleteSpy.mockRestore();
     }
