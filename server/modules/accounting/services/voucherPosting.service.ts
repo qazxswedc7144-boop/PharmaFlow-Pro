@@ -201,7 +201,7 @@ export class VoucherPostingService {
   }
 
   static async create(scope: VoucherScope, input: VoucherCreateInput) {
-    const { tx, tenantId, branchId, userId } = scope;
+    const { tx, tenantId, branchId } = scope;
     const type = normalizedVoucherType(input.type);
     const partnerType = expectedPartnerType(type);
     if (input.partnerType !== partnerType) fail("VOUCHER_PARTNER_TYPE_MISMATCH");
@@ -247,7 +247,7 @@ export class VoucherPostingService {
     }).sort((a, b) => a.invoiceId.localeCompare(b.invoiceId));
 
     const allocationTotal = normalized.reduce((sum, allocation) => sum.plus(allocation.amount), ZERO);
-    if (allocationTotal.minus(amount).greaterThan(TOLERANCE)) fail("ALLOCATIONS_EXCEED_VOUCHER_AMOUNT");
+    if (allocationTotal.greaterThan(amount)) fail("ALLOCATIONS_EXCEED_VOUCHER_AMOUNT");
 
     const invoiceUpdates: Array<{ invoiceId: string; paidAmount: Prisma.Decimal; paymentStatus: string }> = [];
     for (const allocation of normalized) {
@@ -274,14 +274,14 @@ export class VoucherPostingService {
       } else {
         currentPaid = new Prisma.Decimal(String(invoice.paidAmount));
       }
-      if (currentPaid.isNegative() || currentPaid.minus(total).greaterThan(TOLERANCE)) {
+      if (currentPaid.isNegative() || currentPaid.greaterThan(total)) {
         fail("INVOICE_PAID_AMOUNT_INVALID");
       }
-      if (allocation.amount.minus(total.minus(currentPaid)).greaterThan(TOLERANCE)) {
+      if (allocation.amount.greaterThan(total.minus(currentPaid))) {
         fail("INVOICE_OVER_ALLOCATION");
       }
       const nextPaid = currentPaid.plus(allocation.amount);
-      const isFullyPaid = nextPaid.plus(TOLERANCE).greaterThanOrEqualTo(total);
+      const isFullyPaid = nextPaid.greaterThanOrEqualTo(total);
       const normalizedPaid = isFullyPaid ? total : nextPaid;
       const paymentStatus = isFullyPaid ? "PAID" : "PARTIALLY_PAID";
       invoiceUpdates.push({ invoiceId: allocation.invoiceId, paidAmount: normalizedPaid, paymentStatus });
@@ -403,16 +403,16 @@ export class VoucherPostingService {
       }
       const currentPaid = new Prisma.Decimal(String(invoice.paidAmount));
       const allocationAmount = new Prisma.Decimal(allocation.amount.toString());
-      if (currentPaid.minus(allocationAmount).lessThan(new Prisma.Decimal("-0.0001"))) {
+      if (currentPaid.lessThan(allocationAmount)) {
         fail("INVOICE_ALLOCATION_REVERSAL_EXCEEDS_PAID_AMOUNT");
       }
-      const nextPaid = currentPaid.minus(allocationAmount).lessThanOrEqualTo(TOLERANCE)
+      const nextPaid = currentPaid.minus(allocationAmount).isZero()
         ? ZERO
         : currentPaid.minus(allocationAmount);
       const total = new Prisma.Decimal(String(invoice.totalAmount));
       const paymentStatus = nextPaid.isZero()
         ? "UNPAID"
-        : nextPaid.plus(TOLERANCE).greaterThanOrEqualTo(total) ? "PAID" : "PARTIALLY_PAID";
+        : nextPaid.greaterThanOrEqualTo(total) ? "PAID" : "PARTIALLY_PAID";
 
       await tx.invoice.update({
         where: { id: invoice.id, tenantId },
