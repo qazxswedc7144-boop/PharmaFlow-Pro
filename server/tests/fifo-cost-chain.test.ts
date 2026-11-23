@@ -44,9 +44,12 @@ const PRODUCT_ID = "8c0fce38-5f6e-4c76-9a2f-71e6cb87bfa1";
 function createAddStockTx() {
   return {
     $queryRaw: vi.fn().mockResolvedValue([{ id: PRODUCT_ID, tenantId: TENANT_ID }]),
+    branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-P0-01" }) },
+    branchInventory: { upsert: vi.fn().mockResolvedValue({ stockQuantity: 10 }) },
     inventoryLayer: {
       findFirst: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({ id: "layer-25" })
+      create: vi.fn().mockResolvedValue({ id: "layer-25" }),
+      aggregate: vi.fn().mockResolvedValue({ _sum: { quantityRemaining: 10 } })
     },
     inventoryBatch: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -142,8 +145,16 @@ function createDepleteTx() {
         expiryDate: null,
         createdAt: new Date("2026-01-01T00:00:00.000Z")
       }]),
+    branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-P0-01" }) },
+    branchInventory: {
+      findUnique: vi.fn().mockResolvedValue({ stockQuantity: 10 }),
+      update: vi.fn().mockResolvedValue({ stockQuantity: 0 })
+    },
     inventoryLayer: {
       update: vi.fn(),
+      aggregate: vi.fn()
+        .mockResolvedValueOnce({ _sum: { quantityRemaining: 10 } })
+        .mockResolvedValueOnce({ _sum: { quantityRemaining: 0 } }),
       findMany: vi.fn().mockResolvedValue([])
     },
     inventoryBatch: {
