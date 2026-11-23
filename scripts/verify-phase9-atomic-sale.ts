@@ -18,8 +18,19 @@ async function runVerification() {
   const deviceId = "DEV_VERIFY_9";
   const branchId = "BR_VERIFY_9";
 
-  // 1. SETUP: Ensure product exists
+  // 1. SETUP: Ensure the verified branch and product exist
   console.log("Step 1: Setting up environment...");
+  await prisma.branch.upsert({
+    where: { id: branchId },
+    update: {},
+    create: {
+      id: branchId,
+      tenantId,
+      code: "VERIFY-PHASE9",
+      name: "Phase 9 Verification Branch",
+      isActive: true
+    }
+  });
   const productId = "550e8400-e29b-41d4-a716-446655440000"; // Valid UUID
   const partnerId = "550e8400-e29b-41d4-a716-446655440001"; // Valid UUID
   await prisma.product.create({
@@ -89,6 +100,7 @@ async function runVerification() {
   const result = await AtomicPostSaleService.executePostSaleCommand({
     payload,
     tenantId,
+    branchId,
     userId,
     ipAddress: "127.0.0.1"
   });
@@ -200,6 +212,7 @@ async function runVerification() {
     await AtomicPostSaleService.executePostSaleCommand({
       payload: tamperedPayload,
       tenantId,
+      branchId,
       userId,
       ipAddress: "127.0.0.1"
     });
