@@ -57,37 +57,47 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
     IdempotencyRegistry.clearInMemory();
     delete (globalThis as any).__FAIL_AT_STAGE__;
 
-    // Seed branches for both tenants
+    // Seed each tenant's fixtures only while that tenant is the active session.
     await db.branches.bulkPut([
       { id: branchId, code: branchId, name: 'Main Branch', tenantId: tenant1, isActive: true },
-      { id: 'WH-MAIN', code: 'WH-MAIN', name: 'Main Warehouse', tenantId: tenant1, isActive: true },
-      { id: 'BRH-PHASE1-02', code: 'BRH-PHASE1-02', name: 'Branch 2', tenantId: tenant2, isActive: true },
-      { id: 'WH-MAIN-T2', code: 'WH-MAIN-T2', name: 'Warehouse T2', tenantId: tenant2, isActive: true }
+      { id: 'WH-MAIN', code: 'WH-MAIN', name: 'Main Warehouse', tenantId: tenant1, isActive: true }
     ] as any);
-
-    // Seed suppliers
-    await db.suppliers.bulkPut([
-      { id: supplierId, Supplier_Name: 'Supplier Phase1', balance: 0, tenantId: tenant1, branchId, is_active: true },
-      { id: supplier2Id, Supplier_Name: 'Supplier Tenant2', balance: 0, tenantId: tenant2, branchId: 'BRH-PHASE1-02', is_active: true }
-    ] as any);
-
-    // Seed products
-    await db.products.bulkPut([
-      { id: productId, name: 'Med A', stock: 100, price: 50, costPrice: 40, tenantId: tenant1, is_active: true },
-      { id: 'PROD-PHASE1-T2', name: 'Med T2', stock: 100, price: 50, costPrice: 40, tenantId: tenant2, is_active: true }
-    ] as any);
-
-    // Seed warehouse stock
-    await db.warehouseStock.bulkPut([
-      { id: `${warehouseId}-${productId}`, warehouseId, productId, quantity: 100, tenantId: tenant1 },
-      { id: `WH-MAIN-T2-PROD-PHASE1-T2`, warehouseId: 'WH-MAIN-T2', productId: 'PROD-PHASE1-T2', quantity: 100, tenantId: tenant2 }
-    ] as any);
-
-    // Seed standard chart of accounts
+    await db.suppliers.put({
+      id: supplierId, Supplier_Name: 'Supplier Phase1', balance: 0,
+      tenantId: tenant1, branchId, is_active: true
+    } as any);
+    await db.products.put({
+      id: productId, name: 'Med A', stock: 100, price: 50, costPrice: 40,
+      tenantId: tenant1, is_active: true
+    } as any);
+    await db.warehouseStock.put({
+      id: `${warehouseId}-${productId}`, warehouseId, productId,
+      quantity: 100, tenantId: tenant1
+    } as any);
     await db.accounts.bulkPut([
       { id: 'ACC-101', code: '101', name: 'Cash', type: 'Asset', tenantId: tenant1, branchId, balance: 10000 },
       { id: 'ACC-102', code: '102', name: 'Inventory', type: 'Asset', tenantId: tenant1, branchId, balance: 4000 },
-      { id: 'ACC-201', code: '201', name: 'Payables', type: 'Liability', tenantId: tenant1, branchId, balance: 0 },
+      { id: 'ACC-201', code: '201', name: 'Payables', type: 'Liability', tenantId: tenant1, branchId, balance: 0 }
+    ] as any);
+
+    setupUserSession(tenant2, 'BRH-PHASE1-02');
+    await db.branches.bulkPut([
+      { id: 'BRH-PHASE1-02', code: 'BRH-PHASE1-02', name: 'Branch 2', tenantId: tenant2, isActive: true },
+      { id: 'WH-MAIN-T2', code: 'WH-MAIN-T2', name: 'Warehouse T2', tenantId: tenant2, isActive: true }
+    ] as any);
+    await db.suppliers.put({
+      id: supplier2Id, Supplier_Name: 'Supplier Tenant2', balance: 0,
+      tenantId: tenant2, branchId: 'BRH-PHASE1-02', is_active: true
+    } as any);
+    await db.products.put({
+      id: 'PROD-PHASE1-T2', name: 'Med T2', stock: 100, price: 50, costPrice: 40,
+      tenantId: tenant2, is_active: true
+    } as any);
+    await db.warehouseStock.put({
+      id: 'WH-MAIN-T2-PROD-PHASE1-T2', warehouseId: 'WH-MAIN-T2',
+      productId: 'PROD-PHASE1-T2', quantity: 100, tenantId: tenant2
+    } as any);
+    await db.accounts.bulkPut([
       { id: 'ACC-101-T2', code: '101', name: 'Cash', type: 'Asset', tenantId: tenant2, branchId: 'BRH-PHASE1-02', balance: 10000 },
       { id: 'ACC-102-T2', code: '102', name: 'Inventory', type: 'Asset', tenantId: tenant2, branchId: 'BRH-PHASE1-02', balance: 4000 },
       { id: 'ACC-201-T2', code: '201', name: 'Payables', type: 'Liability', tenantId: tenant2, branchId: 'BRH-PHASE1-02', balance: 0 }
