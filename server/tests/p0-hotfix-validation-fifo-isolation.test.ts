@@ -114,6 +114,8 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
       tenantId,
       branchId
     } as any);
+    // Keep the FIFO ledger consistent with the seeded product and warehouse stock.
+    await FIFOEngine.addPurchaseLayer(productId, 100, 20, 'P0-VALIDATION-INITIAL-STOCK', tenantId);
   });
 
   // =========================================================================
@@ -127,8 +129,8 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
           {
             productId,
             quantity: 0, // Invalid: quantity must be positive
-            unitPrice: 30,
-            price: 30
+            unitPrice: 50,
+            price: 50
           } as any
         ],
         total: 0
@@ -231,8 +233,8 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
           {
             productId,
             quantity: 5,
-            unitPrice: 30,
-            price: 30
+            unitPrice: 50,
+            price: 50
           } as any
         ],
         total: 150
