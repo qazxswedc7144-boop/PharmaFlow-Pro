@@ -867,14 +867,34 @@ const BackupManagement: React.FC = () => {
                 منتجات مستبعدة لارتباطها بفواتير غير تجريبية: {cleanupPreview.excluded.productsLinkedToNonDemoInvoices.length}
               </p>
               <p className="text-[10px] text-slate-600">
-                فواتير بيع مرحلة تحتاج مراجعة: {cleanupPreview.diagnostics.postedDemoSales}
+                فواتير بيع مرحلة تحتاج مراجعة: {cleanupPreview.diagnostics.postedDemoSales.length}
               </p>
               <p className="text-[10px] text-slate-600">
-                فواتير شراء مرحلة تحتاج مراجعة: {cleanupPreview.diagnostics.postedDemoPurchases}
+                فواتير شراء مرحلة تحتاج مراجعة: {cleanupPreview.diagnostics.postedDemoPurchases.length}
               </p>
               <p className="text-[10px] text-slate-600">
                 قيود يتيمة للتشخيص فقط (لن تُحذف): {cleanupPreview.diagnostics.orphanJournalEntries.length}
               </p>
+              {cleanupPreview.diagnostics.postedDemoSales.map(item => (
+                <p key={`posted-sale-${item.id}`} className="text-[10px] text-amber-800">
+                  بيع مرحّل — {item.id}: {item.reason}
+                </p>
+              ))}
+              {cleanupPreview.diagnostics.postedDemoPurchases.map(item => (
+                <p key={`posted-purchase-${item.id}`} className="text-[10px] text-amber-800">
+                  شراء مرحّل — {item.id}: {item.reason}
+                </p>
+              ))}
+              {cleanupPreview.excluded.productsLinkedToNonDemoInvoices.map(item => (
+                <p key={`excluded-product-${item.id}`} className="text-[10px] text-slate-600">
+                  صنف مستبعد — {item.id}: {item.reason}
+                </p>
+              ))}
+              {cleanupPreview.diagnostics.orphanJournalEntries.map(item => (
+                <p key={`orphan-entry-${item.id}`} className="text-[10px] text-rose-700">
+                  قيد يتيم — {item.id}: {item.reason}
+                </p>
+              ))}
               {cleanupPreview.warnings.map((warning, index) => (
                 <p key={index} className="text-[10px] font-bold text-amber-800">• {warning}</p>
               ))}
