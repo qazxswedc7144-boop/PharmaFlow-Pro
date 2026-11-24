@@ -11,9 +11,9 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safety Suite', () => {
   const tenantId = 'TENANT-HOTFIX-P0-01';
   const branchId = 'BRH-HOTFIX-MAIN-01';
-  const customerId = 'CUST-HOTFIX-001';
-  const supplierId = 'SUPP-HOTFIX-001';
-  const productId = 'PROD-HOTFIX-001';
+  const customerId = '00000000-0000-4000-8000-000000000001';
+  const supplierId = '00000000-0000-4000-8000-000000000002';
+  const productId = '00000000-0000-4000-8000-000000000003';
   const warehouseId = 'WH-MAIN';
 
   beforeEach(async () => {
