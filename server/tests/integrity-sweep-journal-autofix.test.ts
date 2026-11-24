@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   entries: [] as Array<{ id: string; lines: Array<{ debit: number; credit: number }> }>,
@@ -8,6 +8,16 @@ const mocks = vi.hoisted(() => ({
   deleteJournalEntry: vi.fn(),
   deleteJournalLines: vi.fn(),
   updateAccount: vi.fn(),
+  recentAlertsQuery: {
+    above: vi.fn(),
+    filter: vi.fn(),
+    toArray: vi.fn(),
+  },
+  getSystemAlertsByTimestamp: vi.fn(),
+  putSystemAlert: vi.fn(),
+  generateId: vi.fn(() => 'CRIT-TEST-1'),
+  logMetric: vi.fn(),
+  calculateCurrentRiskScore: vi.fn(),
 }));
 
 vi.mock('@/core/db', () => ({
@@ -16,12 +26,17 @@ vi.mock('@/core/db', () => ({
     journalEntries: { delete: mocks.deleteJournalEntry },
     journalLines: { delete: mocks.deleteJournalLines },
     accounts: { update: mocks.updateAccount },
+    systemAlerts: {
+      where: mocks.getSystemAlertsByTimestamp,
+      put: mocks.putSystemAlert,
+    },
+    generateId: mocks.generateId,
   },
   getCurrentUserSession: vi.fn(() => ({ tenantId: 'tenant-integrity-test' })),
 }));
 
 vi.mock('@/services/system/LoadTestService', () => ({
-  LoadTestService: { logMetric: vi.fn().mockResolvedValue(undefined) },
+  LoadTestService: { logMetric: mocks.logMetric },
 }));
 
 vi.mock('@features/inventory/services/UnifiedInventoryMutationEngine', () => ({
@@ -29,7 +44,7 @@ vi.mock('@features/inventory/services/UnifiedInventoryMutationEngine', () => ({
 }));
 
 vi.mock('@/services/audit/AnomalyScoringEngine', () => ({
-  AnomalyScoringEngine: { calculateCurrentRiskScore: vi.fn() },
+  AnomalyScoringEngine: { calculateCurrentRiskScore: mocks.calculateCurrentRiskScore },
 }));
 
 vi.mock('@/constants', () => ({ IS_PREVIEW: false }));
@@ -37,6 +52,9 @@ vi.mock('@/constants', () => ({ IS_PREVIEW: false }));
 import { IntegritySweepService } from '@/services/integrity/IntegritySweepService';
 
 describe('IntegritySweepService journal auto-fix safety', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   const validateJournal = (autoFix: boolean) =>
     (IntegritySweepService as any).validateJournal(autoFix) as Promise<boolean>;
 
@@ -54,6 +72,13 @@ describe('IntegritySweepService journal auto-fix safety', () => {
       { id: 'line-credit-1', entryId: 'journal-imbalanced-1', debit: 0, credit: 100 },
     ];
     mocks.accountBalances = { cash: 125, payable: -100 };
+    mocks.recentAlertsQuery.above.mockReturnValue(mocks.recentAlertsQuery);
+    mocks.recentAlertsQuery.filter.mockReturnValue(mocks.recentAlertsQuery);
+    mocks.recentAlertsQuery.toArray.mockResolvedValue([]);
+    mocks.getSystemAlertsByTimestamp.mockReturnValue(mocks.recentAlertsQuery);
+    mocks.putSystemAlert.mockResolvedValue(undefined);
+    mocks.logMetric.mockResolvedValue(undefined);
+    mocks.calculateCurrentRiskScore.mockResolvedValue(undefined);
 
     mocks.getJournalEntries.mockImplementation(async () =>
       mocks.entries.map(entry => ({ ...entry, lines: entry.lines.map(line => ({ ...line })) }))
@@ -89,6 +114,37 @@ describe('IntegritySweepService journal auto-fix safety', () => {
     expect(mocks.entries).toHaveLength(1);
     expect(mocks.lines).toHaveLength(2);
     expect(mocks.deleteJournalEntry).not.toHaveBeenCalled();
+  });
+
+  it('does not report a successful sweep and records a critical alert when journal auto-fix is blocked', async () => {
+    const unaffectedChecks = [
+      'validateStock',
+      'validateARAP',
+      'validateOrphans',
+      'validateVouchers',
+      'validateDates',
+    ] as const;
+    const checkSpies = unaffectedChecks.map((name) =>
+      vi.spyOn(IntegritySweepService as any, name).mockResolvedValue(true)
+    );
+
+    try {
+      await expect(IntegritySweepService.runSweep(true)).resolves.toBe(false);
+
+      expect(mocks.putSystemAlert).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'SYSTEM',
+        severity: 'CRITICAL',
+        message: expect.stringContaining('Journal imbalance detected'),
+      }));
+      expect(mocks.calculateCurrentRiskScore).toHaveBeenCalledOnce();
+      expect(mocks.logMetric).toHaveBeenCalledWith(
+        'INTEGRITY_SWEEP_TIME',
+        expect.any(Number),
+        expect.objectContaining({ isHealthy: false })
+      );
+    } finally {
+      checkSpies.forEach((spy) => spy.mockRestore());
+    }
   });
 
   it('continues to accept balanced journal entries', async () => {
