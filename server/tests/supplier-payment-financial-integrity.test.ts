@@ -10,6 +10,21 @@ import { PurchaseRepository } from '@/database/repositories/PurchaseRepository';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 
+// These suites validate purchase/payment integrity, not the accounting-period HTTP API.
+// Keep their period state deterministic; closed-period behavior is covered by PeriodLockEngine.test.ts.
+vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
+  AccountingPeriodSyncService: {
+    getPeriods: vi.fn().mockResolvedValue([{
+      id: 'TEST-OPEN-PERIOD',
+      tenantId: 'TEST-TENANT',
+      Start_Date: '1900-01-01T00:00:00.000Z',
+      End_Date: '2200-12-31T23:59:59.999Z',
+      Is_Locked: false,
+    }]),
+    setLocked: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite', () => {
   const tenantId = 'TENANT-FIN-PROD-01';
   const branchId = 'BRH-FIN-MAIN-01';
