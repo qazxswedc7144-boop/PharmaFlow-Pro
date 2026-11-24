@@ -41,10 +41,6 @@ vi.mock('@/services/system/LoadTestService', () => ({
   LoadTestService: { logMetric: mocks.logMetric },
 }));
 
-vi.mock('@features/inventory/services/UnifiedInventoryMutationEngine', () => ({
-  unifiedInventoryMutationEngine: { executeAdjustment: vi.fn() },
-}));
-
 vi.mock('@/services/audit/AnomalyScoringEngine', () => ({
   AnomalyScoringEngine: { calculateCurrentRiskScore: mocks.calculateCurrentRiskScore },
 }));
