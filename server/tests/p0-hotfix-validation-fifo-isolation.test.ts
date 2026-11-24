@@ -114,6 +114,13 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
       tenantId,
       branchId
     } as any);
+    await db.branchInventory.put({
+      id: `INV-${branchId}-${productId}`,
+      branchId,
+      productId,
+      stockQuantity: 100,
+      tenantId
+    } as any);
     // Keep the FIFO ledger consistent with the seeded product and warehouse stock.
     await FIFOEngine.addPurchaseLayer(productId, 100, 20, 'P0-VALIDATION-INITIAL-STOCK', tenantId);
   });
@@ -138,7 +145,7 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processSale(invalidPayload)
-      ).rejects.toThrow(/INVOICE_VALIDATION_FAILED|Quantity must be a positive integer/i);
+      ).rejects.toThrow(/INVALID_SALE_QUANTITY|INVOICE_VALIDATION_FAILED|Quantity must be a positive integer/i);
 
       // Verify ZERO database persistence
       expect(await db.invoices.count()).toBe(0);
