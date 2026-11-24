@@ -300,7 +300,7 @@ const SystemHealthModule: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
     eventBus.emit(EVENTS.SYSTEM_TEST_RUN, { passed, failed });
   }, []);
 
-  // Run integrity DB sweeps with automatic fixes
+  // Run integrity DB sweeps in diagnostic-only mode
   const runIntegritySweep = async () => {
     setIsSweeping(true);
     setSweepResult(null);
