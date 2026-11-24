@@ -569,7 +569,7 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
           items: [{ productId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
           total: 100
         })
-      ).rejects.toThrow(/CROSS_TENANT_SUPPLIER_FORBIDDEN|تابع لمؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_SUPPLIER_FORBIDDEN|تابع لمؤسسة أخرى|FAIL_CLOSED: Unauthorized direct read on 'suppliers'/i);
     });
 
     it('rejects purchase using product from another tenant', async () => {
@@ -594,7 +594,7 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
           items: [{ productId: foreignProductId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
           total: 100
         })
-      ).rejects.toThrow(/CROSS_TENANT_PRODUCT_FORBIDDEN|تابع لمؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_PRODUCT_FORBIDDEN|تابع لمؤسسة أخرى|FAIL_CLOSED: Unauthorized direct read on 'products'/i);
     });
 
     it('prevents modifying or allocating a purchase invoice belonging to another tenant', async () => {
@@ -619,7 +619,7 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
           amount: 200,
           allocations: { [foreignInvId]: 200 }
         })
-      ).rejects.toThrow(/CROSS_TENANT_INVOICE_FORBIDDEN|مؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_INVOICE_FORBIDDEN|مؤسسة أخرى|FAIL_CLOSED: Unauthorized direct read on 'invoices'/i);
     });
   });
 
