@@ -100,7 +100,7 @@ describe('ProductionCleanupService safety boundary', () => {
         { id: 'line-real', entryId: 'journal-real' }
       ],
       inventoryTransactions: [
-        { TransactionID: 'movement-linked', SourceDocumentID: 'sale-demo', source_doc_id: 'sale-demo', tenantId: 'tenant-a' },
+        { id: 'movement-linked', source_doc_id: 'sale-demo', tenantId: 'tenant-a' },
         { TransactionID: 'movement-marked', productId: 'product-demo', isDemo: true, tenantId: 'tenant-a' },
         { TransactionID: 'movement-foreign', SourceDocumentID: 'sale-demo', source_doc_id: 'sale-demo', tenantId: 'tenant-b' }
       ],
