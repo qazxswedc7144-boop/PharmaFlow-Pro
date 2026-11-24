@@ -185,6 +185,30 @@ describe('IntegritySweepService journal auto-fix safety', () => {
     }
   });
 
+  it('never forwards automatic mutation permission to domain validators', async () => {
+    const validationMethods = [
+      'validateJournal',
+      'validateStock',
+      'validateARAP',
+      'validateOrphans',
+      'validateVouchers',
+      'validateDates',
+    ] as const;
+    const validationSpies = validationMethods.map((name) =>
+      vi.spyOn(IntegritySweepService as any, name).mockResolvedValue(true)
+    );
+
+    try {
+      await expect(IntegritySweepService.runSweep(true)).resolves.toBe(true);
+      validationSpies.forEach((spy) => {
+        expect(spy).toHaveBeenCalledOnce();
+        expect(spy).toHaveBeenCalledWith(false);
+      });
+    } finally {
+      validationSpies.forEach((spy) => spy.mockRestore());
+    }
+  });
+
   it('continues to accept balanced journal entries', async () => {
     mocks.entries = [{
       id: 'journal-balanced-1',
