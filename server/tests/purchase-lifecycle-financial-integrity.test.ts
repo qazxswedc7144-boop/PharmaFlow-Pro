@@ -8,6 +8,28 @@ import { IdempotencyRegistry } from '../../src/core/integrity/idempotencyRegistr
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { AccountingEngine } from '../../src/features/accounting/services/AccountingEngine';
 
+const putRawTenantRecord = async (tableName: string, record: Record<string, any>) => {
+  const nativeDb = (db as any).backendDB();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = nativeDb.transaction(tableName, 'readwrite');
+    transaction.objectStore(tableName).put(record);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+};
+
+const deleteRawTenantRecord = async (tableName: string, id: string) => {
+  const nativeDb = (db as any).backendDB();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = nativeDb.transaction(tableName, 'readwrite');
+    transaction.objectStore(tableName).delete(id);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+};
+
 describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
   const tenantId = 'TENANT-PUR-PROD-01';
   const branchId = 'BRH-PUR-MAIN-01';
@@ -523,25 +545,29 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
 
     it('rejects purchase using supplier from another tenant', async () => {
       const foreignSupplierId = 'SUP-FOREIGN-99';
-      await db.suppliers.put({
+      await putRawTenantRecord('suppliers', {
         id: foreignSupplierId,
         Supplier_Name: 'Foreign Supplier',
         balance: 0,
         tenantId: foreignTenantId
-      } as any);
+      });
 
-      await expect(
-        UnifiedBusinessWorkflowOrchestrator.processPurchase({
-          supplierId: foreignSupplierId,
-          items: [{ productId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
-          total: 100
-        })
-      ).rejects.toThrow(/CROSS_TENANT_SUPPLIER_FORBIDDEN|تابع لمؤسسة أخرى/i);
+      try {
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processPurchase({
+            supplierId: foreignSupplierId,
+            items: [{ productId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
+            total: 100
+          })
+        ).rejects.toThrow(/CROSS_TENANT_SUPPLIER_FORBIDDEN|FAIL_CLOSED: Unauthorized direct read on 'suppliers'|تابع لمؤسسة أخرى/i);
+      } finally {
+        await deleteRawTenantRecord('suppliers', foreignSupplierId);
+      }
     });
 
     it('rejects purchase using product from another tenant', async () => {
       const foreignProductId = 'PROD-FOREIGN-99';
-      await db.products.put({
+      await putRawTenantRecord('products', {
         id: foreignProductId,
         name: 'Foreign Drug',
         stock: 5,
@@ -549,36 +575,50 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
         price: 20,
         costPrice: 15,
         tenantId: foreignTenantId
-      } as any);
+      });
 
-      await expect(
-        UnifiedBusinessWorkflowOrchestrator.processPurchase({
-          supplierId,
-          items: [{ productId: foreignProductId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
-          total: 100
-        })
-      ).rejects.toThrow(/CROSS_TENANT_PRODUCT_FORBIDDEN|تابع لمؤسسة أخرى/i);
+      try {
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processPurchase({
+            supplierId,
+            items: [{ productId: foreignProductId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
+            total: 100
+          })
+        ).rejects.toThrow(/CROSS_TENANT_PRODUCT_FORBIDDEN|FAIL_CLOSED: Unauthorized direct read on 'products'|تابع لمؤسسة أخرى/i);
+      } finally {
+        await deleteRawTenantRecord('products', foreignProductId);
+      }
     });
 
     it('prevents modifying or allocating a purchase invoice belonging to another tenant', async () => {
       const foreignInvId = 'PUR-FOREIGN-INV-99';
-      await db.invoices.put({
+      await putRawTenantRecord('invoices', {
         id: foreignInvId,
         tenantId: foreignTenantId,
         partnerId: supplierId,
         totalAmount: 1000,
         paidAmount: 0,
         type: 'PURCHASE'
-      } as any);
+      });
 
-      // Attempt payment allocation to foreign invoice
-      await expect(
-        UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
-          partnerId: supplierId,
-          amount: 200,
-          allocations: { [foreignInvId]: 200 }
-        })
-      ).rejects.toThrow(/CROSS_TENANT_INVOICE_FORBIDDEN|مؤسسة أخرى/i);
+      // Simulate a legacy/cross-tenant row beneath the Dexie tenant write hook.
+      // The application must reject it before any voucher or accounting mutation.
+      try {
+        await expect(
+          UnifiedBusinessWorkflowOrchestrator.processSupplierPayment({
+            partnerId: supplierId,
+            amount: 200,
+            allocations: { [foreignInvId]: 200 }
+          })
+        ).rejects.toThrow(/CROSS_TENANT_INVOICE_FORBIDDEN|FAIL_CLOSED: Unauthorized direct read on 'invoices'|مؤسسة أخرى/i);
+
+        expect(await db.vouchers.count()).toBe(0);
+        expect(await db.financialTransactions.count()).toBe(0);
+        expect(await db.journalEntries.count()).toBe(0);
+        expect((await db.suppliers.get(supplierId))?.balance).toBe(0);
+      } finally {
+        await deleteRawTenantRecord('invoices', foreignInvId);
+      }
     });
   });
 
