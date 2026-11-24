@@ -172,7 +172,7 @@ export class ProductionCleanupService {
       const sourceDocumentId = record.SourceDocumentID || record.source_doc_id || record.sourceDocId;
       const directReason = this.getDemoReason(record);
       if (directReason) {
-        return [{ id: getRecordId(record.TransactionID), reason: directReason }];
+        return [{ id: getRecordId(record.id, record.TransactionID, record.transaction_id), reason: directReason }];
       }
       if (demoSaleIds.has(sourceDocumentId)) {
         return [{ id: getRecordId(record.id, record.TransactionID, record.transaction_id), reason: `مرتبط بفاتورة بيع تجريبية ${sourceDocumentId}` }];
