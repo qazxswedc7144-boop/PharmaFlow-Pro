@@ -156,6 +156,35 @@ describe('IntegritySweepService journal auto-fix safety', () => {
     }
   });
 
+  it('fails closed and audits when journal validation itself cannot complete', async () => {
+    const unaffectedChecks = [
+      'validateStock',
+      'validateARAP',
+      'validateOrphans',
+      'validateVouchers',
+      'validateDates',
+    ] as const;
+    const checkSpies = unaffectedChecks.map((name) =>
+      vi.spyOn(IntegritySweepService as any, name).mockResolvedValue(true)
+    );
+    mocks.getJournalEntries.mockRejectedValueOnce(new Error('journal storage unavailable'));
+
+    try {
+      await expect(IntegritySweepService.runSweep(true)).resolves.toBe(false);
+      expect(mocks.putSystemAlert).toHaveBeenCalledWith(expect.objectContaining({
+        severity: 'CRITICAL',
+      }));
+      expect(mocks.addAuditLog).toHaveBeenCalledWith(
+        'user-integrity-test',
+        'SYSTEM',
+        'INTEGRITY_SWEEP',
+        expect.stringContaining('Journal integrity validation failed')
+      );
+    } finally {
+      checkSpies.forEach((spy) => spy.mockRestore());
+    }
+  });
+
   it('continues to accept balanced journal entries', async () => {
     mocks.entries = [{
       id: 'journal-balanced-1',
