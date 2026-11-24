@@ -2,7 +2,6 @@
 import { db, getCurrentUserSession } from '@/core/db';
 import { SystemAlert } from '@/types';
 import { LoadTestService } from '@/services/system/LoadTestService';
-import { unifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
 
 import { IS_PREVIEW } from '@/constants';
 import { AnomalyScoringEngine } from '@/services/audit/AnomalyScoringEngine';
@@ -25,7 +24,6 @@ export class IntegritySweepService {
 
     // Generic integrity sweeps are diagnostic-only. Financial, voucher, date,
     // and stock corrections require domain-specific reviewed workflows.
-    const safeAutoFix = false;
     if (autoFix) {
       console.warn('[IntegritySweep] AUTO_FIX_BLOCKED: generic integrity sweeps never mutate business records.');
     }
@@ -33,7 +31,7 @@ export class IntegritySweepService {
     try {
       // 1. Validate Journal Balance
       try {
-        const journalBalance = await this.validateJournal(safeAutoFix);
+        const journalBalance = await this.validateJournal();
         if (!journalBalance) {
           isHealthy = false;
           errors.push("Journal imbalance detected (Debits != Credits)");
@@ -46,7 +44,7 @@ export class IntegritySweepService {
 
       // 2. Validate Stock Balance
       try {
-        const stockBalance = await this.validateStock(safeAutoFix);
+        const stockBalance = await this.validateStock();
         if (!stockBalance) {
           isHealthy = false;
           errors.push("Stock balance mismatch detected (Transactions != StockQuantity)");
@@ -55,7 +53,7 @@ export class IntegritySweepService {
 
       // 3. Validate AR/AP Consistency
       try {
-        const arapConsistency = await this.validateARAP(safeAutoFix);
+        const arapConsistency = await this.validateARAP();
         if (!arapConsistency) {
           isHealthy = false;
           errors.push("AR/AP consistency mismatch detected");
@@ -64,7 +62,7 @@ export class IntegritySweepService {
 
       // 4. Validate No Orphan References
       try {
-        const noOrphans = await this.validateOrphans(safeAutoFix);
+        const noOrphans = await this.validateOrphans();
         if (!noOrphans) {
           isHealthy = false;
           errors.push("Orphan references detected in transactions");
@@ -73,7 +71,7 @@ export class IntegritySweepService {
 
       // 5. Validate Voucher Consistency
       try {
-        const voucherConsistency = await this.validateVouchers(safeAutoFix);
+        const voucherConsistency = await this.validateVouchers();
         if (!voucherConsistency) {
           isHealthy = false;
           errors.push("Voucher allocation inconsistency detected");
@@ -82,7 +80,7 @@ export class IntegritySweepService {
 
       // 6. Validate Date Formats (New)
       try {
-        const datesHealthy = await this.validateDates(safeAutoFix);
+        const datesHealthy = await this.validateDates();
         if (!datesHealthy) {
           isHealthy = false;
           errors.push("Malformed date strings detected in records");
@@ -104,102 +102,98 @@ export class IntegritySweepService {
     }
   }
 
-  private static async validateJournal(autoFix = false): Promise<boolean> {
+  private static async validateJournal(): Promise<boolean> {
     const entries = await db.getJournalEntries();
     let healthy = true;
+
     for (const entry of entries) {
       const debits = (entry.lines || []).reduce((sum: number, line: any) => sum + (line.debit || 0), 0);
       const credits = (entry.lines || []).reduce((sum: number, line: any) => sum + (line.credit || 0), 0);
+
       if (Math.abs(debits - credits) > 0.01) {
-        // Posted financial history must never be physically deleted by an integrity sweep.
-        // Until an approved compensating-reversal workflow exists, auto-fix is diagnostic only.
-        if (autoFix) {
-          console.error(
-            `AUTO_FIX BLOCKED: Imbalanced journal entry [${entry.id || 'unknown'}] was preserved. Manual review and an approved reversal workflow are required.`
-          );
-        } else {
-          console.warn(
-            `INTEGRITY CHECK: Imbalanced journal entry [${entry.id || 'unknown'}] detected.`
-          );
-        }
+        console.error(
+          `[IntegritySweep] Imbalanced journal entry [${entry.id || 'unknown'}] was preserved. Manual review and an approved compensating reversal are required.`
+        );
         healthy = false;
       }
     }
+
     return healthy;
   }
 
-  private static async validateStock(autoFix = false): Promise<boolean> {
+  private static async validateStock(): Promise<boolean> {
     const products = await db.getProducts();
     let healthy = true;
-    for (const p of products) {
-      if (!p.id) continue;
-      const transactions = await db.inventoryTransactions.where('productId').equals(p.id).toArray();
-      const calculatedStock = transactions.reduce((sum: number, t: any) => sum + (t.QuantityChange || 0), 0);
-      const currentStock = Number(p.stock || p.StockQuantity || 0);
-      
+
+    for (const product of products) {
+      if (!product.id) continue;
+      const transactions = await db.inventoryTransactions.where('productId').equals(product.id).toArray();
+      const calculatedStock = transactions.reduce((sum: number, transaction: any) => sum + (transaction.QuantityChange || 0), 0);
+      const currentStock = Number(product.stock || product.StockQuantity || 0);
+
       if (Math.abs(calculatedStock - currentStock) > 0.01) {
-        if (autoFix && p.id) {
-          const session = getCurrentUserSession();
-          const targetTenant = (p as any).tenantId || (p as any).tenant_id || session?.tenantId;
-          const targetBranch = (p as any).branchId || (p as any).branch_id || session?.branchId;
-
-          if (!targetTenant || !targetBranch) {
-            console.warn(`[IntegritySweep] Skipping stock auto-fix for ${p.id}: missing tenant or branch context.`);
-            healthy = false;
-            continue;
-          }
-
-          console.warn(`AUTO_FIX: Correcting stock for [${p.name || p.Name}] from ${currentStock} to ${calculatedStock} via canonical adjustment.`);
-          // 🛡️ REPAIR: Use canonical adjustment instead of direct stock overwrite
-          await unifiedInventoryMutationEngine.executeAdjustment({
-            adjustmentId: `FIX-${Date.now()}`,
-            productId: p.id,
-            warehouseId: 'WH-MAIN', // Default fix warehouse
-            actualQuantity: calculatedStock,
-            reason: `تصحيح آلي لنزاهة البيانات - الفرق: ${calculatedStock - currentStock}`,
-            userId: 'system-repair',
-            tenantId: targetTenant,
-            branchId: targetBranch,
-            transactionUuid: `REPAIR-${p.id}-${Date.now()}`
-          }).catch(err => {
-            console.error(`FAILED AUTO_FIX for ${p.id}:`, err);
-            healthy = false;
-          });
-        } else if (!autoFix) {
-          healthy = false;
-        }
+        console.warn(
+          `[IntegritySweep] Stock mismatch for [${product.name || product.Name}]: ledger=${calculatedStock}, stored=${currentStock}. No automatic stock mutation was performed.`
+        );
+        healthy = false;
       }
     }
+
     return healthy;
   }
 
-  private static async validateARAP(autoFix = false): Promise<boolean> {
+  private static async validateARAP(): Promise<boolean> {
     const sales = await db.getSales();
     let healthy = true;
 
-    for (const s of sales) {
-      if (s.InvoiceStatus === 'CANCELLED') continue;
-      const balance = s.finalTotal - (s.paidAmount || 0);
+    for (const sale of sales) {
+      if (sale.InvoiceStatus === 'CANCELLED') continue;
+      const balance = sale.finalTotal - (sale.paidAmount || 0);
+
       if (balance < -0.01) {
-        if (autoFix && s.id) {
-          console.warn(`AUTO_FIX: Correcting overpaid sale [${s.SaleID}]`);
-          await db.sales.update(s.id, { paidAmount: s.finalTotal });
-        } else if (!autoFix) {
-          healthy = false;
-        }
+        console.warn(
+          `[IntegritySweep] Overpaid sale [${sale.SaleID}] detected. Payment history and paidAmount were preserved for manual reconciliation.`
+        );
+        healthy = false;
       }
     }
 
     const purchases = await db.getPurchases();
-    for (const p of purchases) {
-      if (p.invoiceStatus === 'CANCELLED') continue;
-      const totalAmt = p.totalAmount || p.finalTotal || 0;
-      const balance = totalAmt - (p.paidAmount || 0);
+    for (const purchase of purchases) {
+      if (purchase.invoiceStatus === 'CANCELLED') continue;
+      const totalAmount = purchase.totalAmount || purchase.finalTotal || 0;
+      const balance = totalAmount - (purchase.paidAmount || 0);
+
       if (balance < -0.01) {
-        if (autoFix && p.id) {
-          console.warn(`AUTO_FIX: Correcting overpaid purchase [${p.invoiceId}]`);
-          await db.purchases.update(p.id, { paidAmount: totalAmt });
-        } else if (!autoFix) {
+        console.warn(
+          `[IntegritySweep] Overpaid purchase [${purchase.invoiceId}] detected. Payment history and paidAmount were preserved for manual reconciliation.`
+        );
+        healthy = false;
+      }
+    }
+
+    return healthy;
+  }
+
+  private static async validateOrphans(): Promise<boolean> {
+    const transactions = await db.inventoryTransactions.toArray();
+    let healthy = true;
+
+    for (const transaction of transactions) {
+      if (transaction.SourceDocumentType === 'SALE') {
+        const sale = await db.sales.get(transaction.SourceDocumentID);
+        if (!sale) {
+          console.error(
+            `[IntegritySweep] Orphan inventory transaction [${transaction.TransactionID}] references a missing sale. The record was preserved.`
+          );
+          healthy = false;
+        }
+      } else if (transaction.SourceDocumentType === 'PURCHASE') {
+        const purchase = await db.purchases.get(transaction.SourceDocumentID);
+        if (!purchase) {
+          console.error(
+            `[IntegritySweep] Orphan inventory transaction [${transaction.TransactionID}] references a missing purchase. The record was preserved.`
+          );
           healthy = false;
         }
       }
@@ -208,114 +202,75 @@ export class IntegritySweepService {
     return healthy;
   }
 
-  private static async validateOrphans(autoFix = false): Promise<boolean> {
-    const transactions = await db.inventoryTransactions.toArray();
-    let healthy = true;
-    for (const t of transactions) {
-      if (t.SourceDocumentType === 'SALE') {
-        const sale = await db.sales.get(t.SourceDocumentID);
-        if (!sale) {
-          if (autoFix) {
-            console.error(`AUTO_FIX BLOCKED: Physical deletion of orphan inventory transaction [${t.TransactionID}] is forbidden by architecture.`);
-            healthy = false;
-          } else {
-            healthy = false;
-          }
-        }
-      } else if (t.SourceDocumentType === 'PURCHASE') {
-        const purchase = await db.purchases.get(t.SourceDocumentID);
-        if (!purchase) {
-          if (autoFix) {
-            console.error(`AUTO_FIX BLOCKED: Physical deletion of orphan inventory transaction [${t.TransactionID}] is forbidden by architecture.`);
-            healthy = false;
-          } else {
-            healthy = false;
-          }
-        }
-      }
-    }
-    return healthy;
-  }
-
-  private static async validateVouchers(autoFix = false): Promise<boolean> {
+  private static async validateVouchers(): Promise<boolean> {
     const settlements = await db.settlements.toArray();
     const cashFlow = await db.getCashFlow();
-    const vouchers = cashFlow.filter((c: any) => c.notes?.includes('سند #'));
+    const vouchers = cashFlow.filter((item: any) => item.notes?.includes('سند #'));
     let healthy = true;
 
-    for (const v of vouchers) {
-      const vIdMatch = v.notes?.match(/سند #([A-Z0-9-]+)/);
-      if (vIdMatch) {
-        const vId = vIdMatch[1];
-        const vSettlements = settlements.filter((s: any) => s.voucherId === vId);
-        const settledTotal = vSettlements.reduce((sum: number, s: any) => sum + s.amount, 0);
-        if (settledTotal > v.amount + 0.01) {
-          if (autoFix) {
-            console.warn(`AUTO_FIX: Correcting over-allocated voucher #${vId}`);
-            // Simple fix: delete settlements for this voucher to allow re-allocation
-            await db.settlements.bulkDelete(vSettlements.map((s: any) => s.id));
-          } else {
-            healthy = false;
-          }
-        }
+    for (const voucher of vouchers) {
+      const voucherIdMatch = voucher.notes?.match(/سند #([A-Z0-9-]+)/);
+      if (!voucherIdMatch) continue;
+
+      const voucherId = voucherIdMatch[1];
+      const voucherSettlements = settlements.filter((settlement: any) => settlement.voucherId === voucherId);
+      const settledTotal = voucherSettlements.reduce((sum: number, settlement: any) => sum + settlement.amount, 0);
+
+      if (settledTotal > voucher.amount + 0.01) {
+        console.error(
+          `[IntegritySweep] Over-allocated voucher [${voucherId}] detected. Settlement records were preserved for manual reconciliation.`
+        );
+        healthy = false;
       }
     }
+
     return healthy;
   }
 
-  private static async validateDates(autoFix = false): Promise<boolean> {
+  private static async validateDates(): Promise<boolean> {
     const tables = [
-      'sales', 'purchases', 'journalEntries', 'Audit_Log', 'financialTransactions', 
+      'sales', 'purchases', 'journalEntries', 'Audit_Log', 'financialTransactions',
       'inventoryTransactions', 'cashFlow', 'settlements', 'Accounting_Periods',
       'systemAlerts', 'systemPerformanceLog', 'userBehavior', 'historicalMetrics'
     ] as const;
     let healthy = true;
 
-    const actualTableNames = typeof db.getExistingTableNames === 'function' 
-      ? db.getExistingTableNames() 
-      : (Array.isArray(db.tables) ? db.tables.map((t: any) => t.name) : []);
+    const actualTableNames = typeof db.getExistingTableNames === 'function'
+      ? db.getExistingTableNames()
+      : (Array.isArray(db.tables) ? db.tables.map((table: any) => table.name) : []);
 
     for (const tableName of tables) {
-      if (!actualTableNames.includes(tableName)) {
-        continue;
-      }
+      if (!actualTableNames.includes(tableName)) continue;
       const table = (db.db as any)[tableName];
       if (!table) continue;
 
       try {
         const records = await table.toArray();
         for (const record of records) {
-          // Check common date fields
-          const dateFields = ['date', 'TransactionDate', 'timestamp', 'Created_At', 'Modified_At', 'Last_Updated', 'deleted_at', 'updatedAt', 'Start_Date', 'End_Date'];
-          
+          const dateFields = [
+            'date', 'TransactionDate', 'timestamp', 'Created_At', 'Modified_At',
+            'Last_Updated', 'deleted_at', 'updatedAt', 'Start_Date', 'End_Date'
+          ];
+
           for (const field of dateFields) {
-            const dateVal = record[field];
-            if (dateVal === undefined || dateVal === null) continue;
+            const dateValue = record[field];
+            if (dateValue === undefined || dateValue === null) continue;
 
-            let d: Date;
-            if (typeof dateVal === 'number') {
-              d = new Date(dateVal);
-            } else {
-              d = new Date(dateVal);
-            }
-
-            if (isNaN(d.getTime())) {
+            const parsedDate = new Date(dateValue);
+            if (Number.isNaN(parsedDate.getTime())) {
+              console.error(
+                `[IntegritySweep] Invalid historical date in ${tableName}.${field} for record ${record.id || record.TransactionID || record.Log_ID}. The original value was preserved.`
+              );
               healthy = false;
-              if (autoFix) {
-                console.warn(`AUTO_FIX: Repairing invalid date in ${tableName}.${field} for record ${record.id || record.TransactionID || record.Log_ID}`);
-                const now = new Date().toISOString();
-                const update: any = {};
-                update[field] = typeof dateVal === 'number' ? Date.now() : now;
-                
-                await table.update(record.id || record.TransactionID || record.Log_ID || record.id, update);
-              }
             }
           }
         }
-      } catch (e) {
-        console.error(`Failed to validate dates in table ${tableName}:`, e);
+      } catch (error) {
+        console.error(`Failed to validate dates in table ${tableName}:`, error);
+        healthy = false;
       }
     }
+
     return healthy;
   }
 
