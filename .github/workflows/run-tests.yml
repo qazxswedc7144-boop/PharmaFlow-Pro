@@ -49,6 +49,8 @@ jobs:
           server/tests/manual-journal-persistence-integrity.test.ts
           server/tests/payment-financial-integrity-atomicity.test.ts
           server/tests/voucher-cancellation-hardening.test.ts
+          server/tests/purchase-lifecycle-financial-integrity.test.ts
+          server/tests/supplier-payment-financial-integrity.test.ts
           server/tests/projection-event-bus-transaction-context.test.ts
           server/tests/voucher-sync-dispatch.test.ts
           server/tests/tenant-isolation-phase2.test.ts
