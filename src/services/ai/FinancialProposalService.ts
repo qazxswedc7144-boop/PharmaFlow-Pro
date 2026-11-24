@@ -26,6 +26,7 @@ import { FinancialMath } from '@/core/financial-math';
 import { AIUserContext } from './types';
 import { JournalPostingWorkflow } from '@/features/accounting/workflows/JournalPostingWorkflow';
 import { WorkflowContextFactory } from '@/core/workflow/workflowContext';
+import { TransactionBoundary } from '@/core/integrity/transactionBoundary';
 
 export type ProposalType = 'JOURNAL_ENTRY' | 'ADJUSTMENT' | 'CORRECTION' | 'RECLASSIFICATION';
 export type ProposalStatus = 'DRAFT_PENDING_REVIEW' | 'REJECTED' | 'APPROVED' | 'POSTED';
@@ -313,28 +314,30 @@ export class FinancialProposalService {
     // Approved by Human -> Delegate to Existing JournalPostingWorkflow / PostingEngine
     try {
       const workflow = new JournalPostingWorkflow();
-      const postingResult = await workflow.executeDomainSteps(
-        {
-          date: proposal.proposedDate,
-          description: `[ترحيل معتمد من توصية AI] ${proposal.title} - ${proposal.description}`,
-          reference: proposal.correlationId,
-          lines: proposal.lines.map((l) => ({
-            accountId: l.accountId,
-            accountCode: l.accountCode,
-            accountName: l.accountName,
-            debit: l.debit,
-            credit: l.credit,
-            memo: l.memo,
-          })),
-        },
-        WorkflowContextFactory.create('JOURNAL_POSTING', {
-          workflowId: workflow.id,
-          idempotencyKey: proposal.correlationId,
-          userId: reviewerContext.userId,
-          tenantId: reviewerContext.tenantId,
-          branchId: reviewerContext.branchId,
-          correlationId: proposal.correlationId,
-        })
+      const postingInput = {
+        date: proposal.proposedDate,
+        description: `[ترحيل معتمد من توصية AI] ${proposal.title} - ${proposal.description}`,
+        reference: proposal.correlationId,
+        lines: proposal.lines.map((l) => ({
+          accountId: l.accountId,
+          accountCode: l.accountCode,
+          accountName: l.accountName,
+          debit: l.debit,
+          credit: l.credit,
+          memo: l.memo,
+        })),
+      };
+      const postingContext = WorkflowContextFactory.create('JOURNAL_POSTING', {
+        workflowId: workflow.id,
+        idempotencyKey: proposal.correlationId,
+        userId: reviewerContext.userId,
+        tenantId: reviewerContext.tenantId,
+        branchId: reviewerContext.branchId,
+        correlationId: proposal.correlationId,
+      });
+      const postingResult = await TransactionBoundary.executeAtomic(
+        workflow.tables!,
+        (tx) => workflow.executeDomainSteps(postingInput, postingContext, tx)
       );
 
       proposal.status = 'POSTED';
