@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   generateId: vi.fn(() => 'CRIT-TEST-1'),
   logMetric: vi.fn(),
   calculateCurrentRiskScore: vi.fn(),
+  addAuditLog: vi.fn(),
 }));
 
 vi.mock('@/core/db', () => ({
@@ -31,6 +32,7 @@ vi.mock('@/core/db', () => ({
       put: mocks.putSystemAlert,
     },
     generateId: mocks.generateId,
+    addAuditLog: mocks.addAuditLog,
   },
   getCurrentUserSession: vi.fn(() => ({ tenantId: 'tenant-integrity-test' })),
 }));
@@ -79,6 +81,7 @@ describe('IntegritySweepService journal auto-fix safety', () => {
     mocks.putSystemAlert.mockResolvedValue(undefined);
     mocks.logMetric.mockResolvedValue(undefined);
     mocks.calculateCurrentRiskScore.mockResolvedValue(undefined);
+    mocks.addAuditLog.mockResolvedValue(undefined);
 
     mocks.getJournalEntries.mockImplementation(async () =>
       mocks.entries.map(entry => ({ ...entry, lines: entry.lines.map(line => ({ ...line })) }))
@@ -136,6 +139,12 @@ describe('IntegritySweepService journal auto-fix safety', () => {
         severity: 'CRITICAL',
         message: expect.stringContaining('Journal imbalance detected'),
       }));
+      expect(mocks.addAuditLog).toHaveBeenCalledWith(
+        'SYSTEM',
+        'SYSTEM',
+        'INTEGRITY_SWEEP',
+        expect.stringContaining('"event":"INTEGRITY_REPAIR_BLOCKED"')
+      );
       expect(mocks.calculateCurrentRiskScore).toHaveBeenCalledOnce();
       expect(mocks.logMetric).toHaveBeenCalledWith(
         'INTEGRITY_SWEEP_TIME',
