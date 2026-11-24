@@ -100,12 +100,18 @@ export class IntegritySweepService {
       const debits = (entry.lines || []).reduce((sum: number, line: any) => sum + (line.debit || 0), 0);
       const credits = (entry.lines || []).reduce((sum: number, line: any) => sum + (line.credit || 0), 0);
       if (Math.abs(debits - credits) > 0.01) {
-        if (autoFix && entry.id) {
-          console.warn(`AUTO_FIX: Deleting imbalanced journal entry [${entry.id}]`);
-          await db.journalEntries.delete(entry.id);
-        } else if (!autoFix) {
-          healthy = false;
+        // Posted financial history must never be physically deleted by an integrity sweep.
+        // Until an approved compensating-reversal workflow exists, auto-fix is diagnostic only.
+        if (autoFix) {
+          console.error(
+            `AUTO_FIX BLOCKED: Imbalanced journal entry [${entry.id || 'unknown'}] was preserved. Manual review and an approved reversal workflow are required.`
+          );
+        } else {
+          console.warn(
+            `INTEGRITY CHECK: Imbalanced journal entry [${entry.id || 'unknown'}] detected.`
+          );
         }
+        healthy = false;
       }
     }
     return healthy;
