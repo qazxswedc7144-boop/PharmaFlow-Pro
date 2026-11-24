@@ -1,0 +1,53 @@
+name: Purchase Invoice Number Contract Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/features/purchases/workflows/PurchaseWorkflow.ts'
+      - 'server/tests/purchase-phase1-contract-integrity.test.ts'
+      - 'src/features/purchases/workflows/PurchaseWorkflow.numbering.test.ts'
+      - 'vitest.phase-c.config.ts'
+      - 'server/tests/phase-c-setup.ts'
+      - '.github/workflows/purchase-invoice-number-contract.yml'
+
+jobs:
+  purchase-number-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+
+      - name: Run corrected Phase 1 contract cases
+        run: >-
+          npx vitest run
+          --config vitest.phase-c.config.ts
+          --reporter=verbose
+          server/tests/purchase-phase1-contract-integrity.test.ts
+          -t "1. Generates the internal purchase number|2. Keeps the internal ID|3. Generates distinct internal|5. Edit preserves both purchase numbers"
+        env:
+          NODE_ENV: test
+
+      - name: Run purchase numbering regression suite
+        run: >-
+          npx vitest run
+          --config vitest.phase-c.config.ts
+          --reporter=verbose
+          src/features/purchases/workflows/PurchaseWorkflow.numbering.test.ts
+        env:
+          NODE_ENV: test
