@@ -11,20 +11,20 @@ export class IntegritySweepService {
   /**
    * Main entry point to run the integrity sweep
    */
-  static async runSweep(autoFix = false): Promise<boolean> {
+  static async runSweep(autoFixRequested = false): Promise<boolean> {
     const { tenantId, userId } = getCurrentUserSession();
     if (!tenantId) {
       throw new Error('FAIL_CLOSED: لا يمكن تنفيذ فحص سلامة البيانات دون جلسة مؤسسة نشطة.');
     }
     
-    console.log(`Starting Integrity Sweep (autoFix: ${autoFix})...`);
+    console.log(`Starting Integrity Sweep (autoFix requested: ${autoFixRequested})...`);
     const startTime = performance.now();
     let isHealthy = true;
     const errors: string[] = [];
 
     // Generic integrity sweeps are diagnostic-only. Financial, voucher, date,
     // and stock corrections require domain-specific reviewed workflows.
-    if (autoFix) {
+    if (autoFixRequested) {
       console.warn('[IntegritySweep] AUTO_FIX_BLOCKED: generic integrity sweeps never mutate business records.');
     }
 
@@ -108,7 +108,7 @@ export class IntegritySweepService {
       }
 
       if (!isHealthy) {
-        await this.handleCriticalError(errors, autoFix, userId || 'SYSTEM');
+        await this.handleCriticalError(errors, autoFixRequested, userId || 'SYSTEM');
       }
 
       const endTime = performance.now();
