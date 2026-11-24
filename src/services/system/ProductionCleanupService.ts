@@ -1,205 +1,220 @@
-
 import { db } from '@/core/db';
-import { PostingEngine } from '@features/accounting/services/PostingEngine';
+
+export interface CleanupPreviewCandidate {
+  id: string;
+  reason: string;
+}
+
+export interface CleanupPreviewReport {
+  generatedAt: string;
+  notice: string;
+  candidates: {
+    sales: CleanupPreviewCandidate[];
+    purchases: CleanupPreviewCandidate[];
+    vouchers: CleanupPreviewCandidate[];
+    journalEntries: CleanupPreviewCandidate[];
+    stockMovements: CleanupPreviewCandidate[];
+    customers: CleanupPreviewCandidate[];
+    suppliers: CleanupPreviewCandidate[];
+    products: CleanupPreviewCandidate[];
+  };
+  excluded: {
+    productsLinkedToNonDemoInvoices: CleanupPreviewCandidate[];
+  };
+  diagnostics: {
+    postedDemoSales: number;
+    postedDemoPurchases: number;
+    orphanJournalEntries: CleanupPreviewCandidate[];
+  };
+  warnings: string[];
+}
+
+const getRecordId = (...values: unknown[]): string => {
+  const value = values.find(candidate => typeof candidate === 'string' && candidate.trim());
+  return typeof value === 'string' ? value : '(معرف غير متوفر)';
+};
 
 export class ProductionCleanupService {
-  
-  static async clearDemoData() {
-    try {
-      // ⚠️ WARNING: This is a destructive operation. 
-      // It does not handle dependencies, journal entries, or stock movements.
-      // Use ProductionCleanupService.runCleanup() for a safe, dependency-aware cleanup.
-      await db.products.clear();
-      await db.purchases.clear();
-      await db.sales.clear();
-      
-      console.log("✅ تم حذف البيانات التجريبية بنجاح!");
-      // alert("تم تصفير النظام من البيانات التجريبية"); // Removed alert as it's not recommended in iframe
-    } catch (error) {
-      console.error("❌ فشل الحذف:", error);
+  /**
+   * Preserves the legacy demo-identification rules while exposing the exact
+   * matching reason for an auditable, read-only preview.
+   */
+  static getDemoReason(record: any): string | null {
+    if (!record || typeof record !== 'object') return null;
+
+    if (record.isDemo === true) return 'الحقل isDemo مضبوط على true';
+    if (record.Created_By === 'demo') return 'تم إنشاء السجل بواسطة demo';
+
+    if (
+      record.SaleID?.startsWith('TEST-') ||
+      record.purchase_id?.startsWith('TEST-') ||
+      record.invoiceId?.startsWith('TEST-')
+    ) {
+      return 'معرف المستند يبدأ بالبادئة TEST-';
     }
+
+    const name = record.Customer_Name || record.Supplier_Name || record.partnerName || record.Entity_Name || '';
+    if (typeof name === 'string') {
+      if (name.includes('عميل تجريبي')) return 'اسم العميل يحتوي على عميل تجريبي';
+      if (name.includes('مورد تجريبي')) return 'اسم المورد يحتوي على مورد تجريبي';
+    }
+
+    return null;
   }
 
   static isDemo(record: any): boolean {
-    if (!record) return false;
-    
-    // Identification Rules
-    if (record.isDemo === true) return true;
-    if (record.Created_By === 'demo') return true;
-    
-    // Invoice Number starts with TEST-
-    if (record.SaleID?.startsWith('TEST-') || record.purchase_id?.startsWith('TEST-') || record.invoiceId?.startsWith('TEST-')) return true;
-    
-    // Customer/Supplier Name contains "عميل تجريبي" or "مورد تجريبي"
-    const name = record.Customer_Name || record.Supplier_Name || record.partnerName || record.Entity_Name || '';
-    if (name.includes('عميل تجريبي') || name.includes('مورد تجريبي')) return true;
-    
-    return false;
+    return this.getDemoReason(record) !== null;
+  }
+
+  /**
+   * Read-only inventory of records matching the legacy demo heuristics.
+   * Candidates are NOT an approved deletion plan: this method deliberately
+   * performs no writes, reversals, balance changes, or cleanup actions.
+   */
+  static async previewCleanup(): Promise<CleanupPreviewReport> {
+    const [
+      sales,
+      purchases,
+      vouchers,
+      journalEntries,
+      stockMovements,
+      customers,
+      suppliers,
+      products
+    ] = await Promise.all([
+      db.sales.toArray(),
+      db.purchases.toArray(),
+      db.cashFlow.toArray(),
+      db.journalEntries.toArray(),
+      db.inventoryTransactions.toArray(),
+      db.customers.toArray(),
+      db.suppliers.toArray(),
+      db.products.toArray()
+    ]);
+
+    const demoSales = sales.filter(record => this.isDemo(record));
+    const demoPurchases = purchases.filter(record => this.isDemo(record));
+    const demoVouchers = vouchers.filter(record => this.isDemo(record));
+    const demoSaleIds = new Set(demoSales.map(record => record.id).filter(Boolean));
+    const demoPurchaseIds = new Set(demoPurchases.map(record => record.id).filter(Boolean));
+    const demoVoucherIds = new Set(demoVouchers.map(record => record.transaction_id).filter(Boolean));
+
+    const realSales = sales.filter(record => !this.isDemo(record));
+    const realPurchases = purchases.filter(record => !this.isDemo(record));
+
+    const journalCandidates = journalEntries.flatMap(record => {
+      const directReason = this.getDemoReason(record);
+      if (directReason) {
+        return [{ id: getRecordId(record.id), reason: directReason }];
+      }
+      if (demoSaleIds.has(record.sourceId)) {
+        return [{ id: getRecordId(record.id), reason: `مرتبط بفاتورة بيع تجريبية ${record.sourceId}` }];
+      }
+      if (demoPurchaseIds.has(record.sourceId)) {
+        return [{ id: getRecordId(record.id), reason: `مرتبط بفاتورة شراء تجريبية ${record.sourceId}` }];
+      }
+      if (demoVoucherIds.has(record.sourceId)) {
+        return [{ id: getRecordId(record.id), reason: `مرتبط بسند تجريبي ${record.sourceId}` }];
+      }
+      return [];
+    });
+
+    const stockCandidates = stockMovements.flatMap(record => {
+      const directReason = this.getDemoReason(record);
+      if (directReason) {
+        return [{ id: getRecordId(record.TransactionID), reason: directReason }];
+      }
+      if (demoSaleIds.has(record.SourceDocumentID)) {
+        return [{ id: getRecordId(record.TransactionID), reason: `مرتبط بفاتورة بيع تجريبية ${record.SourceDocumentID}` }];
+      }
+      if (demoPurchaseIds.has(record.SourceDocumentID)) {
+        return [{ id: getRecordId(record.TransactionID), reason: `مرتبط بفاتورة شراء تجريبية ${record.SourceDocumentID}` }];
+      }
+      return [];
+    });
+
+    const productsLinkedToNonDemoInvoices = products.flatMap(product => {
+      if (!this.isDemo(product)) return [];
+      const linkedToSale = realSales.some(sale =>
+        Array.isArray(sale.items) && sale.items.some((item: any) => item?.product_id === product.id)
+      );
+      const linkedToPurchase = realPurchases.some(purchase =>
+        Array.isArray(purchase.items) && purchase.items.some((item: any) => item?.product_id === product.id)
+      );
+      return linkedToSale || linkedToPurchase
+        ? [{ id: getRecordId(product.id), reason: 'مرتبط بفاتورة غير تجريبية؛ مستبعد من مرشحات المنتجات' }]
+        : [];
+    });
+
+    const orphanJournalEntries = journalEntries.flatMap(entry => {
+      if (entry.sourceType === 'SALE' && !sales.some(sale => sale.id === entry.sourceId)) {
+        return [{ id: getRecordId(entry.id), reason: 'قيد بيع لا يوجد مستند بيع مطابق له' }];
+      }
+      if (entry.sourceType === 'PURCHASE' && !purchases.some(purchase => purchase.id === entry.sourceId)) {
+        return [{ id: getRecordId(entry.id), reason: 'قيد شراء لا يوجد مستند شراء مطابق له' }];
+      }
+      if (entry.sourceType === 'VOUCHER' && !vouchers.some(voucher => voucher.transaction_id === entry.sourceId)) {
+        return [{ id: getRecordId(entry.id), reason: 'قيد سند لا يوجد سند مطابق له' }];
+      }
+      return [];
+    });
+
+    const postedDemoSales = demoSales.filter(record => record.InvoiceStatus === 'POSTED').length;
+    const postedDemoPurchases = demoPurchases.filter(record => record.invoiceStatus === 'POSTED').length;
+    const warnings = [
+      'هذه معاينة للمرشحات وفق قواعد التصنيف الحالية، وليست موافقة على حذفها أو ضماناً بأن حذفها آمن.',
+      'المستندات المرحلة تحتاج مراجعة محاسبية مستقلة؛ لم يتم تنفيذ أي عكس للقيود أو الحركات.',
+      'القيود اليتيمة معروضة للتشخيص فقط، ولا تُضاف إلى قائمة المرشحات ولا تُحذف تلقائياً.',
+      'المنتجات المرتبطة بفواتير غير تجريبية مستبعدة من مرشحات الحذف.'
+    ];
+
+    return {
+      generatedAt: new Date().toISOString(),
+      notice: 'Dry Run فقط — لم يتم تعديل أو حذف أي سجل.',
+      candidates: {
+        sales: demoSales.map(record => ({ id: getRecordId(record.id, record.SaleID), reason: this.getDemoReason(record) || 'مطابق لقواعد البيانات التجريبية' })),
+        purchases: demoPurchases.map(record => ({ id: getRecordId(record.id, record.purchase_id), reason: this.getDemoReason(record) || 'مطابق لقواعد البيانات التجريبية' })),
+        vouchers: demoVouchers.map(record => ({ id: getRecordId(record.transaction_id), reason: this.getDemoReason(record) || 'مطابق لقواعد البيانات التجريبية' })),
+        journalEntries: journalCandidates,
+        stockMovements: stockCandidates,
+        customers: customers.flatMap(record => {
+          const reason = this.getDemoReason(record);
+          return reason ? [{ id: getRecordId(record.id), reason }] : [];
+        }),
+        suppliers: suppliers.flatMap(record => {
+          const reason = this.getDemoReason(record);
+          return reason ? [{ id: getRecordId(record.id), reason }] : [];
+        }),
+        products: products.flatMap(record => {
+          const reason = this.getDemoReason(record);
+          if (!reason) return [];
+          if (productsLinkedToNonDemoInvoices.some(item => item.id === getRecordId(record.id))) return [];
+          return [{ id: getRecordId(record.id), reason }];
+        })
+      },
+      excluded: { productsLinkedToNonDemoInvoices },
+      diagnostics: {
+        postedDemoSales,
+        postedDemoPurchases,
+        orphanJournalEntries
+      },
+      warnings
+    };
+  }
+
+  /**
+   * Legacy destructive entry points are intentionally fail-closed.
+   * Re-enabling deletion requires a separately reviewed implementation.
+   */
+  static async clearDemoData(): Promise<void> {
+    console.error('[ProductionCleanupService] clearDemoData is disabled: destructive cleanup is blocked pending review.');
   }
 
   static async runCleanup(): Promise<{ success: boolean; message: string; deletedCount: number }> {
-    try {
-      console.log("Starting Production Cleanup...");
-      
-      // Step 1: Maintenance Mode
-      PostingEngine.setMaintenanceMode(true);
-      
-      let deletedCount = 0;
-
-      // Fetch all data
-      const sales = await db.sales.toArray();
-      const purchases = await db.purchases.toArray();
-      const vouchers = await db.cashFlow.toArray();
-      const journalEntries = await db.journalEntries.toArray();
-      const stockMovements = await db.inventoryTransactions.toArray();
-      const customers = await db.customers.toArray();
-      const suppliers = await db.suppliers.toArray();
-      const products = await db.products.toArray();
-
-      // Step 2: Unpost all demo invoices
-      const demoSales = sales.filter(s => this.isDemo(s));
-      const demoPurchases = purchases.filter(p => this.isDemo(p));
-      const demoVouchers = vouchers.filter(v => this.isDemo(v));
-
-      console.log(`Unposting ${demoSales.length} sales, ${demoPurchases.length} purchases, ${demoVouchers.length} vouchers...`);
-
-      for (const sale of demoSales) {
-        if (sale.InvoiceStatus === 'POSTED') {
-          await PostingEngine.unpostSale(sale.id);
-        }
-      }
-      for (const purchase of demoPurchases) {
-        if (purchase.invoiceStatus === 'POSTED') {
-          await PostingEngine.unpostPurchase(purchase.id);
-        }
-      }
-      for (const voucher of demoVouchers) {
-        // Vouchers don't have a status in this schema yet, but unpostVoucher handles reversal if entry exists
-        await PostingEngine.unpostVoucher(voucher.transaction_id);
-      }
-
-      // Step 3: Delete demo records in order
-      
-      // 1. Vouchers
-      const demoVoucherIds = demoVouchers.map(v => v.transaction_id);
-      await db.cashFlow.bulkDelete(demoVoucherIds);
-      deletedCount += demoVoucherIds.length;
-
-      // 2. Journal Entries (demo only)
-      // We also delete reversals created during unposting if they are marked as demo or linked to demo
-      const demoJournalIds = journalEntries.filter(e => {
-        if (this.isDemo(e)) return true;
-        // Also delete if linked to a demo source
-        if (demoSales.some(s => s.id === e.sourceId)) return true;
-        if (demoPurchases.some(p => p.id === e.sourceId)) return true;
-        if (demoVoucherIds.includes(e.sourceId)) return true;
-        return false;
-      }).map(e => e.id);
-      await db.journalEntries.bulkDelete(demoJournalIds);
-      deletedCount += demoJournalIds.length;
-
-      // 3. Stock Movements (demo only)
-      const demoStockIds = stockMovements.filter(m => {
-        if (this.isDemo(m)) return true;
-        if (demoSales.some(s => s.id === m.SourceDocumentID)) return true;
-        if (demoPurchases.some(p => p.id === m.SourceDocumentID)) return true;
-        return false;
-      }).map(m => m.TransactionID);
-      await db.inventoryTransactions.bulkDelete(demoStockIds);
-      deletedCount += demoStockIds.length;
-
-      // 4. Invoices
-      await db.sales.bulkDelete(demoSales.map(s => s.id).filter(Boolean) as string[]);
-      await db.purchases.bulkDelete(demoPurchases.map(p => p.id).filter(Boolean) as string[]);
-      deletedCount += demoSales.length + demoPurchases.length;
-
-      // 5. Customers
-      const demoCustomerIds = customers.filter(c => this.isDemo(c)).map(c => c.id).filter(Boolean) as string[];
-      await db.customers.bulkDelete(demoCustomerIds);
-      deletedCount += demoCustomerIds.length;
-
-      // 6. Suppliers
-      const demoSupplierIds = suppliers.filter(s => this.isDemo(s)).map(s => s.id).filter(Boolean) as string[];
-      await db.suppliers.bulkDelete(demoSupplierIds);
-      deletedCount += demoSupplierIds.length;
-
-      // 7. Products (demo only – only if not linked to real invoices)
-      const demoProducts = products.filter(p => this.isDemo(p));
-      const realSales = (await db.sales.toArray()).filter(s => !this.isDemo(s));
-      const realPurchases = (await db.purchases.toArray()).filter(p => !this.isDemo(p));
-      
-      const productsToDelete = demoProducts.filter(p => {
-        const linkedToSale = realSales.some((s: { items?: { product_id: string }[] }) => 
-          Array.isArray(s?.items) && s.items.some((it: { product_id: string }) => it.product_id === p.id)
-        );
-        const linkedToPurchase = realPurchases.some((pur: { items?: { product_id: string }[] }) => 
-          Array.isArray(pur?.items) && pur.items.some((it: { product_id: string }) => it.product_id === p.id)
-        );
-        return !linkedToSale && !linkedToPurchase;
-      }).map(p => p.id).filter(Boolean) as string[];
-      
-      await db.products.bulkDelete(productsToDelete);
-      deletedCount += productsToDelete.length;
-
-      // Step 4: Integrity Check
-      console.log("Running Integrity Checks...");
-      
-      // 1. Trial Balance
-      const accounts = await db.accounts.toArray();
-      const totalBalance = accounts.reduce((sum: number, acc: any) => sum + (acc.balance || 0), 0);
-      
-      if (Math.abs(totalBalance) > 0.01) {
-        throw new Error(`IMBALANCE DETECTED: Trial Balance is ${totalBalance.toFixed(2)}.`);
-      }
-
-      // 2. Orphan Check (Journal Entries)
-      const remainingEntries = await db.journalEntries.toArray();
-      const remainingSales = await db.sales.toArray();
-      const remainingPurchases = await db.purchases.toArray();
-      const remainingVouchers = await db.cashFlow.toArray();
-
-      const orphans = remainingEntries.filter((e: any) => {
-        if (e.sourceType === 'SALE' && !remainingSales.some((s: any) => s.id === e.sourceId)) return true;
-        if (e.sourceType === 'PURCHASE' && !remainingPurchases.some((p: any) => p.id === e.sourceId)) return true;
-        if (e.sourceType === 'VOUCHER' && !remainingVouchers.some((v: any) => v.transaction_id === e.sourceId)) return true;
-        return false;
-      });
-
-      if (orphans.length > 0) {
-        console.warn(`Detected ${orphans.length} orphan journal entries. Cleaning up...`);
-        await db.journalEntries.bulkDelete(orphans.map((o: any) => o.id));
-      }
-
-        // 3. Stock vs Ledger Check
-        const remainingProducts = await db.products.toArray();
-        for (const p of remainingProducts) {
-          if (!p.id) continue;
-          const movements = await db.inventoryTransactions.where('productId').equals(p.id).toArray();
-          const calculatedStock = movements.reduce((sum: number, m: any) => sum + (m.QuantityChange || 0), 0);
-          if (Math.abs(calculatedStock - (p.stock || p.StockQuantity || 0)) > 0.001) {
-            console.warn(`Stock mismatch for ${p.name || p.Name}: Ledger=${p.stock || p.StockQuantity}, Calculated=${calculatedStock}. Fixing...`);
-            await db.products.update(p.id, { 
-              stock: calculatedStock,
-              updated_at: new Date().toISOString()
-            });
-          }
-        }
-
-      // Re-enable PostingEngine
-      PostingEngine.setMaintenanceMode(false);
-      
-      // Clear local cache
-      await db.init();
-      
-      // Log cleanup event
-      await db.addAuditLog('SYSTEM', 'SYSTEM', 'CLEANUP', `Production cleanup completed. Deleted ${deletedCount} records.`);
-      
-      return { success: true, message: `تم تنظيف ${deletedCount} سجل بنجاح`, deletedCount };
-
-    } catch (error: any) {
-      console.error("Cleanup failed:", error);
-      PostingEngine.setMaintenanceMode(false);
-      return { success: false, message: error.message || "فشلت عملية التنظيف", deletedCount: 0 };
-    }
+    return {
+      success: false,
+      message: 'تم تعطيل الحذف مؤقتاً لحماية البيانات. استخدم معاينة Dry Run لمراجعة السجلات المرشحة.',
+      deletedCount: 0
+    };
   }
 }
