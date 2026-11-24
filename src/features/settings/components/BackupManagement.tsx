@@ -9,7 +9,7 @@ import {
   FileJson, Lock, Shield, Search, Trash2, AlertCircle,
   Cloud, RefreshCw, Upload
 } from 'lucide-react';
-import { Card, Button, Badge, Modal } from '@/components/shared/SharedUI';
+import { Card, Button, Badge, Modal, Input } from '@/components/shared/SharedUI';
 import { useUI } from '@/contexts/AppContext';
 import { authService } from '@features/auth/services/authService';
 import { ProductionCleanupService, type CleanupPreviewReport } from '@/services/system/ProductionCleanupService';
@@ -804,11 +804,11 @@ const BackupManagement: React.FC = () => {
           </div>
           <div className="p-4 bg-white/50 rounded-2xl border border-red-100 flex items-center gap-3">
             <RotateCcw className="text-blue-600" size={18} />
-            <span className="text-[10px] font-bold text-slate-600">عكس القيود المحاسبية</span>
+            <span className="text-[10px] font-bold text-slate-600">رصد القيود المرتبطة</span>
           </div>
           <div className="p-4 bg-white/50 rounded-2xl border border-red-100 flex items-center gap-3">
             <AlertCircle className="text-amber-600" size={18} />
-            <span className="text-[10px] font-bold text-slate-600">فحص سلامة الميزان</span>
+            <span className="text-[10px] font-bold text-slate-600">تشخيص دون تعديل الأرصدة</span>
           </div>
         </div>
       </Card>
@@ -834,6 +834,7 @@ const BackupManagement: React.FC = () => {
                 { label: 'فواتير الشراء', items: cleanupPreview.candidates.purchases },
                 { label: 'السندات', items: cleanupPreview.candidates.vouchers },
                 { label: 'القيود المحاسبية المرتبطة أو المصنفة', items: cleanupPreview.candidates.journalEntries },
+                { label: 'سطور القيود المرتبطة', items: cleanupPreview.candidates.journalLines },
                 { label: 'حركات المخزون المرتبطة أو المصنفة', items: cleanupPreview.candidates.stockMovements },
                 { label: 'العملاء', items: cleanupPreview.candidates.customers },
                 { label: 'الموردون', items: cleanupPreview.candidates.suppliers },
