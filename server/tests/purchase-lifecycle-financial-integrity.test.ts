@@ -7,6 +7,7 @@ import { useAuthStore } from '@/store/authStore';
 import { IdempotencyRegistry } from '../../src/core/integrity/idempotencyRegistry';
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { AccountingEngine } from '../../src/features/accounting/services/AccountingEngine';
+import { AccountingPeriodSyncService } from '@/features/accounting/services/AccountingPeriodSyncService';
 
 describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
   const tenantId = 'TENANT-PUR-PROD-01';
@@ -43,6 +44,17 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
       permissions: ['ALL', 'purchases.create', 'purchases.edit', 'accounting.voucher.create', 'vouchers.create'],
       isAuthenticated: true
     });
+
+    // These workflow tests exercise purchase/payment integrity, not the HTTP
+    // accounting-period endpoint. Keep the period guard authoritative while
+    // supplying deterministic tenant-owned open-period state in this unit suite.
+    vi.spyOn(AccountingPeriodSyncService, 'getPeriods').mockResolvedValue([{
+      id: 'PER-PUR-TEST-OPEN',
+      tenantId,
+      Start_Date: '2000-01-01T00:00:00.000Z',
+      End_Date: '2099-12-31T23:59:59.999Z',
+      Is_Locked: false
+    } as any]);
 
     (globalThis as any).__FAIL_AT_STAGE__ = undefined;
     IdempotencyRegistry.clearInMemory();
