@@ -68,6 +68,10 @@ export class ProjectionEventBus {
     payload: any = {},
     tx?: any
   ): Promise<void> {
+    // Keep the ambient transaction visible to the catch block as well: if the
+    // event write fails inside a detected business transaction, the caller
+    // must see the failure so the business transaction cannot commit silently.
+    let activeTx: any;
     try {
       const eventId = `evt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const eventRecord: ProjectionEvent = {
@@ -92,7 +96,7 @@ export class ProjectionEventBus {
       // ambient Dexie transaction. Detect that context so the worker starts only
       // after the event has committed, rather than reading a partially committed
       // event or using an object store outside the business transaction scope.
-      const activeTx = tx ?? Dexie.currentTransaction;
+      activeTx = tx ?? Dexie.currentTransaction;
 
       if (activeTx) {
         if (typeof activeTx.table !== 'function') {
@@ -118,7 +122,7 @@ export class ProjectionEventBus {
       triggerQueue();
     } catch (err) {
       console.error('[ProjectionEventBus] Failed to publish projection event:', err);
-      if (tx !== undefined) throw err;
+      if (tx !== undefined || activeTx) throw err;
     }
   }
 
