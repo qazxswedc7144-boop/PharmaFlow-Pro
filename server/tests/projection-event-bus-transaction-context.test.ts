@@ -51,6 +51,9 @@ describe('ProjectionEventBus Dexie transaction boundary', () => {
   });
 
   it('does not process or persist an event when the ambient business transaction rolls back', async () => {
+    await db.projectionEvents.clear();
+    await db.projectionCheckpoints.clear();
+
     const projectSpy = vi.spyOn(ReportProjector, 'project').mockResolvedValue();
     const queueErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     let eventId: number | undefined;
@@ -80,6 +83,9 @@ describe('ProjectionEventBus Dexie transaction boundary', () => {
   });
 
   it('fails closed when an ambient transaction cannot write the projection event store', async () => {
+    await db.projectionEvents.clear();
+    await db.projectionCheckpoints.clear();
+
     const queueErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     await expect(
