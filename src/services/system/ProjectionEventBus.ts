@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db } from '@/core/db';
 import { reportEngine } from '@/services/reports/reportEngine';
 
@@ -67,6 +68,10 @@ export class ProjectionEventBus {
     payload: any = {},
     tx?: any
   ): Promise<void> {
+    // Keep the ambient transaction visible to the catch block as well: if the
+    // event write fails inside a detected business transaction, the caller
+    // must see the failure so the business transaction cannot commit silently.
+    let activeTx: any;
     try {
       const eventId = `evt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const eventRecord: ProjectionEvent = {
@@ -79,35 +84,45 @@ export class ProjectionEventBus {
       };
 
       const triggerQueue = () => {
-        ProjectionEventBus.processQueue().catch((err) => {
+        // The projection worker must never inherit the caller's Dexie transaction.
+        // It reads/writes projectionCheckpoints as well as projectionEvents, and
+        // some business transactions intentionally do not include both stores.
+        void Dexie.ignoreTransaction(() => ProjectionEventBus.processQueue()).catch((err) => {
           console.error('[ProjectionEventBus] Error in automatic queue trigger:', err);
         });
       };
 
-      if (tx !== undefined) {
-        if (!tx || typeof tx.table !== 'function') {
+      // Callers may omit tx while still running inside WorkflowExecutionPipeline's
+      // ambient Dexie transaction. Detect that context so the worker starts only
+      // after the event has committed, rather than reading a partially committed
+      // event or using an object store outside the business transaction scope.
+      activeTx = tx ?? Dexie.currentTransaction;
+
+      if (activeTx) {
+        if (typeof activeTx.table !== 'function') {
           throw new Error('PROJECTION_WRITE_REJECTED: ACTIVE_TRANSACTION_REQUIRED');
         }
-        await tx.table('projectionEvents').add(eventRecord);
+        await activeTx.table('projectionEvents').add(eventRecord);
         console.log(`[ProjectionEventBus] Published Event (tx): ${eventType} (ID: ${eventId})`);
 
-        if (typeof tx.on === 'function') {
-          tx.on('complete', triggerQueue);
-        } else if (tx.on && typeof tx.on.complete === 'function') {
-          tx.on.complete(triggerQueue);
+        if (typeof activeTx.on === 'function') {
+          activeTx.on('complete', triggerQueue);
+        } else if (activeTx.on && typeof activeTx.on.complete === 'function') {
+          activeTx.on.complete(triggerQueue);
+        } else {
+          throw new Error('PROJECTION_WRITE_REJECTED: TRANSACTION_COMPLETION_HOOK_REQUIRED');
         }
         return;
       }
 
-      // Add to indexedDb projectionEvents log
+      // No active transaction: persist the event independently, then start the
+      // worker outside any inherited Dexie transaction context.
       await db.projectionEvents.add(eventRecord);
       console.log(`[ProjectionEventBus] Published Event: ${eventType} (ID: ${eventId})`);
-
-      // Trigger background worker process stream (async/non-blocking)
       triggerQueue();
     } catch (err) {
       console.error('[ProjectionEventBus] Failed to publish projection event:', err);
-      if (tx !== undefined) throw err;
+      if (tx !== undefined || activeTx) throw err;
     }
   }
 
