@@ -152,6 +152,18 @@ describe('Manual journal persistence and reversal integrity', () => {
     expect((await db.accounts.get('ACC-MJ-CASH'))?.balance).toBe(1075);
     expect((await db.accounts.get('ACC-MJ-REVENUE'))?.balance).toBe(1925);
 
+    const duplicateApproval = await FinancialProposalService.approveAndPostProposal(
+      proposal.id,
+      reviewerContext,
+      'APPROVED',
+      'Duplicate approval must not post again'
+    );
+    expect(duplicateApproval.success).toBe(false);
+    expect(duplicateApproval.journalId).toBeUndefined();
+    expect((await db.journalEntries.toArray()).filter(entry => entry.sourceId === proposal.correlationId)).toHaveLength(1);
+    expect((await db.accounts.get('ACC-MJ-CASH'))?.balance).toBe(1075);
+    expect((await db.accounts.get('ACC-MJ-REVENUE'))?.balance).toBe(1925);
+
     await TransactionBoundary.executeAtomic(
       ['journalEntries', 'journalLines', 'accounts'],
       (tx) => AccountingRepository.deleteEntry(result.journalId!, tx)
