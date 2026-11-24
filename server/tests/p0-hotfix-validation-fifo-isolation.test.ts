@@ -176,7 +176,7 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
       expect(await db.inventoryTransactions.count()).toBe(0);
     });
 
-    it('rejects sales invoice when declared total does not match item totals', async () => {
+    it('recalculates a mismatched client total from trusted catalog prices', async () => {
       const mismatchPayload = {
         customerId,
         items: [
@@ -187,14 +187,17 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
             price: 50
           } as any
         ],
-        total: 500 // Declared 500 but items total 100
+        total: 500 // Untrusted client total; catalog calculation is 100
       };
 
-      await expect(
-        UnifiedBusinessWorkflowOrchestrator.processSale(mismatchPayload)
-      ).rejects.toThrow(/INVOICE_VALIDATION_FAILED|Total mismatch/i);
+      const result = await UnifiedBusinessWorkflowOrchestrator.processSale(mismatchPayload);
+      expect(result.success).toBe(true);
 
-      expect(await db.invoices.count()).toBe(0);
+      const savedInvoice = await db.invoices.get(result.refId);
+      expect(savedInvoice).toBeDefined();
+      expect(savedInvoice?.totalAmount).toBe(100);
+      expect(savedInvoice?.finalTotal).toBe(100);
+      expect(savedInvoice?.totalAmount).not.toBe(500);
     });
 
     it('rejects purchase invoice with empty or invalid items array', async () => {
