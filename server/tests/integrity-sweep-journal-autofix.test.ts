@@ -108,7 +108,7 @@ describe('IntegritySweepService journal auto-fix safety', () => {
     expect(mocks.updateAccount).not.toHaveBeenCalled();
   });
 
-  it('reports an imbalanced journal as unhealthy when auto-fix is disabled', async () => {
+  it('reports an imbalanced journal as unhealthy', async () => {
     await expect(validateJournal()).resolves.toBe(false);
     expect(mocks.entries).toHaveLength(1);
     expect(mocks.lines).toHaveLength(2);
@@ -214,7 +214,7 @@ describe('IntegritySweepService journal auto-fix safety', () => {
       ],
     }];
 
-    await expect(validateJournal(true)).resolves.toBe(true);
+    await expect(validateJournal()).resolves.toBe(true);
     expect(mocks.deleteJournalEntry).not.toHaveBeenCalled();
   });
 });
