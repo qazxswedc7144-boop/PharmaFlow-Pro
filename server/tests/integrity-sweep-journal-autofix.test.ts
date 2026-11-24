@@ -34,7 +34,7 @@ vi.mock('@/core/db', () => ({
     generateId: mocks.generateId,
     addAuditLog: mocks.addAuditLog,
   },
-  getCurrentUserSession: vi.fn(() => ({ tenantId: 'tenant-integrity-test' })),
+  getCurrentUserSession: vi.fn(() => ({ tenantId: 'tenant-integrity-test', userId: 'user-integrity-test' })),
 }));
 
 vi.mock('@/services/system/LoadTestService', () => ({
@@ -140,7 +140,7 @@ describe('IntegritySweepService journal auto-fix safety', () => {
         message: expect.stringContaining('Journal imbalance detected'),
       }));
       expect(mocks.addAuditLog).toHaveBeenCalledWith(
-        'SYSTEM',
+        'user-integrity-test',
         'SYSTEM',
         'INTEGRITY_SWEEP',
         expect.stringContaining('"event":"INTEGRITY_REPAIR_BLOCKED"')
