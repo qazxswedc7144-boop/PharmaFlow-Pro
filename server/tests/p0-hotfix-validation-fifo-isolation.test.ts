@@ -89,6 +89,7 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
       stock: 100,
       costPrice: 20,
       sellingPrice: 30,
+      price: 30,
       isActive: true,
       tenantId,
       branchId
