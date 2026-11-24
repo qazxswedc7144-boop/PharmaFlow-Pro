@@ -43,15 +43,15 @@ export const SafeModePanel: React.FC = () => {
   const handleRepair = async () => {
     if (!requireSystemManagement()) return;
     try {
-      if (window.confirm("هل تريد تشغيل محرك الإصلاح التلقائي الشامل؟ سيقوم النظام بتصحيح الأرصدة، حذف الحركات اليتيمة، وتصفير التنبيهات الحرجة إذا نجح الإصلاح.")) {
-        const isHealthy = await IntegritySweepService.runSweep(true);
+      if (window.confirm("هل تريد تشغيل فحص النزاهة الشامل؟ سيقوم النظام بفحص القيود والمخزون والمدفوعات والتواريخ دون تعديل أو حذف أي سجل.")) {
+        const isHealthy = await IntegritySweepService.runSweep(false);
         if (isHealthy) {
           await AlertCenter.clearCriticalAlerts();
           await AlertCenter.resetSystemStatus();
-          NotificationService.success("تم الإصلاح بنجاح! سيعاد تشغيل النظام الآن.");
+          NotificationService.success("اكتمل فحص النزاهة دون اكتشاف مخالفات. سيعاد تشغيل النظام الآن.");
           window.location.reload();
         } else {
-          NotificationService.error("فشل الإصلاح التلقائي في معالجة كافة المشاكل. يرجى مراجعة سجلات التدقيق أو استعادة نسخة احتياطية.");
+          NotificationService.error("تم اكتشاف مخالفات في نزاهة البيانات. لم يتم تعديل البيانات تلقائياً؛ يرجى مراجعة سجلات التدقيق.");
         }
       }
     } catch (e) {
@@ -124,7 +124,7 @@ export const SafeModePanel: React.FC = () => {
                 className="flex items-center justify-center gap-3 bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-2xl font-bold transition-all shadow-lg hover:shadow-emerald-200"
               >
                 <RefreshCw size={20} />
-                تشغيل الإصلاح التلقائي
+                تشغيل فحص النزاهة
               </button>
               
               <button 
