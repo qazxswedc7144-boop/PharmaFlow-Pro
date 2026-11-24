@@ -307,7 +307,13 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
       userFacingInvoiceNumber = await db.generateInternalInvoiceNumber(isReturn, ctx.tenantId);
     }
 
-    let supplierInvoiceNumber = String(input.supplierInvoiceNumber ?? '').trim().toUpperCase();
+    // Preserve the supplier's original document number when an edit omits the field.
+    // An explicitly supplied empty string still requests the normal auto-number behavior.
+    let supplierInvoiceNumber = String(
+      input.supplierInvoiceNumber ??
+      (input.isEdit ? existingPurchase?.supplierInvoiceNumber : '') ??
+      ''
+    ).trim().toUpperCase();
     if (!supplierInvoiceNumber) {
       supplierInvoiceNumber = await db.generateAutoSupplierNumber(isReturn, ctx.tenantId);
     }
