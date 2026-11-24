@@ -19,6 +19,18 @@ vi.mock('@/services/auth/tokenProvider', () => ({
   TokenProvider: { getCurrentSession }
 }));
 
+vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
+  AccountingPeriodSyncService: {
+    getPeriods: vi.fn().mockResolvedValue([{
+      id: 'TEST-OPEN-PERIOD',
+      Start_Date: '1900-01-01T00:00:00.000Z',
+      End_Date: '2200-12-31T23:59:59.999Z',
+      Is_Locked: false
+    }]),
+    setLocked: vi.fn().mockResolvedValue(undefined)
+  }
+}));
+
 import { db } from '@/core/db';
 import { TransactionBoundary } from '@/core/integrity/transactionBoundary';
 import { WorkflowOrchestrator } from '@/core/workflow';
