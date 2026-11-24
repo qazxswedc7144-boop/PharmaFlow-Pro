@@ -129,7 +129,7 @@ describe('ProductionCleanupService safety boundary', () => {
     expect(report.candidates.suppliers.map(item => item.id)).toEqual(['supplier-demo']);
     expect(report.candidates.products.map(item => item.id)).toEqual(['product-demo']);
     expect(report.excluded.productsLinkedToNonDemoInvoices.map(item => item.id)).toEqual(['product-linked']);
-    expect(report.diagnostics.postedDemoSales).toBe(1);
+    expect(report.diagnostics.postedDemoSales.map(item => item.id)).toEqual(['sale-demo']);
     expect(report.diagnostics.orphanJournalEntries.map(item => item.id)).toContain('journal-orphan');
     expect(report.notice).toContain('لم يتم تعديل أو حذف');
 
