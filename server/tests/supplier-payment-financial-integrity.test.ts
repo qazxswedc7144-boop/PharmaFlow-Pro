@@ -9,6 +9,7 @@ import { db } from '@/core/db';
 import { PurchaseRepository } from '@/database/repositories/PurchaseRepository';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
+import { AccountingPeriodSyncService } from '@/features/accounting/services/AccountingPeriodSyncService';
 
 describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite', () => {
   const tenantId = 'TENANT-FIN-PROD-01';
@@ -33,6 +34,16 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
       permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete'],
       isAuthenticated: true
     });
+
+    // These tests target voucher/payment atomicity. Avoid an unrelated relative
+    // HTTP request while preserving the production fail-closed period guard.
+    vi.spyOn(AccountingPeriodSyncService, 'getPeriods').mockResolvedValue([{
+      id: 'PER-FIN-TEST-OPEN',
+      tenantId,
+      Start_Date: '2000-01-01T00:00:00.000Z',
+      End_Date: '2099-12-31T23:59:59.999Z',
+      Is_Locked: false
+    } as any]);
 
     IdempotencyRegistry.clearInMemory();
 
