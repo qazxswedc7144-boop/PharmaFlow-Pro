@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
   journalEntries: vi.fn(),
   journalLines: vi.fn(),
   inventoryTransactions: vi.fn(),
+  inventoryWhere: vi.fn(),
+  getCurrentUserSession: vi.fn(() => ({ tenantId: 'tenant-a' })),
   customers: vi.fn(),
   suppliers: vi.fn(),
   products: vi.fn(),
@@ -27,13 +29,14 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/core/db', () => ({
+  getCurrentUserSession: mocks.getCurrentUserSession,
   db: {
     sales: { toArray: mocks.sales, ...mocks.writes },
     purchases: { toArray: mocks.purchases, ...mocks.writes },
     cashFlow: { toArray: mocks.cashFlow, ...mocks.writes },
     journalEntries: { toArray: mocks.journalEntries, ...mocks.writes },
     journalLines: { toArray: mocks.journalLines, ...mocks.writes },
-    inventoryTransactions: { toArray: mocks.inventoryTransactions, ...mocks.writes },
+    inventoryTransactions: { where: mocks.inventoryWhere },
     customers: { toArray: mocks.customers, ...mocks.writes },
     suppliers: { toArray: mocks.suppliers, ...mocks.writes },
     products: { toArray: mocks.products, ...mocks.writes }
@@ -72,6 +75,10 @@ describe('ProductionCleanupService safety boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setRows({});
+    mocks.getCurrentUserSession.mockReturnValue({ tenantId: 'tenant-a' });
+    mocks.inventoryWhere.mockImplementation(() => ({
+      anyOf: vi.fn(() => ({ toArray: mocks.inventoryTransactions }))
+    }));
   });
 
   it('returns a read-only preview with reasons and linked-record candidates', async () => {
@@ -93,8 +100,9 @@ describe('ProductionCleanupService safety boundary', () => {
         { id: 'line-real', entryId: 'journal-real' }
       ],
       inventoryTransactions: [
-        { TransactionID: 'movement-linked', SourceDocumentID: 'sale-demo' },
-        { TransactionID: 'movement-marked', isDemo: true }
+        { TransactionID: 'movement-linked', SourceDocumentID: 'sale-demo', source_doc_id: 'sale-demo', tenantId: 'tenant-a' },
+        { TransactionID: 'movement-marked', productId: 'product-demo', isDemo: true, tenantId: 'tenant-a' },
+        { TransactionID: 'movement-foreign', SourceDocumentID: 'sale-demo', source_doc_id: 'sale-demo', tenantId: 'tenant-b' }
       ],
       customers: [{ id: 'customer-demo', Customer_Name: 'عميل تجريبي 1' }],
       suppliers: [{ id: 'supplier-demo', Supplier_Name: 'مورد تجريبي 1' }],
@@ -113,6 +121,10 @@ describe('ProductionCleanupService safety boundary', () => {
     expect(report.candidates.journalEntries.map(item => item.id)).toEqual(['journal-linked', 'journal-marked']);
     expect(report.candidates.journalLines.map(item => item.id)).toEqual(['line-linked-1']);
     expect(report.candidates.stockMovements.map(item => item.id)).toEqual(['movement-linked', 'movement-marked']);
+    expect(mocks.inventoryWhere).toHaveBeenCalledWith('source_doc_id');
+    expect(mocks.inventoryWhere).toHaveBeenCalledWith('productId');
+    expect(mocks.inventoryWhere).toHaveBeenCalledWith('product_id');
+    expect(report.warnings.some(warning => warning.includes('tenant guard'))).toBe(true);
     expect(report.candidates.customers.map(item => item.id)).toEqual(['customer-demo']);
     expect(report.candidates.suppliers.map(item => item.id)).toEqual(['supplier-demo']);
     expect(report.candidates.products.map(item => item.id)).toEqual(['product-demo']);
