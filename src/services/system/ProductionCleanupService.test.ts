@@ -85,7 +85,7 @@ describe('ProductionCleanupService safety boundary', () => {
     setRows({
       sales: [
         { id: 'sale-demo', isDemo: true, InvoiceStatus: 'POSTED' },
-        { id: 'sale-real', items: [{ product_id: 'product-linked' }] }
+        { id: 'sale-real', items: [{ product_id: 'product-linked' }, { productId: 'product-linked-camel' }] }
       ],
       purchases: [{ id: 'purchase-demo', Created_By: 'demo' }],
       cashFlow: [{ transaction_id: 'voucher-demo', isDemo: true }],
@@ -108,7 +108,8 @@ describe('ProductionCleanupService safety boundary', () => {
       suppliers: [{ id: 'supplier-demo', Supplier_Name: 'مورد تجريبي 1' }],
       products: [
         { id: 'product-demo', isDemo: true },
-        { id: 'product-linked', isDemo: true }
+        { id: 'product-linked', isDemo: true },
+        { id: 'product-linked-camel', isDemo: true }
       ]
     });
 
@@ -128,7 +129,7 @@ describe('ProductionCleanupService safety boundary', () => {
     expect(report.candidates.customers.map(item => item.id)).toEqual(['customer-demo']);
     expect(report.candidates.suppliers.map(item => item.id)).toEqual(['supplier-demo']);
     expect(report.candidates.products.map(item => item.id)).toEqual(['product-demo']);
-    expect(report.excluded.productsLinkedToNonDemoInvoices.map(item => item.id)).toEqual(['product-linked']);
+    expect(report.excluded.productsLinkedToNonDemoInvoices.map(item => item.id)).toEqual(['product-linked', 'product-linked-camel']);
     expect(report.diagnostics.postedDemoSales.map(item => item.id)).toEqual(['sale-demo']);
     expect(report.diagnostics.orphanJournalEntries.map(item => item.id)).toContain('journal-orphan');
     expect(report.notice).toContain('لم يتم تعديل أو حذف');
