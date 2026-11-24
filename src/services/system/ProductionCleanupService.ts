@@ -141,18 +141,19 @@ export class ProductionCleanupService {
     const realPurchases = purchases.filter(record => !this.isDemo(record));
 
     const journalCandidates = journalEntries.flatMap(record => {
+      const sourceId = record.sourceId || record.source_id;
       const directReason = this.getDemoReason(record);
       if (directReason) {
         return [{ id: getRecordId(record.id), reason: directReason }];
       }
-      if (demoSaleIds.has(record.sourceId)) {
-        return [{ id: getRecordId(record.id), reason: `مرتبط بفاتورة بيع تجريبية ${record.sourceId}` }];
+      if (demoSaleIds.has(sourceId)) {
+        return [{ id: getRecordId(record.id), reason: `مرتبط بفاتورة بيع تجريبية ${sourceId}` }];
       }
-      if (demoPurchaseIds.has(record.sourceId)) {
-        return [{ id: getRecordId(record.id), reason: `مرتبط بفاتورة شراء تجريبية ${record.sourceId}` }];
+      if (demoPurchaseIds.has(sourceId)) {
+        return [{ id: getRecordId(record.id), reason: `مرتبط بفاتورة شراء تجريبية ${sourceId}` }];
       }
-      if (demoVoucherIds.has(record.sourceId)) {
-        return [{ id: getRecordId(record.id), reason: `مرتبط بسند تجريبي ${record.sourceId}` }];
+      if (demoVoucherIds.has(sourceId)) {
+        return [{ id: getRecordId(record.id), reason: `مرتبط بسند تجريبي ${sourceId}` }];
       }
       return [];
     });
@@ -168,15 +169,16 @@ export class ProductionCleanupService {
     });
 
     const stockCandidates = stockMovements.flatMap(record => {
+      const sourceDocumentId = record.SourceDocumentID || record.source_doc_id || record.sourceDocId;
       const directReason = this.getDemoReason(record);
       if (directReason) {
         return [{ id: getRecordId(record.TransactionID), reason: directReason }];
       }
-      if (demoSaleIds.has(record.SourceDocumentID)) {
-        return [{ id: getRecordId(record.TransactionID), reason: `مرتبط بفاتورة بيع تجريبية ${record.SourceDocumentID}` }];
+      if (demoSaleIds.has(sourceDocumentId)) {
+        return [{ id: getRecordId(record.id, record.TransactionID, record.transaction_id), reason: `مرتبط بفاتورة بيع تجريبية ${sourceDocumentId}` }];
       }
-      if (demoPurchaseIds.has(record.SourceDocumentID)) {
-        return [{ id: getRecordId(record.TransactionID), reason: `مرتبط بفاتورة شراء تجريبية ${record.SourceDocumentID}` }];
+      if (demoPurchaseIds.has(sourceDocumentId)) {
+        return [{ id: getRecordId(record.id, record.TransactionID, record.transaction_id), reason: `مرتبط بفاتورة شراء تجريبية ${sourceDocumentId}` }];
       }
       return [];
     });
@@ -200,13 +202,15 @@ export class ProductionCleanupService {
       }));
 
     const orphanJournalEntries = journalEntries.flatMap(entry => {
-      if (entry.sourceType === 'SALE' && !sales.some(sale => sale.id === entry.sourceId)) {
+      const sourceType = entry.sourceType || entry.source_type;
+      const sourceId = entry.sourceId || entry.source_id;
+      if (sourceType === 'SALE' && !sales.some(sale => sale.id === sourceId)) {
         return [{ id: getRecordId(entry.id), reason: 'قيد بيع لا يوجد مستند بيع مطابق له' }];
       }
-      if (entry.sourceType === 'PURCHASE' && !purchases.some(purchase => purchase.id === entry.sourceId)) {
+      if (sourceType === 'PURCHASE' && !purchases.some(purchase => purchase.id === sourceId)) {
         return [{ id: getRecordId(entry.id), reason: 'قيد شراء لا يوجد مستند شراء مطابق له' }];
       }
-      if (entry.sourceType === 'VOUCHER' && !vouchers.some(voucher => voucher.transaction_id === entry.sourceId)) {
+      if (sourceType === 'VOUCHER' && !vouchers.some(voucher => voucher.transaction_id === sourceId)) {
         return [{ id: getRecordId(entry.id), reason: 'قيد سند لا يوجد سند مطابق له' }];
       }
       return [];
