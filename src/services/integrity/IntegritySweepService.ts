@@ -31,7 +31,11 @@ export class IntegritySweepService {
           isHealthy = false;
           errors.push("Journal imbalance detected (Debits != Credits)");
         }
-      } catch (e) { console.error("Journal check failed", e); }
+      } catch (e) {
+        console.error("Journal check failed", e);
+        isHealthy = false;
+        errors.push("Journal integrity validation failed; no automatic repair was performed");
+      }
 
       // 2. Validate Stock Balance
       try {
