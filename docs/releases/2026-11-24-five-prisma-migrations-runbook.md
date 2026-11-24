@@ -6,7 +6,7 @@
 
 ## 1. Exact release scope
 
-The five pending migrations identified for this release are expected to be:
+The five migrations in the originally identified release scope are:
 
 1. `20261108202000_sales_policy_phase1`
 2. `20261110022000_tenant_sales_policy_rls`
@@ -14,7 +14,9 @@ The five pending migrations identified for this release are expected to be:
 4. `20261123100000_fifo_layer_cost_provenance`
 5. `20261123120000_invoice_payment_allocations`
 
-The repository currently contains seven migration directories in total. The initial schema migration and `20261108184500_add_lock_and_replication_audit_actions` are prerequisites, not part of this five-item release. **Do not proceed unless a live `prisma migrate status` confirms the exact expected applied/pending set above.** If the live ledger differs, stop and reconcile; do not use `migrate resolve`, manual ledger edits, `db push`, or `migrate reset`.
+The repository contains seven migration directories: the initial schema plus six subsequent migrations. A live read-only inspection of production on 2026-11-24 found three completed Prisma ledger rows: the initial schema, `20261108202000_sales_policy_phase1`, and `20261110022000_tenant_sales_policy_rls`. Thus, two of the five named release migrations are already applied; only the accounting-period, FIFO-layer, and invoice-payment-allocation migrations remain pending within that five-item scope. **Do not rerun the two completed migrations.**
+
+A separate earlier migration, `20261108184500_add_lock_and_replication_audit_actions`, is also absent from the production ledger. Read-only inspection found that its five intended `AuditActionType` enum values (`LOCK_ACQUIRED`, `LOCK_RELEASED`, `LOCK_EXTENDED`, `LOCK_RECOVERY`, `REPLICATION_PUBLISHED`) are absent. This is an outstanding schema drift/prerequisite, not one of the five named migrations. Do not silently ignore it or manually resolve it. Review its checksum and dependency/order with the release owner; if confirmed in scope, the actual pending deployment set is four migrations (this prerequisite plus the three remaining named migrations). The live `prisma migrate status` from the exact release commit must confirm this complete ledger before deployment. If it differs, stop; do not use `migrate resolve`, manual ledger edits, `db push`, or `migrate reset`.
 
 ## 2. Hard release gates
 
@@ -37,13 +39,13 @@ npx prisma validate
 npx prisma migrate status
 ```
 
-Expected ledger before applying: the initial schema migration and `20261108184500_add_lock_and_replication_audit_actions` are applied; the five migrations in section 1 are pending. Any other output is a **STOP**.
+Observed production ledger baseline (2026-11-24): initial schema + the first two named release migrations are completed. `20261108184500_add_lock_and_replication_audit_actions` and the final three named release migrations are not recorded as completed. The audit enum currently lacks all five labels introduced by that prerequisite. Treat this as a hard reconciliation gate. Do not deploy until the exact release commit's `prisma migrate status`, checksums, dependency order, and intended inclusion of the prerequisite have been reviewed and signed off. No manual ledger edits or `migrate resolve`.
 
 The repository did not contain `prisma/migrations/migration_lock.toml` at the inspected base commit. This release branch adds the standard PostgreSQL provider lock. Verify it is present in the checked-out release commit before any Prisma command.
 
 ## 4. Backup and restore verification
 
-Create a uniquely named backup on encrypted storage with restricted access. Use the direct PostgreSQL connection string supplied through the secure environment, not a literal in the command.
+Create a uniquely named full logical backup on encrypted storage with restricted access, using a direct PostgreSQL connection string supplied through a secure environment. This project runs PostgreSQL 17.11.0.011 and may use Supabase physical backups: confirm the backup type and downloadable/export path in Database > Backups before assuming `pg_dump` can retrieve a provider-managed physical backup. Supabase documents daily automatic backups for Pro/Team/Enterprise; Free projects should arrange their own logical export. Physical backups are not directly downloadable in the same way as legacy logical backups. Do not claim a backup exists until a file has been exported and verified. See [Supabase Database Backups](https://supabase.com/docs/guides/platform/backups).
 
 ```bash
 umask 077
@@ -54,7 +56,7 @@ pg_restore --list "$BACKUP_FILE" > "${BACKUP_FILE}.contents.txt"
 sha256sum "$BACKUP_FILE" | tee "${BACKUP_FILE}.sha256"
 ```
 
-Then restore the dump into a **separate isolated restore-test database** (never the production URL), using a protected `RESTORE_TEST_URL`:
+Then restore the dump into a **separate isolated PostgreSQL database or newly created isolated Supabase project** (never the production URL), using a protected `RESTORE_TEST_URL`. Verify schema, critical row counts, constraints, roles, and application-required extensions after restore. A development branch is not a backup of production data and is not a substitute for this restore drill.
 
 ```bash
 test -n "${RESTORE_TEST_URL:-}"
@@ -136,7 +138,7 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' AND c.relname = 'tenant_sales_policies';
 ```
 
-Require `relrowsecurity = true`. Verify separately that the application server's trusted database role can access the table and that public/API roles cannot read it. Do not infer role behavior from the flag alone.
+Require `relrowsecurity = true`. The observed production `tenant_sales_policies` table has RLS enabled but no policies; the Supabase security advisor reports an informational `rls_enabled_no_policy` finding for it. Verify separately that the application server's trusted database role can access the table and that public/API roles cannot read it. Do not infer role behavior from the flag alone.
 
 ### 6.4 Accounting-period constraints
 
