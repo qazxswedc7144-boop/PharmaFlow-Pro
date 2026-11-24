@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   purchases: vi.fn(),
   cashFlow: vi.fn(),
   journalEntries: vi.fn(),
+  journalLines: vi.fn(),
   inventoryTransactions: vi.fn(),
   customers: vi.fn(),
   suppliers: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock('@/core/db', () => ({
     purchases: { toArray: mocks.purchases, ...mocks.writes },
     cashFlow: { toArray: mocks.cashFlow, ...mocks.writes },
     journalEntries: { toArray: mocks.journalEntries, ...mocks.writes },
+    journalLines: { toArray: mocks.journalLines, ...mocks.writes },
     inventoryTransactions: { toArray: mocks.inventoryTransactions, ...mocks.writes },
     customers: { toArray: mocks.customers, ...mocks.writes },
     suppliers: { toArray: mocks.suppliers, ...mocks.writes },
@@ -49,6 +51,7 @@ const setRows = (rows: {
   purchases?: any[];
   cashFlow?: any[];
   journalEntries?: any[];
+  journalLines?: any[];
   inventoryTransactions?: any[];
   customers?: any[];
   suppliers?: any[];
@@ -58,6 +61,7 @@ const setRows = (rows: {
   mocks.purchases.mockResolvedValue(rows.purchases || []);
   mocks.cashFlow.mockResolvedValue(rows.cashFlow || []);
   mocks.journalEntries.mockResolvedValue(rows.journalEntries || []);
+  mocks.journalLines.mockResolvedValue(rows.journalLines || []);
   mocks.inventoryTransactions.mockResolvedValue(rows.inventoryTransactions || []);
   mocks.customers.mockResolvedValue(rows.customers || []);
   mocks.suppliers.mockResolvedValue(rows.suppliers || []);
@@ -84,6 +88,10 @@ describe('ProductionCleanupService safety boundary', () => {
         { id: 'journal-real', sourceType: 'SALE', sourceId: 'sale-real' },
         { id: 'journal-orphan', sourceType: 'SALE', sourceId: 'missing-sale' }
       ],
+      journalLines: [
+        { id: 'line-linked-1', entryId: 'journal-linked' },
+        { id: 'line-real', entryId: 'journal-real' }
+      ],
       inventoryTransactions: [
         { TransactionID: 'movement-linked', SourceDocumentID: 'sale-demo' },
         { TransactionID: 'movement-marked', isDemo: true }
@@ -103,6 +111,7 @@ describe('ProductionCleanupService safety boundary', () => {
     expect(report.candidates.purchases.map(item => item.id)).toEqual(['purchase-demo']);
     expect(report.candidates.vouchers.map(item => item.id)).toEqual(['voucher-demo']);
     expect(report.candidates.journalEntries.map(item => item.id)).toEqual(['journal-linked', 'journal-marked']);
+    expect(report.candidates.journalLines.map(item => item.id)).toEqual(['line-linked-1']);
     expect(report.candidates.stockMovements.map(item => item.id)).toEqual(['movement-linked', 'movement-marked']);
     expect(report.candidates.customers.map(item => item.id)).toEqual(['customer-demo']);
     expect(report.candidates.suppliers.map(item => item.id)).toEqual(['supplier-demo']);
