@@ -92,21 +92,8 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
     await db.vouchers.clear();
     await db.auditLogs.clear();
 
-    // Clear any previous foreign-tenant fixtures only while that tenant is active.
-    setTestTenantSession(foreignTenantId, foreignBranchId);
-    await db.invoices.clear();
-    await db.products.clear();
-    await db.suppliers.clear();
-    await db.warehouseStock.clear();
-    await db.branchInventory.clear();
-    await db.inventoryTransactions.clear();
-    await db.financialTransactions.clear();
-    await db.journalEntries.clear();
-    await db.journalLines.clear();
-    await db.accounts.clear();
-    await db.vouchers.clear();
-    await db.voucherInvoiceLinks.clear();
-    setTestTenantSession(tenantId, branchId);
+    // The primary clear() calls above clear each Dexie object store globally;
+    // do not repeat them under a foreign session or erase the primary fixtures.
 
     // Seed Supplier with initial balance of 0
     await db.suppliers.put({
