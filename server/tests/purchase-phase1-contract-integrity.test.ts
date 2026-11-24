@@ -96,9 +96,9 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
     setupUserSession(tenant1, branchId);
   });
 
-  // 1. إنشاء Purchase برقم invoice يدوي
-  it('1. Successfully creates Purchase with manual invoiceNumber', async () => {
-    const manualInvNumber = 'INV-PUR-2026-9901';
+  // 1. The system number is generated; the supplier's document number is user-provided.
+  it('1. Generates the internal purchase number and preserves the manual supplier number', async () => {
+    const manualSupplierNumber = 'INV-PUR-2026-9901';
     const txUuid = 'TX-MANUAL-001';
 
     const result = (await useAccountingStore.getState().addInvoice({
@@ -107,7 +107,7 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
         supplierId,
         items: [{ productId, quantity: 10, unitPrice: 40 }],
         total: 400,
-        invoiceNumber: manualInvNumber,
+        supplierInvoiceNumber: manualSupplierNumber,
         transactionUuid: txUuid
       },
       options: { isCash: false }
@@ -117,13 +117,14 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
 
     const invoice = await db.invoices.get(result.refId);
     expect(invoice).toBeDefined();
-    expect(invoice?.invoiceNumber).toBe(manualInvNumber);
-    expect(invoice?.invoice_number).toBe(manualInvNumber);
+    expect(invoice?.invoiceNumber).toBe('PUR-1');
+    expect(invoice?.invoice_number).toBe('PUR-1');
+    expect(invoice?.supplierInvoiceNumber).toBe(manualSupplierNumber);
   });
 
-  // 2. internal id مختلف عن invoiceNumber
-  it('2. Enforces clear separation: internal id != user-facing invoiceNumber', async () => {
-    const manualInvNumber = 'INV-MANUAL-7788';
+  // 2. Internal record ID, system invoice number, and supplier number are distinct fields.
+  it('2. Keeps the internal ID separate from the generated system and supplier numbers', async () => {
+    const manualSupplierNumber = 'INV-MANUAL-7788';
     const txUuid = 'TX-IDENTITY-002';
 
     const result = (await useAccountingStore.getState().addInvoice({
@@ -132,7 +133,7 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
         supplierId,
         items: [{ productId, quantity: 5, unitPrice: 40 }],
         total: 200,
-        invoiceNumber: manualInvNumber,
+        supplierInvoiceNumber: manualSupplierNumber,
         transactionUuid: txUuid
       },
       options: { isCash: false }
@@ -140,50 +141,47 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
 
     const invoice = await db.invoices.get(result.refId);
     expect(invoice).toBeDefined();
-    // Internal DB ID must NOT equal the user-entered invoice number
-    expect(invoice?.id).not.toBe(manualInvNumber);
     expect(invoice?.id).toBe(result.refId);
-    expect(invoice?.invoiceNumber).toBe(manualInvNumber);
+    expect(invoice?.id).not.toBe(invoice?.invoiceNumber);
+    expect(invoice?.invoiceNumber).toBe('PUR-1');
+    expect(invoice?.supplierInvoiceNumber).toBe(manualSupplierNumber);
   });
 
-  // 3. رفض invoiceNumber المكرر داخل نفس tenant
-  it('3. Rejects duplicate invoiceNumber within same tenant', async () => {
-    const duplicateNumber = 'INV-DUP-SAME-TENANT';
-
-    // First invoice succeeds
-    await useAccountingStore.getState().addInvoice({
+  // 3. Internal purchase numbers are generated sequentially within the active tenant.
+  it('3. Generates distinct internal invoice numbers for consecutive purchases in one tenant', async () => {
+    const first = await useAccountingStore.getState().addInvoice({
       type: 'PURCHASE',
       payload: {
         supplierId,
         items: [{ productId, quantity: 2, unitPrice: 40 }],
         total: 80,
-        invoiceNumber: duplicateNumber,
-        transactionUuid: 'TX-DUP-001'
+        transactionUuid: 'TX-NUMBER-001'
       },
       options: { isCash: false }
-    });
+    }) as { success: boolean; refId: string };
 
-    // Second invoice with same number in same tenant must fail
-    await expect(
-      useAccountingStore.getState().addInvoice({
-        type: 'PURCHASE',
-        payload: {
-          supplierId,
-          items: [{ productId, quantity: 3, unitPrice: 40 }],
-          total: 120,
-          invoiceNumber: duplicateNumber,
-          transactionUuid: 'TX-DUP-002'
-        },
-        options: { isCash: false }
-      })
-    ).rejects.toThrow(/DUPLICATE_INVOICE_NUMBER/);
+    const second = await useAccountingStore.getState().addInvoice({
+      type: 'PURCHASE',
+      payload: {
+        supplierId,
+        items: [{ productId, quantity: 3, unitPrice: 40 }],
+        total: 120,
+        transactionUuid: 'TX-NUMBER-002'
+      },
+      options: { isCash: false }
+    }) as { success: boolean; refId: string };
+
+    const firstInvoice = await db.invoices.get(first.refId);
+    const secondInvoice = await db.invoices.get(second.refId);
+    expect(firstInvoice?.invoiceNumber).toBe('PUR-1');
+    expect(secondInvoice?.invoiceNumber).toBe('PUR-2');
+    expect(firstInvoice?.invoiceNumber).not.toBe(secondInvoice?.invoiceNumber);
   });
 
-  // 4. السماح بنفس invoiceNumber في tenant مختلف إذا كان ذلك متوافقاً مع قواعد المشروع الحالية
-  it('4. Allows same invoiceNumber in different tenant (Tenant-scoped uniqueness)', async () => {
-    const sharedNumber = 'INV-SHARED-ACROSS-TENANTS';
+  // 4. Supplier document numbers remain tenant-local and may coincide across tenants.
+  it('4. Allows the same supplier invoice number in different tenants', async () => {
+    const sharedSupplierNumber = 'SUPPLIER-INV-SHARED-001';
 
-    // Save in Tenant 1
     setupUserSession(tenant1, branchId);
     const res1 = (await useAccountingStore.getState().addInvoice({
       type: 'PURCHASE',
@@ -191,14 +189,13 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
         supplierId,
         items: [{ productId, quantity: 2, unitPrice: 40 }],
         total: 80,
-        invoiceNumber: sharedNumber,
+        supplierInvoiceNumber: sharedSupplierNumber,
         transactionUuid: 'TX-SHARED-T1'
       },
       options: { isCash: false }
-    })) as { success: boolean };
+    })) as { success: boolean; refId: string };
     expect(res1.success).toBe(true);
 
-    // Save in Tenant 2 with same user-facing invoiceNumber
     setupUserSession(tenant2, 'BRH-PHASE1-02');
     const res2 = (await useAccountingStore.getState().addInvoice({
       type: 'PURCHASE',
@@ -206,36 +203,42 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
         supplierId: supplier2Id,
         items: [{ productId: 'PROD-PHASE1-T2', quantity: 2, unitPrice: 40 }],
         total: 80,
-        invoiceNumber: sharedNumber,
+        supplierInvoiceNumber: sharedSupplierNumber,
         warehouseId: 'WH-MAIN-T2',
         transactionUuid: 'TX-SHARED-T2'
       },
       options: { isCash: false, warehouseId: 'WH-MAIN-T2' }
-    })) as { success: boolean };
+    })) as { success: boolean; refId: string };
     expect(res2.success).toBe(true);
+
+    setupUserSession(tenant1, branchId);
+    expect((await db.invoices.get(res1.refId))?.supplierInvoiceNumber).toBe(sharedSupplierNumber);
+    setupUserSession(tenant2, 'BRH-PHASE1-02');
+    expect((await db.invoices.get(res2.refId))?.supplierInvoiceNumber).toBe(sharedSupplierNumber);
   });
 
-  // 5. edit يحافظ على invoiceNumber
-  it('5. Edit preserves invoiceNumber even if omitted in update payload', async () => {
+  // 5. Edits preserve both the system number and supplier number when omitted.
+  it('5. Edit preserves both purchase numbers when supplierInvoiceNumber is omitted', async () => {
     setupUserSession(tenant1, branchId);
-    const originalInvoiceNumber = 'INV-ORIGINAL-TO-PRESERVE';
+    const originalSupplierNumber = 'INV-ORIGINAL-TO-PRESERVE';
 
-    // 1. Create original invoice
     const createRes = (await useAccountingStore.getState().addInvoice({
       type: 'PURCHASE',
       payload: {
         supplierId,
         items: [{ productId, quantity: 2, unitPrice: 40 }],
         total: 80,
-        invoiceNumber: originalInvoiceNumber,
+        supplierInvoiceNumber: originalSupplierNumber,
         transactionUuid: 'TX-EDIT-ORIG'
       },
       options: { isCash: false }
     })) as { success: boolean; refId: string };
 
     const internalId = createRes.refId;
+    const original = await db.invoices.get(internalId);
+    expect(original?.invoiceNumber).toBe('PUR-1');
+    expect(original?.supplierInvoiceNumber).toBe(originalSupplierNumber);
 
-    // 2. Edit without re-specifying invoiceNumber
     const editRes = (await useAccountingStore.getState().addInvoice({
       type: 'PURCHASE',
       payload: {
@@ -243,7 +246,7 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
         supplierId,
         items: [{ productId, quantity: 4, unitPrice: 40 }],
         total: 160,
-        // invoiceNumber intentionally omitted to test preservation
+        // supplierInvoiceNumber intentionally omitted; preserve the stored value.
         transactionUuid: 'TX-EDIT-UPDATE'
       },
       options: { isEdit: true, isCash: false }
@@ -253,14 +256,13 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
 
     const updated = await db.invoices.get(internalId);
     expect(updated?.id).toBe(internalId);
-    // Must retain original invoiceNumber, not fall back to internal id!
-    expect(updated?.invoiceNumber).toBe(originalInvoiceNumber);
+    expect(updated?.invoiceNumber).toBe('PUR-1');
+    expect(updated?.supplierInvoiceNumber).toBe(originalSupplierNumber);
   });
 
   // 6 & 7. discount + fees + tax تصل حتى workflow والقيم المحفوظة تطابق العملية
   it('6 & 7. Financial adjustments (discountPercent, otherFees, tax) reach workflow and persist accurately', async () => {
     setupUserSession(tenant1, branchId);
-    const invoiceNumber = 'INV-FIN-ADJ-007';
 
     // 10 items @ 50 = 500 subtotal
     // 10% discount = 50
@@ -279,7 +281,6 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
         supplierId,
         items: [{ productId, quantity: 10, unitPrice: 50 }],
         total: finalTotal,
-        invoiceNumber,
         discountPercent,
         otherFees,
         tax,
@@ -315,7 +316,6 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
           supplierId,
           items: [{ productId: manualProdId, quantity: 2, unitPrice: 100 }],
           total: 200,
-          invoiceNumber: 'INV-FAIL-ROLLBACK',
           pendingProducts: [
             { id: manualProdId, name: 'Orphan Candidate', UnitPrice: 100 }
           ],
@@ -332,7 +332,7 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
     expect(product).toBeUndefined();
 
     // Verify no invoice committed
-    const invoices = await db.invoices.where('invoiceNumber').equals('INV-FAIL-ROLLBACK').toArray();
+    const invoices = await db.invoices.where('transactionUuid').equals('TX-FAIL-ROLLBACK').toArray();
     expect(invoices.length).toBe(0);
   });
 
@@ -340,13 +340,11 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
   it('9. Replaying with same idempotency key is idempotent and creates no duplicate records', async () => {
     setupUserSession(tenant1, branchId);
     const stableKey = 'TX-IDEMPOTENT-STABLE-009';
-    const invNumber = 'INV-IDEM-009';
 
     const payload = {
       supplierId,
       items: [{ productId, quantity: 2, unitPrice: 40 }],
       total: 80,
-      invoiceNumber: invNumber,
       transactionUuid: stableKey
     };
 
@@ -389,7 +387,6 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
         supplierId,
         items: [{ productId, quantity: 2, unitPrice: 40 }],
         total: 80,
-        invoiceNumber: 'INV-PAYLOAD-A',
         transactionUuid: stableKey
       },
       options: { isCash: false }
@@ -404,7 +401,6 @@ describe('PURCHASE PHASE 1 — Contract, Identity & Financial Integrity', () => 
           supplierId,
           items: [{ productId, quantity: 25, unitPrice: 40 }],
           total: 1000,
-          invoiceNumber: 'INV-PAYLOAD-B',
           transactionUuid: stableKey
         },
         options: { isCash: false }
