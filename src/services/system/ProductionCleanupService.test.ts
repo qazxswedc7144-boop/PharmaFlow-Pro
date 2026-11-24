@@ -141,6 +141,13 @@ describe('ProductionCleanupService safety boundary', () => {
     }
   });
 
+  it('fails closed when no trusted tenant session is available', async () => {
+    mocks.getCurrentUserSession.mockReturnValue({ tenantId: undefined });
+
+    await expect(ProductionCleanupService.previewCleanup()).rejects.toThrow('FAIL_CLOSED');
+    expect(mocks.inventoryWhere).not.toHaveBeenCalled();
+  });
+
   it('fails closed when the legacy cleanup entry point is invoked', async () => {
     const result = await ProductionCleanupService.runCleanup();
 
