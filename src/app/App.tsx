@@ -665,7 +665,7 @@ function MainLayout() {
       
       if (!health.success || savedStatus === 'RECOVERY_MODE') {
         if (IS_PREVIEW) {
-          const fixed = await IntegritySweepService.runSweep(true).catch(() => false);
+          const fixed = await IntegritySweepService.runSweep(false).catch(() => false);
           if (fixed) {
             setSystemStatus('ACTIVE');
             refreshGlobal();
