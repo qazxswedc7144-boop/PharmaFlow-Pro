@@ -13,7 +13,7 @@ export class IntegritySweepService {
    * Main entry point to run the integrity sweep
    */
   static async runSweep(autoFix = false): Promise<boolean> {
-    const { tenantId } = getCurrentUserSession();
+    const { tenantId, userId } = getCurrentUserSession();
     if (!tenantId) {
       throw new Error('FAIL_CLOSED: لا يمكن تنفيذ فحص سلامة البيانات دون جلسة مؤسسة نشطة.');
     }
@@ -79,7 +79,7 @@ export class IntegritySweepService {
       } catch (e) { console.error("Date check failed", e); }
 
       if (!isHealthy) {
-        await this.handleCriticalError(errors, autoFix);
+        await this.handleCriticalError(errors, autoFix, userId || 'SYSTEM');
       }
 
       const endTime = performance.now();
@@ -308,7 +308,7 @@ export class IntegritySweepService {
     return healthy;
   }
 
-  private static async handleCriticalError(errors: string[], autoFixRequested = false) {
+  private static async handleCriticalError(errors: string[], autoFixRequested = false, actorUserId = 'SYSTEM') {
     const now = new Date().toISOString();
 
     // Persist the failed/blocked integrity action independently of alert de-duplication.
@@ -320,7 +320,7 @@ export class IntegritySweepService {
       timestamp: now,
     });
     try {
-      await db.addAuditLog('SYSTEM', 'SYSTEM', 'INTEGRITY_SWEEP', auditDetails);
+      await db.addAuditLog(actorUserId, 'SYSTEM', 'INTEGRITY_SWEEP', auditDetails);
     } catch (auditError) {
       // Audit failure must not suppress the critical system alert or make the sweep healthy.
       console.error('[IntegritySweep] Failed to persist critical sweep audit record:', auditError);
