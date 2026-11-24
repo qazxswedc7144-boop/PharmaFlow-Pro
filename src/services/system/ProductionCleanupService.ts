@@ -187,10 +187,10 @@ export class ProductionCleanupService {
     for (const product of products) {
       if (!this.isDemo(product) || !product.id) continue;
       const linkedToSale = realSales.some(sale =>
-        Array.isArray(sale.items) && sale.items.some((item: any) => item?.product_id === product.id)
+        Array.isArray(sale.items) && sale.items.some((item: any) => item?.product_id === product.id || item?.productId === product.id)
       );
       const linkedToPurchase = realPurchases.some(purchase =>
-        Array.isArray(purchase.items) && purchase.items.some((item: any) => item?.product_id === product.id)
+        Array.isArray(purchase.items) && purchase.items.some((item: any) => item?.product_id === product.id || item?.productId === product.id)
       );
       if (linkedToSale || linkedToPurchase) linkedProductIds.add(String(product.id));
     }
