@@ -51,6 +51,7 @@ jobs:
           server/tests/voucher-cancellation-hardening.test.ts
           server/tests/voucher-sync-dispatch.test.ts
           server/tests/tenant-isolation-phase2.test.ts
+          server/tests/integrity-sweep-journal-autofix.test.ts
           server/tests/tenant-isolation-hardening.test.ts
           server/tests/password-hash-compatibility.test.ts
           server/tests/sync-security-hardening.test.ts
