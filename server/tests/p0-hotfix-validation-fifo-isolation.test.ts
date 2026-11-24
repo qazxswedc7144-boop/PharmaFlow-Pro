@@ -60,6 +60,16 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
     await db.auditLogs.clear();
 
 
+    // Register the active branch before workflow mutations; the inventory engine
+    // correctly rejects unregistered branches even in the in-memory test database.
+    await db.branches.put({
+      id: branchId,
+      code: branchId,
+      name: 'Phase C Main Branch',
+      tenantId,
+      isActive: true
+    } as any);
+
     // Seed test master records
     await db.customers.add({
       id: customerId,
