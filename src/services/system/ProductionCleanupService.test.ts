@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   journalLines: vi.fn(),
   inventoryTransactions: vi.fn(),
   inventoryWhere: vi.fn(),
-  getCurrentUserSession: vi.fn(() => ({ tenantId: 'tenant-a' })),
+  getCurrentUserSession: vi.fn((): { tenantId?: string } => ({ tenantId: 'tenant-a' })),
   customers: vi.fn(),
   suppliers: vi.fn(),
   products: vi.fn(),
