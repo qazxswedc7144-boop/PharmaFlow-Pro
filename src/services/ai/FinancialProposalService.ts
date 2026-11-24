@@ -265,6 +265,15 @@ export class FinancialProposalService {
       };
     }
 
+    // A proposal can be posted only once; reject stale/replayed approval attempts.
+    if (proposal.status !== 'DRAFT_PENDING_REVIEW') {
+      return {
+        success: false,
+        proposal,
+        error: `رفض الترحيل: حالة المقترح الحالية لا تسمح بالاعتماد (STATUS_${proposal.status}).`,
+      };
+    }
+
     // Role Verification for Approver
     if (!['admin', 'accountant'].includes(reviewerContext.userRole)) {
       return {
