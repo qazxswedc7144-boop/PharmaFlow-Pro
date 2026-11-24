@@ -23,6 +23,7 @@ import { db } from '@/core/db';
 import { TransactionBoundary } from '@/core/integrity/transactionBoundary';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { JournalPostingWorkflow } from '@/features/accounting/workflows/JournalPostingWorkflow';
+import { FinancialProposalService } from '@/services/ai/FinancialProposalService';
 import { useAuthStore } from '@/store/authStore';
 
 const TENANT_ID = 'TENANT-MANUAL-JOURNAL';
@@ -88,6 +89,58 @@ describe('Manual journal persistence and reversal integrity', () => {
         branchId: BRANCH_ID
       }
     ] as any);
+  });
+
+  it('posts a human-approved AI proposal through the same atomic journal persistence path', async () => {
+    const reviewerContext = {
+      userId: 'USER-MANUAL-JOURNAL',
+      userRole: 'accountant' as const,
+      branchId: BRANCH_ID,
+      tenantId: TENANT_ID
+    };
+
+    const proposal = await FinancialProposalService.createProposalFromAI(reviewerContext, {
+      proposalType: 'JOURNAL_ENTRY',
+      title: 'Approved manual journal',
+      description: 'AI proposal persistence regression',
+      reasoning: 'Human-approved test proposal',
+      proposedDate: '2026-11-24',
+      correlationId: 'AI-MANUAL-JOURNAL-APPROVAL-001',
+      lines: [
+        { accountId: 'ACC-MJ-CASH', accountCode: '101', accountName: 'Cash', debit: 75, credit: 0 },
+        { accountId: 'ACC-MJ-REVENUE', accountCode: '401', accountName: 'Revenue', debit: 0, credit: 75 }
+      ]
+    });
+
+    expect(proposal.status).toBe('DRAFT_PENDING_REVIEW');
+
+    const result = await FinancialProposalService.approveAndPostProposal(
+      proposal.id,
+      reviewerContext,
+      'APPROVED',
+      'Approved for regression test'
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.journalId).toBeTruthy();
+
+    const savedEntry = await db.journalEntries.get(result.journalId!);
+    const savedLines = await db.journalLines.where('entryId').equals(result.journalId!).toArray();
+    expect(savedEntry?.lines).toHaveLength(2);
+    expect(savedLines).toHaveLength(2);
+    expect(savedLines.every(line => line.entryId === result.journalId)).toBe(true);
+    expect((await db.accounts.get('ACC-MJ-CASH'))?.balance).toBe(1075);
+    expect((await db.accounts.get('ACC-MJ-REVENUE'))?.balance).toBe(1925);
+
+    await TransactionBoundary.executeAtomic(
+      ['journalEntries', 'journalLines', 'accounts'],
+      (tx) => AccountingRepository.deleteEntry(result.journalId!, tx)
+    );
+
+    expect(await db.journalEntries.get(result.journalId!)).toBeUndefined();
+    expect(await db.journalLines.where('entryId').equals(result.journalId!).count()).toBe(0);
+    expect((await db.accounts.get('ACC-MJ-CASH'))?.balance).toBe(1000);
+    expect((await db.accounts.get('ACC-MJ-REVENUE'))?.balance).toBe(2000);
   });
 
   it('requires the active transaction and persists entry, lines, and account balances atomically through posting and reversal', async () => {
