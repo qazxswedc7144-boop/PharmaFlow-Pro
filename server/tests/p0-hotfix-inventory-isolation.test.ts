@@ -4,23 +4,92 @@ import { db } from '../../src/core/db';
 import { InventoryService } from '@/features/inventory/services/InventoryService';
 import { ProductRepository } from '@/features/inventory/services/ProductRepository';
 import { TokenProvider } from '@/services/auth/tokenProvider';
+import { useAuthStore } from '@/store/authStore';
 import { PriceHistoryRepository } from '@/database/repositories/PriceHistoryRepository';
+import { FIFOEngine } from '@/features/inventory/services/fifoEngine';
 
 describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   const validTenant = 'REAL-TENANT-001';
   const validBranch = 'REAL-BRANCH-001';
   const productId = 'PROD-TEST-001';
 
+  const setSessionFixture = (user: any, token: string, refresh: string) => {
+    if (!user) {
+      TokenProvider.setSession(null as any, token, refresh);
+      useAuthStore.setState({
+        user: null,
+        token: token || null,
+        refreshToken: refresh || null,
+        tenantId: null,
+        branchId: null,
+        roles: [],
+        permissions: [],
+        isAuthenticated: false
+      } as any);
+      return;
+    }
+    const normalized = { ...user };
+    const userId = normalized.id || normalized.user_id || 'phase-c-test-user';
+    normalized.id = userId;
+    normalized.user_id = normalized.user_id || userId;
+    if (normalized.tenantId === undefined && normalized.tenant_id !== undefined) normalized.tenantId = normalized.tenant_id;
+    if (normalized.tenant_id === undefined && normalized.tenantId !== undefined) normalized.tenant_id = normalized.tenantId;
+    if (normalized.branchId === undefined && normalized.branch_id !== undefined) normalized.branchId = normalized.branch_id;
+    if (normalized.branch_id === undefined && normalized.branchId !== undefined) normalized.branch_id = normalized.branchId;
+    TokenProvider.setSession(normalized, token, refresh);
+    useAuthStore.setState({
+      user: normalized,
+      token: token || null,
+      refreshToken: refresh || null,
+      tenantId: normalized.tenantId || null,
+      branchId: normalized.branchId || null,
+      roles: normalized.roles || [normalized.role || normalized.Role].filter(Boolean),
+      permissions: normalized.permissions || [],
+      isAuthenticated: Boolean(token && userId)
+    } as any);
+  };
+
+  // Seed pre-existing ownerless legacy rows without triggering current creation hooks.
+  // This models records created before tenant enforcement; production writes stay guarded.
+  const seedLegacyRecord = async (tableName: string, record: Record<string, any>) => {
+    const nativeDb = (db as any).backendDB();
+    const transaction = nativeDb.transaction(tableName, 'readwrite');
+    transaction.objectStore(tableName).put(record);
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('LEGACY_FIXTURE_SEED_FAILED'));
+      transaction.onabort = () => reject(transaction.error || new Error('LEGACY_FIXTURE_SEED_ABORTED'));
+    });
+  };
+
+  const setTestSession = (tenantId: string, branchId: string) => {
+    const user = {
+      id: 'user-1',
+      user_id: 'user-1',
+      tenantId,
+      tenant_id: tenantId,
+      branchId,
+      branch_id: branchId,
+      role: 'ADMIN',
+      Role: 'ADMIN'
+    };
+    setSessionFixture(user as any, 'token', 'refresh');
+    useAuthStore.setState({
+      user: user as any,
+      token: 'token',
+      tenantId,
+      branchId,
+      roles: ['ADMIN'],
+      permissions: ['ALL'],
+      isAuthenticated: true
+    });
+  };
+
   beforeEach(async () => {
     vi.clearAllMocks();
 
     // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
-    TokenProvider.setSession({
-      id: 'user-1',
-      tenantId: validTenant,
-      branchId: validBranch,
-      role: 'ADMIN'
-    } as any, 'token', 'refresh');
+    setTestSession(validTenant, validBranch);
 
     await db.products.clear();
     await db.inventoryTransactions.clear();
@@ -61,20 +130,21 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       tenantId: validTenant,
       branchId: validBranch
     } as any);
+    await FIFOEngine.addPurchaseLayer(productId, 100, 10, 'PHASE-C-INITIAL-STOCK', validTenant);
   });
 
   it('1. resetStock without trusted tenant context (forbidden value) throws error', async () => {
-    TokenProvider.setSession({ tenantId: 'TEN-DEV-001', branchId: validBranch } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: 'TEN-DEV-001', branchId: validBranch } as any, 'token', 'refresh');
     await expect(InventoryService.resetStock(productId)).rejects.toThrow(/TRUSTED_TENANT_CONTEXT_REQUIRED/);
   });
 
   it('2. resetStock without trusted branch context (forbidden value) throws error', async () => {
-    TokenProvider.setSession({ tenantId: validTenant, branchId: 'BR-MAIN' } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: validTenant, branchId: 'BR-MAIN' } as any, 'token', 'refresh');
     await expect(InventoryService.resetStock(productId)).rejects.toThrow(/TRUSTED_BRANCH_CONTEXT_REQUIRED/);
   });
 
   it('3. recordMovement without trusted tenant context throws error', async () => {
-    TokenProvider.setSession({ tenantId: 'default', branchId: validBranch } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: 'default', branchId: validBranch } as any, 'token', 'refresh');
     await expect(InventoryService.recordMovement({
       type: 'ADJUSTMENT',
       productId,
@@ -85,7 +155,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('4. recordMovement without trusted branch context throws error', async () => {
-    TokenProvider.setSession({ tenantId: validTenant, branchId: 'branch_default' } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: validTenant, branchId: 'branch_default' } as any, 'token', 'refresh');
     await expect(InventoryService.recordMovement({
       type: 'ADJUSTMENT',
       productId,
@@ -96,7 +166,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('5. adjustStock without trusted tenant context throws error', async () => {
-    TokenProvider.setSession({ tenantId: '', branchId: validBranch } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: '', branchId: validBranch } as any, 'token', 'refresh');
     await expect(InventoryService.adjustStock({
       productId,
       newQty: 50,
@@ -105,7 +175,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('6. adjustStock without trusted branch context throws error', async () => {
-    TokenProvider.setSession({ tenantId: validTenant, branchId: '' } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: validTenant, branchId: '' } as any, 'token', 'refresh');
     await expect(InventoryService.adjustStock({
       productId,
       newQty: 50,
@@ -114,17 +184,17 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('7. TEN-DEV-001 is strictly rejected for all mutations', async () => {
-    TokenProvider.setSession({ tenantId: 'TEN-DEV-001', branchId: validBranch } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: 'TEN-DEV-001', branchId: validBranch } as any, 'token', 'refresh');
     await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/TRUSTED_TENANT_CONTEXT_REQUIRED/);
   });
 
   it('8. BR-MAIN is strictly rejected for all mutations', async () => {
-    TokenProvider.setSession({ tenantId: validTenant, branchId: 'BR-MAIN' } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: validTenant, branchId: 'BR-MAIN' } as any, 'token', 'refresh');
     await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/TRUSTED_BRANCH_CONTEXT_REQUIRED/);
   });
 
   it('11. Valid real tenant and branch allows mutation to succeed', async () => {
-    TokenProvider.setSession({ tenantId: 'REAL-ACC-999', branchId: 'REAL-BR-999' } as any, 'token', 'refresh');
+    setTestSession('REAL-ACC-999', 'REAL-BR-999');
     
     await db.branches.add({
       id: 'REAL-BR-999',
@@ -134,27 +204,36 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       isActive: true
     } as any);
 
-    // Update product to match new tenant for test
-    await db.products.update(productId, { tenantId: 'REAL-ACC-999', branchId: 'REAL-BR-999' });
+    // Seed a separate tenant-owned product; tenant ownership is immutable.
+    const realTenantProductId = 'PROD-REAL-999';
+    await db.products.add({
+      id: realTenantProductId,
+      name: 'Real Tenant Product',
+      stock: 100,
+      tenantId: 'REAL-ACC-999',
+      branchId: 'REAL-BR-999',
+      isActive: true
+    } as any);
     await db.warehouseStock.put({
-      id: `WHS-MAIN-${productId}`,
+      id: `WHS-MAIN-${realTenantProductId}`,
       warehouseId: 'WH-MAIN',
-      productId,
+      productId: realTenantProductId,
       quantity: 100,
       tenantId: 'REAL-ACC-999',
       branchId: 'REAL-BR-999'
     } as any);
     await db.branchInventory.put({
-      id: `INV-REAL-BR-999-${productId}`,
+      id: `INV-REAL-BR-999-${realTenantProductId}`,
       branchId: 'REAL-BR-999',
-      productId,
+      productId: realTenantProductId,
       stockQuantity: 100,
       tenantId: 'REAL-ACC-999'
     } as any);
+    await FIFOEngine.addPurchaseLayer(realTenantProductId, 100, 10, 'REAL-TENANT-INITIAL-STOCK', 'REAL-ACC-999');
 
-    await InventoryService.updateStock(productId, -5);
+    await InventoryService.updateStock(realTenantProductId, -5);
     
-    const product = await db.products.get(productId);
+    const product = await db.products.get(realTenantProductId);
     expect(product?.stock).toBe(95);
 
     const tx = await db.inventoryTransactions.toArray();
@@ -163,7 +242,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('A. tenant A + branch A => accepted', async () => {
-    TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+    setTestSession('TENANT-A', 'BRANCH-A');
     await db.branches.put({
       id: 'BRANCH-A',
       code: 'BRANCH-A',
@@ -200,6 +279,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
   });
 
   it('B. tenant A + branch B belonging to tenant B => rejected (CROSS_TENANT_VIOLATION)', async () => {
+    // Create the foreign branch while Tenant B is active so its ownership is genuine.
+    setTestSession('TENANT-B', 'BRANCH-B');
     await db.branches.put({
       id: 'BRANCH-B',
       code: 'BRANCH-B',
@@ -207,23 +288,42 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       tenantId: 'TENANT-B',
       isActive: true
     } as any);
-    TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-B' } as any, 'token', 'refresh');
 
-    await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
+    // The product belongs to Tenant A, allowing the test to reach branch validation.
+    setTestSession('TENANT-A', 'BRANCH-B');
+    const tenantAProductId = 'PROD-TENANT-A-BRANCH-CHECK';
+    await db.products.put({
+      id: tenantAProductId,
+      name: 'Tenant A Branch Check Product',
+      stock: 50,
+      tenantId: 'TENANT-A',
+      branchId: 'BRANCH-A',
+      isActive: true
+    } as any);
+    await db.warehouseStock.put({
+      id: 'WHS-TENANT-A-BRANCH-CHECK',
+      warehouseId: 'WH-MAIN',
+      productId: tenantAProductId,
+      quantity: 50,
+      tenantId: 'TENANT-A',
+      branchId: 'BRANCH-A'
+    } as any);
+
+    await expect(InventoryService.updateStock(tenantAProductId, 10)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
   });
 
   it('C. missing branchId where required => rejected', async () => {
-    TokenProvider.setSession({ tenantId: validTenant, branchId: '' } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: validTenant, branchId: '' } as any, 'token', 'refresh');
     await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/TRUSTED_BRANCH_CONTEXT_REQUIRED/);
   });
 
   it('D. unknown/unbound branch => rejected', async () => {
-    TokenProvider.setSession({ tenantId: validTenant, branchId: 'UNKNOWN-BRANCH-999' } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: validTenant, branchId: 'UNKNOWN-BRANCH-999' } as any, 'token', 'refresh');
     await expect(InventoryService.updateStock(productId, 10)).rejects.toThrow(/CROSS_TENANT_VIOLATION/);
   });
 
   it('E. existing valid inventory mutation behavior remains unchanged', async () => {
-    TokenProvider.setSession({ tenantId: validTenant, branchId: validBranch } as any, 'token', 'refresh');
+    setSessionFixture({ tenantId: validTenant, branchId: validBranch } as any, 'token', 'refresh');
     await InventoryService.updateStock(productId, -10);
     const prod = await db.products.get(productId);
     expect(prod?.stock).toBe(90);
@@ -231,7 +331,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
   describe('Central Tenant Isolation #2: Product & Warehouse Boundaries', () => {
     it('A. tenant A + product A + warehouse A => mutation succeeds', async () => {
-      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      setTestSession('TENANT-A', 'BRANCH-A');
       await db.branches.put({
         id: 'BRANCH-A',
         code: 'BRANCH-A',
@@ -271,7 +371,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('B. tenant A + product B belonging to tenant B => mutation is rejected with CROSS_TENANT_VIOLATION', async () => {
-      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      setTestSession('TENANT-A', 'BRANCH-A');
       await db.products.put({
         id: 'PROD-B-FOREIGN',
         name: 'Product B Foreign',
@@ -287,7 +387,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('C. tenant A + warehouse context belonging to tenant B => mutation is rejected with CROSS_TENANT_VIOLATION', async () => {
-      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      setTestSession('TENANT-A', 'BRANCH-A');
       await db.branches.put({
         id: 'BRANCH-A',
         code: 'BRANCH-A',
@@ -320,7 +420,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('D. unknown/unbound product or warehouse => fail closed', async () => {
-      TokenProvider.setSession({ tenantId: 'TENANT-A', branchId: 'BRANCH-A' } as any, 'token', 'refresh');
+      setTestSession('TENANT-A', 'BRANCH-A');
       await db.branches.put({
         id: 'BRANCH-A',
         code: 'BRANCH-A',
@@ -361,7 +461,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('E. existing valid tenant/branch/product/warehouse mutation remains unchanged', async () => {
-      TokenProvider.setSession({ tenantId: validTenant, branchId: validBranch } as any, 'token', 'refresh');
+      setSessionFixture({ tenantId: validTenant, branchId: validBranch } as any, 'token', 'refresh');
       await InventoryService.updateStock(productId, -5, { warehouseId: 'WH-MAIN' });
       const prod = await db.products.get(productId);
       expect(prod?.stock).toBe(95);
@@ -378,69 +478,50 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     const productB = 'PROD-READ-B';
 
     beforeEach(async () => {
-      // Seed Product A for Tenant A
+      // Clean both tenant partitions using their own active contexts.
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.priceHistory.clear();
+      await db.invoices.clear();
+      setSessionFixture({ tenantId: tenantB, branchId: 'BR-B' } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.priceHistory.clear();
+      await db.invoices.clear();
+
+      // Seed Tenant A records only while Tenant A is active.
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
       await db.products.put({
-        id: productA,
-        name: 'Product A',
-        price: 100,
-        stock: 50,
-        tenantId: tenantA,
-        isActive: true
+        id: productA, name: 'Product A', price: 100, stock: 50,
+        tenantId: tenantA, isActive: true
+      } as any);
+      await db.priceHistory.put({
+        id: 'PH-A-1', productId: productA, name: 'Product A',
+        partnerId: 'PARTNER-A', Price: 95, date: '2026-01-01', tenantId: tenantA
+      } as any);
+      await db.invoices.put({
+        id: 'INV-PUR-A-1', type: 'PURCHASE', tenantId: tenantA,
+        date: '2026-01-10', items: [{ productId: productA, unitPrice: 90, quantity: 10 }]
       } as any);
 
-      // Seed Product B for Tenant B
+      // Seed Tenant B records in Tenant B context.
+      setSessionFixture({ tenantId: tenantB, branchId: 'BR-B' } as any, 'tok', 'ref');
       await db.products.put({
-        id: productB,
-        name: 'Product B',
-        price: 200,
-        stock: 40,
-        tenantId: tenantB,
-        isActive: true
+        id: productB, name: 'Product B', price: 200, stock: 40,
+        tenantId: tenantB, isActive: true
       } as any);
-
-      // Seed Price History for Product A (Tenant A)
       await db.priceHistory.put({
-        id: 'PH-A-1',
-        productId: productA,
-        name: 'Product A',
-        partnerId: 'PARTNER-A',
-        Price: 95,
-        date: '2026-01-01',
-        tenantId: tenantA
+        id: 'PH-B-1', productId: productB, name: 'Product B',
+        partnerId: 'PARTNER-B', Price: 195, date: '2026-01-02', tenantId: tenantB
       } as any);
-
-      // Seed Price History for Product B (Tenant B)
-      await db.priceHistory.put({
-        id: 'PH-B-1',
-        productId: productB,
-        name: 'Product B',
-        partnerId: 'PARTNER-B',
-        Price: 195,
-        date: '2026-01-02',
-        tenantId: tenantB
-      } as any);
-
-      // Seed Purchase Invoice for Product A (Tenant A)
       await db.invoices.put({
-        id: 'INV-PUR-A-1',
-        type: 'PURCHASE',
-        tenantId: tenantA,
-        date: '2026-01-10',
-        items: [{ productId: productA, unitPrice: 90, quantity: 10 }]
+        id: 'INV-PUR-B-1', type: 'PURCHASE', tenantId: tenantB,
+        date: '2026-01-12', items: [{ productId: productB, unitPrice: 180, quantity: 5 }]
       } as any);
-
-      // Seed Purchase Invoice for Product B (Tenant B)
-      await db.invoices.put({
-        id: 'INV-PUR-B-1',
-        type: 'PURCHASE',
-        tenantId: tenantB,
-        date: '2026-01-12',
-        items: [{ productId: productB, unitPrice: 180, quantity: 5 }]
-      } as any);
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
     });
 
     it('A. Tenant A requests history for Product A belonging to Tenant A => existing records are returned', async () => {
-      TokenProvider.setSession({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
 
       const priceHistory = await ProductRepository.getPriceHistory(productA);
       expect(priceHistory.length).toBeGreaterThan(0);
@@ -452,7 +533,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('B. Tenant A attempts to obtain history for Product B belonging to Tenant B => must not expose Tenant B data', async () => {
-      TokenProvider.setSession({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
 
       const priceHistory = await ProductRepository.getPriceHistory(productB);
       expect(priceHistory).toEqual([]);
@@ -463,18 +544,18 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
     it('C. Tenant context missing or untrusted where required => returns safe empty array', async () => {
       // 1. Missing tenant context
-      TokenProvider.setSession({ tenantId: undefined, branchId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined, branchId: undefined } as any, 'tok', 'ref');
       expect(await ProductRepository.getPriceHistory(productA)).toEqual([]);
       expect(await ProductRepository.getPurchaseHistory(productA)).toEqual([]);
 
       // 2. Forbidden / untrusted tenant context
-      TokenProvider.setSession({ tenantId: 'TEN-DEV-001', branchId: 'BR-A' } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: 'TEN-DEV-001', branchId: 'BR-A' } as any, 'tok', 'ref');
       expect(await ProductRepository.getPriceHistory(productA)).toEqual([]);
       expect(await ProductRepository.getPurchaseHistory(productA)).toEqual([]);
     });
 
     it('D. Existing valid callers and behavior remain unchanged', async () => {
-      TokenProvider.setSession({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
 
       // Caller: InventoryService.getProductDetails
       const details = await InventoryService.getProductDetails(productA);
@@ -486,7 +567,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('E. Cross-verify both getPriceHistory and getPurchaseHistory enforce tenant boundaries', async () => {
-      TokenProvider.setSession({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA, branchId: 'BR-A' } as any, 'tok', 'ref');
 
       // Directly verify both methods for Product A (authorized)
       const pricesA = await ProductRepository.getPriceHistory(productA, 10);
@@ -509,6 +590,15 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     const productUnbound = 'PROD-SEC-UNBOUND';
 
     beforeEach(async () => {
+      // Reset both tenant partitions so repeated tests cannot inherit foreign ownership.
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.priceHistory.clear();
+      setSessionFixture({ tenantId: tenantB } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.priceHistory.clear();
+
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
       await db.products.put({
         id: productA,
         name: 'Sec Product A',
@@ -516,12 +606,11 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         isActive: true
       } as any);
 
-      await db.products.put({
+      await seedLegacyRecord('products', {
         id: productUnbound,
         name: 'Sec Product Unbound',
-        // No tenantId
         isActive: true
-      } as any);
+      });
 
       await db.priceHistory.put({
         id: 'PH-SEC-A-1',
@@ -533,68 +622,68 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('A. Authoritative session resolution: Session tenant is used even if caller passes different tenantId', async () => {
-      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
       // Caller passes tenantB, but session is tenantA. Should return tenantA data.
       const history = await ProductRepository.getPriceHistory(productA, 5, tenantB);
       expect(history).toEqual([]); // Should be rejected because tenantB (caller) != tenantA (session)
     });
 
     it('B. Tenant ID conflict (Session != Caller) => reject', async () => {
-      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
       await expect(ProductRepository.getPriceHistory(productA, 5, tenantB)).resolves.toEqual([]);
     });
 
     it('C. Fail-closed for unbound products (product has no tenantId)', async () => {
-      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
       const history = await ProductRepository.getPriceHistory(productUnbound);
       expect(history).toEqual([]);
     });
 
     it('D. Fail-closed for cross-tenant product access', async () => {
-      TokenProvider.setSession({ tenantId: tenantB } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantB } as any, 'tok', 'ref');
       const history = await ProductRepository.getPriceHistory(productA);
       expect(history).toEqual([]);
     });
 
     it('E. Forbidden tenants are strictly rejected', async () => {
-      TokenProvider.setSession({ tenantId: 'TEN-DEV-001' } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: 'TEN-DEV-001' } as any, 'tok', 'ref');
       const history = await ProductRepository.getPriceHistory(productA);
       expect(history).toEqual([]);
     });
 
     it('F. PriceHistoryRepository.record throws on conflict', async () => {
-      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
       await expect(PriceHistoryRepository.record(productA, 'Test', 'P1', 10, '2026-01-01', tenantB))
         .rejects.toThrow(/TENANT_CONFLICT/);
     });
 
     it('G. Backward compatibility: if session is empty, caller tenant is used', async () => {
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       // Update: Security Fix #5 now rejects even if session is empty but tenantId is passed
       await expect(ProductRepository.getPriceHistory(productA, 5, tenantA)).resolves.toEqual([]);
     });
 
     it('H. Security Fix #5: Missing session tenant with caller tenant => reject', async () => {
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       const history = await ProductRepository.getPriceHistory(productA, 5, tenantA);
       expect(history).toEqual([]);
     });
 
     it('I. Security Fix #5: Conflict handling (Session A, Caller B) => reject', async () => {
-      TokenProvider.setSession({ tenantId: tenantA } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantA } as any, 'tok', 'ref');
       const history = await ProductRepository.getPriceHistory(productA, 5, tenantB);
       expect(history).toEqual([]);
     });
 
     it('J. Security Fix #5: PriceHistoryRepository.record rejected when session is missing', async () => {
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       await expect(PriceHistoryRepository.record(productA, 'Test', 'P1', 10, '2026-01-01', tenantA))
         .rejects.toThrow(/SECURITY_VIOLATION/);
     });
 
     it('K. Security Fix #5: Legitimate internal workflow (sets session) => accepted', async () => {
       // Simulate internal script setting a session
-      TokenProvider.setSession({ tenantId: tenantA } as any, 'mock-tok', 'mock-ref');
+      setSessionFixture({ tenantId: tenantA } as any, 'mock-tok', 'mock-ref');
       const history = await ProductRepository.getPriceHistory(productA);
       expect(history.length).toBeGreaterThan(0);
     });
@@ -615,13 +704,22 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
 
     beforeEach(async () => {
       vi.clearAllMocks();
-      TokenProvider.setSession({ tenantId: undefined, branchId: undefined, user: undefined } as any, '', '');
+      // Clear tenant-owned records under each tenant context; never bypass Dexie guards.
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
       await db.products.clear();
       await db.inventoryTransactions.clear();
       await db.purchasesByItem.clear();
       await db.warehouseStock.clear();
       await db.invoices.clear();
       await db.priceHistory.clear();
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
+      await db.products.clear();
+      await db.inventoryTransactions.clear();
+      await db.purchasesByItem.clear();
+      await db.warehouseStock.clear();
+      await db.invoices.clear();
+      await db.priceHistory.clear();
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
 
       const now = new Date();
       const expirySoon = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000).toISOString(); // 10 days
@@ -662,7 +760,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         is_active: true
       } as any);
 
-      // Seed Tenant B Products (with matching overlapping barcode)
+      // Seed Tenant B Products (with matching overlapping barcode) in Tenant B context.
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       await db.products.put({
         id: productB1,
         name: 'Ibuprofen 400mg',
@@ -680,8 +779,10 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         is_active: true
       } as any);
 
-      // Seed Unbound Product (no tenantId)
-      await db.products.put({
+      // Return to Tenant A to seed the intentionally unbound legacy row and Alpha data.
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
+      // Seed a pre-existing ownerless legacy product outside current Dexie creation hooks.
+      await seedLegacyRecord('products', {
         id: productUnbound,
         name: 'Unbound Legacy Aspirin',
         barcode: 'BAR-UNBOUND',
@@ -692,7 +793,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         ExpiryDate: expirySoon,
         Is_Active: true,
         is_active: true
-      } as any);
+      });
 
       // Seed Inventory Transactions for productA1:
       // Valid Tenant Alpha transactions (+20, +30)
@@ -712,7 +813,8 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         TransactionType: 'PURCHASE'
       } as any);
 
-      // Foreign Tenant Beta transaction (+100) referencing productA1
+      // Foreign Tenant Beta transaction (+100) referencing productA1.
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       await db.inventoryTransactions.put({
         id: 'ITX-B-1',
         productId: productA1,
@@ -721,13 +823,14 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         TransactionType: 'PURCHASE'
       } as any);
 
-      // Unbound transaction (+50) referencing productA1 without tenantId
-      await db.inventoryTransactions.put({
+      // Return to Tenant Alpha; preserve the ownerless legacy transaction as-is.
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
+      await seedLegacyRecord('inventoryTransactions', {
         id: 'ITX-UNBOUND-1',
         productId: productA1,
         QuantityChange: 50,
         TransactionType: 'ADJUSTMENT'
-      } as any);
+      });
 
       // Seed purchasesByItem for productA1:
       await db.purchasesByItem.put({
@@ -739,6 +842,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         tenantId: tenantAlpha
       } as any);
 
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       await db.purchasesByItem.put({
         id: 'PBI-B-1',
         productId: productA1,
@@ -748,18 +852,19 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
         tenantId: tenantBeta
       } as any);
 
-      await db.purchasesByItem.put({
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
+      await seedLegacyRecord('purchasesByItem', {
         id: 'PBI-UNBOUND-1',
         productId: productA1,
         unitCost: 888.0,
         supplierId: 'SUP-ROGUE',
         supplierName: 'Rogue Supplier'
-      } as any);
+      });
     });
 
     // 1. getAll
     it('Fix 6B.1: getAll returns only same-tenant active products for authenticated session', async () => {
-      TokenProvider.setSession({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
       const products = await ProductRepository.getAll();
       expect(products).toHaveLength(2);
       expect(products.map(p => p.id)).toEqual(expect.arrayContaining([productA1, productA2]));
@@ -767,7 +872,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('Fix 6B.2: getAll cross-tenant denial (Tenant Beta sees only Tenant Beta products)', async () => {
-      TokenProvider.setSession({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       const products = await ProductRepository.getAll();
       expect(products).toHaveLength(1);
       expect(products[0].id).toBe(productB1);
@@ -775,22 +880,22 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
     });
 
     it('Fix 6B.3: getAll fails closed on missing session or conflicting tenantId', async () => {
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       expect(await ProductRepository.getAll()).toEqual([]);
 
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       expect(await ProductRepository.getAll({ tenantId: tenantBeta })).toEqual([]);
     });
 
     it('Fix 6B.4: getAll excludes unbound products', async () => {
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       const products = await ProductRepository.getAll();
       expect(products.some(p => p.id === productUnbound)).toBe(false);
     });
 
     // 2. getById
     it('Fix 6B.5: getById returns product when session matches, fails closed otherwise', async () => {
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       const prod = await ProductRepository.getById(productA1);
       expect(prod?.id).toBe(productA1);
 
@@ -804,20 +909,20 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       expect(await ProductRepository.getById(productUnbound)).toBeUndefined();
 
       // Missing session
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       expect(await ProductRepository.getById(productA1)).toBeUndefined();
     });
 
     // 3. getByBarcode
     it('Fix 6B.6: getByBarcode resolves correct tenant record on barcode collision', async () => {
       // Tenant Alpha lookup
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       const prodA = await ProductRepository.getByBarcode(sharedBarcode);
       expect(prodA?.id).toBe(productA1);
       expect(prodA?.tenantId).toBe(tenantAlpha);
 
       // Tenant Beta lookup
-      TokenProvider.setSession({ tenantId: tenantBeta } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantBeta } as any, 'tok', 'ref');
       const prodB = await ProductRepository.getByBarcode(sharedBarcode);
       expect(prodB?.id).toBe(productB1);
       expect(prodB?.tenantId).toBe(tenantBeta);
@@ -826,20 +931,20 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       expect(await ProductRepository.getByBarcode('BAR-A-PARA')).toBeUndefined();
 
       // Conflicting tenant
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       expect(await ProductRepository.getByBarcode(sharedBarcode, tenantBeta)).toBeUndefined();
 
       // Unbound barcode
       expect(await ProductRepository.getByBarcode('BAR-UNBOUND')).toBeUndefined();
 
       // Missing session
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       expect(await ProductRepository.getByBarcode(sharedBarcode)).toBeUndefined();
     });
 
     // 4. search
     it('Fix 6B.7: search returns matches strictly within session tenant context', async () => {
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       const results = await ProductRepository.search('500mg');
       expect(results).toHaveLength(2);
       expect(results.every(p => p.tenantId === tenantAlpha)).toBe(true);
@@ -854,35 +959,35 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       expect(await ProductRepository.search('Aspirin')).toHaveLength(0);
 
       // Missing session
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       expect(await ProductRepository.search('Amoxicillin')).toHaveLength(0);
     });
 
     // 5. calculateCurrentBalance
     it('Fix 6B.8: calculateCurrentBalance sums valid tenant transactions and excludes foreign & unbound', async () => {
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       // ITX-A-1 (+20) + ITX-A-2 (+30) = 50. Foreign (+100) and unbound (+50) excluded.
       expect(await ProductRepository.calculateCurrentBalance(productA1)).toBe(50);
 
       // Cross-tenant calculation returns 0
-      TokenProvider.setSession({ tenantId: tenantBeta } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantBeta } as any, 'tok', 'ref');
       expect(await ProductRepository.calculateCurrentBalance(productA1)).toBe(0);
 
       // Conflicting tenant returns 0
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       expect(await ProductRepository.calculateCurrentBalance(productA1, tenantBeta)).toBe(0);
 
       // Unbound product returns 0
       expect(await ProductRepository.calculateCurrentBalance(productUnbound)).toBe(0);
 
       // Missing session returns 0
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       expect(await ProductRepository.calculateCurrentBalance(productA1)).toBe(0);
     });
 
     // 6. getItemAutoFillDetails
     it('Fix 6B.9: getItemAutoFillDetails uses same-tenant purchases without foreign or unbound leak', async () => {
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       const details = await ProductRepository.getItemAutoFillDetails(productA1);
       expect(details).toBeDefined();
       expect(details?.lastPrice).toBe(22.0); // From PBI-A-1, NOT 999.0 (Beta) or 888.0 (Unbound)
@@ -890,48 +995,48 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       expect(details?.supplierName).toBe('PharmaSupply Alpha');
 
       // Cross-tenant denial
-      TokenProvider.setSession({ tenantId: tenantBeta } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantBeta } as any, 'tok', 'ref');
       expect(await ProductRepository.getItemAutoFillDetails(productA1)).toBeNull();
 
       // Conflicting tenant
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       expect(await ProductRepository.getItemAutoFillDetails(productA1, tenantBeta)).toBeNull();
 
       // Unbound product
       expect(await ProductRepository.getItemAutoFillDetails(productUnbound)).toBeNull();
 
       // Missing session
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       expect(await ProductRepository.getItemAutoFillDetails(productA1)).toBeNull();
     });
 
     // 7. getExpiringSoon
     it('Fix 6B.10: getExpiringSoon returns only same-tenant products expiring within days', async () => {
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       const expiring = await ProductRepository.getExpiringSoon(30);
       expect(expiring).toHaveLength(1);
       expect(expiring[0].id).toBe(productA1);
       expect(expiring[0].tenantId).toBe(tenantAlpha);
 
       // Tenant Beta
-      TokenProvider.setSession({ tenantId: tenantBeta } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantBeta } as any, 'tok', 'ref');
       const expiringBeta = await ProductRepository.getExpiringSoon(30);
       expect(expiringBeta).toHaveLength(1);
       expect(expiringBeta[0].id).toBe(productB1);
       expect(expiringBeta[0].tenantId).toBe(tenantBeta);
 
       // Conflicting tenant
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       expect(await ProductRepository.getExpiringSoon(30, tenantBeta)).toEqual([]);
 
       // Missing session
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       expect(await ProductRepository.getExpiringSoon(30)).toEqual([]);
     });
 
     // 8. Write paths: save and delete
     it('Fix 6B.11: save and delete enforce tenant boundaries and avoid orphaned products', async () => {
-      TokenProvider.setSession({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha, branchId: branchAlpha } as any, 'tok', 'ref');
       const newProdId = 'PROD-NEW-WRITE';
       await ProductRepository.save({
         id: newProdId,
@@ -946,7 +1051,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       expect(saved?.tenantId).toBe(tenantAlpha);
 
       // Save without session throws CANNOT_SAVE
-      TokenProvider.setSession({ tenantId: undefined } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: undefined } as any, 'tok', 'ref');
       await expect(ProductRepository.save({
         id: 'PROD-NO-SESS',
         name: 'No Sess',
@@ -955,7 +1060,7 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       } as any)).rejects.toThrow(/CANNOT_SAVE/);
 
       // Save with conflicting tenant throws CANNOT_SAVE
-      TokenProvider.setSession({ tenantId: tenantAlpha } as any, 'tok', 'ref');
+      setSessionFixture({ tenantId: tenantAlpha } as any, 'tok', 'ref');
       await expect(ProductRepository.save({
         id: 'PROD-CONF-SESS',
         name: 'Conf Sess',
@@ -969,8 +1074,9 @@ describe('P0 Hotfix: Inventory Tenant/Branch Isolation Tests', () => {
       const deletedProd = await db.products.get(productA2);
       expect(deletedProd?.is_active).toBe(false);
 
-      // Delete cross-tenant product refused
+      // Delete cross-tenant product refused; verify it from its owning tenant context.
       await ProductRepository.delete(productB1);
+      setSessionFixture({ tenantId: tenantBeta, branchId: branchBeta } as any, 'tok', 'ref');
       const foreignProd = await db.products.get(productB1);
       expect(foreignProd?.is_active).not.toBe(false);
     });

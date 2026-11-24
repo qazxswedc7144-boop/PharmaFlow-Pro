@@ -1,8 +1,12 @@
 name: Run Tests
 
+concurrency:
+  group: run-tests-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 on:
   push:
-    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state ]
+    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state, phase-c/omitted-test-execution ]
   pull_request:
     branches: [ main, fix/sync-outbox-ownership-phase3 ]
   workflow_dispatch:
@@ -248,3 +252,85 @@ jobs:
         run: npx vitest run server/tests/voucher-allocation-posting.integration.test.ts --reporter=verbose --maxWorkers=1
         env:
           NODE_OPTIONS: "--max-old-space-size=5120"
+
+  phase-c-omitted-tests:
+    name: Phase C - 17 previously omitted test files
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/pharmaflow_ci?schema=public
+      JWT_SECRET: ci-only-access-secret-32-characters-minimum
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-32-characters-minimum
+      ENCRYPTION_KEY: ci-only-encryption-key-32-characters-minimum
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install exact locked dependencies
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Execute all 17 omitted test files independently
+        shell: bash
+        run: |
+          set +e
+          mkdir -p phase-c-logs
+          failed=0
+          : > phase-c-logs/summary.txt
+          TEST_FILES=(
+            app/applet/server/tests/security-patch-2.test.ts
+            server/tests/idempotency-middleware-security.test.ts
+            server/tests/p0-hotfix-inventory-isolation.test.ts
+            server/tests/p0-hotfix-metrics-backup.test.ts
+            server/tests/p0-hotfix-validation-fifo-isolation.test.ts
+            server/tests/prisma-recovery.test.ts
+            server/tests/purchase-lifecycle-financial-integrity.test.ts
+            server/tests/purchase-phase1-contract-integrity.test.ts
+            server/tests/purchase-phase2-accounting-integrity.test.ts
+            server/tests/purchase-phase2-reversal-precision.test.ts
+            server/tests/purchase-total-enforcement.test.ts
+            server/tests/supplier-payment-financial-integrity.test.ts
+            server/tests/sync-cross-tenant-security.test.ts
+            src/features/catalog/utils/productApplicationPermission.test.ts
+            src/features/inventory/services/UnifiedInventoryMutationEngine.purchase-transaction.test.ts
+            src/features/inventory/services/fifoEngine.transactional.test.ts
+            src/features/sales/services/salesDraftRecovery.service.test.ts
+          )
+
+          for file in "${TEST_FILES[@]}"; do
+            safe_name="${file//\//__}"
+            log="phase-c-logs/${safe_name}.log"
+            echo "===== START: $file ====="
+            npx vitest run --config vitest.phase-c.config.ts --reporter=verbose --maxWorkers=1 "$file" 2>&1 | tee "$log"
+            status=${PIPESTATUS[0]}
+            if [ "$status" -eq 0 ]; then
+              result="PASS"
+            else
+              result="FAIL (exit $status)"
+              failed=$((failed + 1))
+            fi
+            echo "$result | $file" | tee -a phase-c-logs/summary.txt
+            echo "===== END: $file | $result ====="
+          done
+
+          echo "Failed files: $failed / ${#TEST_FILES[@]}" | tee -a phase-c-logs/summary.txt
+          exit "$failed"
+
+      - name: Upload Phase C per-file logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-c-omitted-test-logs
+          path: phase-c-logs/
+          if-no-files-found: warn

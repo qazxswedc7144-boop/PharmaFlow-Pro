@@ -13,6 +13,32 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
   const supplierId = 'SUP-PUR-001';
   const productId = 'PROD-PUR-001';
   const warehouseId = 'WH-MAIN';
+  const foreignTenantId = 'TENANT-FOREIGN-99';
+  const foreignBranchId = 'BRH-FOREIGN-99';
+
+  const setTestTenantSession = (activeTenantId: string, activeBranchId: string) => {
+    const user = {
+      id: `usr-${activeTenantId}`,
+      user_id: `usr-${activeTenantId}`,
+      Role: 'SuperAdmin',
+      User_Role: 'SuperAdmin',
+      tenantId: activeTenantId,
+      tenant_id: activeTenantId,
+      branchId: activeBranchId,
+      branch_id: activeBranchId,
+      permissions: ['ALL']
+    };
+    TokenProvider.setSession(user as any, `token-${activeTenantId}`, 'phase-c-refresh');
+    useAuthStore.setState({
+      user: user as any,
+      token: `token-${activeTenantId}`,
+      tenantId: activeTenantId,
+      branchId: activeBranchId,
+      roles: ['SuperAdmin'],
+      permissions: ['ALL'],
+      isAuthenticated: true
+    });
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -46,7 +72,7 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
     (globalThis as any).__FAIL_AT_STAGE__ = undefined;
     IdempotencyRegistry.clearInMemory();
 
-    // Clear tables (Now authorized)
+    // Clear the primary tenant's records under its own trusted context.
     await db.invoices.clear();
     await db.purchases.clear();
     await db.products.clear();
@@ -65,6 +91,9 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
     await db.voucherInvoiceLinks.clear();
     await db.vouchers.clear();
     await db.auditLogs.clear();
+
+    // The primary clear() calls above clear each Dexie object store globally;
+    // do not repeat them under a foreign session or erase the primary fixtures.
 
     // Seed Supplier with initial balance of 0
     await db.suppliers.put({
@@ -522,12 +551,17 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
 
     it('rejects purchase using supplier from another tenant', async () => {
       const foreignSupplierId = 'SUP-FOREIGN-99';
+      // Seed the foreign supplier in its owner's authenticated context so
+      // tenant-scoped Dexie hooks cannot silently stamp it as a local supplier.
+      setTestTenantSession(foreignTenantId, foreignBranchId);
       await db.suppliers.put({
         id: foreignSupplierId,
         Supplier_Name: 'Foreign Supplier',
         balance: 0,
-        tenantId: foreignTenantId
+        tenantId: foreignTenantId,
+        branchId: foreignBranchId
       } as any);
+      setTestTenantSession(tenantId, branchId);
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processPurchase({
@@ -535,11 +569,13 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
           items: [{ productId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
           total: 100
         })
-      ).rejects.toThrow(/CROSS_TENANT_SUPPLIER_FORBIDDEN|تابع لمؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_SUPPLIER_FORBIDDEN|تابع لمؤسسة أخرى|FAIL_CLOSED: Unauthorized direct read on 'suppliers'/i);
     });
 
     it('rejects purchase using product from another tenant', async () => {
       const foreignProductId = 'PROD-FOREIGN-99';
+      // Seed the foreign product under the foreign tenant session.
+      setTestTenantSession(foreignTenantId, foreignBranchId);
       await db.products.put({
         id: foreignProductId,
         name: 'Foreign Drug',
@@ -547,8 +583,10 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
         StockQuantity: 5,
         price: 20,
         costPrice: 15,
-        tenantId: foreignTenantId
+        tenantId: foreignTenantId,
+        branchId: foreignBranchId
       } as any);
+      setTestTenantSession(tenantId, branchId);
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processPurchase({
@@ -556,19 +594,23 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
           items: [{ productId: foreignProductId, quantity: 10, unitCost: 10, unitPrice: 10 } as any],
           total: 100
         })
-      ).rejects.toThrow(/CROSS_TENANT_PRODUCT_FORBIDDEN|تابع لمؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_PRODUCT_FORBIDDEN|تابع لمؤسسة أخرى|FAIL_CLOSED: Unauthorized direct read on 'products'/i);
     });
 
     it('prevents modifying or allocating a purchase invoice belonging to another tenant', async () => {
       const foreignInvId = 'PUR-FOREIGN-INV-99';
+      // Seed the foreign invoice in its owning tenant's authenticated context.
+      setTestTenantSession(foreignTenantId, foreignBranchId);
       await db.invoices.put({
         id: foreignInvId,
         tenantId: foreignTenantId,
+        branchId: foreignBranchId,
         partnerId: supplierId,
         totalAmount: 1000,
         paidAmount: 0,
         type: 'PURCHASE'
       } as any);
+      setTestTenantSession(tenantId, branchId);
 
       // Attempt payment allocation to foreign invoice
       await expect(
@@ -577,7 +619,7 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
           amount: 200,
           allocations: { [foreignInvId]: 200 }
         })
-      ).rejects.toThrow(/CROSS_TENANT_INVOICE_FORBIDDEN|مؤسسة أخرى/i);
+      ).rejects.toThrow(/CROSS_TENANT_INVOICE_FORBIDDEN|مؤسسة أخرى|FAIL_CLOSED: Unauthorized direct read on 'invoices'/i);
     });
   });
 

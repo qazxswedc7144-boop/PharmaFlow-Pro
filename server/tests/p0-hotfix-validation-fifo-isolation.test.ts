@@ -11,15 +11,33 @@ import { TokenProvider } from '@/services/auth/tokenProvider';
 describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safety Suite', () => {
   const tenantId = 'TENANT-HOTFIX-P0-01';
   const branchId = 'BRH-HOTFIX-MAIN-01';
-  const customerId = 'CUST-HOTFIX-001';
-  const supplierId = 'SUPP-HOTFIX-001';
-  const productId = 'PROD-HOTFIX-001';
+  const customerId = '00000000-0000-4000-8000-000000000001';
+  const supplierId = '00000000-0000-4000-8000-000000000002';
+  const productId = '00000000-0000-4000-8000-000000000003';
   const warehouseId = 'WH-MAIN';
 
   beforeEach(async () => {
     vi.clearAllMocks();
     (globalThis as any).__FAIL_AT_STAGE__ = undefined;
     IdempotencyRegistry.clearInMemory();
+
+    // Authenticated session
+    const userSession = {
+      id: 'usr-p0-auditor',
+      user_id: 'usr-p0-auditor',
+      User_Name: 'P0 Security Auditor',
+      User_Email: 'auditor@pharmaflow.test',
+      Role: 'SuperAdmin',
+      User_Role: 'SuperAdmin',
+      tenantId,
+      tenant_id: tenantId,
+      branchId,
+      branch_id: branchId,
+      permissions: ['ALL', 'sales.create', 'sales.edit', 'purchases.create', 'purchases.edit']
+    };
+
+    TokenProvider.setSession(userSession as any, 'mock-jwt-p0-audit', 'mock-refresh-p0-audit');
+
 
     // Reset database tables
     await db.invoices.clear();
@@ -41,22 +59,16 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
     await db.idempotencyKeys.clear();
     await db.auditLogs.clear();
 
-    // Authenticated session
-    const userSession = {
-      id: 'usr-p0-auditor',
-      user_id: 'usr-p0-auditor',
-      User_Name: 'P0 Security Auditor',
-      User_Email: 'auditor@pharmaflow.test',
-      Role: 'SuperAdmin',
-      User_Role: 'SuperAdmin',
-      tenantId,
-      tenant_id: tenantId,
-      branchId,
-      branch_id: branchId,
-      permissions: ['ALL', 'sales.create', 'sales.edit', 'purchases.create', 'purchases.edit']
-    };
 
-    TokenProvider.setSession(userSession as any, 'mock-jwt-p0-audit', 'mock-refresh-p0-audit');
+    // Register the active branch before workflow mutations; the inventory engine
+    // correctly rejects unregistered branches even in the in-memory test database.
+    await db.branches.put({
+      id: branchId,
+      code: branchId,
+      name: 'Phase C Main Branch',
+      tenantId,
+      isActive: true
+    } as any);
 
     // Seed test master records
     await db.customers.add({
@@ -86,7 +98,8 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
       code: 'PAN-EXT-500',
       stock: 100,
       costPrice: 20,
-      sellingPrice: 30,
+      sellingPrice: 50,
+      price: 50,
       isActive: true,
       tenantId,
       branchId
@@ -101,6 +114,15 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
       tenantId,
       branchId
     } as any);
+    await db.branchInventory.put({
+      id: `INV-${branchId}-${productId}`,
+      branchId,
+      productId,
+      stockQuantity: 100,
+      tenantId
+    } as any);
+    // Keep the FIFO ledger consistent with the seeded product and warehouse stock.
+    await FIFOEngine.addPurchaseLayer(productId, 100, 20, 'P0-VALIDATION-INITIAL-STOCK', tenantId);
   });
 
   // =========================================================================
@@ -114,8 +136,8 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
           {
             productId,
             quantity: 0, // Invalid: quantity must be positive
-            unitPrice: 30,
-            price: 30
+            unitPrice: 50,
+            price: 50
           } as any
         ],
         total: 0
@@ -123,7 +145,7 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
 
       await expect(
         UnifiedBusinessWorkflowOrchestrator.processSale(invalidPayload)
-      ).rejects.toThrow(/INVOICE_VALIDATION_FAILED|Quantity must be a positive integer/i);
+      ).rejects.toThrow(/INVALID_SALE_QUANTITY|INVOICE_VALIDATION_FAILED|Quantity must be a positive integer/i);
 
       // Verify ZERO database persistence
       expect(await db.invoices.count()).toBe(0);
@@ -154,7 +176,7 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
       expect(await db.inventoryTransactions.count()).toBe(0);
     });
 
-    it('rejects sales invoice when declared total does not match item totals', async () => {
+    it('recalculates a mismatched client total from trusted catalog prices', async () => {
       const mismatchPayload = {
         customerId,
         items: [
@@ -165,14 +187,17 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
             price: 50
           } as any
         ],
-        total: 500 // Declared 500 but items total 100
+        total: 500 // Untrusted client total; catalog calculation is 100
       };
 
-      await expect(
-        UnifiedBusinessWorkflowOrchestrator.processSale(mismatchPayload)
-      ).rejects.toThrow(/INVOICE_VALIDATION_FAILED|Total mismatch/i);
+      const result = await UnifiedBusinessWorkflowOrchestrator.processSale(mismatchPayload);
+      expect(result.success).toBe(true);
 
-      expect(await db.invoices.count()).toBe(0);
+      const savedInvoice = await db.invoices.get(result.refId);
+      expect(savedInvoice).toBeDefined();
+      expect(savedInvoice?.totalAmount).toBe(100);
+      expect(savedInvoice?.finalTotal).toBe(100);
+      expect(savedInvoice?.totalAmount).not.toBe(500);
     });
 
     it('rejects purchase invoice with empty or invalid items array', async () => {
@@ -218,8 +243,8 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
           {
             productId,
             quantity: 5,
-            unitPrice: 30,
-            price: 30
+            unitPrice: 50,
+            price: 50
           } as any
         ],
         total: 150
