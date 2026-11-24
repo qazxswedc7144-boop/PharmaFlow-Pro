@@ -13,6 +13,7 @@ export interface CleanupPreviewReport {
     purchases: CleanupPreviewCandidate[];
     vouchers: CleanupPreviewCandidate[];
     journalEntries: CleanupPreviewCandidate[];
+    journalLines: CleanupPreviewCandidate[];
     stockMovements: CleanupPreviewCandidate[];
     customers: CleanupPreviewCandidate[];
     suppliers: CleanupPreviewCandidate[];
@@ -46,9 +47,9 @@ export class ProductionCleanupService {
     if (record.Created_By === 'demo') return 'تم إنشاء السجل بواسطة demo';
 
     if (
-      record.SaleID?.startsWith('TEST-') ||
-      record.purchase_id?.startsWith('TEST-') ||
-      record.invoiceId?.startsWith('TEST-')
+      (typeof record.SaleID === 'string' && record.SaleID.startsWith('TEST-')) ||
+      (typeof record.purchase_id === 'string' && record.purchase_id.startsWith('TEST-')) ||
+      (typeof record.invoiceId === 'string' && record.invoiceId.startsWith('TEST-'))
     ) {
       return 'معرف المستند يبدأ بالبادئة TEST-';
     }
@@ -77,6 +78,7 @@ export class ProductionCleanupService {
       purchases,
       vouchers,
       journalEntries,
+      journalLines,
       stockMovements,
       customers,
       suppliers,
@@ -86,6 +88,7 @@ export class ProductionCleanupService {
       db.purchases.toArray(),
       db.cashFlow.toArray(),
       db.journalEntries.toArray(),
+      db.journalLines.toArray(),
       db.inventoryTransactions.toArray(),
       db.customers.toArray(),
       db.suppliers.toArray(),
@@ -119,6 +122,16 @@ export class ProductionCleanupService {
       return [];
     });
 
+    const candidateJournalEntryIds = new Set(journalCandidates.map(candidate => candidate.id));
+    const journalLineCandidates = journalLines.flatMap(line => {
+      const parentEntryId = line.entryId || line.entry_id;
+      if (!parentEntryId || !candidateJournalEntryIds.has(String(parentEntryId))) return [];
+      return [{
+        id: getRecordId(line.id, line.lineId),
+        reason: `سطر تابع للقيد المرشح ${parentEntryId}`
+      }];
+    });
+
     const stockCandidates = stockMovements.flatMap(record => {
       const directReason = this.getDemoReason(record);
       if (directReason) {
@@ -133,18 +146,23 @@ export class ProductionCleanupService {
       return [];
     });
 
-    const productsLinkedToNonDemoInvoices = products.flatMap(product => {
-      if (!this.isDemo(product)) return [];
+    const linkedProductIds = new Set<string>();
+    for (const product of products) {
+      if (!this.isDemo(product) || !product.id) continue;
       const linkedToSale = realSales.some(sale =>
         Array.isArray(sale.items) && sale.items.some((item: any) => item?.product_id === product.id)
       );
       const linkedToPurchase = realPurchases.some(purchase =>
         Array.isArray(purchase.items) && purchase.items.some((item: any) => item?.product_id === product.id)
       );
-      return linkedToSale || linkedToPurchase
-        ? [{ id: getRecordId(product.id), reason: 'مرتبط بفاتورة غير تجريبية؛ مستبعد من مرشحات المنتجات' }]
-        : [];
-    });
+      if (linkedToSale || linkedToPurchase) linkedProductIds.add(String(product.id));
+    }
+    const productsLinkedToNonDemoInvoices = products
+      .filter(product => linkedProductIds.has(String(product.id)))
+      .map(product => ({
+        id: getRecordId(product.id),
+        reason: 'مرتبط بفاتورة غير تجريبية؛ مستبعد من مرشحات المنتجات'
+      }));
 
     const orphanJournalEntries = journalEntries.flatMap(entry => {
       if (entry.sourceType === 'SALE' && !sales.some(sale => sale.id === entry.sourceId)) {
@@ -176,6 +194,7 @@ export class ProductionCleanupService {
         purchases: demoPurchases.map(record => ({ id: getRecordId(record.id, record.purchase_id), reason: this.getDemoReason(record) || 'مطابق لقواعد البيانات التجريبية' })),
         vouchers: demoVouchers.map(record => ({ id: getRecordId(record.transaction_id), reason: this.getDemoReason(record) || 'مطابق لقواعد البيانات التجريبية' })),
         journalEntries: journalCandidates,
+        journalLines: journalLineCandidates,
         stockMovements: stockCandidates,
         customers: customers.flatMap(record => {
           const reason = this.getDemoReason(record);
@@ -188,7 +207,7 @@ export class ProductionCleanupService {
         products: products.flatMap(record => {
           const reason = this.getDemoReason(record);
           if (!reason) return [];
-          if (productsLinkedToNonDemoInvoices.some(item => item.id === getRecordId(record.id))) return [];
+          if (record.id && linkedProductIds.has(String(record.id))) return [];
           return [{ id: getRecordId(record.id), reason }];
         })
       },
