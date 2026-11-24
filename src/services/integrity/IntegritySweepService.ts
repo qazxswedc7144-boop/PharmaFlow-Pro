@@ -23,10 +23,17 @@ export class IntegritySweepService {
     let isHealthy = true;
     const errors: string[] = [];
 
+    // Generic integrity sweeps are diagnostic-only. Financial, voucher, date,
+    // and stock corrections require domain-specific reviewed workflows.
+    const safeAutoFix = false;
+    if (autoFix) {
+      console.warn('[IntegritySweep] AUTO_FIX_BLOCKED: generic integrity sweeps never mutate business records.');
+    }
+
     try {
       // 1. Validate Journal Balance
       try {
-        const journalBalance = await this.validateJournal(autoFix);
+        const journalBalance = await this.validateJournal(safeAutoFix);
         if (!journalBalance) {
           isHealthy = false;
           errors.push("Journal imbalance detected (Debits != Credits)");
@@ -39,7 +46,7 @@ export class IntegritySweepService {
 
       // 2. Validate Stock Balance
       try {
-        const stockBalance = await this.validateStock(autoFix);
+        const stockBalance = await this.validateStock(safeAutoFix);
         if (!stockBalance) {
           isHealthy = false;
           errors.push("Stock balance mismatch detected (Transactions != StockQuantity)");
@@ -48,7 +55,7 @@ export class IntegritySweepService {
 
       // 3. Validate AR/AP Consistency
       try {
-        const arapConsistency = await this.validateARAP(autoFix);
+        const arapConsistency = await this.validateARAP(safeAutoFix);
         if (!arapConsistency) {
           isHealthy = false;
           errors.push("AR/AP consistency mismatch detected");
@@ -57,7 +64,7 @@ export class IntegritySweepService {
 
       // 4. Validate No Orphan References
       try {
-        const noOrphans = await this.validateOrphans(autoFix);
+        const noOrphans = await this.validateOrphans(safeAutoFix);
         if (!noOrphans) {
           isHealthy = false;
           errors.push("Orphan references detected in transactions");
@@ -66,7 +73,7 @@ export class IntegritySweepService {
 
       // 5. Validate Voucher Consistency
       try {
-        const voucherConsistency = await this.validateVouchers(autoFix);
+        const voucherConsistency = await this.validateVouchers(safeAutoFix);
         if (!voucherConsistency) {
           isHealthy = false;
           errors.push("Voucher allocation inconsistency detected");
@@ -75,7 +82,7 @@ export class IntegritySweepService {
 
       // 6. Validate Date Formats (New)
       try {
-        const datesHealthy = await this.validateDates(autoFix);
+        const datesHealthy = await this.validateDates(safeAutoFix);
         if (!datesHealthy) {
           isHealthy = false;
           errors.push("Malformed date strings detected in records");
