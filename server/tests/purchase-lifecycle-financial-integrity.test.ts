@@ -6,6 +6,7 @@ import { PurchaseRepository } from '../../src/database/repositories/PurchaseRepo
 import { useAuthStore } from '@/store/authStore';
 import { IdempotencyRegistry } from '../../src/core/integrity/idempotencyRegistry';
 import { TokenProvider } from '@/services/auth/tokenProvider';
+import { AccountingEngine } from '../../src/features/accounting/services/AccountingEngine';
 
 describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
   const tenantId = 'TENANT-PUR-PROD-01';
@@ -650,4 +651,66 @@ describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
       lines.forEach(line => expect(line.branchId).toBe(branchId));
     });
   });
+
+  it('keeps transactionUuid journal identities consistent across purchase, retry, and accounting reversal', async () => {
+    const purchaseId = 'PUR-JOURNAL-IDENTITY-001';
+    const transactionUuid = 'TX-JOURNAL-IDENTITY-001';
+    const payload = {
+      id: purchaseId,
+      transactionUuid,
+      supplierId,
+      items: [{ productId, quantity: 10, unitCost: 20, unitPrice: 20 } as any],
+      total: 200
+    };
+
+    const created = await UnifiedBusinessWorkflowOrchestrator.processPurchase(payload);
+    expect(created.success).toBe(true);
+
+    const originalEntry = await db.journalEntries.where('sourceId').equals(created.refId).first();
+    expect(originalEntry).toBeDefined();
+    expect(originalEntry!.id).toBe(`JE-${created.refId}-${transactionUuid}`);
+
+    const originalLines = await db.journalLines.where('entryId').equals(originalEntry!.id).toArray();
+    expect(originalLines).toHaveLength(2);
+    expect(originalLines.every(line =>
+      line.entryId === originalEntry!.id && line.entry_id === originalEntry!.id
+    )).toBe(true);
+
+    // Retry with the same transactionUuid must not duplicate the journal entry or its lines.
+    const replay = await UnifiedBusinessWorkflowOrchestrator.processPurchase(payload);
+    expect(replay.success).toBe(true);
+    expect(replay.refId).toBe(created.refId);
+    expect(await db.journalEntries.where('sourceId').equals(created.refId).count()).toBe(1);
+    expect(await db.journalLines.where('entryId').equals(originalEntry!.id).count()).toBe(2);
+
+    // Exercise the compensating-entry path used when a posted purchase is unposted.
+    await db.safeTransaction('rw', ['journalEntries', 'journalLines', 'accounts'], async (tx: any) => {
+      await AccountingEngine.postInvoice({
+        id: created.refId,
+        type: 'PURCHASE',
+        isReversal: true,
+        transactionUuid: `UNPOST-${transactionUuid}`,
+        tenantId,
+        branchId
+      } as any, undefined, tx);
+    });
+
+    const reversedOriginal = await db.journalEntries.get(originalEntry!.id);
+    expect((reversedOriginal as any)?.reversedBy).toBeDefined();
+
+    const reversalEntry = await db.journalEntries.get((reversedOriginal as any).reversedBy);
+    expect(reversalEntry?.sourceType).toBe('AUTO_REVERSAL');
+    expect((reversalEntry as any)?.reversalOf).toBe(originalEntry!.id);
+
+    const reversalLines = await db.journalLines.where('entryId').equals(reversalEntry!.id).toArray();
+    expect(reversalLines).toHaveLength(2);
+    expect(reversalLines.every(line =>
+      line.entryId === reversalEntry!.id && line.entry_id === reversalEntry!.id
+    )).toBe(true);
+
+    expect(reversalLines.reduce((sum, line) => sum + line.debit, 0)).toBe(200);
+    expect(reversalLines.reduce((sum, line) => sum + line.credit, 0)).toBe(200);
+  });
+
+
 });
