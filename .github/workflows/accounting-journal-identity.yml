@@ -38,6 +38,6 @@ jobs:
           --config vitest.phase-c.config.ts
           --reporter=verbose
           server/tests/purchase-lifecycle-financial-integrity.test.ts
-          -t "keeps transactionUuid journal identities consistent across purchase, retry, and accounting reversal"
+          -t "cash purchase invoice sets paidAmount|creates exact single balanced journal entry|keeps transactionUuid journal identities consistent across purchase, retry, and accounting reversal"
         env:
           NODE_ENV: test
