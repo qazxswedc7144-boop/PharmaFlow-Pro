@@ -299,6 +299,33 @@ describe('PurchaseWorkflow Phase 1 invoice numbering (TDD)', () => {
     expect(edited.updatedAt).not.toBe(original.updatedAt);
   });
 
+  it('preserves a legacy snake-case supplier number when an edit omits the field', async () => {
+    const legacyInvoiceId = 'PUR-LEGACY-SNAKE-SUPPLIER-NUMBER';
+    await db.invoices.put({
+      id: legacyInvoiceId,
+      type: 'PURCHASE',
+      tenantId: TENANT_ID,
+      branchId: BRANCH_ID,
+      invoiceNumber: 'PUR-LEGACY-1',
+      supplier_invoice_number: 'LEGACY-SUP-7788',
+      supplierId: 'SUP-NUMBERING-001',
+      items: [],
+      totalAmount: 0,
+      finalTotal: 0,
+      invoiceStatus: 'DRAFT'
+    } as any);
+
+    const result = await executePurchase({
+      id: legacyInvoiceId,
+      isEdit: true,
+      supplierInvoiceNumber: undefined,
+      items: []
+    });
+
+    expect(result.purchase.invoiceNumber).toBe('PUR-LEGACY-1');
+    expect(result.purchase.supplierInvoiceNumber).toBe('LEGACY-SUP-7788');
+  });
+
   it('T11: keeps the Phase 1 supplier number out of the pre-Phase-2 sync payload', () => {
     const payload = purchaseWorkflow.syncContract.buildPayload({
       refId: 'PUR-NUMBERING-SYNC-001',
