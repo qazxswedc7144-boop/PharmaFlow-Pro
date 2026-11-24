@@ -88,8 +88,8 @@ describe('P0 Hotfix: Validation Enforcement, FIFO Stock Integrity & Tenant Safet
       code: 'PAN-EXT-500',
       stock: 100,
       costPrice: 20,
-      sellingPrice: 30,
-      price: 30,
+      sellingPrice: 50,
+      price: 50,
       isActive: true,
       tenantId,
       branchId
