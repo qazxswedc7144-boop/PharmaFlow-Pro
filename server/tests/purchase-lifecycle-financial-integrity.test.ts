@@ -8,6 +8,21 @@ import { IdempotencyRegistry } from '../../src/core/integrity/idempotencyRegistr
 import { TokenProvider } from '@/services/auth/tokenProvider';
 import { AccountingEngine } from '../../src/features/accounting/services/AccountingEngine';
 
+// These suites validate purchase/payment integrity, not the accounting-period HTTP API.
+// Keep their period state deterministic; closed-period behavior is covered by PeriodLockEngine.test.ts.
+vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
+  AccountingPeriodSyncService: {
+    getPeriods: vi.fn().mockResolvedValue([{
+      id: 'TEST-OPEN-PERIOD',
+      tenantId: 'TEST-TENANT',
+      Start_Date: '1900-01-01T00:00:00.000Z',
+      End_Date: '2200-12-31T23:59:59.999Z',
+      Is_Locked: false,
+    }]),
+    setLocked: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 describe('Purchase Lifecycle Integrity Audit & Verification Suite', () => {
   const tenantId = 'TENANT-PUR-PROD-01';
   const branchId = 'BRH-PUR-MAIN-01';
