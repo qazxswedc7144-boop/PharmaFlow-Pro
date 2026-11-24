@@ -311,7 +311,9 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     // An explicitly supplied empty string still requests the normal auto-number behavior.
     let supplierInvoiceNumber = String(
       input.supplierInvoiceNumber ??
-      (input.isEdit ? existingPurchase?.supplierInvoiceNumber : '') ??
+      (input.isEdit
+        ? existingPurchase?.supplierInvoiceNumber ?? (existingPurchase as any)?.supplier_invoice_number
+        : '') ??
       ''
     ).trim().toUpperCase();
     if (!supplierInvoiceNumber) {
