@@ -16,7 +16,14 @@ const { getCurrentSession } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/services/auth/tokenProvider', () => ({
-  TokenProvider: { getCurrentSession }
+  TokenProvider: {
+    getCurrentSession,
+    getAuthHeaders: vi.fn(() => ({
+      Authorization: 'Bearer manual-journal-test-token',
+      'x-tenant-id': 'TENANT-MANUAL-JOURNAL',
+      'x-branch-id': 'BRANCH-MANUAL-JOURNAL'
+    }))
+  }
 }));
 
 vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
