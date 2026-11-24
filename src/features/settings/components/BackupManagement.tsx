@@ -9,10 +9,10 @@ import {
   FileJson, Lock, Shield, Search, Trash2, AlertCircle,
   Cloud, RefreshCw, Upload
 } from 'lucide-react';
-import { Card, Button, Badge, Modal, Input } from '@/components/shared/SharedUI';
+import { Card, Button, Badge, Modal } from '@/components/shared/SharedUI';
 import { useUI } from '@/contexts/AppContext';
 import { authService } from '@features/auth/services/authService';
-import { ProductionCleanupService } from '@/services/system/ProductionCleanupService';
+import { ProductionCleanupService, type CleanupPreviewReport } from '@/services/system/ProductionCleanupService';
 
 import { localBackupService } from '@/services/integrity/shared/localBackupService';
 import { GoogleDriveService } from '@/services/backup/googleDriveService';
@@ -23,7 +23,7 @@ const BackupManagement: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showCleanupModal, setShowCleanupModal] = useState(false);
-  const [cleanupConfirmText, setCleanupConfirmText] = useState('');
+  const [cleanupPreview, setCleanupPreview] = useState<CleanupPreviewReport | null>(null);
   const { addToast, refreshGlobal } = useUI();
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const user = authService.getCurrentUser();
@@ -378,25 +378,14 @@ const BackupManagement: React.FC = () => {
     }
   };
 
-  const handleExecuteCleanup = async () => {
-    if (cleanupConfirmText !== 'DELETE-DEMO') {
-      addToast('يرجى كتابة رمز التأكيد بشكل صحيح', 'warning');
-      return;
-    }
-
+  const handlePreviewCleanup = async () => {
     setLoading(true);
     try {
-      const result = await ProductionCleanupService.runCleanup();
-      if (result.success) {
-        addToast(result.message, 'success');
-        setShowCleanupModal(false);
-        setCleanupConfirmText('');
-        refreshGlobal();
-      } else {
-        addToast(result.message, 'error');
-      }
+      const report = await ProductionCleanupService.previewCleanup();
+      setCleanupPreview(report);
+      setShowCleanupModal(true);
     } catch (error: any) {
-      addToast(`فشل التنظيف: ${error.message}`, 'error');
+      addToast(`تعذر إعداد معاينة التنظيف: ${error?.message || 'خطأ غير معروف'}`, 'error');
     } finally {
       setLoading(false);
     }
@@ -795,15 +784,16 @@ const BackupManagement: React.FC = () => {
             </div>
             <div>
               <h3 className="text-lg font-black text-red-900">تنظيف البيانات التجريبية (Production Cleanup)</h3>
-              <p className="text-[11px] font-bold text-red-700/70">حذف كافة السجلات التي تم تمييزها كبيانات تجريبية أو اختبارية بأمان.</p>
+              <p className="text-[11px] font-bold text-red-700/70">معاينة السجلات المطابقة لقواعد البيانات التجريبية فقط؛ الحذف معطل لحماية البيانات.</p>
             </div>
           </div>
           <Button 
-            variant="danger" 
-            className="h-14 px-8 !rounded-2xl shadow-xl shadow-red-200 hover:scale-105 transition-all"
-            onClick={() => setShowCleanupModal(true)}
+            variant="secondary" 
+            className="h-14 px-8 !rounded-2xl transition-all"
+            onClick={handlePreviewCleanup}
+            isLoading={loading}
           >
-            بدء عملية التنظيف
+            معاينة المرشحات (Dry Run)
           </Button>
         </div>
         
@@ -823,57 +813,84 @@ const BackupManagement: React.FC = () => {
         </div>
       </Card>
 
-      {/* Cleanup Confirmation Modal */}
+      {/* Read-only Cleanup Preview Modal */}
       <Modal 
         isOpen={showCleanupModal} 
         onClose={() => setShowCleanupModal(false)} 
-        title="تأكيد حذف البيانات التجريبية"
+        title="معاينة السجلات التجريبية (Dry Run)"
       >
-        <div className="space-y-6 py-4 text-right" dir="rtl">
-          <div className="p-6 bg-red-50 border border-red-100 rounded-[28px] flex gap-4">
-            <AlertTriangle className="text-red-600 shrink-0" size={32} />
-            <div className="space-y-2">
-              <h4 className="text-sm font-black text-red-900">تحذير نهائي!</h4>
-              <p className="text-[11px] font-bold text-red-800 leading-relaxed">
-                سيتم حذف جميع الفواتير، السندات، والقيود المحاسبية التي تحمل علامة "تجريبي" أو تبدأ بـ "TEST-". هذه العملية لا يمكن التراجع عنها.
+        {cleanupPreview && (
+          <div className="space-y-4 py-4 text-right" dir="rtl">
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-1">
+              <p className="text-sm font-black text-amber-900">{cleanupPreview.notice}</p>
+              <p className="text-[11px] font-bold text-amber-800">
+                وقت المعاينة: {new Date(cleanupPreview.generatedAt).toLocaleString('ar-EG')}
               </p>
             </div>
-          </div>
 
-          <div className="space-y-3">
-            <p className="text-xs font-black text-[#1E4D4D]">لتأكيد العملية، يرجى كتابة الرمز التالي:</p>
-            <div className="p-4 bg-slate-100 rounded-2xl text-center font-mono font-black text-lg tracking-[0.5em] text-slate-600 select-none">
-              DELETE-DEMO
+            <div className="max-h-[45vh] overflow-y-auto space-y-3 pr-1">
+              {([
+                { label: 'فواتير البيع', items: cleanupPreview.candidates.sales },
+                { label: 'فواتير الشراء', items: cleanupPreview.candidates.purchases },
+                { label: 'السندات', items: cleanupPreview.candidates.vouchers },
+                { label: 'القيود المحاسبية المرتبطة أو المصنفة', items: cleanupPreview.candidates.journalEntries },
+                { label: 'حركات المخزون المرتبطة أو المصنفة', items: cleanupPreview.candidates.stockMovements },
+                { label: 'العملاء', items: cleanupPreview.candidates.customers },
+                { label: 'الموردون', items: cleanupPreview.candidates.suppliers },
+                { label: 'الأصناف', items: cleanupPreview.candidates.products }
+              ]).map(section => (
+                <div key={section.label} className="border border-slate-200 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-xs font-black text-slate-800">{section.label}</h4>
+                    <span className="text-xs font-black text-[#1E4D4D]">{section.items.length}</span>
+                  </div>
+                  {section.items.length > 0 ? (
+                    <ul className="space-y-2">
+                      {section.items.map((item, index) => (
+                        <li key={`${item.id}-${index}`} className="text-[10px] text-slate-600 border-t border-slate-100 pt-2">
+                          <span className="font-mono font-bold text-slate-800">{item.id}</span>
+                          <span className="block mt-1">{item.reason}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-[10px] text-slate-400">لا توجد سجلات مطابقة</p>
+                  )}
+                </div>
+              ))}
             </div>
-            <Input 
-              placeholder="اكتب الرمز هنا..."
-              value={cleanupConfirmText}
-              onChange={e => setCleanupConfirmText(e.target.value)}
-              className="text-center font-mono uppercase"
-            />
-          </div>
 
-          <div className="flex gap-4">
-            <Button 
-              variant="danger" 
-              className="flex-1 h-14 !rounded-2xl shadow-xl shadow-red-100"
-              onClick={handleExecuteCleanup}
-              isLoading={loading}
-              disabled={cleanupConfirmText !== 'DELETE-DEMO'}
-            >
-              تأكيد الحذف النهائي
-            </Button>
-            <Button 
-              variant="secondary" 
-              className="flex-1 h-14 !rounded-2xl"
-              onClick={() => setShowCleanupModal(false)}
-            >
-              إلغاء
-            </Button>
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+              <h4 className="text-xs font-black text-slate-800">استثناءات وتشخيصات</h4>
+              <p className="text-[10px] text-slate-600">
+                منتجات مستبعدة لارتباطها بفواتير غير تجريبية: {cleanupPreview.excluded.productsLinkedToNonDemoInvoices.length}
+              </p>
+              <p className="text-[10px] text-slate-600">
+                فواتير بيع مرحلة تحتاج مراجعة: {cleanupPreview.diagnostics.postedDemoSales}
+              </p>
+              <p className="text-[10px] text-slate-600">
+                فواتير شراء مرحلة تحتاج مراجعة: {cleanupPreview.diagnostics.postedDemoPurchases}
+              </p>
+              <p className="text-[10px] text-slate-600">
+                قيود يتيمة للتشخيص فقط (لن تُحذف): {cleanupPreview.diagnostics.orphanJournalEntries.length}
+              </p>
+              {cleanupPreview.warnings.map((warning, index) => (
+                <p key={index} className="text-[10px] font-bold text-amber-800">• {warning}</p>
+              ))}
+            </div>
+
+            <div className="flex justify-end">
+              <Button 
+                variant="secondary" 
+                className="h-12 px-8 !rounded-xl"
+                onClick={() => setShowCleanupModal(false)}
+              >
+                إغلاق المعاينة
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </Modal>
-
     </div>
   );
 };
