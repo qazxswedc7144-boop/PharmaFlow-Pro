@@ -31,7 +31,7 @@ describe('SafeModePanel privileged recovery controls', () => {
 
     expect(markup).toContain('وضع الأمان مفعل');
     expect(markup).toContain('صلاحية إدارة النظام');
-    expect(markup).not.toContain('تشغيل الإصلاح التلقائي');
+    expect(markup).not.toContain('تشغيل فحص النزاهة');
     expect(markup).not.toContain('تصفير التنبيهات والعودة');
     expect(markup).not.toContain('استعادة نسخة احتياطية');
     expect(markup).not.toContain('إلغاء وضع الأمان يدوياً');
@@ -41,7 +41,7 @@ describe('SafeModePanel privileged recovery controls', () => {
     setRole('admin');
     const markup = renderToStaticMarkup(<SafeModePanel />);
 
-    expect(markup).toContain('تشغيل الإصلاح التلقائي');
+    expect(markup).toContain('تشغيل فحص النزاهة');
     expect(markup).toContain('تصفير التنبيهات والعودة');
     expect(markup).toContain('استعادة نسخة احتياطية');
     expect(markup).toContain('إلغاء وضع الأمان يدوياً');
