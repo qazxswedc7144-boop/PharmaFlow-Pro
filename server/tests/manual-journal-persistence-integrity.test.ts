@@ -21,6 +21,7 @@ vi.mock('@/services/auth/tokenProvider', () => ({
 
 import { db } from '@/core/db';
 import { TransactionBoundary } from '@/core/integrity/transactionBoundary';
+import { WorkflowOrchestrator } from '@/core/workflow';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { JournalPostingWorkflow } from '@/features/accounting/workflows/JournalPostingWorkflow';
 import { FinancialProposalService } from '@/services/ai/FinancialProposalService';
@@ -158,10 +159,14 @@ describe('Manual journal persistence and reversal integrity', () => {
       workflow.executeDomainSteps(input, context() as any)
     ).rejects.toThrow(/ACTIVE_TRANSACTION_REQUIRED/i);
 
-    const posted = await TransactionBoundary.executeAtomic(
-      workflow.tables!,
-      (tx) => workflow.executeDomainSteps(input, context() as any, tx)
-    );
+    const workflowResult = await WorkflowOrchestrator.execute(workflow, input, {
+      tenantId: TENANT_ID,
+      branchId: BRANCH_ID,
+      userId: 'USER-MANUAL-JOURNAL',
+      idempotencyKey: 'IDEM-MANUAL-JOURNAL-PIPELINE-001'
+    });
+    expect(workflowResult.success).toBe(true);
+    const posted = workflowResult.data!;
 
     const savedEntry = await db.journalEntries.get(posted.journalId);
     const savedLines = await db.journalLines.where('entryId').equals(posted.journalId).toArray();
