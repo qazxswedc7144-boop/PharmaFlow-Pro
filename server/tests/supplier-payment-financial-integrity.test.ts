@@ -9,21 +9,7 @@ import { db } from '@/core/db';
 import { PurchaseRepository } from '@/database/repositories/PurchaseRepository';
 import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
-
-// These suites validate purchase/payment integrity, not the accounting-period HTTP API.
-// Keep their period state deterministic; closed-period behavior is covered by PeriodLockEngine.test.ts.
-vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
-  AccountingPeriodSyncService: {
-    getPeriods: vi.fn().mockResolvedValue([{
-      id: 'TEST-OPEN-PERIOD',
-      tenantId: 'TENANT-FIN-PROD-01',
-      Start_Date: '2000-01-01T00:00:00.000Z',
-      End_Date: '2099-12-31T23:59:59.999Z',
-      Is_Locked: false,
-    }]),
-    setLocked: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+import { TokenProvider } from '@/services/auth/tokenProvider';
 
 describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite', () => {
   const tenantId = 'TENANT-FIN-PROD-01';
@@ -33,19 +19,27 @@ describe('Supplier Payment: Financial Integrity & Atomicity Verification Suite',
     vi.clearAllMocks();
 
     // 🚨 SECURITY SETUP: Must set session BEFORE clearing tables to satisfy Dexie guards
+    const userObj = {
+      id: 'usr-accountant',
+      user_id: 'usr-accountant',
+      User_Name: 'Supplier Payment Auditor',
+      User_Email: 'supplier-auditor@pharmaflow.test',
+      Role: 'accountant',
+      User_Role: 'accountant',
+      tenantId,
+      tenant_id: tenantId,
+      branchId,
+      branch_id: branchId,
+      permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete']
+    };
+    TokenProvider.setSession(userObj as any, 'mock-jwt-fin-audit', 'mock-refresh-fin-audit');
     useAuthStore.setState({
-      user: {
-        id: 'usr-accountant',
-        tenantId,
-        branchId,
-        role: 'accountant',
-        roles: ['accountant'],
-        permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete']
-      } as any,
+      user: userObj as any,
+      token: 'mock-jwt-fin-audit',
       tenantId,
       branchId,
       roles: ['accountant'],
-      permissions: ['accounting.voucher.create', 'vouchers.create', 'vouchers.manage', 'vouchers.delete'],
+      permissions: userObj.permissions,
       isAuthenticated: true
     });
 
