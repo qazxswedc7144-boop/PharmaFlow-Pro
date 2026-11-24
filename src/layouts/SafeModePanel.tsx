@@ -5,9 +5,17 @@ import { db } from '@/core/db';
 import { IntegritySweepService } from '@/services/integrity/IntegritySweepService';
 import { AlertCenter } from '@/services/notifications/AlertCenter';
 import { NotificationService } from '@/context/NotificationContext';
+import { useAuthStore } from '@/store/authStore';
 
 export const SafeModePanel: React.FC = () => {
   const [errors, setErrors] = React.useState<string[]>([]);
+  const canManageSystem = useAuthStore(state => state.hasPermission('MANAGE_SYSTEM'));
+
+  const requireSystemManagement = () => {
+    if (useAuthStore.getState().hasPermission('MANAGE_SYSTEM')) return true;
+    NotificationService.error('لا تملك صلاحية إدارة النظام لتنفيذ هذا الإجراء.');
+    return false;
+  };
 
   React.useEffect(() => {
     const checkHealth = async () => {
@@ -33,6 +41,7 @@ export const SafeModePanel: React.FC = () => {
   }, []);
 
   const handleRepair = async () => {
+    if (!requireSystemManagement()) return;
     try {
       if (window.confirm("هل تريد تشغيل محرك الإصلاح التلقائي الشامل؟ سيقوم النظام بتصحيح الأرصدة، حذف الحركات اليتيمة، وتصفير التنبيهات الحرجة إذا نجح الإصلاح.")) {
         const isHealthy = await IntegritySweepService.runSweep(true);
@@ -52,6 +61,7 @@ export const SafeModePanel: React.FC = () => {
   };
 
   const handleReset = async () => {
+    if (!requireSystemManagement()) return;
     try {
       if (window.confirm("هل أنت متأكد من إعادة ضبط النظام؟ سيتم مسح التنبيهات الحرجة والعودة للوضع الطبيعي.")) {
         await AlertCenter.clearCriticalAlerts();
@@ -64,6 +74,7 @@ export const SafeModePanel: React.FC = () => {
   };
 
   const handleDeactivateSafeMode = async () => {
+    if (!requireSystemManagement()) return;
     try {
       if (window.confirm("تحذير: إلغاء وضع الأمان قد يؤدي إلى تلف البيانات إذا لم يتم إصلاح الخلل. هل أنت متأكد؟")) {
         await db.saveSetting('SYSTEM_STATUS', 'ACTIVE');
@@ -105,41 +116,49 @@ export const SafeModePanel: React.FC = () => {
             </ul>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button 
-              onClick={handleRepair}
-              className="flex items-center justify-center gap-3 bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-2xl font-bold transition-all shadow-lg hover:shadow-emerald-200"
-            >
-              <RefreshCw size={20} />
-              تشغيل الإصلاح التلقائي
-            </button>
-            
-            <button 
-              onClick={handleReset}
-              className="flex items-center justify-center gap-3 bg-amber-600 hover:bg-amber-700 text-white py-4 rounded-2xl font-bold transition-all shadow-lg hover:shadow-amber-200"
-            >
-              <RotateCcw size={20} />
-              تصفير التنبيهات والعودة (Reset)
-            </button>
-            
-            <button 
-              onClick={() => window.location.href = '/settings/backup'}
-              className="flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-bold transition-all shadow-lg hover:shadow-blue-200"
-            >
-              <Database size={20} />
-              استعادة نسخة احتياطية
-            </button>
-          </div>
-
-          <div className="pt-4 border-top border-gray-100 flex justify-center">
-            <button 
-              onClick={handleDeactivateSafeMode}
-              className="text-gray-400 hover:text-red-600 text-xs flex items-center gap-2 transition-colors"
-            >
-              <Lock size={12} />
-              إلغاء وضع الأمان يدوياً (غير مستحسن)
-            </button>
-          </div>
+          {canManageSystem ? (
+            <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button 
+                onClick={handleRepair}
+                className="flex items-center justify-center gap-3 bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-2xl font-bold transition-all shadow-lg hover:shadow-emerald-200"
+              >
+                <RefreshCw size={20} />
+                تشغيل الإصلاح التلقائي
+              </button>
+              
+              <button 
+                onClick={handleReset}
+                className="flex items-center justify-center gap-3 bg-amber-600 hover:bg-amber-700 text-white py-4 rounded-2xl font-bold transition-all shadow-lg hover:shadow-amber-200"
+              >
+                <RotateCcw size={20} />
+                تصفير التنبيهات والعودة (Reset)
+              </button>
+              
+              <button 
+                onClick={() => window.location.href = '/settings/backup'}
+                className="flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-bold transition-all shadow-lg hover:shadow-blue-200"
+              >
+                <Database size={20} />
+                استعادة نسخة احتياطية
+              </button>
+            </div>
+  
+            <div className="pt-4 border-top border-gray-100 flex justify-center">
+              <button 
+                onClick={handleDeactivateSafeMode}
+                className="text-gray-400 hover:text-red-600 text-xs flex items-center gap-2 transition-colors"
+              >
+                <Lock size={12} />
+                إلغاء وضع الأمان يدوياً (غير مستحسن)
+              </button>
+            </div>
+            </>
+          ) : (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-center text-sm text-amber-900">
+              إجراءات الإصلاح والاستعادة وإلغاء وضع الأمان متاحة فقط للمستخدمين الحاصلين على صلاحية إدارة النظام.
+            </div>
+          )}
         </div>
       </div>
     </div>
