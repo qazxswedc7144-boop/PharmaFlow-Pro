@@ -1,4 +1,4 @@
-import { db } from '@/core/db';
+import { db, getCurrentUserSession } from '@/core/db';
 
 export interface CleanupPreviewCandidate {
   id: string;
@@ -79,7 +79,6 @@ export class ProductionCleanupService {
       vouchers,
       journalEntries,
       journalLines,
-      stockMovements,
       customers,
       suppliers,
       products
@@ -89,7 +88,6 @@ export class ProductionCleanupService {
       db.cashFlow.toArray(),
       db.journalEntries.toArray(),
       db.journalLines.toArray(),
-      db.inventoryTransactions.toArray(),
       db.customers.toArray(),
       db.suppliers.toArray(),
       db.products.toArray()
@@ -101,6 +99,43 @@ export class ProductionCleanupService {
     const demoSaleIds = new Set(demoSales.map(record => record.id).filter(Boolean));
     const demoPurchaseIds = new Set(demoPurchases.map(record => record.id).filter(Boolean));
     const demoVoucherIds = new Set(demoVouchers.map(record => record.transaction_id).filter(Boolean));
+
+    // inventoryTransactions is NOT in the Dexie tenant-scoped table allow-list
+    // and has no tenantId index. Never perform a full-table read here.
+    const { tenantId } = getCurrentUserSession();
+    if (!tenantId) {
+      throw new Error('FAIL_CLOSED: Dry Run requires an active tenant session.');
+    }
+
+    const demoDocumentIds = [...new Set([
+      ...demoSales.map(record => record.id),
+      ...demoPurchases.map(record => record.id)
+    ].filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    const demoProductIds = [...new Set([
+      ...products.filter(record => this.isDemo(record)).map(record => record.id),
+      ...demoSales.flatMap(record => Array.isArray(record.items) ? record.items.map((item: any) => item?.product_id || item?.productId) : []),
+      ...demoPurchases.flatMap(record => Array.isArray(record.items) ? record.items.map((item: any) => item?.product_id || item?.productId) : [])
+    ].filter((id): id is string => typeof id === 'string' && id.length > 0))];
+
+    const movementReads = await Promise.all([
+      demoDocumentIds.length
+        ? db.inventoryTransactions.where('source_doc_id').anyOf(demoDocumentIds).toArray()
+        : Promise.resolve([]),
+      demoProductIds.length
+        ? db.inventoryTransactions.where('productId').anyOf(demoProductIds).toArray()
+        : Promise.resolve([]),
+      demoProductIds.length
+        ? db.inventoryTransactions.where('product_id').anyOf(demoProductIds).toArray()
+        : Promise.resolve([])
+    ]);
+    const movementMap = new Map<string, any>();
+    movementReads.flat().forEach((movement: any, index: number) => {
+      const movementTenantId = movement?.tenantId || movement?.tenant_id;
+      if (!movementTenantId || movementTenantId !== tenantId) return;
+      const movementId = getRecordId(movement.id, movement.TransactionID, movement.transaction_id, String(index));
+      movementMap.set(movementId, movement);
+    });
+    const stockMovements = [...movementMap.values()];
 
     const realSales = sales.filter(record => !this.isDemo(record));
     const realPurchases = purchases.filter(record => !this.isDemo(record));
@@ -183,7 +218,8 @@ export class ProductionCleanupService {
       'هذه معاينة للمرشحات وفق قواعد التصنيف الحالية، وليست موافقة على حذفها أو ضماناً بأن حذفها آمن.',
       'المستندات المرحلة تحتاج مراجعة محاسبية مستقلة؛ لم يتم تنفيذ أي عكس للقيود أو الحركات.',
       'القيود اليتيمة معروضة للتشخيص فقط، ولا تُضاف إلى قائمة المرشحات ولا تُحذف تلقائياً.',
-      'المنتجات المرتبطة بفواتير غير تجريبية مستبعدة من مرشحات الحذف.'
+      'المنتجات المرتبطة بفواتير غير تجريبية مستبعدة من مرشحات الحذف.',
+      'جدول حركات المخزون لا يطبق tenant guard على القراءة العامة؛ لذلك عُرضت فقط الحركات المسترجعة بمفاتيح مستندات/أصناف مرشحة ثم طابقت tenantId صراحةً. الحركات غير المرتبطة بهذه المفاتيح غير مشمولة.'
     ];
 
     return {
