@@ -49,7 +49,11 @@ export class IntegritySweepService {
           isHealthy = false;
           errors.push("Stock balance mismatch detected (Transactions != StockQuantity)");
         }
-      } catch (e) { console.error("Stock check failed", e); }
+      } catch (e) {
+        console.error("Stock check failed", e);
+        isHealthy = false;
+        errors.push("Stock integrity validation failed");
+      }
 
       // 3. Validate AR/AP Consistency
       try {
@@ -58,7 +62,11 @@ export class IntegritySweepService {
           isHealthy = false;
           errors.push("AR/AP consistency mismatch detected");
         }
-      } catch (e) { console.error("AR/AP check failed", e); }
+      } catch (e) {
+        console.error("AR/AP check failed", e);
+        isHealthy = false;
+        errors.push("AR/AP integrity validation failed");
+      }
 
       // 4. Validate No Orphan References
       try {
@@ -67,7 +75,11 @@ export class IntegritySweepService {
           isHealthy = false;
           errors.push("Orphan references detected in transactions");
         }
-      } catch (e) { console.error("Orphans check failed", e); }
+      } catch (e) {
+        console.error("Orphans check failed", e);
+        isHealthy = false;
+        errors.push("Orphan-reference validation failed");
+      }
 
       // 5. Validate Voucher Consistency
       try {
@@ -76,7 +88,11 @@ export class IntegritySweepService {
           isHealthy = false;
           errors.push("Voucher allocation inconsistency detected");
         }
-      } catch (e) { console.error("Voucher check failed", e); }
+      } catch (e) {
+        console.error("Voucher check failed", e);
+        isHealthy = false;
+        errors.push("Voucher integrity validation failed");
+      }
 
       // 6. Validate Date Formats (New)
       try {
@@ -85,7 +101,11 @@ export class IntegritySweepService {
           isHealthy = false;
           errors.push("Malformed date strings detected in records");
         }
-      } catch (e) { console.error("Date check failed", e); }
+      } catch (e) {
+        console.error("Date check failed", e);
+        isHealthy = false;
+        errors.push("Date integrity validation failed");
+      }
 
       if (!isHealthy) {
         await this.handleCriticalError(errors, autoFix, userId || 'SYSTEM');
