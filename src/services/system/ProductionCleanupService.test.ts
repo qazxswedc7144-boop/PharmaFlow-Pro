@@ -115,7 +115,7 @@ describe('ProductionCleanupService safety boundary', () => {
     const report = await ProductionCleanupService.previewCleanup();
 
     expect(report.candidates.sales).toHaveLength(1);
-    expect(report.candidates.sales[0].reason).toContain('isDemo');
+    expect(report.candidates.sales[0]?.reason).toContain('isDemo');
     expect(report.candidates.purchases.map(item => item.id)).toEqual(['purchase-demo']);
     expect(report.candidates.vouchers.map(item => item.id)).toEqual(['voucher-demo']);
     expect(report.candidates.journalEntries.map(item => item.id)).toEqual(['journal-linked', 'journal-marked']);
