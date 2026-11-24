@@ -305,10 +305,10 @@ const SystemHealthModule: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
     setIsSweeping(true);
     setSweepResult(null);
     try {
-      const success = await IntegritySweepService.runSweep(true);
+      const success = await IntegritySweepService.runSweep(false);
       setSweepResult({
         success,
-        message: success ? 'تم فحص وإصلاح جميع مشاكل نزاهة البيانات والاصطدامات بنجاح.' : 'تم اكتشاف مشاكل في نزاهة البيانات. يرجى مراجعة سجلات النظام.'
+        message: success ? 'اكتمل فحص نزاهة البيانات دون الحاجة إلى تعديلات.' : 'تم اكتشاف مشاكل في نزاهة البيانات. لم تُجرَ تعديلات تلقائية؛ يرجى مراجعة سجلات النظام.'
       });
       await checkIntegrity();
       await loadSystemStats();
