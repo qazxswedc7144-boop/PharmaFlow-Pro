@@ -563,18 +563,28 @@ export class AccountingEngine {
       }
     }
     
-    // Ensure idempotency for new entries if transactionUuid is present
+    // Ensure idempotency for new entries if transactionUuid is present.
+    // Journal lines are children of the journal entry and must always carry
+    // the final persisted entry identity, not the temporary generation ID.
+    const assignIdempotentEntryIdentity = (target: AccountingEntry, id: string) => {
+      target.id = id;
+      target.entry_id = id;
+      target.lines = target.lines.map(line => ({
+        ...line,
+        entryId: id,
+        entry_id: id
+      }));
+    };
+
     if (invoice.id && (invoice as any).transactionUuid) {
       const txUuid = (invoice as any).transactionUuid;
 
       if (Array.isArray(entry)) {
         entry.forEach((e, idx) => {
-          e.id = `JE-${invoice.id}-${txUuid}-${idx}`;
-          e.entry_id = e.id;
+          assignIdempotentEntryIdentity(e, `JE-${invoice.id}-${txUuid}-${idx}`);
         });
       } else {
-        entry.id = `JE-${invoice.id}-${txUuid}`;
-        entry.entry_id = entry.id;
+        assignIdempotentEntryIdentity(entry, `JE-${invoice.id}-${txUuid}`);
       }
     }
 
