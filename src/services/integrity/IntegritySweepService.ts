@@ -79,7 +79,7 @@ export class IntegritySweepService {
       } catch (e) { console.error("Date check failed", e); }
 
       if (!isHealthy) {
-        await this.handleCriticalError(errors);
+        await this.handleCriticalError(errors, autoFix);
       }
 
       const endTime = performance.now();
@@ -308,9 +308,24 @@ export class IntegritySweepService {
     return healthy;
   }
 
-  private static async handleCriticalError(errors: string[]) {
+  private static async handleCriticalError(errors: string[], autoFixRequested = false) {
     const now = new Date().toISOString();
-    
+
+    // Persist the failed/blocked integrity action independently of alert de-duplication.
+    // A repeated alert may be suppressed, but the audit trail must retain each repair attempt.
+    const auditDetails = JSON.stringify({
+      event: autoFixRequested ? 'INTEGRITY_REPAIR_BLOCKED' : 'INTEGRITY_FAILURE_DETECTED',
+      autoFixRequested,
+      errors,
+      timestamp: now,
+    });
+    try {
+      await db.addAuditLog('SYSTEM', 'SYSTEM', 'INTEGRITY_SWEEP', auditDetails);
+    } catch (auditError) {
+      // Audit failure must not suppress the critical system alert or make the sweep healthy.
+      console.error('[IntegritySweep] Failed to persist critical sweep audit record:', auditError);
+    }
+
     // Check if we already have a recent critical alert for the same issues to prevent flooding
     const recentAlerts = await db.systemAlerts
       .where('timestamp').above(new Date(Date.now() - 5 * 60 * 1000).toISOString())
