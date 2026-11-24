@@ -1,6 +1,7 @@
 import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
 import { AccountingEntry, JournalLine } from '@/types';
+import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { PeriodLockEngine } from '@/services/transactions/PeriodLockEngine';
 import { integrityVerifier } from '@/services/integrity/integrityVerifier';
 
@@ -70,8 +71,13 @@ export class JournalPostingWorkflow implements BusinessWorkflow<JournalPostingIn
 
   public async executeDomainSteps(
     input: JournalPostingInput,
-    ctx: WorkflowContext
+    ctx: WorkflowContext,
+    tx?: any
   ): Promise<JournalPostingResult> {
+    if (!tx || typeof tx.table !== 'function') {
+      throw new Error('JOURNAL_POSTING_REJECTED: ACTIVE_TRANSACTION_REQUIRED');
+    }
+
     const journalId = db.generateId('JE');
 
     const mappedLines: JournalLine[] = input.lines.map((l, index) => {
@@ -105,13 +111,7 @@ export class JournalPostingWorkflow implements BusinessWorkflow<JournalPostingIn
     };
 
     const signedEntry = await integrityVerifier.signEntry(entry);
-    await db.saveAccountingEntry(signedEntry);
-
-    // Update account balances
-    for (const line of signedEntry.lines) {
-      const netChange = line.debit - line.credit;
-      await db.updateAccountBalance(line.accountId, netChange);
-    }
+    await AccountingRepository.addEntry(signedEntry, tx);
 
     return {
       journalId,
