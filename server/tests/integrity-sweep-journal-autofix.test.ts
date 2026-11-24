@@ -57,8 +57,8 @@ describe('IntegritySweepService journal auto-fix safety', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-  const validateJournal = (autoFix: boolean) =>
-    (IntegritySweepService as any).validateJournal(autoFix) as Promise<boolean>;
+  const validateJournal = () =>
+    (IntegritySweepService as any).validateJournal() as Promise<boolean>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -97,12 +97,12 @@ describe('IntegritySweepService journal auto-fix safety', () => {
     });
   });
 
-  it('preserves an imbalanced journal, its lines, and account balances when auto-fix is enabled', async () => {
+  it('preserves an imbalanced journal, its lines, and account balances during validation', async () => {
     const entryBefore = structuredClone(mocks.entries);
     const linesBefore = structuredClone(mocks.lines);
     const balancesBefore = structuredClone(mocks.accountBalances);
 
-    await expect(validateJournal(true)).resolves.toBe(false);
+    await expect(validateJournal()).resolves.toBe(false);
 
     expect(mocks.entries).toEqual(entryBefore);
     expect(mocks.lines).toEqual(linesBefore);
@@ -113,7 +113,7 @@ describe('IntegritySweepService journal auto-fix safety', () => {
   });
 
   it('reports an imbalanced journal as unhealthy when auto-fix is disabled', async () => {
-    await expect(validateJournal(false)).resolves.toBe(false);
+    await expect(validateJournal()).resolves.toBe(false);
     expect(mocks.entries).toHaveLength(1);
     expect(mocks.lines).toHaveLength(2);
     expect(mocks.deleteJournalEntry).not.toHaveBeenCalled();
@@ -185,7 +185,7 @@ describe('IntegritySweepService journal auto-fix safety', () => {
     }
   });
 
-  it('never forwards automatic mutation permission to domain validators', async () => {
+  it('keeps all domain validators read-only when legacy auto-fix is requested', async () => {
     const validationMethods = [
       'validateJournal',
       'validateStock',
@@ -202,7 +202,7 @@ describe('IntegritySweepService journal auto-fix safety', () => {
       await expect(IntegritySweepService.runSweep(true)).resolves.toBe(true);
       validationSpies.forEach((spy) => {
         expect(spy).toHaveBeenCalledOnce();
-        expect(spy).toHaveBeenCalledWith(false);
+        expect(spy).toHaveBeenCalledWith();
       });
     } finally {
       validationSpies.forEach((spy) => spy.mockRestore());
