@@ -25,8 +25,7 @@
 import { FinancialMath } from '@/core/financial-math';
 import { AIUserContext } from './types';
 import { JournalPostingWorkflow } from '@/features/accounting/workflows/JournalPostingWorkflow';
-import { WorkflowContextFactory } from '@/core/workflow/workflowContext';
-import { TransactionBoundary } from '@/core/integrity/transactionBoundary';
+import { WorkflowOrchestrator } from '@/core/workflow';
 
 export type ProposalType = 'JOURNAL_ENTRY' | 'ADJUSTMENT' | 'CORRECTION' | 'RECLASSIFICATION';
 export type ProposalStatus = 'DRAFT_PENDING_REVIEW' | 'REJECTED' | 'APPROVED' | 'POSTED';
@@ -327,18 +326,17 @@ export class FinancialProposalService {
           memo: l.memo,
         })),
       };
-      const postingContext = WorkflowContextFactory.create('JOURNAL_POSTING', {
-        workflowId: workflow.id,
+      const workflowResult = await WorkflowOrchestrator.execute(workflow, postingInput, {
         idempotencyKey: proposal.correlationId,
         userId: reviewerContext.userId,
         tenantId: reviewerContext.tenantId,
         branchId: reviewerContext.branchId,
         correlationId: proposal.correlationId,
       });
-      const postingResult = await TransactionBoundary.executeAtomic(
-        workflow.tables!,
-        (tx) => workflow.executeDomainSteps(postingInput, postingContext, tx)
-      );
+      if (!workflowResult.success || !workflowResult.data) {
+        throw new Error(workflowResult.error?.message || 'JOURNAL_POSTING_WORKFLOW_FAILED');
+      }
+      const postingResult = workflowResult.data;
 
       proposal.status = 'POSTED';
       proposal.postedJournalId = postingResult.journalId;
