@@ -23,8 +23,8 @@ export interface CleanupPreviewReport {
     productsLinkedToNonDemoInvoices: CleanupPreviewCandidate[];
   };
   diagnostics: {
-    postedDemoSales: number;
-    postedDemoPurchases: number;
+    postedDemoSales: CleanupPreviewCandidate[];
+    postedDemoPurchases: CleanupPreviewCandidate[];
     orphanJournalEntries: CleanupPreviewCandidate[];
   };
   warnings: string[];
@@ -216,8 +216,12 @@ export class ProductionCleanupService {
       return [];
     });
 
-    const postedDemoSales = demoSales.filter(record => record.InvoiceStatus === 'POSTED').length;
-    const postedDemoPurchases = demoPurchases.filter(record => record.invoiceStatus === 'POSTED').length;
+    const postedDemoSales = demoSales
+      .filter(record => record.InvoiceStatus === 'POSTED')
+      .map(record => ({ id: getRecordId(record.id, record.SaleID), reason: 'فاتورة بيع تجريبية مرحّلة؛ تتطلب مراجعة محاسبية' }));
+    const postedDemoPurchases = demoPurchases
+      .filter(record => record.invoiceStatus === 'POSTED')
+      .map(record => ({ id: getRecordId(record.id, record.purchase_id), reason: 'فاتورة شراء تجريبية مرحّلة؛ تتطلب مراجعة محاسبية' }));
     const warnings = [
       'هذه معاينة للمرشحات وفق قواعد التصنيف الحالية، وليست موافقة على حذفها أو ضماناً بأن حذفها آمن.',
       'المستندات المرحلة تحتاج مراجعة محاسبية مستقلة؛ لم يتم تنفيذ أي عكس للقيود أو الحركات.',
