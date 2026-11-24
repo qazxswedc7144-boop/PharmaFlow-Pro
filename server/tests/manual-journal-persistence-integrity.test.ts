@@ -117,7 +117,7 @@ describe('Manual journal persistence and reversal integrity', () => {
     expect(savedEntry?.lines).toHaveLength(2);
     expect(savedLines).toHaveLength(2);
     expect(savedLines.map(line => line.entryId)).toEqual([posted.journalId, posted.journalId]);
-    expect(savedLines.map(line => line.entry_id)).toEqual([posted.journalId, posted.journalId]);
+    expect(savedLines.map(line => (line as any).entry_id)).toEqual([posted.journalId, posted.journalId]);
     expect(savedLines.every(line => line.tenantId === TENANT_ID && line.branchId === BRANCH_ID)).toBe(true);
 
     const totalDebit = savedLines.reduce((sum, line) => sum + line.debit, 0);
