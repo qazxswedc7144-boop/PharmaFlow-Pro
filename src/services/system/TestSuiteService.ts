@@ -653,9 +653,9 @@ export class TestSuiteService {
       console.log("Step 6: Restoring from Backup...");
       await BackupService.restoreFromBackup(backupId);
 
-      // 7. Final Integrity Sweep
+      // 7. Final read-only Integrity Sweep
       console.log("Step 7: Final Integrity Sweep...");
-      const isHealthy = await IntegritySweepService.runSweep(true);
+      const isHealthy = await IntegritySweepService.runSweep(false);
       
       if (isHealthy) {
         console.log("✅ SYSTEM PASSED ALL INTEGRITY TESTS!");
