@@ -12,7 +12,33 @@ function assertTestDatabase(): void {
   }
 }
 
-definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (getContext) => {
+definePostgresHttpSuite("Phase 4C — PostgreSQL branch-scoped FIFO layer cost provenance", (getContext) => {
+  it("enables RLS on every new server-managed finance and FIFO table", async () => {
+    assertTestDatabase();
+    const { prisma } = await import("../database/prisma.js");
+    const rows = await prisma.$queryRaw<Array<{ table_name: string; rls_enabled: boolean }>>`
+      SELECT c.relname AS table_name, c.relrowsecurity AS rls_enabled
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relkind = 'r'
+        AND c.relname IN (
+          'accounting_periods',
+          'inventory_layers',
+          'fifo_consumption_log',
+          'invoice_payment_allocations'
+        )
+      ORDER BY c.relname
+    `;
+    expect(rows.map((row) => row.table_name)).toEqual([
+      "accounting_periods",
+      "fifo_consumption_log",
+      "inventory_layers",
+      "invoice_payment_allocations"
+    ]);
+    expect(rows.every((row) => row.rls_enabled)).toBe(true);
+  });
+
   it("keeps repeated receipts as separate cost layers and records exact FEFO/FIFO consumption", async () => {
     assertTestDatabase();
     const ctx = getContext();
@@ -123,6 +149,257 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
       expect(new Set(consumptions.map((row) => row.idempotencyKey)).size).toBe(consumptions.length);
     } finally {
       await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
+  it("never consumes another branch's FIFO layers and keeps branch stock projections synchronized", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const secondBranch = await prisma.branch.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        code: `P4-BR-${suffix}`,
+        name: `P4 FIFO Branch B ${suffix}`,
+        isActive: true
+      }
+    });
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 Branch FIFO ${suffix}`,
+        sku: `P4-BR-FIFO-${suffix}`,
+        barcode: `P4-BR-FIFO-${suffix}`,
+        price: 30,
+        cost: 5,
+        stockQuantity: 0
+      }
+    });
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        await FifoService.addStock(
+          tx, product.id, `BATCH-A-${suffix}`, 2, 5, null,
+          `PUR-A-${suffix}`, "INVOICE", "Branch A receipt",
+          ctx.tenantAId, ctx.branchAId, `LINE-A-${suffix}`
+        );
+        await FifoService.addStock(
+          tx, product.id, `BATCH-B-${suffix}`, 5, 9, null,
+          `PUR-B-${suffix}`, "INVOICE", "Branch B receipt",
+          ctx.tenantAId, secondBranch.id, `LINE-B-${suffix}`
+        );
+      });
+
+      await expect(prisma.$transaction((tx) =>
+        FifoService.depleteStock(
+          tx, product.id, 3, `SALE-A-OVERDRAW-${suffix}`, "INVOICE",
+          "Branch A cannot consume Branch B stock", ctx.tenantAId,
+          `SALE-LINE-A-${suffix}`, ctx.branchAId
+        )
+      )).rejects.toThrow(/INSUFFICIENT_BRANCH_STOCK/);
+
+      const branchAResult = await prisma.$transaction((tx) =>
+        FifoService.depleteStock(
+          tx, product.id, 3, `SALE-B-${suffix}`, "INVOICE",
+          "Branch B consumes only its own stock", ctx.tenantAId,
+          `SALE-LINE-B-${suffix}`, secondBranch.id
+        )
+      );
+
+      const [branchAStock, branchBStock, layers, consumption, movements, productAfter] = await Promise.all([
+        prisma.branchInventory.findUnique({
+          where: { branchId_productId: { branchId: ctx.branchAId, productId: product.id } }
+        }),
+        prisma.branchInventory.findUnique({
+          where: { branchId_productId: { branchId: secondBranch.id, productId: product.id } }
+        }),
+        prisma.inventoryLayer.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.fifoConsumption.findMany({ where: { tenantId: ctx.tenantAId, referenceId: `SALE-B-${suffix}` } }),
+        prisma.inventoryMovement.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } })
+      ]);
+
+      expect(branchAResult.totalCost).toBe(27);
+      expect(branchAStock?.stockQuantity).toBe(2);
+      expect(branchBStock?.stockQuantity).toBe(2);
+      expect(layers.find((layer) => layer.branchId === ctx.branchAId)?.quantityRemaining).toBe(2);
+      expect(layers.find((layer) => layer.branchId === secondBranch.id)?.quantityRemaining).toBe(2);
+      expect(consumption).toHaveLength(1);
+      expect(consumption[0].branchId).toBe(secondBranch.id);
+      expect(movements.filter((movement) => movement.qty < 0).every((movement) => movement.branchId === secondBranch.id)).toBe(true);
+      expect(productAfter?.stockQuantity).toBe(4);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+      await prisma.branch.deleteMany({ where: { id: secondBranch.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
+  it("fails closed when eligible legacy stock has no verified branch assignment", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 Unassigned Legacy ${suffix}`,
+        sku: `P4-UNASSIGNED-${suffix}`,
+        price: 20,
+        cost: 8,
+        stockQuantity: 1
+      }
+    });
+    const batch = await prisma.inventoryBatch.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        productId: product.id,
+        batchNumber: `LEGACY-UNASSIGNED-${suffix}`,
+        initialQty: 1,
+        stockQuantity: 1,
+        cost: 8
+      }
+    });
+    await prisma.inventoryLayer.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        productId: product.id,
+        batchId: batch.id,
+        batchNumber: batch.batchNumber,
+        sourceReferenceId: `LEGACY-UNASSIGNED-${suffix}`,
+        sourceReferenceType: "LEGACY_BASELINE",
+        sourceKey: `legacy-unassigned:${suffix}`,
+        quantityInitial: 1,
+        quantityRemaining: 1,
+        unitCost: 8,
+        isLegacyBaseline: true,
+        branchId: null
+      }
+    });
+    await prisma.branchInventory.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        branchId: ctx.branchAId,
+        productId: product.id,
+        stockQuantity: 0
+      }
+    });
+
+    try {
+      await expect(prisma.$transaction((tx) =>
+        FifoService.depleteStock(
+          tx, product.id, 1, `SALE-UNASSIGNED-${suffix}`, "INVOICE",
+          "Unassigned stock must not be consumed by a branch", ctx.tenantAId,
+          `SALE-LINE-UNASSIGNED-${suffix}`, ctx.branchAId
+        )
+      )).rejects.toThrow(/FIFO_UNASSIGNED_STOCK_REQUIRES_RECONCILIATION/);
+
+      const [layer, productAfter, branchStock, consumptions] = await Promise.all([
+        prisma.inventoryLayer.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
+        prisma.branchInventory.findUnique({
+          where: { branchId_productId: { branchId: ctx.branchAId, productId: product.id } }
+        }),
+        prisma.fifoConsumption.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } })
+      ]);
+      expect(layer?.quantityRemaining).toBe(1);
+      expect(productAfter?.stockQuantity).toBe(1);
+      expect(branchStock?.stockQuantity).toBe(0);
+      expect(consumptions).toHaveLength(0);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.product.deleteMany({ where: { id: product.id, tenantId: ctx.tenantAId } });
+    }
+  });
+
+  it("does not let a new receipt silently overwrite a divergent legacy branch projection", async () => {
+    assertTestDatabase();
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `P4 Projection Mismatch ${suffix}`,
+        sku: `P4-PROJECTION-${suffix}`,
+        price: 20,
+        cost: 8,
+        stockQuantity: 1
+      }
+    });
+    const batch = await prisma.inventoryBatch.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        productId: product.id,
+        batchNumber: `P4-PROJECTION-BATCH-${suffix}`,
+        initialQty: 1,
+        stockQuantity: 1,
+        cost: 8
+      }
+    });
+    await prisma.inventoryLayer.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        productId: product.id,
+        batchId: batch.id,
+        batchNumber: batch.batchNumber,
+        sourceReferenceId: `P4-PROJECTION-LEGACY-${suffix}`,
+        sourceReferenceType: "LEGACY_BASELINE",
+        sourceKey: `p4-projection-legacy:${suffix}`,
+        quantityInitial: 1,
+        quantityRemaining: 1,
+        unitCost: 8,
+        isLegacyBaseline: true,
+        branchId: ctx.branchAId
+      }
+    });
+    await prisma.branchInventory.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        branchId: ctx.branchAId,
+        productId: product.id,
+        stockQuantity: 0
+      }
+    });
+
+    try {
+      await expect(prisma.$transaction((tx) =>
+        FifoService.addStock(
+          tx, product.id, `P4-NEW-BATCH-${suffix}`, 2, 12, null,
+          `P4-NEW-RECEIPT-${suffix}`, "INVOICE", "Must not mask old projection mismatch",
+          ctx.tenantAId, ctx.branchAId, `P4-NEW-LINE-${suffix}`
+        )
+      )).rejects.toThrow(/BRANCH_INVENTORY_LAYER_MISMATCH/);
+
+      const [productAfter, branchStock, layers, batches] = await Promise.all([
+        prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
+        prisma.branchInventory.findUnique({
+          where: { branchId_productId: { branchId: ctx.branchAId, productId: product.id } }
+        }),
+        prisma.inventoryLayer.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+        prisma.inventoryBatch.findMany({ where: { tenantId: ctx.tenantAId, productId: product.id } })
+      ]);
+      expect(productAfter?.stockQuantity).toBe(1);
+      expect(branchStock?.stockQuantity).toBe(0);
+      expect(layers).toHaveLength(1);
+      expect(batches).toHaveLength(1);
+    } finally {
+      await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
@@ -182,6 +459,7 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
       expect(result.totalCost).toBe(10);
     } finally {
       await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
@@ -245,6 +523,7 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
       expect(movements.reduce((sum, movement) => sum + movement.qty, 0)).toBe(1);
     } finally {
       await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
@@ -314,6 +593,7 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
       expect(movements.reduce((sum, movement) => sum + movement.qty, 0)).toBe(3);
     } finally {
       await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
@@ -367,6 +647,7 @@ definePostgresHttpSuite("Phase 4A — PostgreSQL FIFO layer cost provenance", (g
       expect(currentProduct?.stockQuantity).toBe(4);
     } finally {
       await prisma.fifoConsumption.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
+      await prisma.branchInventory.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryMovement.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryLayer.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });
       await prisma.inventoryBatch.deleteMany({ where: { tenantId: ctx.tenantAId, productId: product.id } });

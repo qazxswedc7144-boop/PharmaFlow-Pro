@@ -383,11 +383,40 @@ export class SyncProcessorService {
     // 🚨 SECURITY FIX: Case-insensitive POST detection
     if ((upperEntity === "INVOICE" || upperEntity === "SALE") && operation === "POST") {
       try {
+        if (!branchId) {
+          return {
+            id: mutationId, mutationId, status: "REJECTED", success: false,
+            errorCode: "TRUSTED_BRANCH_CONTEXT_REQUIRED",
+            message: "A verified branch context is required to post a sale."
+          };
+        }
+        if (data.tenantId && data.tenantId !== tenantId) {
+          return {
+            id: mutationId, mutationId, status: "UNAUTHORIZED", success: false,
+            errorCode: "TENANT_MISMATCH",
+            message: "Sale payload tenant does not match the authenticated tenant."
+          };
+        }
+        if (data.branchId && data.branchId !== branchId) {
+          return {
+            id: mutationId, mutationId, status: "UNAUTHORIZED", success: false,
+            errorCode: "BRANCH_MISMATCH",
+            message: "Sale payload branch does not match the authenticated branch."
+          };
+        }
         // Keep the accounting/FIFO posting graph out of ordinary Sync requests.
-        // Load it only when a real SALE POST mutation reaches this branch.
+        // Tenant and branch are supplied separately from the authenticated context;
+        // never inject identity fields into the strict InvoiceSchema DTO.
+        const { tenantId: _payloadTenantId, branchId: _payloadBranchId, ...salePayload } = data;
         const { AtomicPostSaleService } = await import("../accounting/services/atomicPostSale.service.js");
         const postResult = await AtomicPostSaleService.executePostSaleCommand({
-          payload: { ...data, tenantId }, tenantId, userId: params.userId, userRole, ipAddress: "127.0.0.1", tx
+          payload: salePayload,
+          tenantId,
+          branchId,
+          userId: params.userId,
+          userRole,
+          ipAddress: "127.0.0.1",
+          tx
         });
         return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
       } catch (err: any) {
@@ -854,19 +883,8 @@ export class SyncProcessorService {
       );
     }
 
-    for (const item of normalizedItems) {
-      await tx.branchInventory.upsert({
-        where: { branchId_productId: { branchId, productId: item.productId } },
-        create: {
-          tenantId,
-          branchId,
-          productId: item.productId,
-          stockQuantity: item.qty
-        },
-        update: { stockQuantity: { increment: item.qty } }
-      });
-    }
-
+    // FifoService.addStock updates BranchInventory from the resulting
+    // branch-scoped layer total inside this same transaction.
     return {
       id: mutationId,
       mutationId,

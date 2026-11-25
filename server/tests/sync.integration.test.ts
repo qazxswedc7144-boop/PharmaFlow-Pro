@@ -303,6 +303,137 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
   });
 
 
+  it("posts a strict SALE DTO using authenticated branch scope and decrements only that branch's stock", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const { DeviceService } = await import("../modules/sync/device.service.js");
+    const { SyncProcessorService } = await import("../modules/sync/sync-processor.service.js");
+    const suffix = randomUUID().replace(/-/g, "").slice(0, 12);
+    const deviceId = `ci-sale-device-${suffix}`;
+    await DeviceService.registerDevice({
+      deviceId,
+      deviceName: "CI Branch-Scoped Sale Device",
+      tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId,
+      userId: ctx.userAId,
+      appVersion: "ci",
+      schemaVersion: 1
+    });
+
+    const product = await prisma.product.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        name: `CI Branch Sale Product ${suffix}`,
+        sku: `CI-BR-SALE-${suffix}`,
+        price: 10,
+        cost: 3,
+        stockQuantity: 2,
+        isActive: true
+      }
+    });
+    const batch = await prisma.inventoryBatch.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        productId: product.id,
+        batchNumber: `CI-BR-SALE-BATCH-${suffix}`,
+        initialQty: 2,
+        stockQuantity: 2,
+        cost: 3
+      }
+    });
+    await prisma.inventoryLayer.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        productId: product.id,
+        batchId: batch.id,
+        batchNumber: batch.batchNumber,
+        sourceReferenceId: `CI-BR-SALE-BASELINE-${suffix}`,
+        sourceReferenceType: "TEST_FIXTURE",
+        sourceKey: `ci-branch-sale:${suffix}`,
+        quantityInitial: 2,
+        quantityRemaining: 2,
+        unitCost: 3,
+        branchId: ctx.branchAId
+      }
+    });
+    await prisma.branchInventory.create({
+      data: {
+        tenantId: ctx.tenantAId,
+        branchId: ctx.branchAId,
+        productId: product.id,
+        stockQuantity: 2
+      }
+    });
+
+    const invoiceNumber = `SALE-BRANCH-SYNC-${suffix}`;
+    const mutationId = randomUUID();
+    const idempotencyKey = randomUUID();
+    const envelope = {
+      tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId,
+      deviceId,
+      schemaVersion: 1,
+      mutations: [{
+        id: mutationId,
+        entity: "SALE",
+        entityId: randomUUID(),
+        operation: "POST",
+        // This is the strict SaleSyncDTO: tenantId and branchId are intentionally absent.
+        payload: {
+          invoiceNumber,
+          type: "SALE",
+          partnerType: "CUSTOMER",
+          totalAmount: 10,
+          paymentStatus: "UNPAID",
+          items: [{ productId: product.id, qty: 1, price: 10 }]
+        },
+        idempotencyKey,
+        timestamp: Date.now(),
+        version: 1
+      }]
+    };
+
+    const first = await SyncProcessorService.processBatch({
+      envelope: envelope as any,
+      authenticatedTenantId: ctx.tenantAId,
+      authenticatedUserId: ctx.userAId,
+      authenticatedUserRole: "TENANT_ADMIN"
+    });
+    expect(first.results[0]?.status, JSON.stringify(first.results[0])).toBe("SUCCESS");
+
+    const persistedInvoice = await prisma.invoice.findFirst({
+      where: { tenantId: ctx.tenantAId, invoiceNumber }
+    });
+    expect(persistedInvoice?.branchId).toBe(ctx.branchAId);
+
+    const replay = await SyncProcessorService.processBatch({
+      envelope: envelope as any,
+      authenticatedTenantId: ctx.tenantAId,
+      authenticatedUserId: ctx.userAId,
+      authenticatedUserRole: "TENANT_ADMIN"
+    });
+    expect(replay.results[0]?.status).toBe("DUPLICATE");
+
+    const [productAfter, branchStock, layerAfter, consumption, movement] = await Promise.all([
+      prisma.product.findFirst({ where: { id: product.id, tenantId: ctx.tenantAId } }),
+      prisma.branchInventory.findUnique({
+        where: { branchId_productId: { branchId: ctx.branchAId, productId: product.id } }
+      }),
+      prisma.inventoryLayer.findFirst({ where: { tenantId: ctx.tenantAId, productId: product.id } }),
+      prisma.fifoConsumption.findFirst({
+        where: { tenantId: ctx.tenantAId, referenceId: persistedInvoice!.id }
+      }),
+      prisma.inventoryMovement.findFirst({
+        where: { tenantId: ctx.tenantAId, referenceId: persistedInvoice!.id }
+      })
+    ]);
+    expect(productAfter?.stockQuantity).toBe(1);
+    expect(branchStock?.stockQuantity).toBe(1);
+    expect(layerAfter?.quantityRemaining).toBe(1);
+    expect(consumption?.branchId).toBe(ctx.branchAId);
+    expect(movement?.branchId).toBe(ctx.branchAId);
+  });
+
   it("rejects TENANT_ADMIN sync to a branch without branchUser membership", async () => {
     const ctx = getContext();
     const { prisma } = await import("../database/prisma.js");

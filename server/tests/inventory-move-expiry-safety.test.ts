@@ -16,7 +16,9 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../database/tenantPrisma.js", () => ({
   tenantPrisma: {
     inventoryBatch: { findMany: vi.fn() },
-    product: { findMany: vi.fn() }
+    product: { findMany: vi.fn() },
+    branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-A" }) },
+    branchUser: { findFirst: vi.fn().mockResolvedValue({ id: "branch-user-a" }) }
   }
 }));
 
@@ -29,7 +31,8 @@ vi.mock("../middleware/auth.middleware.js", () => ({
     req.user = {
       userId: "inventory-user-a",
       role: "INVENTORY_MANAGER",
-      tenantId: "TENANT-A"
+      tenantId: "TENANT-A",
+      branchId: "BRANCH-A"
     };
     next();
   },
@@ -70,6 +73,13 @@ describe("POST /api/inventory/move — expired/NULL FEFO safety", () => {
     mocks.runInTransaction.mockImplementation(async (_service: string, callback: (tx: any) => Promise<any>) => {
       const tx = {
         $queryRaw: mocks.queryRaw,
+        branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-A" }) },
+        branchInventory: { findUnique: vi.fn().mockResolvedValue({ stockQuantity: 10 }) },
+        inventoryLayer: {
+          aggregate: vi.fn()
+            .mockResolvedValueOnce({ _sum: { quantityRemaining: 10 } })
+            .mockResolvedValueOnce({ _sum: { quantityRemaining: 0 } })
+        },
         inventoryBatch: { update: mocks.batchUpdate },
         inventoryMovement: { create: mocks.movementCreate },
         product: { update: mocks.productUpdate },

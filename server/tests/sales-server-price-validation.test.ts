@@ -4,6 +4,8 @@ const { mockPrisma, mockSaas, mockAuthorization } = vi.hoisted(() => {
   const prisma: any = {
     $transaction: vi.fn(async (callback: (tx: any) => Promise<unknown>) => callback(prisma)),
     product: { findMany: vi.fn() },
+    branch: { findFirst: vi.fn() },
+    branchUser: { findFirst: vi.fn() },
     tenantSalesPolicy: { findUnique: vi.fn() },
     invoice: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() },
     auditLog: { create: vi.fn() },
@@ -63,7 +65,8 @@ async function invokeCreate(payload: Record<string, unknown>) {
 
   const req: any = {
     body: payload,
-    user: { tenantId, userId: "user-sales-a", role: "ADMIN" },
+    user: { tenantId, userId: "user-sales-a", role: "ADMIN", branchId: "branch-sales-a" },
+    headers: {},
     ip: "127.0.0.1",
   };
   const res = makeResponse();
@@ -81,6 +84,8 @@ describe("Server-side sales price and discount validation", () => {
     mockSaas.checkSubscriptionLimit.mockResolvedValue({ allowed: true });
     mockSaas.incrementUsage.mockResolvedValue(undefined);
     mockAuthorization.can.mockResolvedValue(false);
+    mockPrisma.branch.findFirst.mockResolvedValue({ id: "branch-sales-a" });
+    mockPrisma.branchUser.findFirst.mockResolvedValue({ id: "branch-user-sales-a" });
     mockPrisma.invoice.findUnique.mockResolvedValue(null);
     mockPrisma.invoice.findFirst.mockResolvedValue(null);
     mockPrisma.tenantSalesPolicy.findUnique.mockResolvedValue({ maxDiscountPercent: 10, taxRatePercent: 0, taxMode: "NONE" });

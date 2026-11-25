@@ -486,11 +486,13 @@ model InventoryLayer {
   tenantId             String
   tenant               Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   branchId             String?
-  consumptions         FifoConsumption[]
+  branch               Branch?           @relation("BranchInventoryLayers", fields: [branchId, tenantId], references: [id, tenantId], onDelete: Restrict)
+  consumptions          FifoConsumption[]
 
   @@unique([id, tenantId])
   @@unique([tenantId, sourceKey])
   @@index([tenantId, productId, expiryDate, createdAt])
+  @@index([tenantId, branchId, productId, expiryDate, createdAt])
   @@index([batchId, tenantId])
   @@map("inventory_layers")
 }
@@ -512,12 +514,14 @@ model FifoConsumption {
   tenantId       String
   tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   branchId       String?
+  branch         Branch?        @relation("BranchFifoConsumptions", fields: [branchId, tenantId], references: [id, tenantId], onDelete: Restrict)
 
   @@unique([id, tenantId])
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, referenceId, referenceType])
   @@index([tenantId, layerId])
   @@index([tenantId, productId])
+  @@index([tenantId, branchId, productId])
   @@map("fifo_consumption_log")
 }
 
@@ -688,6 +692,8 @@ model Branch {
   tenantId            String
   tenant              Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   deviceRegistrations DeviceRegistration[]
+  inventoryLayers     InventoryLayer[]     @relation("BranchInventoryLayers")
+  fifoConsumptions    FifoConsumption[]    @relation("BranchFifoConsumptions")
 
   @@unique([id, tenantId])
   @@unique([tenantId, code])

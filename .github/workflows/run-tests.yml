@@ -4,6 +4,7 @@ on:
   push:
     branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state ]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [ main, fix/sync-outbox-ownership-phase3 ]
   workflow_dispatch:
 
@@ -252,8 +253,8 @@ jobs:
         env:
           NODE_OPTIONS: "--max-old-space-size=5120"
 
-      # Phase 4A FIFO provenance suite — isolated PostgreSQL test database only.
-      - name: Run PostgreSQL Phase 4A FIFO Layer Cost Provenance tests
+      # Phase 4C branch-scoped FIFO provenance suite — isolated PostgreSQL test database only.
+      - name: Run PostgreSQL Phase 4C Branch-Scoped FIFO Layer Cost Provenance tests
         if: always()
         run: npx vitest run server/tests/fifo-layer-cost-provenance.integration.test.ts --reporter=verbose --maxWorkers=1
         env:

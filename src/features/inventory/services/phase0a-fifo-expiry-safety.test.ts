@@ -274,6 +274,13 @@ describe("Phase 0B — FIFO & Expiry safety regression", () => {
       $queryRaw: vi.fn()
         .mockResolvedValueOnce([{ id: PRODUCT, tenantId: TENANT, stockQuantity: 10, version: 0 }])
         .mockResolvedValueOnce([]),
+      branch: { findFirst: vi.fn().mockResolvedValue({ id: BRANCH }) },
+      branchInventory: { findUnique: vi.fn().mockResolvedValue({ stockQuantity: 10 }) },
+      inventoryLayer: {
+        aggregate: vi.fn()
+          .mockResolvedValueOnce({ _sum: { quantityRemaining: 10 } })
+          .mockResolvedValueOnce({ _sum: { quantityRemaining: 0 } })
+      },
       inventoryBatch: { update: vi.fn() },
       inventoryMovement: { create: vi.fn() },
       product: { update: vi.fn() },
@@ -287,6 +294,8 @@ describe("Phase 0B — FIFO & Expiry safety regression", () => {
       "INVOICE",
       "Phase 0A expired batch test",
       TENANT,
+      undefined,
+      BRANCH,
     )).rejects.toThrow(/FIFO_DEPLETION_MISMATCH|INSUFFICIENT_FIFO_STOCK/i);
 
     const batchQuery = tx.$queryRaw.mock.calls[1][0];

@@ -26,8 +26,29 @@ inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWN
     });
   }
   const key = `inventory:${data.productId}`;
-  const branchId = data.branchId || "BRH-MAIN-001";
+  const headerBranchId = req.headers["x-branch-id"] || req.headers["branch-id"];
+  const branchId = req.user?.branchId || (typeof headerBranchId === "string" ? headerBranchId.trim() : "");
   const userId = req.user?.userId || "SYSTEM";
+  if (!branchId) {
+    return res.status(400).json({ error: "TRUSTED_BRANCH_CONTEXT_REQUIRED", message: "يجب تحديد فرع موثوق لتنفيذ حركة المخزون." });
+  }
+  if (req.user?.branchId && headerBranchId && String(headerBranchId).trim() !== req.user.branchId) {
+    return res.status(403).json({ error: "BRANCH_MISMATCH", message: "الفرع المطلوب لا يطابق الفرع المرتبط بجلسة المستخدم." });
+  }
+  const branch = await prisma.branch.findFirst({
+    where: { id: branchId, tenantId },
+    select: { id: true }
+  });
+  if (!branch) {
+    return res.status(403).json({ error: "BRANCH_NOT_IN_TENANT", message: "الفرع لا ينتمي إلى المؤسسة المصادق عليها." });
+  }
+  const membership = await prisma.branchUser.findFirst({
+    where: { userId, branchId, tenantId },
+    select: { id: true }
+  });
+  if (!membership) {
+    return res.status(403).json({ error: "BRANCH_MEMBERSHIP_REQUIRED", message: "لا توجد عضوية مستخدم معتمدة لهذا الفرع." });
+  }
 
   // Acquire Redis lock
   const lock = await LockingService.acquireLock({
@@ -61,7 +82,8 @@ inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWN
           refId,
           "ADJUSTMENT",
           data.reason || "Manual Stock Intake Adjustment",
-          tenantId
+          tenantId,
+          branchId
         );
       } else {
         // Stock depletion / write off
@@ -72,7 +94,9 @@ inventoryRouter.post("/move", authenticateToken, requireRoles([Role.PLATFORM_OWN
           refId,
           "ADJUSTMENT",
           data.reason || "Manual Stock Depletion Adjustment",
-          tenantId
+          tenantId,
+          undefined,
+          branchId
         );
       }
 

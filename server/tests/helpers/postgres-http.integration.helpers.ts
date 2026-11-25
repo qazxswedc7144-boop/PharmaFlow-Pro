@@ -232,11 +232,20 @@ async function initialize(
       branchId: ctx.branchAId,
     },
   });
+  await prisma.branchInventory.create({
+    data: {
+      tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId,
+      productId: ctx.productAId,
+      stockQuantity: 6
+    }
+  });
 
   const invoiceB = await prisma.invoice.create({
     data: {
       tenantId: ctx.tenantBId,
       invoiceNumber: `TENANT-B-${ctx.suffix}`,
+      branchId: ctx.branchBId,
       type: "SALE",
       totalAmount: 7,
       status: "DRAFT",

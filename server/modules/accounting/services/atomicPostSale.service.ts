@@ -22,15 +22,29 @@ export class AtomicPostSaleService {
   static async executePostSaleCommand(params: {
     payload: any;
     tenantId: string;
+    branchId: string;
     userId: string;
     userRole?: string;
     ipAddress: string;
     tx?: any;
   }) {
-    const { payload, tenantId, userId, userRole, ipAddress, tx: providedTx } = params;
+    const { payload, tenantId, branchId, userId, userRole, ipAddress, tx: providedTx } = params;
+    if (!branchId?.trim()) {
+      throw new Error("TRUSTED_BRANCH_CONTEXT_REQUIRED: A verified branch context is mandatory for sale posting.");
+    }
+    if (payload?.tenantId && payload.tenantId !== tenantId) {
+      throw new Error("TENANT_MISMATCH: Sale payload tenant does not match the authenticated tenant.");
+    }
+    if (payload?.branchId && payload.branchId !== branchId) {
+      throw new Error("BRANCH_MISMATCH: Sale payload branch does not match the authenticated branch.");
+    }
+
+    // Tenant and branch identity come from the authenticated server context,
+    // never from the strict business DTO.
+    const { tenantId: _payloadTenantId, branchId: _payloadBranchId, ...businessPayload } = payload || {};
 
     // 0. Sanitize input (Handle 'عميل نقدي' case)
-    const sanitizedPayload = { ...payload };
+    const sanitizedPayload = { ...businessPayload };
     if (sanitizedPayload.partnerId === "عميل نقدي") {
       sanitizedPayload.partnerId = null;
     }
@@ -114,6 +128,14 @@ export class AtomicPostSaleService {
 
     // 3. Atomic Execution within Transaction
     const executeLogic = async (tx: any) => {
+      const branch = await tx.branch.findFirst({
+        where: { id: branchId, tenantId },
+        select: { id: true }
+      });
+      if (!branch) {
+        throw new Error("BRANCH_NOT_FOUND_OR_FORBIDDEN: Branch does not belong to the authenticated tenant.");
+      }
+
       // a. Check for duplicate invoice number within tenant to prevent collisions
       const existing = await tx.invoice.findFirst({
         where: { 
@@ -152,6 +174,7 @@ export class AtomicPostSaleService {
               : null,
           documentStatus: DocumentStatus.ACTIVE,
           tenantId,
+          branchId,
           items: {
             create: itemsData
           }

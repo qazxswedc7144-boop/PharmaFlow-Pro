@@ -22,7 +22,8 @@ vi.mock("../middleware/auth.middleware.js", () => ({
     req.user = {
       userId: "p0-01-user",
       role: "ACCOUNTANT",
-      tenantId: "TENANT-P0-01"
+      tenantId: "TENANT-P0-01",
+      branchId: "BRANCH-P0-01"
     };
     next();
   },
@@ -44,9 +45,17 @@ const PRODUCT_ID = "8c0fce38-5f6e-4c76-9a2f-71e6cb87bfa1";
 function createAddStockTx() {
   return {
     $queryRaw: vi.fn().mockResolvedValue([{ id: PRODUCT_ID, tenantId: TENANT_ID }]),
+    branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-P0-01" }) },
+    branchInventory: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({ stockQuantity: 10 })
+    },
     inventoryLayer: {
       findFirst: vi.fn().mockResolvedValue(null),
-      create: vi.fn().mockResolvedValue({ id: "layer-25" })
+      create: vi.fn().mockResolvedValue({ id: "layer-25" }),
+      aggregate: vi.fn()
+        .mockResolvedValueOnce({ _sum: { quantityRemaining: 0 } })
+        .mockResolvedValueOnce({ _sum: { quantityRemaining: 10 } })
     },
     inventoryBatch: {
       findUnique: vi.fn().mockResolvedValue(null),
@@ -142,8 +151,16 @@ function createDepleteTx() {
         expiryDate: null,
         createdAt: new Date("2026-01-01T00:00:00.000Z")
       }]),
+    branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-P0-01" }) },
+    branchInventory: {
+      findUnique: vi.fn().mockResolvedValue({ stockQuantity: 10 }),
+      update: vi.fn().mockResolvedValue({ stockQuantity: 0 })
+    },
     inventoryLayer: {
       update: vi.fn(),
+      aggregate: vi.fn()
+        .mockResolvedValueOnce({ _sum: { quantityRemaining: 10 } })
+        .mockResolvedValueOnce({ _sum: { quantityRemaining: 0 } }),
       findMany: vi.fn().mockResolvedValue([])
     },
     inventoryBatch: {
@@ -172,6 +189,8 @@ describe("P0-01 purchase-to-FIFO cost chain", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const tx = {
+      branch: { findFirst: vi.fn().mockResolvedValue({ id: "BRANCH-P0-01" }) },
+      branchUser: { findFirst: vi.fn().mockResolvedValue({ id: "branch-user-p0-01" }) },
       invoice: {
         findFirst: mocks.invoiceFindFirst,
         create: mocks.invoiceCreate
@@ -226,6 +245,7 @@ describe("P0-01 purchase-to-FIFO cost chain", () => {
     const body = await response.json() as any;
     expect(Number(body.invoice.items[0].cost)).toBe(25);
     expect(Number(body.invoice.items[0].price)).toBe(25);
+    expect(body.invoice.branchId).toBe("BRANCH-P0-01");
   });
 
   it("returns HTTP 422 for a PURCHASE with price zero", async () => {

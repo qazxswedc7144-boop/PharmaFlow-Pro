@@ -72,6 +72,16 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       });
     }
 
+    const branchHeader = req.headers["x-branch-id"] || req.headers["branch-id"];
+    const branchId = req.user?.branchId ||
+      (typeof branchHeader === "string" ? branchHeader.trim() : "");
+    if (!branchId) {
+      return res.status(400).json({ error: "TRUSTED_BRANCH_CONTEXT_REQUIRED", message: "يجب تحديد فرع موثوق لإنشاء الفاتورة." });
+    }
+    if (req.user?.branchId && branchHeader && String(branchHeader).trim() !== req.user.branchId) {
+      return res.status(403).json({ error: "BRANCH_MISMATCH", message: "الفرع المحدد لا يطابق الفرع المرتبط بجلسة المستخدم." });
+    }
+
     if (data.type === "SALE") {
       const checkLimit = await SaasService.checkSubscriptionLimit(tenantId);
       if (!checkLimit.allowed) {
@@ -86,6 +96,25 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
     // must commit or roll back together. Client price/total values are never
     // used for SALE invoices.
     const invoice = await prisma.$transaction(async (tx: any) => {
+      const branch = await tx.branch.findFirst({
+        where: { id: branchId, tenantId },
+        select: { id: true }
+      });
+      if (!branch) {
+        const error: any = new Error("BRANCH_NOT_IN_TENANT");
+        error.code = "BRANCH_NOT_IN_TENANT";
+        throw error;
+      }
+      const membership = await tx.branchUser.findFirst({
+        where: { userId: req.user?.userId || "", branchId, tenantId },
+        select: { id: true }
+      });
+      if (!membership) {
+        const error: any = new Error("BRANCH_MEMBERSHIP_REQUIRED");
+        error.code = "BRANCH_MEMBERSHIP_REQUIRED";
+        throw error;
+      }
+
       const existing = await tx.invoice.findFirst({
         where: { tenantId, invoiceNumber: data.invoiceNumber },
         select: { id: true }
@@ -233,6 +262,7 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
           paymentStatus: data.paymentStatus,
           documentStatus: DocumentStatus.ACTIVE,
           tenantId,
+          branchId,
           items: { create: itemData }
         },
         include: { items: true }
@@ -262,6 +292,12 @@ invoiceRouter.post("/create", authenticateToken, requireRoles([Role.PLATFORM_OWN
       invoice
     });
   } catch (err: any) {
+    if (err.code === "BRANCH_NOT_IN_TENANT") {
+      return res.status(403).json({ error: "BRANCH_NOT_IN_TENANT", message: "الفرع لا ينتمي إلى المؤسسة المصادق عليها." });
+    }
+    if (err.code === "BRANCH_MEMBERSHIP_REQUIRED") {
+      return res.status(403).json({ error: "BRANCH_MEMBERSHIP_REQUIRED", message: "لا توجد عضوية مستخدم معتمدة لهذا الفرع." });
+    }
     if (err.code === "PRICE_OVERRIDE_FORBIDDEN") {
       return res.status(403).json({ error: "PRICE_OVERRIDE_FORBIDDEN", message: "لا تملك صلاحية تعديل سعر البيع." });
     }
@@ -315,10 +351,39 @@ invoiceRouter.post("/post", authenticateToken, requireRoles([Role.PLATFORM_OWNER
     }
 
     const { invoiceId } = bodyValidation.data;
+    const tenantId = req.user?.tenantId;
+    const userId = req.user?.userId || "SYSTEM";
+    if (!tenantId) {
+      return res.status(403).json({ error: "TENANT_REQUIRED", message: "A trusted tenant context is required." });
+    }
+
+    const invoiceContext = await prisma.invoice.findFirst({
+      where: { id: invoiceId, tenantId },
+      select: { branchId: true }
+    });
+    if (!invoiceContext) {
+      return res.status(404).json({ error: "INVOICE_NOT_FOUND" });
+    }
+    const branchId = invoiceContext.branchId;
+    if (!branchId) {
+      return res.status(409).json({ error: "INVOICE_BRANCH_REQUIRED", message: "يجب إسناد الفاتورة إلى فرع قبل ترحيلها." });
+    }
+    const branchHeader = req.headers["x-branch-id"] || req.headers["branch-id"];
+    const requestedBranchId = req.user?.branchId ||
+      (typeof branchHeader === "string" ? branchHeader.trim() : "");
+    if (!requestedBranchId || requestedBranchId !== branchId ||
+        (req.user?.branchId && branchHeader && String(branchHeader).trim() !== req.user.branchId)) {
+      return res.status(403).json({ error: "BRANCH_MISMATCH", message: "لا يمكن ترحيل فاتورة فرع خارج سياق المستخدم الحالي." });
+    }
+    const membership = await prisma.branchUser.findFirst({
+      where: { userId, branchId, tenantId },
+      select: { id: true }
+    });
+    if (!membership) {
+      return res.status(403).json({ error: "BRANCH_MEMBERSHIP_REQUIRED", message: "لا توجد عضوية مستخدم معتمدة لهذا الفرع." });
+    }
 
     const key = `sales:${invoiceId}`;
-    const branchId = "BRH-MAIN-001";
-    const userId = req.user?.userId || "SYSTEM";
 
     const lock = await LockingService.acquireLock({
       key,
@@ -355,7 +420,7 @@ invoiceRouter.post("/post", authenticateToken, requireRoles([Role.PLATFORM_OWNER
           const type = (invoice.type === "SALE" || invoice.type === "RETURN_SALE") ? "InvoicePosted" : "PurchasePosted";
           await ReplicationPublisher.publish({
             type,
-            branchId: invoice.branchId || "BRH-MAIN-001",
+            branchId: invoice.branchId,
             userId: req.user?.userId || "SYSTEM",
             tenantId: invoice.tenantId || req.user?.tenantId,
             payload: {
@@ -380,6 +445,9 @@ invoiceRouter.post("/post", authenticateToken, requireRoles([Role.PLATFORM_OWNER
       await LockingService.releaseLock(key, lock.id, branchId, userId);
     }
   } catch (err: any) {
+    if (err.code === "TRUSTED_BRANCH_CONTEXT_REQUIRED" || err.code === "BRANCH_NOT_FOUND_OR_FORBIDDEN") {
+      return res.status(409).json({ error: "INVOICE_BRANCH_REQUIRED", message: "الفاتورة لا تحمل فرعاً موثوقاً صالحاً للترحيل." });
+    }
     if (err.code === "ACCOUNTING_PERIOD_LOCKED") {
       return res.status(423).json({ error: "ACCOUNTING_PERIOD_LOCKED", message: "الفترة المحاسبية لتاريخ الفاتورة مغلقة، ولا يمكن ترحيلها." });
     }
