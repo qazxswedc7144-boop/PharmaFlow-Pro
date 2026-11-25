@@ -11,7 +11,42 @@ import { authenticateToken } from "../middleware/auth.middleware.js";
 import { getJwtSecret } from "../security/jwtSecrets.js";
 import { resetLoginAttemptGuardForTests } from "../security/loginAttemptGuard.js";
 
-const enabled = Boolean(process.env.DATABASE_URL);
+// Fail-Closed: refuse to run unless explicitly in test environment AND
+// the database name clearly indicates a test database.
+function isSafeTestDatabase(): { safe: boolean; reason?: string } {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    return { safe: false, reason: 'DATABASE_URL not set' };
+  }
+  if (process.env.NODE_ENV !== 'test' && process.env.CI !== 'true') {
+    return { safe: false, reason: 'NODE_ENV is not "test" and CI is not "true"' };
+  }
+  let dbName: string;
+  try {
+    const parsed = new URL(url);
+    dbName = parsed.pathname.replace(/^\\//, '').split('?')[0] || '';
+  } catch {
+    return { safe: false, reason: 'DATABASE_URL is not a valid URL' };
+  }
+  const testIndicators = ['test', 'ci', 'pharmaflow_test', 'pharmaflow_ci'];
+  const looksLikeTest = testIndicators.some(indicator =>
+    dbName.toLowerCase().includes(indicator)
+  );
+  if (!looksLikeTest) {
+    return { safe: false, reason: `Database name "${dbName}" does not contain a test indicator` };
+  }
+  return { safe: true };
+}
+
+const safety = isSafeTestDatabase();
+const enabled = safety.safe;
+
+if (!enabled) {
+  console.warn(
+    `[P0-02 Test] SKIPPED — unsafe environment: ${safety.reason}. ` +
+    `This test refuses to run unless NODE_ENV=test AND the database name contains "test"/"ci".`
+  );
+}
 const password = "P0-02-CI-Only-Password!";
 
 describe.skipIf(!enabled)("P0-02 tenant Auto-Link removal and admin reassignment", () => {
