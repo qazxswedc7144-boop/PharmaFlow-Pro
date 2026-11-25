@@ -18,7 +18,7 @@ function isSafeTestDatabase(): { safe: boolean; reason?: string } {
   if (!url) {
     return { safe: false, reason: 'DATABASE_URL not set' };
   }
-  if (process.env.NODE_ENV !== 'test' && process.env.CI !== 'true') {
+  if (process.env.NODE_ENV !== 'test' || process.env.CI !== 'true') {
     return { safe: false, reason: 'NODE_ENV is not "test" and CI is not "true"' };
   }
   let dbName: string;
