@@ -24,7 +24,7 @@ function isSafeTestDatabase(): { safe: boolean; reason?: string } {
   let dbName: string;
   try {
     const parsed = new URL(url);
-    dbName = parsed.pathname.replace(/^\\//, '').split('?')[0] || '';
+    dbName = parsed.pathname.replace(/^\//, '').split('?')[0] || '';
   } catch {
     return { safe: false, reason: 'DATABASE_URL is not a valid URL' };
   }
