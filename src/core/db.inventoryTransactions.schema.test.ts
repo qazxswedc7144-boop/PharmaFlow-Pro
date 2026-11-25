@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { InventoryTransaction } from '@/types';
 import { PharmaFlowDB } from './db';
+
+// The Dexie schema intentionally retains legacy snake_case indexes that are
+// not part of the canonical InventoryTransaction domain type.
+type IndexedInventoryTransaction = InventoryTransaction & {
+  source_doc_id?: string;
+  product_id?: string;
+};
 
 describe('Production cleanup inventoryTransactions Dexie schema', () => {
   let testDb: PharmaFlowDB | undefined;
@@ -24,11 +32,35 @@ describe('Production cleanup inventoryTransactions Dexie schema', () => {
     expect(indexedFields.has('productId')).toBe(true);
     expect(indexedFields.has('product_id')).toBe(true);
 
+    const movement = (
+      id: string,
+      productId: string,
+      tenantId: string,
+      sourceDocId?: string,
+      legacyProductId?: string
+    ): IndexedInventoryTransaction => ({
+      id,
+      TransactionID: id,
+      productId,
+      warehouseId: 'warehouse-test',
+      SourceDocumentType: 'SALE',
+      SourceDocumentID: sourceDocId ?? '',
+      QuantityChange: 1,
+      before_qty: 0,
+      after_qty: 1,
+      TransactionType: 'SALE',
+      TransactionDate: '2026-11-25T00:00:00.000Z',
+      UserID: 'user-test',
+      tenantId,
+      ...(sourceDocId ? { source_doc_id: sourceDocId } : {}),
+      ...(legacyProductId ? { product_id: legacyProductId } : {})
+    });
+
     await table.bulkAdd([
-      { id: 'movement-source', source_doc_id: 'sale-demo', tenantId: 'tenant-a' },
-      { id: 'movement-camel', productId: 'product-camel', tenantId: 'tenant-a' },
-      { id: 'movement-snake', product_id: 'product-snake', tenantId: 'tenant-a' },
-      { id: 'movement-foreign', source_doc_id: 'sale-demo', tenantId: 'tenant-b' }
+      movement('movement-source', 'product-source', 'tenant-a', 'sale-demo'),
+      movement('movement-camel', 'product-camel', 'tenant-a'),
+      movement('movement-snake', 'product-snake-base', 'tenant-a', undefined, 'product-snake'),
+      movement('movement-foreign', 'product-foreign', 'tenant-b', 'sale-demo')
     ]);
 
     await expect(
