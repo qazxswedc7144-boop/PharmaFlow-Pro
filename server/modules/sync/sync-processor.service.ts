@@ -431,7 +431,7 @@ export class SyncProcessorService {
         // Load it only when a real SALE POST mutation reaches this branch.
         const { AtomicPostSaleService } = await import("../accounting/services/atomicPostSale.service.js");
         const postResult = await AtomicPostSaleService.executePostSaleCommand({
-          payload: { ...data, tenantId }, tenantId, userId: params.userId, userRole, ipAddress: "127.0.0.1", tx
+          payload: data, tenantId, userId: params.userId, userRole, ipAddress: "127.0.0.1", tx
         });
         return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
       } catch (err: any) {

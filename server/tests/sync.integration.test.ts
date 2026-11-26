@@ -557,7 +557,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
       where: { tenantId: ctx.tenantAId, referenceId: postedInvoice!.id }
     })).toBe(1);
     expect(await prisma.fifoConsumption.count({
-      where: { tenantId: ctx.tenantAId, saleId: postedInvoice!.id }
+      where: { tenantId: ctx.tenantAId, referenceId: postedInvoice!.id, referenceType: "INVOICE" }
     })).toBe(1);
 
     const afterPostProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
@@ -574,7 +574,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     expect(await prisma.invoice.count({ where: { tenantId: ctx.tenantAId, invoiceNumber } })).toBe(1);
     expect(await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId, sourceId: postedInvoice!.id } })).toBe(1);
     expect(await prisma.inventoryMovement.count({ where: { tenantId: ctx.tenantAId, referenceId: postedInvoice!.id } })).toBe(1);
-    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, saleId: postedInvoice!.id } })).toBe(1);
+    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, referenceId: postedInvoice!.id, referenceType: "INVOICE" } })).toBe(1);
     const afterReplayProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
     expect(afterReplayProduct?.stockQuantity).toBe((beforeProduct?.stockQuantity ?? 0) - 1);
   });

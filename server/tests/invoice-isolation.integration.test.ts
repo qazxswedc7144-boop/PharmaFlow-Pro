@@ -610,7 +610,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
 
     expect(await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId, sourceId: invoiceId } })).toBe(1);
     expect(await prisma.inventoryMovement.count({ where: { tenantId: ctx.tenantAId, referenceId: invoiceId } })).toBe(1);
-    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, saleId: invoiceId } })).toBe(1);
+    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, referenceId: invoiceId, referenceType: "INVOICE" } })).toBe(1);
     const afterPostProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
     expect(afterPostProduct?.stockQuantity).toBe((beforeProduct?.stockQuantity ?? 0) - 1);
 
@@ -625,7 +625,7 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
     expect(replayed.body.success).toBe(true);
     expect(await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId, sourceId: invoiceId } })).toBe(1);
     expect(await prisma.inventoryMovement.count({ where: { tenantId: ctx.tenantAId, referenceId: invoiceId } })).toBe(1);
-    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, saleId: invoiceId } })).toBe(1);
+    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, referenceId: invoiceId, referenceType: "INVOICE" } })).toBe(1);
     const afterReplayProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
     expect(afterReplayProduct?.stockQuantity).toBe((beforeProduct?.stockQuantity ?? 0) - 1);
   });
