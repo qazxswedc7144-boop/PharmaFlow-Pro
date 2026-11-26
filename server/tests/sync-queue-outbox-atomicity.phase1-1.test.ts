@@ -562,4 +562,390 @@ describe('Phase 1.1 — Sync Queue / Outbox Atomicity & Failure Injection', () =
     expect(await db.failedMutations.where('mutationId').equals(queued.mutationId).count()).toBe(0);
     expect((await db.outbox.where('mutationId').equals(queued.mutationId).first())?.status).toBe('PENDING');
   });
+
+  describe('Phase 1.1 Closure — Task 2: Atomic stale SENDING outbox recovery', () => {
+    it('10a. recovers paired stale SENDING outbox and PROCESSING syncQueue atomically inside a single Dexie transaction', async () => {
+      const queued = await engine.enqueue('POST', { id: 'inv-stale-send-1' }, 'SALE', 'idem-stale-send-1');
+      const qRow = await db.syncQueue.where('mutationId').equals(queued.mutationId).first();
+      const oRow = await db.outbox.where('mutationId').equals(queued.mutationId).first();
+
+      // Make outbox stale SENDING while syncQueue is PROCESSING with a recent timestamp
+      // so Step 1 does not touch syncQueue and Step 2 stale SENDING recovery owns the pair transition.
+      const staleIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      await db.syncQueue.update(qRow!.id!, { syncStatus: 'PROCESSING', updatedAt: new Date() });
+      await db.outbox.update(oRow!.id!, { status: 'SENDING', updatedAt: staleIso });
+
+      setOnline(true);
+      await (engine as any).recoverStaleSendingOutboxEvent(oRow!.id!, {
+        tenantId: tenantA,
+        userId: userA,
+        branchId: branchA,
+        token: 'p11-token-A',
+      });
+
+      expect((await db.syncQueue.get(qRow!.id!))?.syncStatus).toBe('PENDING');
+      expect((await db.outbox.get(oRow!.id!))?.status).toBe('PENDING');
+    });
+
+    it('10b. proves full Dexie rollback when outbox.update fails after syncQueue.update during paired stale SENDING recovery', async () => {
+      const queued = await engine.enqueue('POST', { id: 'inv-stale-send-rb' }, 'SALE', 'idem-stale-send-rb');
+      const qRow = await db.syncQueue.where('mutationId').equals(queued.mutationId).first();
+      const oRow = await db.outbox.where('mutationId').equals(queued.mutationId).first();
+
+      const staleIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      await db.syncQueue.update(qRow!.id!, { syncStatus: 'PROCESSING', updatedAt: new Date() });
+      await db.outbox.update(oRow!.id!, { status: 'SENDING', updatedAt: staleIso });
+
+      const tableProtoUpdate = Object.getPrototypeOf(db.syncQueue).update;
+      let queueRecoveredInsideTx = false;
+      vi.spyOn(db.syncQueue, 'update').mockImplementation(function (this: any, key: any, changes: any) {
+        return tableProtoUpdate.call(this, key, changes).then((count: number) => {
+          queueRecoveredInsideTx = count === 1;
+          return count;
+        });
+      } as any);
+      vi.spyOn(db.outbox, 'update').mockImplementationOnce((() =>
+        Dexie.Promise.reject(new Error('INJECTED_STALE_SENDING_OUTBOX_FAIL'))) as any);
+
+      setOnline(true);
+      await expect(engine.drainQueue()).rejects.toThrow('INJECTED_STALE_SENDING_OUTBOX_FAIL');
+
+      expect(queueRecoveredInsideTx).toBe(true);
+      // Both sides rolled back completely — no partial PENDING/SENDING mismatch
+      expect((await db.syncQueue.get(qRow!.id!))?.syncStatus).toBe('PROCESSING');
+      expect((await db.outbox.get(oRow!.id!))?.status).toBe('SENDING');
+    });
+
+    it('10c. fails closed (SYNC_PAIR_STATE_CONFLICT) when stale SENDING outbox is paired with terminal syncQueue (REJECTED/FAILED/CONFLICT) and vice versa', async () => {
+      for (const terminalQueueStatus of ['REJECTED', 'FAILED', 'CONFLICT'] as const) {
+        const queued = await engine.enqueue(
+          'POST',
+          { id: `inv-conflict-${terminalQueueStatus}` },
+          'SALE',
+          `idem-conflict-${terminalQueueStatus}`
+        );
+        const qRow = await db.syncQueue.where('mutationId').equals(queued.mutationId).first();
+        const oRow = await db.outbox.where('mutationId').equals(queued.mutationId).first();
+
+        const staleIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        await db.syncQueue.update(qRow!.id!, { syncStatus: terminalQueueStatus, updatedAt: new Date() });
+        await db.outbox.update(oRow!.id!, { status: 'SENDING', updatedAt: staleIso });
+
+        await expect(
+          (engine as any).recoverStaleSendingOutboxEvent(oRow!.id!, {
+            tenantId: tenantA,
+            userId: userA,
+            branchId: branchA,
+            token: 'p11-token-A',
+          })
+        ).rejects.toThrow('SYNC_PAIR_STATE_CONFLICT');
+
+        // Neither side was mutated
+        expect((await db.syncQueue.get(qRow!.id!))?.syncStatus).toBe(terminalQueueStatus);
+        expect((await db.outbox.get(oRow!.id!))?.status).toBe('SENDING');
+      }
+
+      // Symmetric check: stale PROCESSING syncQueue paired with terminal CONFIRMED outbox must fail closed
+      const queuedConfirmed = await engine.enqueue('POST', { id: 'inv-sym-conf' }, 'SALE', 'idem-sym-conf');
+      const qSym = await db.syncQueue.where('mutationId').equals(queuedConfirmed.mutationId).first();
+      const oSym = await db.outbox.where('mutationId').equals(queuedConfirmed.mutationId).first();
+      await db.syncQueue.update(qSym!.id!, {
+        syncStatus: 'PROCESSING',
+        updatedAt: new Date(Date.now() - 10 * 60 * 1000),
+      });
+      await db.outbox.update(oSym!.id!, { status: 'CONFIRMED', updatedAt: new Date().toISOString() });
+
+      await expect(
+        (engine as any).recoverStaleProcessingQueueItem(qSym!.id!, {
+          tenantId: tenantA,
+          userId: userA,
+          branchId: branchA,
+          token: 'p11-token-A',
+        })
+      ).rejects.toThrow('SYNC_PAIR_STATE_CONFLICT');
+
+      expect((await db.syncQueue.get(qSym!.id!))?.syncStatus).toBe('PROCESSING');
+      expect((await db.outbox.get(oSym!.id!))?.status).toBe('CONFIRMED');
+    });
+
+    it('10d. recovers standalone stale SENDING outbox event cleanly without auto-creating a fake syncQueue row, and rolls back on write failure', async () => {
+      const staleIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const outboxId = await db.outbox.add({
+        mutationId: 'standalone-sending-1',
+        tenantId: tenantA,
+        userId: userA,
+        branchId: branchA,
+        type: 'CREATE',
+        operation: 'CREATE',
+        entityType: 'PRODUCT',
+        payload: { id: 'prod-standalone-1' },
+        status: 'SENDING',
+        retries: 0,
+        idempotencyKey: 'idem-standalone-sending-1',
+        createdAt: staleIso,
+        updatedAt: staleIso,
+      } as any);
+
+      // Write failure rolls back and leaves status SENDING
+      vi.spyOn(db.outbox, 'update').mockImplementationOnce((() =>
+        Dexie.Promise.reject(new Error('INJECTED_STANDALONE_RECOVER_FAIL'))) as any);
+
+      await expect(
+        (engine as any).recoverStaleSendingOutboxEvent(outboxId, {
+          tenantId: tenantA,
+          userId: userA,
+          branchId: branchA,
+          token: 'p11-token-A',
+        })
+      ).rejects.toThrow('INJECTED_STANDALONE_RECOVER_FAIL');
+      expect((await db.outbox.get(outboxId))?.status).toBe('SENDING');
+      expect(await db.syncQueue.count()).toBe(0);
+
+      // Recovery succeeds without creating any synthetic syncQueue row
+      await (engine as any).recoverStaleSendingOutboxEvent(outboxId, {
+        tenantId: tenantA,
+        userId: userA,
+        branchId: branchA,
+        token: 'p11-token-A',
+      });
+      expect((await db.outbox.get(outboxId))?.status).toBe('PENDING');
+      expect(await db.syncQueue.count()).toBe(0);
+    });
+  });
+
+  describe('Phase 1.1 Closure — Task 3: Unpaired & Mismatched Records Fail-Closed Matrix', () => {
+    const rawPut = async (storeName: 'syncQueue' | 'outbox', record: Record<string, unknown>) => {
+      if (!db.isOpen()) await db.open();
+      const nativeDb = (db as any).backendDB();
+      await new Promise<void>((resolve, reject) => {
+        const tx = nativeDb.transaction([storeName], 'readwrite');
+        tx.objectStore(storeName).put(record);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+    };
+
+    const rawGet = async (storeName: 'syncQueue' | 'outbox', key: number): Promise<any> => {
+      if (!db.isOpen()) await db.open();
+      const nativeDb = (db as any).backendDB();
+      return await new Promise<any>((resolve, reject) => {
+        const tx = nativeDb.transaction([storeName], 'readonly');
+        const req = tx.objectStore(storeName).get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    };
+
+    it('11a. syncQueue without outbox fails closed when pair is required (resubmitFailed & requirePair delete) and NEVER auto-creates outbox', async () => {
+      const qId = await db.syncQueue.add({
+        mutationId: 'queue-only-mut-1',
+        tenantId: tenantA,
+        userId: userA,
+        branchId: branchA,
+        deviceId: 'DEV-1',
+        entityType: 'SALE',
+        operationType: 'POST',
+        payload: { id: 'inv-q-only' },
+        syncStatus: 'REJECTED',
+        retryCount: 1,
+        idempotencyKey: 'idem-q-only-1',
+        version: 1,
+        logicalTimestamp: Date.now(),
+        actorId: userA,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as any);
+
+      // resubmitFailed requires pair -> fails closed, does NOT touch syncQueue, does NOT create outbox
+      await expect(engine.resubmitFailed('queue-only-mut-1')).rejects.toThrow('SYNC_PAIR_RECONCILIATION_REQUIRED');
+      expect((await db.syncQueue.get(qId))?.syncStatus).toBe('REJECTED');
+      expect(await db.outbox.count()).toBe(0);
+
+      // requirePair delete transition must refuse to delete syncQueue when outbox is missing
+      await expect(
+        (engine as any).applyAtomicPairTransition({
+          snapshot: { tenantId: tenantA, userId: userA, branchId: branchA, token: 'p11-token-A' },
+          mutationId: 'queue-only-mut-1',
+          idempotencyKey: 'idem-q-only-1',
+          queueId: qId,
+          requirePair: true,
+          queueAction: { type: 'delete' },
+          outboxAction: { type: 'update', patch: { status: 'CONFIRMED' } },
+        })
+      ).rejects.toThrow('SYNC_PAIR_RECONCILIATION_REQUIRED');
+
+      expect(await db.syncQueue.get(qId)).toBeDefined();
+      expect(await db.outbox.count()).toBe(0);
+    });
+
+    it('11b. outbox without syncQueue fails closed in resubmitFailed (requirePair) without creating fake syncQueue, while standalone processOutboxEvent stays intact', async () => {
+      const outboxId = await db.outbox.add({
+        mutationId: 'outbox-only-mut-1',
+        tenantId: tenantA,
+        userId: userA,
+        branchId: branchA,
+        type: 'CREATE',
+        operation: 'CREATE',
+        entityType: 'PRODUCT',
+        payload: { id: 'prod-o-only' },
+        status: 'FAILED',
+        retries: 1,
+        idempotencyKey: 'idem-o-only-1',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as any);
+
+      // resubmitFailed requires pair -> fails closed, leaves outbox FAILED, never creates fake syncQueue
+      await expect(engine.resubmitFailed('outbox-only-mut-1')).rejects.toThrow('SYNC_PAIR_RECONCILIATION_REQUIRED');
+      expect((await db.outbox.get(outboxId))?.status).toBe('FAILED');
+      expect(await db.syncQueue.count()).toBe(0);
+
+      // Standalone outbox event dispatched via processOutboxEvent confirms cleanly without creating syncQueue
+      await db.outbox.update(outboxId, { status: 'PENDING' });
+      setOnline(true);
+      (unifiedTransport.request as any).mockResolvedValueOnce(makeResponse('SUCCESS', 'outbox-only-mut-1', 200));
+      await (engine as any).processOutboxEvent(await db.outbox.get(outboxId));
+      expect((await db.outbox.get(outboxId))?.status).toBe('CONFIRMED');
+      expect(await db.syncQueue.count()).toBe(0);
+    });
+
+    it('11c. detects mutationId mismatch across syncQueue and outbox sharing the same idempotencyKey and fails closed without deleting syncQueue or leaving an orphan', async () => {
+      const sharedIdemKey = 'idem-mut-mismatch-1';
+      const qId = await db.syncQueue.add({
+        mutationId: 'mut-queue-side-A',
+        tenantId: tenantA,
+        userId: userA,
+        branchId: branchA,
+        deviceId: 'DEV-1',
+        entityType: 'SALE',
+        operationType: 'POST',
+        payload: { id: 'inv-mm-1' },
+        syncStatus: 'PENDING',
+        retryCount: 0,
+        idempotencyKey: sharedIdemKey,
+        version: 1,
+        logicalTimestamp: Date.now(),
+        actorId: userA,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as any);
+      const oId = await db.outbox.add({
+        mutationId: 'mut-outbox-side-B',
+        tenantId: tenantA,
+        userId: userA,
+        branchId: branchA,
+        type: 'POST',
+        operation: 'POST',
+        entityType: 'SALE',
+        payload: { id: 'inv-mm-1' },
+        status: 'PENDING',
+        retries: 0,
+        idempotencyKey: sharedIdemKey,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      } as any);
+
+      setOnline(true);
+      (unifiedTransport.request as any).mockResolvedValueOnce(makeResponse('SUCCESS', 'mut-queue-side-A', 200));
+
+      await expect(
+        (engine as any).processMutationWithRetry(await db.syncQueue.get(qId))
+      ).rejects.toThrow('SYNC_PAIR_MUTATION_MISMATCH');
+
+      // Neither side deleted or confirmed — zero orphaned outbox left behind
+      expect((await db.syncQueue.get(qId))?.syncStatus).toBe('PROCESSING');
+      expect((await db.outbox.get(oId))?.status).toBe('PENDING');
+
+      // resubmitFailed also fails closed on mutationId mismatch
+      await expect(engine.resubmitFailed('mut-queue-side-A')).rejects.toThrow('SYNC_PAIR_MUTATION_MISMATCH');
+      expect((await db.syncQueue.get(qId))?.syncStatus).toBe('PROCESSING');
+      expect((await db.outbox.get(oId))?.status).toBe('PENDING');
+    });
+
+    it('11d. detects idempotencyKey mismatch on terminal SUCCESS transition and refuses to delete syncQueue or confirm outbox', async () => {
+      const queued = await engine.enqueue('POST', { id: 'inv-idem-mm-1' }, 'SALE', 'idem-original-1');
+      const qRow = await db.syncQueue.where('mutationId').equals(queued.mutationId).first();
+      const oRow = await db.outbox.where('mutationId').equals(queued.mutationId).first();
+
+      // Corrupt outbox idempotencyKey while keeping same mutationId
+      await db.outbox.update(oRow!.id!, { idempotencyKey: 'idem-divergent-2' });
+
+      setOnline(true);
+      (unifiedTransport.request as any).mockResolvedValueOnce(makeResponse('SUCCESS', queued.mutationId, 200));
+
+      await expect(
+        (engine as any).processMutationWithRetry(await db.syncQueue.get(qRow!.id!))
+      ).rejects.toThrow('SYNC_PAIR_IDEMPOTENCY_MISMATCH');
+
+      // syncQueue was NOT deleted and outbox was NOT confirmed
+      expect((await db.syncQueue.get(qRow!.id!))?.syncStatus).toBe('PROCESSING');
+      expect((await db.outbox.get(oRow!.id!))?.status).toBe('PENDING');
+    });
+
+    it('11e. detects tenantId and userId mismatch directly inside pair consistency checks and fails closed without mutating either record', async () => {
+      const queued = await engine.enqueue('POST', { id: 'inv-owner-mm-1' }, 'SALE', 'idem-owner-mm-1');
+      const qRow = await db.syncQueue.where('mutationId').equals(queued.mutationId).first();
+      const oRow = await db.outbox.where('mutationId').equals(queued.mutationId).first();
+
+      // Case 1: Same tenant, mismatched userId on outbox (written directly to native store)
+      await rawPut('outbox', { ...oRow, userId: userB });
+
+      setOnline(true);
+      (unifiedTransport.request as any).mockResolvedValueOnce(makeResponse('SUCCESS', queued.mutationId, 200));
+      await expect(
+        (engine as any).processMutationWithRetry(await db.syncQueue.get(qRow!.id!))
+      ).rejects.toThrow('SYNC_PAIR_OWNER_MISMATCH');
+
+      expect((await db.syncQueue.get(qRow!.id!))?.syncStatus).toBe('PROCESSING');
+      expect((await rawGet('outbox', oRow!.id!))?.status).toBe('PENDING');
+
+      // Case 2: Mismatched tenantId checked directly in assertPairConsistency
+      expect(() =>
+        (engine as any).assertPairConsistency(
+          qRow,
+          { ...oRow, tenantId: tenantB },
+          { tenantId: tenantA, userId: userA, branchId: branchA, token: 'p11-token-A' },
+          { mutationId: queued.mutationId, idempotencyKey: queued.idempotencyKey }
+        )
+      ).toThrow('SYNC_PAIR_OWNER_MISMATCH');
+    });
+
+    it('11f. fails closed and rolls back completely on silent no-op syncQueue.delete or zero-row outbox/syncQueue updates', async () => {
+      // Case 1: Silent no-op delete on syncQueue after outbox.update('CONFIRMED') ran -> rolls back outbox!
+      const queued1 = await engine.enqueue('POST', { id: 'inv-noop-del-1' }, 'SALE', 'idem-noop-del-1');
+      const q1 = await db.syncQueue.where('mutationId').equals(queued1.mutationId).first();
+      const o1 = await db.outbox.where('mutationId').equals(queued1.mutationId).first();
+
+      vi.spyOn(db.syncQueue, 'delete').mockImplementationOnce((() => Dexie.Promise.resolve(undefined)) as any);
+      setOnline(true);
+      (unifiedTransport.request as any).mockResolvedValueOnce(makeResponse('SUCCESS', queued1.mutationId, 200));
+
+      await expect(
+        (engine as any).processMutationWithRetry(await db.syncQueue.get(q1!.id!))
+      ).rejects.toThrow('SYNC_QUEUE_DELETE_FAILED');
+
+      expect(await db.syncQueue.get(q1!.id!)).toBeDefined();
+      expect((await db.outbox.get(o1!.id!))?.status).toBe('PENDING');
+
+      // Case 2: outbox.update returns 0 affected rows -> aborts transaction and rolls back syncQueue!
+      setOnline(false);
+      const queued2 = await engine.enqueue('POST', { id: 'inv-zero-upd-1' }, 'SALE', 'idem-zero-upd-1');
+      const q2 = await db.syncQueue.where('mutationId').equals(queued2.mutationId).first();
+      const o2 = await db.outbox.where('mutationId').equals(queued2.mutationId).first();
+      await db.syncQueue.update(q2!.id!, { syncStatus: 'REJECTED' });
+      await db.outbox.update(o2!.id!, { status: 'FAILED' });
+
+      vi.spyOn(db.outbox, 'update').mockImplementationOnce((() => Dexie.Promise.resolve(0)) as any);
+      await expect(engine.resubmitFailed(queued2.mutationId)).rejects.toThrow('SYNC_OUTBOX_UPDATE_FAILED');
+      expect((await db.syncQueue.get(q2!.id!))?.syncStatus).toBe('REJECTED');
+      expect((await db.outbox.get(o2!.id!))?.status).toBe('FAILED');
+
+      // Case 3: syncQueue.update returns 0 affected rows -> aborts transaction before touching outbox!
+      vi.spyOn(db.syncQueue, 'update').mockImplementationOnce((() => Dexie.Promise.resolve(0)) as any);
+      await expect(engine.resubmitFailed(queued2.mutationId)).rejects.toThrow('SYNC_QUEUE_UPDATE_FAILED');
+      expect((await db.syncQueue.get(q2!.id!))?.syncStatus).toBe('REJECTED');
+      expect((await db.outbox.get(o2!.id!))?.status).toBe('FAILED');
+    });
+  });
 });

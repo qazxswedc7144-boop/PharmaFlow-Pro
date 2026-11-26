@@ -61,6 +61,8 @@ jobs:
           server/tests/sync-branch-security-hardening.test.ts
           server/tests/legacy-local-sync-cleanup.test.ts
           server/tests/sync-engine-phase6-e2e.test.ts
+          server/tests/sync-queue-outbox-atomicity.phase1-1.test.ts
+          server/tests/idempotency-lock-recovery.phase1-1.test.ts
           server/tests/jwt-secrets.test.ts
           server/tests/login-attempt-guard.test.ts
           server/tests/middleware-fail-closed.test.ts

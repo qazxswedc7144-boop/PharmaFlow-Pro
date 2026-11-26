@@ -651,32 +651,42 @@ export class DistributedSyncEngine {
     return `${snapshot.tenantId}:${snapshot.userId}:${mutationId}`;
   }
 
-  private async findRecordByMutationIdWithOwnerCheck(
+  private async findRecordByIndexWithOwnerCheck(
     table: any,
     tableName: 'syncQueue' | 'outbox',
-    mutationId: string,
+    indexName: 'mutationId' | 'idempotencyKey',
+    value: string,
     snapshot: SyncSessionSnapshot
   ): Promise<any | undefined> {
-    if (!table || !mutationId) return undefined;
-    const matches = await table.where('mutationId').equals(mutationId).toArray();
+    if (!table || !value) return undefined;
+    const matches = await table.where(indexName).equals(value).toArray();
     assertSyncSessionCurrent(snapshot);
     if (!matches.length) return undefined;
 
     for (const record of matches) {
       if (record.tenantId !== snapshot.tenantId || record.userId !== snapshot.userId) {
         throw new Error(
-          `SYNC_PAIR_OWNER_MISMATCH: Existing ${tableName} record for mutation ${mutationId} is not owned by the active tenant/user.`
+          `SYNC_PAIR_OWNER_MISMATCH: Existing ${tableName} record for ${indexName} ${value} is not owned by the active tenant/user.`
         );
       }
     }
 
     if (matches.length > 1) {
       throw new Error(
-        `SYNC_PAIR_DUPLICATE_MUTATION: Multiple ${tableName} records found for mutation ${mutationId}.`
+        `SYNC_PAIR_DUPLICATE_MUTATION: Multiple ${tableName} records found for ${indexName} ${value}.`
       );
     }
 
     return matches[0];
+  }
+
+  private async findRecordByMutationIdWithOwnerCheck(
+    table: any,
+    tableName: 'syncQueue' | 'outbox',
+    mutationId: string,
+    snapshot: SyncSessionSnapshot
+  ): Promise<any | undefined> {
+    return this.findRecordByIndexWithOwnerCheck(table, tableName, 'mutationId', mutationId, snapshot);
   }
 
   private assertPairConsistency(
@@ -720,6 +730,80 @@ export class DistributedSyncEngine {
     }
   }
 
+  private async resolvePairedRecordsInTx(params: {
+    snapshot: SyncSessionSnapshot;
+    mutationId?: string;
+    idempotencyKey?: string;
+    queueId?: number;
+    outboxId?: number;
+  }): Promise<{ queueRecord?: LocalSyncQueueItem; outboxRecord?: any }> {
+    const outboxTable = this.getOutboxTable();
+
+    let queueRecord: LocalSyncQueueItem | undefined;
+    if (this.db.syncQueue) {
+      if (params.queueId !== undefined) {
+        queueRecord = await this.db.syncQueue.get(params.queueId);
+        assertSyncSessionCurrent(params.snapshot);
+        if (!queueRecord) {
+          throw new Error(`SYNC_QUEUE_RECORD_NOT_FOUND: syncQueue record ${params.queueId} no longer exists.`);
+        }
+      } else if (params.mutationId) {
+        queueRecord = await this.findRecordByMutationIdWithOwnerCheck(
+          this.db.syncQueue,
+          'syncQueue',
+          params.mutationId,
+          params.snapshot
+        );
+      }
+    }
+
+    let outboxRecord: any | undefined;
+    if (outboxTable) {
+      if (params.outboxId !== undefined) {
+        outboxRecord = await outboxTable.get(params.outboxId);
+        assertSyncSessionCurrent(params.snapshot);
+        if (!outboxRecord) {
+          throw new Error(`SYNC_OUTBOX_RECORD_NOT_FOUND: outbox record ${params.outboxId} no longer exists.`);
+        }
+      } else if (params.mutationId) {
+        outboxRecord = await this.findRecordByMutationIdWithOwnerCheck(
+          outboxTable,
+          'outbox',
+          params.mutationId,
+          params.snapshot
+        );
+      }
+    }
+
+    // Cross-check by idempotencyKey when only one side was found by mutationId so a mismatched
+    // mutationId sharing the same idempotencyKey fails closed instead of leaving an orphan.
+    const effectiveIdempotencyKey =
+      params.idempotencyKey || queueRecord?.idempotencyKey || outboxRecord?.idempotencyKey;
+
+    if (effectiveIdempotencyKey) {
+      if (!outboxRecord && outboxTable) {
+        outboxRecord = await this.findRecordByIndexWithOwnerCheck(
+          outboxTable,
+          'outbox',
+          'idempotencyKey',
+          effectiveIdempotencyKey,
+          params.snapshot
+        );
+      }
+      if (!queueRecord && this.db.syncQueue) {
+        queueRecord = await this.findRecordByIndexWithOwnerCheck(
+          this.db.syncQueue,
+          'syncQueue',
+          'idempotencyKey',
+          effectiveIdempotencyKey,
+          params.snapshot
+        );
+      }
+    }
+
+    return { queueRecord, outboxRecord };
+  }
+
   private async applyAtomicPairTransition(options: {
     snapshot: SyncSessionSnapshot;
     mutationId?: string;
@@ -737,6 +821,7 @@ export class DistributedSyncEngine {
       createdAt: Date;
     };
     requireAtLeastOne?: boolean;
+    requirePair?: boolean;
   }): Promise<{ queueAffected: boolean; outboxAffected: boolean }> {
     const outboxTable = this.getOutboxTable();
     const txTables = this.getQueueOutboxTxTables(Boolean(options.failedMutationRecord));
@@ -750,46 +835,31 @@ export class DistributedSyncEngine {
     await (this.db as any).transaction('rw', txTables, async () => {
       assertSyncSessionCurrent(options.snapshot);
 
-      let queueRecord: LocalSyncQueueItem | undefined;
-      if (this.db.syncQueue) {
-        if (options.queueId !== undefined) {
-          queueRecord = await this.db.syncQueue.get(options.queueId);
-          assertSyncSessionCurrent(options.snapshot);
-          if (!queueRecord) {
-            throw new Error(`SYNC_QUEUE_RECORD_NOT_FOUND: syncQueue record ${options.queueId} no longer exists.`);
-          }
-        } else if (options.mutationId) {
-          queueRecord = await this.findRecordByMutationIdWithOwnerCheck(
-            this.db.syncQueue,
-            'syncQueue',
-            options.mutationId,
-            options.snapshot
-          );
-        }
-      }
-
-      let outboxRecord: any | undefined;
-      if (outboxTable) {
-        if (options.outboxId !== undefined) {
-          outboxRecord = await outboxTable.get(options.outboxId);
-          assertSyncSessionCurrent(options.snapshot);
-          if (!outboxRecord) {
-            throw new Error(`SYNC_OUTBOX_RECORD_NOT_FOUND: outbox record ${options.outboxId} no longer exists.`);
-          }
-        } else if (options.mutationId) {
-          outboxRecord = await this.findRecordByMutationIdWithOwnerCheck(
-            outboxTable,
-            'outbox',
-            options.mutationId,
-            options.snapshot
-          );
-        }
-      }
+      const { queueRecord, outboxRecord } = await this.resolvePairedRecordsInTx({
+        snapshot: options.snapshot,
+        mutationId: options.mutationId,
+        idempotencyKey: options.idempotencyKey,
+        queueId: options.queueId,
+        outboxId: options.outboxId
+      });
 
       if (options.requireAtLeastOne && !queueRecord && !outboxRecord) {
         throw new Error(
           `SYNC_MUTATION_NOT_FOUND: No matching syncQueue or outbox record found for mutation ${options.mutationId || 'unknown'}.`
         );
+      }
+
+      if (options.requirePair && this.db.syncQueue && outboxTable) {
+        if (queueRecord && !outboxRecord) {
+          throw new Error(
+            `SYNC_PAIR_RECONCILIATION_REQUIRED: syncQueue record for mutation ${queueRecord.mutationId} has no matching outbox record; automatic creation is blocked.`
+          );
+        }
+        if (outboxRecord && !queueRecord) {
+          throw new Error(
+            `SYNC_PAIR_RECONCILIATION_REQUIRED: outbox record for mutation ${outboxRecord.mutationId} has no matching syncQueue record; automatic creation is blocked.`
+          );
+        }
       }
 
       this.assertPairConsistency(queueRecord, outboxRecord, options.snapshot, {
@@ -822,6 +892,11 @@ export class DistributedSyncEngine {
         if (options.queueAction.type === 'delete') {
           await this.db.syncQueue.delete(queueRecord.id!);
           assertSyncSessionCurrent(options.snapshot);
+          const remaining = await this.db.syncQueue.get(queueRecord.id!);
+          assertSyncSessionCurrent(options.snapshot);
+          if (remaining) {
+            throw new Error(`SYNC_QUEUE_DELETE_FAILED: syncQueue record ${queueRecord.id} still exists after delete.`);
+          }
           queueAffected = true;
           return;
         }
@@ -863,6 +938,107 @@ export class DistributedSyncEngine {
     });
 
     return { queueAffected, outboxAffected };
+  }
+
+  private async recoverStaleProcessingQueueItem(queueId: number, snapshot: SyncSessionSnapshot): Promise<void> {
+    const outboxTable = this.getOutboxTable();
+    const txTables = this.getQueueOutboxTxTables(false);
+    const nowDate = new Date();
+    const nowIso = nowDate.toISOString();
+
+    await (this.db as any).transaction('rw', txTables, async () => {
+      assertSyncSessionCurrent(snapshot);
+      const queueRow = await this.db.syncQueue.get(queueId);
+      assertSyncSessionCurrent(snapshot);
+      if (!queueRow || queueRow.syncStatus !== 'PROCESSING') return;
+
+      const { outboxRecord: outboxRow } = await this.resolvePairedRecordsInTx({
+        snapshot,
+        mutationId: queueRow.mutationId,
+        idempotencyKey: queueRow.idempotencyKey,
+        queueId: queueRow.id
+      });
+
+      this.assertPairConsistency(queueRow, outboxRow, snapshot, {
+        mutationId: queueRow.mutationId,
+        idempotencyKey: queueRow.idempotencyKey
+      });
+
+      if (outboxRow) {
+        const outboxStatus = String(outboxRow.status || '').toUpperCase();
+        const conflictingOutboxStatuses = new Set(['CONFIRMED', 'COMPLETED', 'SUCCESS', 'DUPLICATE', 'FAILED', 'CONFLICT']);
+        if (conflictingOutboxStatuses.has(outboxStatus)) {
+          throw new Error(
+            `SYNC_PAIR_STATE_CONFLICT: Cannot recover stale PROCESSING syncQueue record ${queueRow.mutationId} while paired outbox is in terminal state ${outboxStatus}.`
+          );
+        }
+      }
+
+      const queueUpdated = await this.db.syncQueue.update(queueRow.id!, { syncStatus: 'PENDING', updatedAt: nowDate });
+      assertSyncSessionCurrent(snapshot);
+      if (queueUpdated !== 1) {
+        throw new Error(`SYNC_QUEUE_UPDATE_FAILED: Expected 1 syncQueue row recovered, got ${queueUpdated}.`);
+      }
+
+      if (outboxRow && outboxTable && String(outboxRow.status || '').toUpperCase() === 'SENDING') {
+        const outboxUpdated = await outboxTable.update(outboxRow.id!, { status: 'PENDING', updatedAt: nowIso });
+        assertSyncSessionCurrent(snapshot);
+        if (outboxUpdated !== 1) {
+          throw new Error(`SYNC_OUTBOX_UPDATE_FAILED: Expected 1 outbox row recovered, got ${outboxUpdated}.`);
+        }
+      }
+    });
+  }
+
+  private async recoverStaleSendingOutboxEvent(outboxId: number, snapshot: SyncSessionSnapshot): Promise<void> {
+    const outboxTable = this.getOutboxTable();
+    if (!outboxTable) return;
+    const txTables = this.getQueueOutboxTxTables(false);
+    const nowDate = new Date();
+    const nowIso = nowDate.toISOString();
+
+    await (this.db as any).transaction('rw', txTables, async () => {
+      assertSyncSessionCurrent(snapshot);
+      const outboxRow = await outboxTable.get(outboxId);
+      assertSyncSessionCurrent(snapshot);
+      if (!outboxRow || String(outboxRow.status || '').toUpperCase() !== 'SENDING') return;
+
+      const { queueRecord: queueRow } = await this.resolvePairedRecordsInTx({
+        snapshot,
+        mutationId: outboxRow.mutationId,
+        idempotencyKey: outboxRow.idempotencyKey,
+        outboxId: outboxRow.id
+      });
+
+      this.assertPairConsistency(queueRow, outboxRow, snapshot, {
+        mutationId: outboxRow.mutationId,
+        idempotencyKey: outboxRow.idempotencyKey
+      });
+
+      if (queueRow) {
+        const queueStatus = String(queueRow.syncStatus || '').toUpperCase();
+        const conflictingQueueStatuses = new Set(['REJECTED', 'FAILED', 'CONFLICT']);
+        if (conflictingQueueStatuses.has(queueStatus)) {
+          throw new Error(
+            `SYNC_PAIR_STATE_CONFLICT: Cannot recover stale SENDING outbox event ${outboxRow.mutationId} while paired syncQueue is in terminal state ${queueStatus}.`
+          );
+        }
+
+        if (queueStatus === 'PROCESSING') {
+          const queueUpdated = await this.db.syncQueue.update(queueRow.id!, { syncStatus: 'PENDING', updatedAt: nowDate });
+          assertSyncSessionCurrent(snapshot);
+          if (queueUpdated !== 1) {
+            throw new Error(`SYNC_QUEUE_UPDATE_FAILED: Expected 1 syncQueue row recovered, got ${queueUpdated}.`);
+          }
+        }
+      }
+
+      const outboxUpdated = await outboxTable.update(outboxRow.id!, { status: 'PENDING', updatedAt: nowIso });
+      assertSyncSessionCurrent(snapshot);
+      if (outboxUpdated !== 1) {
+        throw new Error(`SYNC_OUTBOX_UPDATE_FAILED: Expected 1 outbox row recovered, got ${outboxUpdated}.`);
+      }
+    });
   }
 
   private async commitServerConfirmedLocalState(params: {
@@ -932,7 +1108,8 @@ export class DistributedSyncEngine {
 
   /**
    * Resubmits a failed mutation manually from the dead letter log.
-   * Updates paired syncQueue and outbox records atomically in a single Dexie transaction
+   * Updates paired syncQueue and outbox records atomically in a single Dexie transaction,
+   * fails closed when either side of a required pair is missing or inconsistent,
    * and propagates any failure to the caller instead of swallowing errors.
    */
   public async resubmitFailed(mutationId: string): Promise<void> {
@@ -952,6 +1129,7 @@ export class DistributedSyncEngine {
         snapshot,
         mutationId,
         requireAtLeastOne: true,
+        requirePair: true,
         queueAction: {
           type: 'update',
           patch: {
@@ -1205,25 +1383,8 @@ export class DistributedSyncEngine {
           if (item.tenantId === snapshot.tenantId && item.userId === snapshot.userId &&
               Number.isFinite(updatedAt) && updatedAt < staleBefore) {
             assertSyncSessionCurrent(snapshot);
-            const nowIso = new Date().toISOString();
-            const txTables = this.getQueueOutboxTxTables(false);
-            await (this.db as any).transaction('rw', txTables, async () => {
-              assertSyncSessionCurrent(snapshot);
-              const queueRow = await this.db.syncQueue.get(item.id!);
-              if (!queueRow || queueRow.syncStatus !== 'PROCESSING') return;
-              const outboxRow = outboxTable && queueRow.mutationId
-                ? await this.findRecordByMutationIdWithOwnerCheck(outboxTable, 'outbox', queueRow.mutationId, snapshot)
-                : undefined;
-              this.assertPairConsistency(queueRow, outboxRow, snapshot, {
-                mutationId: queueRow.mutationId,
-                idempotencyKey: queueRow.idempotencyKey
-              });
-              await this.db.syncQueue.update(queueRow.id!, { syncStatus: 'PENDING', updatedAt: new Date() });
-              if (outboxRow && String(outboxRow.status || '').toUpperCase() === 'SENDING') {
-                await outboxTable.update(outboxRow.id!, { status: 'PENDING', updatedAt: nowIso });
-              }
-              assertSyncSessionCurrent(snapshot);
-            });
+            await this.recoverStaleProcessingQueueItem(item.id!, snapshot);
+            assertSyncSessionCurrent(snapshot);
           }
         }
         const batch = await this.db.syncQueue.where('syncStatus').anyOf('PENDING', 'RETRY_PENDING').toArray();
@@ -1248,7 +1409,7 @@ export class DistributedSyncEngine {
           if (event.tenantId === snapshot.tenantId && event.userId === snapshot.userId &&
               Number.isFinite(updatedAt) && updatedAt < staleBefore) {
             assertSyncSessionCurrent(snapshot);
-            await outboxTable.update(event.id, { status: 'PENDING', updatedAt: new Date().toISOString() });
+            await this.recoverStaleSendingOutboxEvent(event.id, snapshot);
             assertSyncSessionCurrent(snapshot);
           }
         }
