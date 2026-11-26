@@ -226,7 +226,8 @@ export class IdempotencyRepository {
   }
 
   /**
-   * Releases a lock to allow retries in case of processing errors, setting processing to false.
+   * Releases an unresolved lock (responseStatus === null) so retries with the same
+   * Idempotency-Key execute cleanly instead of replaying an empty cached response.
    */
   static async releaseLock(key: string, tenantId?: string | null): Promise<IdempotencyKey | null> {
     const effectiveTenantId = tenantId || getTenantContext()?.tenantId || null;
@@ -235,26 +236,21 @@ export class IdempotencyRepository {
     }
     const cacheKey = `${effectiveTenantId}:${key}`;
     const cached = inMemoryFallbackStore.get(cacheKey);
-    if (cached) {
-      cached.processing = false;
-      cached.lockedAt = null;
+    if (cached && cached.responseStatus === null) {
+      inMemoryFallbackStore.delete(cacheKey);
     }
 
     try {
-      return await prisma.idempotencyKey.update({
+      await prisma.idempotencyKey.deleteMany({
         where: {
-          tenantId_key: {
-            tenantId: effectiveTenantId,
-            key
-          }
-        },
-        data: {
-          processing: false,
-          lockedAt: null
+          tenantId: effectiveTenantId,
+          key,
+          responseStatus: null
         }
       });
-    } catch (error) {
-      return cached || null;
+      return null;
+    } catch {
+      return null;
     }
   }
 

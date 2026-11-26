@@ -134,6 +134,25 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
         }
       }
 
+      const isLockedPeriodRejection =
+        responseStatus === 423 &&
+        typeof parsedBody === "object" &&
+        parsedBody !== null &&
+        (parsedBody.error === "ACCOUNTING_PERIOD_LOCKED" ||
+          parsedBody.errorCode === "ACCOUNTING_PERIOD_LOCKED");
+
+      if (isLockedPeriodRejection) {
+        const sendArgs = arguments;
+        IdempotencyService.releaseLock(key, tenantId)
+          .catch((err) => {
+            console.error(`[Idempotency] Failed to release lock on locked accounting period for: ${key}`, err);
+          })
+          .finally(() => {
+            originalSend.apply(this, sendArgs as any);
+          });
+        return this;
+      }
+
       // Persist to DB if successful (status < 500)
       if (responseStatus < 500) {
         IdempotencyService.resolveRequest(key, responseStatus, parsedBody, tenantId).catch((err) => {

@@ -22,7 +22,30 @@ const KNOWN_ENTITIES = new Set([
   "SUPPLIER", "SETTINGS", "DEVICE"
 ]);
 
+class SyncMutationRollbackError extends Error {
+  public readonly result: PerMutationResult;
+
+  constructor(result: PerMutationResult) {
+    super(result.message || result.errorCode || "SYNC_MUTATION_ABORTED");
+    this.name = "SyncMutationRollbackError";
+    this.result = result;
+  }
+}
+
 export class SyncProcessorService {
+  private static extractDomainErrorCode(err: any): string | null {
+    const explicitCode = typeof err?.code === "string" ? err.code.trim() : "";
+    if (explicitCode && !/^P\d{4}$/.test(explicitCode)) {
+      return explicitCode;
+    }
+    const message = typeof err?.message === "string" ? err.message.trim() : "";
+    const prefixMatch = message.match(/^([A-Z][A-Z0-9_]{2,})(?:$|:|\s)/);
+    if (prefixMatch) {
+      return prefixMatch[1];
+    }
+    return null;
+  }
+
   private static readonly PERMISSION_BY_ENTITY_OPERATION: Record<string, string> = {
       "INVOICE:CREATE": "sales.invoice.create",
       "INVOICE:UPDATE": "sales.invoice.update",
@@ -287,9 +310,30 @@ export class SyncProcessorService {
         else if (fullResult.status === "UNAUTHORIZED") { summary.unauthorized.push(mutationId); }
         else { summary.rejected.push(mutationId); }
       } catch (err: any) {
+        if (err instanceof SyncMutationRollbackError) {
+          const rolledBackResult = err.result;
+          results.push(rolledBackResult);
+          if (rolledBackResult.status === "CONFLICT") { summary.conflicts.push(mutationId); }
+          else if (rolledBackResult.status === "UNAUTHORIZED") { summary.unauthorized.push(mutationId); }
+          else { summary.rejected.push(mutationId); }
+          continue;
+        }
         console.error(`[SyncProcessor] Mutation ${mutationId} fatal error:`, err);
-        results.push({ id: mutationId, mutationId, status: "REJECTED", success: false, errorCode: "PROCESSING_EXCEPTION", message: err.message });
-        summary.rejected.push(mutationId);
+        const domainErrorCode = this.extractDomainErrorCode(err);
+        const isUnauthorized =
+          domainErrorCode === "PRICE_OVERRIDE_FORBIDDEN" ||
+          domainErrorCode === "PERMISSION_DENIED";
+        const result: PerMutationResult = {
+          id: mutationId,
+          mutationId,
+          status: isUnauthorized ? "UNAUTHORIZED" : "REJECTED",
+          success: false,
+          errorCode: domainErrorCode || "PROCESSING_EXCEPTION",
+          message: err?.message || "Processing exception"
+        };
+        results.push(result);
+        if (isUnauthorized) { summary.unauthorized.push(mutationId); }
+        else { summary.rejected.push(mutationId); }
       }
     }
 
@@ -347,15 +391,15 @@ export class SyncProcessorService {
         }
         return reject("UNKNOWN_SYNC_OPERATION", "Voucher synchronization accepts CREATE and CANCEL only.");
       } catch (err: any) {
-        const errorCode = err?.code || err?.message || "VOUCHER_POSTING_FAILED";
-        return {
+        const errorCode = this.extractDomainErrorCode(err) || err?.message || "VOUCHER_POSTING_FAILED";
+        throw new SyncMutationRollbackError({
           id: mutationId,
           mutationId,
           status: errorCode === "PERMISSION_DENIED" ? "UNAUTHORIZED" : "REJECTED",
           success: false,
           errorCode,
           message: err?.message || "Voucher posting failed"
-        };
+        });
       }
     }
 
@@ -391,15 +435,15 @@ export class SyncProcessorService {
         });
         return { id: mutationId, mutationId, status: "SUCCESS", success: true, serverVersion: version + 1, processedAt: new Date().toISOString(), details: postResult, effects: postResult.effects };
       } catch (err: any) {
-        const errorCode = err.code || err.message || "BUSINESS_COMMAND_FAILED";
-        return {
+        const errorCode = this.extractDomainErrorCode(err) || err?.message || "BUSINESS_COMMAND_FAILED";
+        throw new SyncMutationRollbackError({
           id: mutationId,
           mutationId,
           status: errorCode === "PRICE_OVERRIDE_FORBIDDEN" ? "UNAUTHORIZED" : "FAILED",
           success: false,
           errorCode,
-          message: err.message || "Business command failed"
-        };
+          message: err?.message || "Business command failed"
+        });
       }
     }
 

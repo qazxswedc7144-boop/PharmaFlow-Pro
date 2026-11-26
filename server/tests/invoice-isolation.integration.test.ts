@@ -554,5 +554,81 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Tenant Isolation + Invoice Pos
       }
     }
   });
+
+  it("does not cache HTTP 423 ACCOUNTING_PERIOD_LOCKED and allows posting with the same Idempotency-Key after period unlock without duplicates", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const idempotencyKey = `post-locked-retry-${ctx.suffix}`;
+
+    const beforeProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
+    const created = await request(ctx, "/api/invoices/create", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: {
+        invoiceNumber: `PERIOD-IDEM-RETRY-${ctx.suffix}`,
+        type: "SALE",
+        totalAmount: 10,
+        paymentStatus: "UNPAID",
+        items: [{ productId: ctx.productAId, qty: 1, price: 10 }],
+      },
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const invoiceId = created.body.invoice.id;
+
+    const locked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/lock", {
+      method: "PATCH",
+      token: ctx.tokenA,
+    });
+    expect(locked.status, JSON.stringify(locked.body)).toBe(200);
+
+    try {
+      const rejected = await request(ctx, "/api/invoices/post", {
+        method: "POST",
+        token: ctx.tokenA,
+        headers: { "idempotency-key": idempotencyKey },
+        body: { invoiceId },
+      });
+      expect(rejected.status, JSON.stringify(rejected.body)).toBe(423);
+      expect(rejected.body.error).toBe("ACCOUNTING_PERIOD_LOCKED");
+    } finally {
+      const unlocked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/unlock", {
+        method: "PATCH",
+        token: ctx.tokenA,
+      });
+      expect(unlocked.status, JSON.stringify(unlocked.body)).toBe(200);
+    }
+
+    // Retry with the exact same Idempotency-Key after unlocking
+    const posted = await request(ctx, "/api/invoices/post", {
+      method: "POST",
+      token: ctx.tokenA,
+      headers: { "idempotency-key": idempotencyKey },
+      body: { invoiceId },
+    });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(200);
+    expect(posted.body.success).toBe(true);
+
+    expect(await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId, sourceId: invoiceId } })).toBe(1);
+    expect(await prisma.inventoryMovement.count({ where: { tenantId: ctx.tenantAId, referenceId: invoiceId } })).toBe(1);
+    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, saleId: invoiceId } })).toBe(1);
+    const afterPostProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
+    expect(afterPostProduct?.stockQuantity).toBe((beforeProduct?.stockQuantity ?? 0) - 1);
+
+    // Replay with the same Idempotency-Key returns cached 200 without duplicating journals or FIFO
+    const replayed = await request(ctx, "/api/invoices/post", {
+      method: "POST",
+      token: ctx.tokenA,
+      headers: { "idempotency-key": idempotencyKey },
+      body: { invoiceId },
+    });
+    expect(replayed.status, JSON.stringify(replayed.body)).toBe(200);
+    expect(replayed.body.success).toBe(true);
+    expect(await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId, sourceId: invoiceId } })).toBe(1);
+    expect(await prisma.inventoryMovement.count({ where: { tenantId: ctx.tenantAId, referenceId: invoiceId } })).toBe(1);
+    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, saleId: invoiceId } })).toBe(1);
+    const afterReplayProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
+    expect(afterReplayProduct?.stockQuantity).toBe((beforeProduct?.stockQuantity ?? 0) - 1);
+  });
 }, { includeInvoiceRoutes: true, includeAccountingRoutes: true });
+
 

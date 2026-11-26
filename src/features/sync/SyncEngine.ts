@@ -20,6 +20,7 @@ export interface OutboxEvent {
   updatedAt: string;
   idempotencyKey: string;
   entityType?: string;
+  errorCode?: string;
   error?: string;
 }
 

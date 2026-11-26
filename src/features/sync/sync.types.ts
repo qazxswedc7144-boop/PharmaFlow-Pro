@@ -59,6 +59,7 @@ export interface LocalSyncQueueItem {
   payload: Record<string, unknown>;
   syncStatus: SyncStatus;
   retryCount: number;
+  errorCode?: string;
   lastError?: string;
   idempotencyKey: string;
   version?: number;

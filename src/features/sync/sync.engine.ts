@@ -37,7 +37,10 @@ function readSyncSessionSnapshot(): SyncSessionSnapshot | null {
   const tenantId = session?.tenantId || user?.tenantId || user?.tenant_id;
   const userId = user?.id || user?.user_id;
   const branchId = session?.branchId || user?.branchId || user?.branch_id || null;
-  if (!session?.isAuthenticated || !session?.token || !tenantId || !userId) return null;
+  const offlineOnly = Boolean(user?.offlineOnly);
+  if (!session?.isAuthenticated || !session?.token || offlineOnly || session.token === 'local-admin-token' || !tenantId || !userId) {
+    return null;
+  }
   return { tenantId, userId, branchId, token: session.token };
 }
 
@@ -134,8 +137,10 @@ export class DistributedSyncEngine {
 
     this.updateState('STARTING');
 
-    // Register device identity in background
-    DeviceManager.registerWithServer().catch(() => {});
+    // Register device identity in background only when an authenticated online session is active
+    if (readSyncSessionSnapshot()) {
+      DeviceManager.registerWithServer().catch(() => {});
+    }
 
     if (typeof window !== 'undefined') {
       window.addEventListener('online', this.handleNetworkChange);
@@ -233,6 +238,11 @@ export class DistributedSyncEngine {
   private async executeSyncCycle(): Promise<void> {
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       this.updateState('OFFLINE');
+      return;
+    }
+
+    if (!readSyncSessionSnapshot()) {
+      this.updateState('IDLE');
       return;
     }
 
@@ -625,6 +635,7 @@ export class DistributedSyncEngine {
           await this.db.syncQueue.update(queueItem.id!, {
             syncStatus: 'PENDING',
             retryCount: 0,
+            errorCode: undefined,
             lastError: undefined,
             updatedAt: now
           });
@@ -637,6 +648,7 @@ export class DistributedSyncEngine {
           await (this.db as any).outbox.update(outboxItem.id!, {
             status: 'PENDING',
             retries: 0,
+            errorCode: undefined,
             error: undefined,
             updatedAt: now
           });
@@ -665,8 +677,14 @@ export class DistributedSyncEngine {
   public async pullSync(): Promise<void> {
     if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
+    const snapshot = readSyncSessionSnapshot();
+    if (!snapshot) return;
+
     try {
       const session = getCurrentUserSession();
+      const tenantId = snapshot.tenantId || session.tenantId;
+      const branchId = snapshot.branchId || session.branchId;
+      const userId = snapshot.userId || session.userId;
       const device = DeviceManager.getDeviceIdentity();
 
       const executePullFetch = async (): Promise<Response> => {
@@ -676,15 +694,15 @@ export class DistributedSyncEngine {
           profile: 'SYNC',
           raw: true,
           headers: { 
-            'X-Tenant-ID': session.tenantId || '',
-            'X-Branch-ID': session.branchId || '',
-            'X-User-ID': session.userId || '',
+            'X-Tenant-ID': tenantId || '',
+            'X-Branch-ID': branchId || '',
+            'X-User-ID': userId || '',
             'X-Device-ID': device.deviceId
           },
           body: { 
-            tenantId: session.tenantId,
-            branchId: session.branchId,
-            userId: session.userId,
+            tenantId,
+            branchId,
+            userId,
             deviceId: device.deviceId,
             cursor: this.lastPulledCursor,
             lastSyncTimestamp: this.lastSyncTimestamp,
@@ -898,6 +916,87 @@ export class DistributedSyncEngine {
     }
   }
 
+  private isPermanentRejectionResponse(
+    httpStatus: number,
+    resultStatus: string,
+    errorCode?: string,
+    bodyErrorCode?: string
+  ): boolean {
+    const permanentHttpStatuses = [400, 401, 403, 404, 422, 423];
+    const permanentResultStatuses = ['REJECTED', 'UNAUTHORIZED', 'INVALID', 'FAILED'];
+    const permanentErrorCodes = [
+      'ACCOUNTING_PERIOD_LOCKED',
+      'ACCOUNTING_PERIOD_NOT_CONFIGURED',
+      'ACCOUNTING_PERIOD_AMBIGUOUS',
+      'SCHEMA_VERSION_MISMATCH',
+      'DEVICE_REVOKED'
+    ];
+    return permanentHttpStatuses.includes(httpStatus) ||
+      permanentResultStatuses.includes(resultStatus) ||
+      (Boolean(errorCode) && permanentErrorCodes.includes(errorCode!)) ||
+      (Boolean(bodyErrorCode) && permanentErrorCodes.includes(bodyErrorCode!));
+  }
+
+  private isNonRetryableHttpError(error: any): boolean {
+    return error?.retryable === false &&
+      typeof error?.status === 'number' &&
+      [400, 401, 403, 404, 422, 423].includes(error.status);
+  }
+
+  private extractRejectionDetails(
+    response: Response,
+    body: any,
+    result: any,
+    resultStatus: string
+  ): { errorCode?: string; message: string } {
+    const rawCode = result?.errorCode || body?.errorCode || body?.error;
+    const errorCode = typeof rawCode === 'string' && rawCode.trim()
+      ? rawCode.trim()
+      : undefined;
+    const message = result?.message ||
+      result?.conflict?.message ||
+      body?.message ||
+      body?.error ||
+      `Rejected by server with code ${errorCode || response.status || resultStatus || 'UNKNOWN'}`;
+    return { errorCode, message };
+  }
+
+  private async updateMatchingOutbox(
+    mutationId: string | undefined,
+    snapshot: SyncSessionSnapshot,
+    patch: Record<string, unknown>
+  ): Promise<void> {
+    if (!mutationId || !(this.db as any).outbox) return;
+    const matching = await (this.db as any).outbox
+      .where('mutationId').equals(mutationId)
+      .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
+      .first()
+      .catch(() => null);
+    assertSyncSessionCurrent(snapshot);
+    if (matching?.id !== undefined) {
+      await (this.db as any).outbox.update(matching.id, patch);
+      assertSyncSessionCurrent(snapshot);
+    }
+  }
+
+  private async updateMatchingSyncQueue(
+    mutationId: string | undefined,
+    snapshot: SyncSessionSnapshot,
+    patch: Record<string, unknown>
+  ): Promise<void> {
+    if (!mutationId || !this.db.syncQueue) return;
+    const matching = await this.db.syncQueue
+      .where('mutationId').equals(mutationId)
+      .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
+      .first()
+      .catch(() => null);
+    assertSyncSessionCurrent(snapshot);
+    if (matching?.id !== undefined) {
+      await this.db.syncQueue.update(matching.id, patch);
+      assertSyncSessionCurrent(snapshot);
+    }
+  }
+
   private async processOutboxEvent(event: any): Promise<void> {
     const snapshot = readSyncSessionSnapshot();
     if (!snapshot || !event?.id || event.tenantId !== snapshot.tenantId ||
@@ -949,25 +1048,103 @@ export class DistributedSyncEngine {
       const resultStatus = String(result?.status || '').toUpperCase();
 
       if (response.ok && (resultStatus === 'SUCCESS' || resultStatus === 'DUPLICATE')) {
-        await (this.db as any).outbox.update(event.id, { status: 'CONFIRMED', error: undefined, updatedAt: new Date().toISOString() });
+        await (this.db as any).outbox.update(event.id, {
+          status: 'CONFIRMED',
+          error: undefined,
+          errorCode: undefined,
+          updatedAt: new Date().toISOString()
+        });
         assertSyncSessionCurrent(snapshot);
+        if (event.mutationId && this.db.syncQueue) {
+          const matchingQueue = await this.db.syncQueue
+            .where('mutationId').equals(event.mutationId)
+            .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
+            .first()
+            .catch(() => null);
+          assertSyncSessionCurrent(snapshot);
+          if (matchingQueue?.id !== undefined) {
+            await this.db.syncQueue.delete(matchingQueue.id);
+            assertSyncSessionCurrent(snapshot);
+          }
+        }
         return;
       }
 
+      const { errorCode, message } = this.extractRejectionDetails(response, body, result, resultStatus);
       const conflict = response.status === 409 || resultStatus === 'CONFLICT' || body.errorType === 'CONFLICT';
-      const rejected = [400,401,403].includes(response.status) ||
-        ['REJECTED','UNAUTHORIZED','INVALID','FAILED'].includes(resultStatus) ||
-        ['SCHEMA_VERSION_MISMATCH','DEVICE_REVOKED'].includes(body.errorCode);
+      if (conflict) {
+        await (this.db as any).outbox.update(event.id, {
+          status: 'CONFLICT',
+          errorCode,
+          error: message,
+          updatedAt: new Date().toISOString()
+        });
+        assertSyncSessionCurrent(snapshot);
+        await this.updateMatchingSyncQueue(event.mutationId, snapshot, {
+          syncStatus: 'CONFLICT',
+          errorCode,
+          lastError: message,
+          updatedAt: new Date()
+        });
+        return;
+      }
+
+      const rejected = this.isPermanentRejectionResponse(response.status, resultStatus, errorCode, body?.errorCode);
+      if (rejected) {
+        await (this.db as any).outbox.update(event.id, {
+          status: 'FAILED',
+          errorCode,
+          error: message,
+          updatedAt: new Date().toISOString()
+        });
+        assertSyncSessionCurrent(snapshot);
+        await this.updateMatchingSyncQueue(event.mutationId, snapshot, {
+          syncStatus: 'REJECTED',
+          errorCode,
+          lastError: message,
+          updatedAt: new Date()
+        });
+        return;
+      }
+
+      // Transient server response (e.g. 5xx / 429): bound retries via MAX_RETRY_ATTEMPTS
+      const nextRetries = (Number(event.retries) || 0) + 1;
+      const exhausted = nextRetries > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
       await (this.db as any).outbox.update(event.id, {
-        status: conflict ? 'CONFLICT' : rejected ? 'FAILED' : 'RETRYING',
-        error: result?.message || result?.conflict?.message || body.message || body.error || `Unexpected sync response (HTTP ${response.status}, result ${resultStatus || 'missing'})`,
+        status: exhausted ? 'FAILED' : 'RETRYING',
+        retries: nextRetries,
+        errorCode,
+        error: message,
         updatedAt: new Date().toISOString()
       });
       assertSyncSessionCurrent(snapshot);
     } catch (error: any) {
       if (!isSyncSessionCurrent(snapshot)) return;
+      if (this.isNonRetryableHttpError(error)) {
+        const errorCode = typeof error?.code === 'string' ? error.code : undefined;
+        const message = error?.message || `Rejected by server (HTTP ${error.status})`;
+        await (this.db as any).outbox.update(event.id, {
+          status: 'FAILED',
+          errorCode,
+          error: message,
+          updatedAt: new Date().toISOString()
+        });
+        await this.updateMatchingSyncQueue(event.mutationId, snapshot, {
+          syncStatus: 'REJECTED',
+          errorCode,
+          lastError: message,
+          updatedAt: new Date()
+        });
+        return;
+      }
+
+      const nextRetries = (Number(event.retries) || 0) + 1;
+      const exhausted = nextRetries > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
       await (this.db as any).outbox.update(event.id, {
-        status: 'RETRYING', error: error?.message || 'Network Error', updatedAt: new Date().toISOString()
+        status: exhausted ? 'FAILED' : 'RETRYING',
+        retries: nextRetries,
+        error: error?.message || 'Network Error',
+        updatedAt: new Date().toISOString()
       });
     }
   }
@@ -1029,14 +1206,12 @@ export class DistributedSyncEngine {
         if (response.ok && (resultStatus === 'SUCCESS' || resultStatus === 'DUPLICATE')) {
           await this.db.syncQueue.delete(mutation.id);
           assertSyncSessionCurrent(snapshot);
-          if ((this.db as any).outbox) {
-            const matching = await (this.db as any).outbox.where('mutationId').equals(mutation.mutationId)
-              .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
-              .first().catch(() => null);
-            assertSyncSessionCurrent(snapshot);
-            if (matching) await (this.db as any).outbox.update(matching.id, { status: 'CONFIRMED', error: undefined, updatedAt: new Date().toISOString() });
-            assertSyncSessionCurrent(snapshot);
-          }
+          await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
+            status: 'CONFIRMED',
+            error: undefined,
+            errorCode: undefined,
+            updatedAt: new Date().toISOString()
+          });
           const entityId = (mutation.payload as any)?.id;
           if (entityId) {
             const table = String(mutation.entityType).toUpperCase() === 'PRODUCT' ? (this.db as any).products :
@@ -1049,25 +1224,53 @@ export class DistributedSyncEngine {
           }
           return;
         }
+
+        const { errorCode, message } = this.extractRejectionDetails(response, body, result, resultStatus);
+
         if (response.status === 409 || resultStatus === 'CONFLICT' || body.errorType === 'CONFLICT') {
           const conflict = result?.conflict || body;
-          await this.handleConflict(mutation, conflict.message || result?.message || 'تعارض في مزامنة السجل مع الخادم', snapshot);
+          const conflictReason = conflict.message || result?.message || 'تعارض في مزامنة السجل مع الخادم';
+          await this.handleConflict(mutation, conflictReason, snapshot, errorCode);
           return;
         }
-        if ([400,401,403].includes(response.status) ||
-            ['REJECTED','UNAUTHORIZED','INVALID','FAILED'].includes(resultStatus) ||
-            body.errorCode === 'SCHEMA_VERSION_MISMATCH' || body.errorCode === 'DEVICE_REVOKED') {
+        if (this.isPermanentRejectionResponse(response.status, resultStatus, errorCode, body?.errorCode)) {
           await this.db.syncQueue.update(mutation.id, {
             syncStatus: 'REJECTED',
-            lastError: body.message || `Rejected by server with code ${body.errorCode || response.status}`,
+            errorCode,
+            lastError: message,
             updatedAt: new Date()
           });
           assertSyncSessionCurrent(snapshot);
+          await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
+            status: 'FAILED',
+            errorCode,
+            error: message,
+            updatedAt: new Date().toISOString()
+          });
           return;
         }
         throw new Error(`Server returned status: ${response.status}`);
       } catch (error: any) {
         if (!isSyncSessionCurrent(snapshot)) return;
+        if (this.isNonRetryableHttpError(error)) {
+          const errorCode = typeof error?.code === 'string' ? error.code : undefined;
+          const message = error?.message || `Rejected by server (HTTP ${error.status})`;
+          await this.db.syncQueue.update(mutation.id, {
+            syncStatus: 'REJECTED',
+            errorCode,
+            lastError: message,
+            updatedAt: new Date()
+          });
+          assertSyncSessionCurrent(snapshot);
+          await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
+            status: 'FAILED',
+            errorCode,
+            error: message,
+            updatedAt: new Date().toISOString()
+          });
+          return;
+        }
+
         mutation.retryCount++;
         const dead = mutation.retryCount > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
         assertSyncSessionCurrent(snapshot);
@@ -1077,6 +1280,12 @@ export class DistributedSyncEngine {
         });
         assertSyncSessionCurrent(snapshot);
         if (dead) {
+          await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
+            status: 'FAILED',
+            retries: mutation.retryCount,
+            error: error?.message || 'Sync network/processing failure',
+            updatedAt: new Date().toISOString()
+          });
           await this.db.failedMutations.add({
             mutationId: mutation.mutationId,
             reason: `DEAD_LETTER_MAX_RETRIES_EXCEEDED: ${error?.message || 'Network error'}`,
@@ -1092,7 +1301,7 @@ export class DistributedSyncEngine {
     }
   }
 
-  private async handleConflict(mutation: LocalSyncQueueItem, reason: string, snapshot: SyncSessionSnapshot): Promise<void> {
+  private async handleConflict(mutation: LocalSyncQueueItem, reason: string, snapshot: SyncSessionSnapshot, errorCode?: string): Promise<void> {
     assertSyncSessionCurrent(snapshot);
     await this.db.transaction('rw', [this.db.syncQueue, this.db.failedMutations], async () => {
       assertSyncSessionCurrent(snapshot);
@@ -1101,8 +1310,14 @@ export class DistributedSyncEngine {
         tenantId: mutation.tenantId, branchId: mutation.branchId, createdAt: new Date()
       });
       assertSyncSessionCurrent(snapshot);
-      await this.db.syncQueue.update(mutation.id!, { syncStatus: 'CONFLICT', updatedAt: new Date() });
+      await this.db.syncQueue.update(mutation.id!, { syncStatus: 'CONFLICT', errorCode, lastError: reason, updatedAt: new Date() });
       assertSyncSessionCurrent(snapshot);
+    });
+    await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
+      status: 'CONFLICT',
+      errorCode,
+      error: reason,
+      updatedAt: new Date().toISOString()
     });
   }
 

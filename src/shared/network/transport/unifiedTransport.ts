@@ -220,6 +220,10 @@ export class UnifiedTransport implements Transport {
           });
         }
 
+        if (config.raw) {
+          return response as unknown as T;
+        }
+
         if (!response.ok) {
           const status = response.status;
           const bodyText = await response.text().catch(() => '');
@@ -256,10 +260,6 @@ export class UnifiedTransport implements Transport {
           continue;
         }
 
-        if (config.raw) {
-          return response as unknown as T;
-        }
-
         // Parse Response Body
         const contentType = response.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
@@ -281,7 +281,13 @@ export class UnifiedTransport implements Transport {
           });
         }
 
-        if (err.code && typeof err.code === 'string' && err.code.startsWith('NETWORK_')) {
+        if (err && typeof err === 'object' && 'retryable' in err && err.retryable === false) {
+          // Never retry normalized non-retryable errors (e.g. HTTP 400, 401, 403, 409, 422, 423, offline)
+          observabilityService.recordError(err, { feature: 'NETWORK' }, 'NETWORK', 'ERROR').catch(() => {});
+          throw err;
+        }
+
+        if (err?.code && typeof err.code === 'string') {
           // Already normalized UnifiedNetworkError
           if (!err.retryable || attempt >= maxRetries) {
             observabilityService.recordError(err, { feature: 'NETWORK' }, 'NETWORK', 'ERROR').catch(() => {});

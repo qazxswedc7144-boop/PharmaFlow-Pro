@@ -447,4 +447,293 @@ definePostgresHttpSuite("Real PostgreSQL HTTP — Sync", (getContext) => {
     expect(await prisma.invoice.findUnique({ where: { id: invoiceId } })).toBeTruthy();
   });
 
-}, { includeSyncRoutes: true });
+  it("rolls back SALE:POST atomically on ACCOUNTING_PERIOD_LOCKED and succeeds without duplicates after period unlock", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const { DeviceService } = await import("../modules/sync/device.service.js");
+    const deviceId = `ci-period-sale-post-${ctx.suffix}`;
+    await DeviceService.registerDevice({
+      deviceId,
+      deviceName: "CI Period Sale Post Device",
+      tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId,
+      userId: ctx.userAId,
+      appVersion: "ci",
+      schemaVersion: 1
+    });
+
+    const invoiceNumber = `SYNC-SALE-LOCKED-${ctx.suffix}`;
+    const mutationId = randomUUID();
+    const idempotencyKey = randomUUID();
+    const beforeProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
+    const beforeLayers = await prisma.inventoryLayer.findMany({
+      where: { tenantId: ctx.tenantAId, productId: ctx.productAId }
+    });
+    const beforeRemaining = beforeLayers.reduce((sum, l) => sum + l.quantityRemaining, 0);
+
+    const locked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/lock", {
+      method: "PATCH",
+      token: ctx.tokenA
+    });
+    expect(locked.status, JSON.stringify(locked.body)).toBe(200);
+
+    const pushBody = {
+      deviceId,
+      branchId: ctx.branchAId,
+      schemaVersion: 1,
+      mutations: [{
+        id: mutationId,
+        entity: "SALE",
+        entityId: mutationId,
+        operation: "POST",
+        payload: {
+          invoiceNumber,
+          type: "SALE",
+          partnerType: "CUSTOMER",
+          totalAmount: 10,
+          paymentStatus: "UNPAID",
+          items: [{ productId: ctx.productAId, qty: 1, price: 10 }]
+        },
+        idempotencyKey,
+        timestamp: Date.now(),
+        version: 1
+      }]
+    };
+
+    try {
+      const rejected = await request(ctx, "/api/v1/sync/push", {
+        method: "POST",
+        token: ctx.tokenA,
+        body: pushBody
+      });
+
+      expect(rejected.status, JSON.stringify(rejected.body)).toBe(400);
+      expect(rejected.body.success).toBe(false);
+      expect(rejected.body.results?.[0]?.status).toBe("FAILED");
+      expect(rejected.body.results?.[0]?.errorCode).toBe("ACCOUNTING_PERIOD_LOCKED");
+
+      // Strict PostgreSQL atomicity: no leaked DRAFT invoice, items, journals, or FIFO mutations
+      expect(await prisma.invoice.count({
+        where: { tenantId: ctx.tenantAId, invoiceNumber }
+      })).toBe(0);
+      expect(await prisma.invoiceItem.count({
+        where: { tenantId: ctx.tenantAId, invoice: { invoiceNumber } }
+      })).toBe(0);
+      const afterRejectProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
+      expect(afterRejectProduct?.stockQuantity).toBe(beforeProduct?.stockQuantity);
+      const afterRejectLayers = await prisma.inventoryLayer.findMany({
+        where: { tenantId: ctx.tenantAId, productId: ctx.productAId }
+      });
+      expect(afterRejectLayers.reduce((sum, l) => sum + l.quantityRemaining, 0)).toBe(beforeRemaining);
+    } finally {
+      const unlocked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/unlock", {
+        method: "PATCH",
+        token: ctx.tokenA
+      });
+      expect(unlocked.status, JSON.stringify(unlocked.body)).toBe(200);
+    }
+
+    // Retry with the exact original mutationId and idempotencyKey after unlocking the period
+    const retried = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: pushBody
+    });
+    expect(retried.status, JSON.stringify(retried.body)).toBe(200);
+    expect(retried.body.success).toBe(true);
+    expect(retried.body.results?.[0]?.status).toBe("SUCCESS");
+
+    const postedInvoice = await prisma.invoice.findFirst({
+      where: { tenantId: ctx.tenantAId, invoiceNumber }
+    });
+    expect(postedInvoice).toBeTruthy();
+    expect(postedInvoice?.status).toBe("CONFIRMED");
+    expect(postedInvoice?.documentStatus).toBe("POSTED");
+
+    expect(await prisma.journalEntry.count({
+      where: { tenantId: ctx.tenantAId, sourceId: postedInvoice!.id }
+    })).toBe(1);
+    expect(await prisma.inventoryMovement.count({
+      where: { tenantId: ctx.tenantAId, referenceId: postedInvoice!.id }
+    })).toBe(1);
+    expect(await prisma.fifoConsumption.count({
+      where: { tenantId: ctx.tenantAId, saleId: postedInvoice!.id }
+    })).toBe(1);
+
+    const afterPostProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
+    expect(afterPostProduct?.stockQuantity).toBe((beforeProduct?.stockQuantity ?? 0) - 1);
+
+    // Replaying the exact same mutation returns DUPLICATE and does not duplicate journals or FIFO
+    const replay = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: pushBody
+    });
+    expect(replay.status, JSON.stringify(replay.body)).toBe(200);
+    expect(replay.body.results?.[0]?.status).toBe("DUPLICATE");
+    expect(await prisma.invoice.count({ where: { tenantId: ctx.tenantAId, invoiceNumber } })).toBe(1);
+    expect(await prisma.journalEntry.count({ where: { tenantId: ctx.tenantAId, sourceId: postedInvoice!.id } })).toBe(1);
+    expect(await prisma.inventoryMovement.count({ where: { tenantId: ctx.tenantAId, referenceId: postedInvoice!.id } })).toBe(1);
+    expect(await prisma.fifoConsumption.count({ where: { tenantId: ctx.tenantAId, saleId: postedInvoice!.id } })).toBe(1);
+    const afterReplayProduct = await prisma.product.findUnique({ where: { id: ctx.productAId } });
+    expect(afterReplayProduct?.stockQuantity).toBe((beforeProduct?.stockQuantity ?? 0) - 1);
+  });
+
+  it("preserves ACCOUNTING_PERIOD_LOCKED and rolls back PURCHASE:CREATE and VOUCHER:CREATE, then succeeds on retry after unlock", async () => {
+    const ctx = getContext();
+    const { prisma } = await import("../database/prisma.js");
+    const { DeviceService } = await import("../modules/sync/device.service.js");
+    const deviceId = `ci-period-purchase-voucher-${ctx.suffix}`;
+    await DeviceService.registerDevice({
+      deviceId,
+      deviceName: "CI Period Purchase Voucher Device",
+      tenantId: ctx.tenantAId,
+      branchId: ctx.branchAId,
+      userId: ctx.userAId,
+      appVersion: "ci",
+      schemaVersion: 1
+    });
+
+    const supplier = await prisma.supplier.create({
+      data: { tenantId: ctx.tenantAId, name: `CI Locked Period Supplier ${ctx.suffix}` }
+    });
+    const purchaseInvoiceId = randomUUID();
+    const purchaseInvoiceNumber = `SYNC-PUR-LOCKED-${ctx.suffix}`;
+    const purchaseMutationId = randomUUID();
+    const purchaseIdemKey = randomUUID();
+    const voucherId = randomUUID();
+    const voucherMutationId = randomUUID();
+    const voucherIdemKey = randomUUID();
+    const batchNumber = `LOCKED-PUR-BATCH-${ctx.suffix}`;
+    const expiryDate = new Date(Date.now() + 180 * 86400000).toISOString();
+
+    const locked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/lock", {
+      method: "PATCH",
+      token: ctx.tokenA
+    });
+    expect(locked.status, JSON.stringify(locked.body)).toBe(200);
+
+    const purchasePushBody = {
+      deviceId,
+      branchId: ctx.branchAId,
+      schemaVersion: 1,
+      mutations: [{
+        id: purchaseMutationId,
+        entity: "PURCHASE",
+        entityId: purchaseInvoiceId,
+        operation: "CREATE",
+        payload: {
+          id: purchaseInvoiceId,
+          tenantId: ctx.tenantAId,
+          branchId: ctx.branchAId,
+          purchase: {
+            id: purchaseInvoiceId,
+            invoiceNumber: purchaseInvoiceNumber,
+            date: new Date().toISOString(),
+            type: "PURCHASE",
+            status: "CONFIRMED",
+            documentStatus: "POSTED",
+            partnerId: supplier.id,
+            partnerType: "SUPPLIER",
+            paymentStatus: "UNPAID",
+            subtotal: 12,
+            totalAmount: 12,
+            isReturn: false,
+            tenantId: ctx.tenantAId,
+            branchId: ctx.branchAId,
+            items: [{
+              productId: ctx.productAId,
+              quantity: 2,
+              qty: 2,
+              unitPrice: 6,
+              unitCost: 6,
+              total: 12,
+              batchNumber,
+              expiryDate
+            }]
+          }
+        },
+        idempotencyKey: purchaseIdemKey,
+        timestamp: Date.now(),
+        version: 1
+      }]
+    };
+
+    try {
+      const purchaseRejected = await request(ctx, "/api/v1/sync/push", {
+        method: "POST",
+        token: ctx.tokenA,
+        body: purchasePushBody
+      });
+      expect(purchaseRejected.status, JSON.stringify(purchaseRejected.body)).toBe(400);
+      expect(purchaseRejected.body.results?.[0]?.status).toBe("REJECTED");
+      expect(purchaseRejected.body.results?.[0]?.errorCode).toBe("ACCOUNTING_PERIOD_LOCKED");
+      expect(await prisma.invoice.count({ where: { id: purchaseInvoiceId, tenantId: ctx.tenantAId } })).toBe(0);
+      expect(await prisma.invoiceItem.count({ where: { invoiceId: purchaseInvoiceId, tenantId: ctx.tenantAId } })).toBe(0);
+      expect(await prisma.journalEntry.count({ where: { sourceId: purchaseInvoiceId, tenantId: ctx.tenantAId } })).toBe(0);
+
+      const voucherRejected = await request(ctx, "/api/v1/sync/push", {
+        method: "POST",
+        token: ctx.tokenA,
+        body: {
+          deviceId,
+          branchId: ctx.branchAId,
+          schemaVersion: 1,
+          mutations: [{
+            id: voucherMutationId,
+            entity: "VOUCHER",
+            entityId: voucherId,
+            operation: "CREATE",
+            payload: {
+              id: voucherId,
+              paymentNumber: `VCH-LOCKED-${ctx.suffix}`,
+              date: new Date().toISOString(),
+              amount: 10,
+              type: "PAYMENT",
+              partnerType: "SUPPLIER",
+              partnerId: supplier.id,
+              paymentMethod: "CASH",
+              tenantId: ctx.tenantAId,
+              branchId: ctx.branchAId
+            },
+            idempotencyKey: voucherIdemKey,
+            timestamp: Date.now(),
+            version: 1
+          }]
+        }
+      });
+      expect(voucherRejected.status, JSON.stringify(voucherRejected.body)).toBe(400);
+      expect(voucherRejected.body.results?.[0]?.status).toBe("REJECTED");
+      expect(voucherRejected.body.results?.[0]?.errorCode).toBe("ACCOUNTING_PERIOD_LOCKED");
+      expect(await prisma.payment.count({ where: { id: voucherId, tenantId: ctx.tenantAId } })).toBe(0);
+    } finally {
+      const unlocked = await request(ctx, "/api/accounting/periods/CI-DEFAULT-A/unlock", {
+        method: "PATCH",
+        token: ctx.tokenA
+      });
+      expect(unlocked.status, JSON.stringify(unlocked.body)).toBe(200);
+    }
+
+    // Retry PURCHASE:CREATE with original mutationId and idempotencyKey after unlocking
+    const purchaseRetried = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: purchasePushBody
+    });
+    expect(purchaseRetried.status, JSON.stringify(purchaseRetried.body)).toBe(200);
+    expect(purchaseRetried.body.results?.[0]?.status).toBe("SUCCESS");
+    expect(await prisma.invoice.count({ where: { id: purchaseInvoiceId, tenantId: ctx.tenantAId } })).toBe(1);
+    expect(await prisma.journalEntry.count({ where: { sourceId: purchaseInvoiceId, tenantId: ctx.tenantAId } })).toBe(1);
+
+    const purchaseReplay = await request(ctx, "/api/v1/sync/push", {
+      method: "POST",
+      token: ctx.tokenA,
+      body: purchasePushBody
+    });
+    expect(purchaseReplay.status, JSON.stringify(purchaseReplay.body)).toBe(200);
+    expect(purchaseReplay.body.results?.[0]?.status).toBe("DUPLICATE");
+    expect(await prisma.journalEntry.count({ where: { sourceId: purchaseInvoiceId, tenantId: ctx.tenantAId } })).toBe(1);
+  });
+
+}, { includeSyncRoutes: true, includeAccountingRoutes: true });
+

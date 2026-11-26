@@ -2,13 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   handlePreRequest: vi.fn(),
+  resolveRequest: vi.fn(),
+  releaseLock: vi.fn(),
 }));
 
 vi.mock("../modules/idempotency/idempotency.service.js", () => ({
   IdempotencyService: {
     handlePreRequest: state.handlePreRequest,
-    resolveRequest: vi.fn(),
-    releaseLock: vi.fn(),
+    resolveRequest: state.resolveRequest,
+    releaseLock: state.releaseLock,
   },
 }));
 
@@ -54,4 +56,91 @@ describe("Idempotency middleware eligibility and error disclosure", () => {
     expect(payload.message).not.toContain("database credentials");
     expect(payload.message).not.toContain("SECRET_STACK_TRACE");
   });
+
+  it("does not cache HTTP 423 ACCOUNTING_PERIOD_LOCKED and releases the lock before sending", async () => {
+    state.handlePreRequest.mockResolvedValueOnce({ status: "PROCESS", hash: "hash-423" });
+    state.releaseLock.mockResolvedValueOnce(undefined);
+    state.resolveRequest.mockResolvedValueOnce(undefined);
+
+    const events: string[] = [];
+    let releaseDone!: () => void;
+    state.releaseLock.mockReset();
+    state.releaseLock.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        releaseDone = () => {
+          events.push("releaseLock:done");
+          resolve();
+        };
+      })
+    );
+
+    const req: any = {
+      headers: { "idempotency-key": "idem-423-key" },
+      method: "POST",
+      path: "/api/invoices/post",
+      originalUrl: "/api/invoices/post",
+      body: { invoiceId: "inv-1", tenantId: "tenant-test" },
+    };
+    const originalSend = vi.fn(() => {
+      events.push("originalSend");
+      return res;
+    });
+    const res: any = {
+      statusCode: 423,
+      send: originalSend,
+      on: vi.fn(),
+      setHeader: vi.fn(),
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn().mockReturnThis(),
+    };
+    const next = vi.fn();
+
+    await idempotencyMiddleware(req, res, next);
+    expect(next).toHaveBeenCalledTimes(1);
+
+    res.send(JSON.stringify({ error: "ACCOUNTING_PERIOD_LOCKED", message: "Period closed" }));
+    expect(state.resolveRequest).not.toHaveBeenCalled();
+    expect(state.releaseLock).toHaveBeenCalledWith("idem-423-key", "tenant-test");
+    expect(originalSend).not.toHaveBeenCalled();
+
+    releaseDone();
+    await vi.waitFor(() => expect(originalSend).toHaveBeenCalledTimes(1));
+    expect(events).toEqual(["releaseLock:done", "originalSend"]);
+  });
+
+  it("continues caching HTTP 200 and non-423 4xx responses under the existing policy", async () => {
+    state.handlePreRequest.mockResolvedValue({ status: "PROCESS", hash: "hash-ok" });
+    state.resolveRequest.mockResolvedValue(undefined);
+    state.releaseLock.mockResolvedValue(undefined);
+
+    for (const [statusCode, body] of [
+      [200, { success: true }],
+      [423, { error: "LOCK_CONFLICT" }],
+      [400, { error: "VALIDATION_FAILED" }],
+    ] as const) {
+      state.resolveRequest.mockClear();
+      state.releaseLock.mockClear();
+      const req: any = {
+        headers: { "idempotency-key": `idem-${statusCode}` },
+        method: "POST",
+        path: "/api/invoices/post",
+        originalUrl: "/api/invoices/post",
+        body: { invoiceId: "inv-1", tenantId: "tenant-test" },
+      };
+      const originalSend = vi.fn();
+      const res: any = {
+        statusCode,
+        send: originalSend,
+        on: vi.fn(),
+        setHeader: vi.fn(),
+      };
+      await idempotencyMiddleware(req, res, vi.fn());
+      res.send(JSON.stringify(body));
+
+      expect(originalSend).toHaveBeenCalledTimes(1);
+      expect(state.resolveRequest).toHaveBeenCalledWith(`idem-${statusCode}`, statusCode, body, "tenant-test");
+      expect(state.releaseLock).not.toHaveBeenCalled();
+    }
+  });
 });
+

@@ -7,6 +7,7 @@ import { DeviceMetadata, SYNC_PROTOCOL_VERSION } from "./sync.types";
 import { getCurrentUserSession } from "@/core/db";
 import { configurationService } from "@/services/config/configurationService";
 import { unifiedTransport } from "@/shared/network/transport/unifiedTransport";
+import { TokenProvider } from "@/services/auth/tokenProvider";
 
 const DEVICE_STORAGE_KEY = "pharmaflow_device_identity";
 
@@ -140,20 +141,29 @@ export class DeviceManager {
   static async registerWithServer(): Promise<boolean> {
     if (typeof window === "undefined" || !navigator.onLine) return false;
 
+    const authSession = TokenProvider.getCurrentSession();
+    const offlineOnly = Boolean((authSession.user as any)?.offlineOnly);
+    if (!authSession.isAuthenticated || !authSession.token || offlineOnly || authSession.token === "local-admin-token") {
+      return false;
+    }
+
     const identity = this.getDeviceIdentity();
     const session = getCurrentUserSession();
+    const tenantId = authSession.tenantId || session.tenantId || "";
+    const branchId = authSession.branchId || session.branchId || "";
+    if (!tenantId) return false;
 
     try {
       const response = await unifiedTransport.post<any>("/api/v1/sync/device/register", {
         deviceId: identity.deviceId,
         deviceName: identity.deviceName,
-        branchId: session.branchId || "",
+        branchId,
         appVersion: "8.3.0",
         schemaVersion: SYNC_PROTOCOL_VERSION
       }, {
         headers: {
-          "X-Tenant-ID": session.tenantId || "",
-          "X-Branch-ID": session.branchId || "",
+          "X-Tenant-ID": tenantId,
+          "X-Branch-ID": branchId,
           "X-Device-ID": identity.deviceId
         },
         timeoutMs: 10000
