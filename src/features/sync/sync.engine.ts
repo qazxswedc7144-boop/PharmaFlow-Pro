@@ -85,6 +85,16 @@ export class DistributedSyncEngine {
   private lastPulledCursor: number = 0;
   private lastSyncTimestamp: number = 0;
   private currentState: SyncEngineState = 'IDLE';
+  private serverConfirmedPendingLocalCommit = new Map<string, {
+    tenantId: string;
+    userId: string;
+    mutationId: string;
+    idempotencyKey?: string;
+    queueId?: number;
+    outboxId?: number;
+    entityType?: string;
+    payload?: Record<string, unknown>;
+  }>();
 
   constructor(dexieInstance?: unknown) {
     this.db = (dexieInstance || defaultDb) as Dexie & PharmaFlowDexieExtension;
@@ -623,43 +633,353 @@ export class DistributedSyncEngine {
     };
   }
 
+  private getOutboxTable(): any | null {
+    const outboxTable = (this.db as any).outbox;
+    return outboxTable && outboxTable.schema ? outboxTable : null;
+  }
+
+  private getQueueOutboxTxTables(includeFailedMutations = false): any[] {
+    const tables: any[] = [];
+    if (this.db.syncQueue) tables.push(this.db.syncQueue);
+    const outboxTable = this.getOutboxTable();
+    if (outboxTable) tables.push(outboxTable);
+    if (includeFailedMutations && this.db.failedMutations) tables.push(this.db.failedMutations);
+    return tables;
+  }
+
+  private getServerConfirmedKey(snapshot: SyncSessionSnapshot, mutationId: string): string {
+    return `${snapshot.tenantId}:${snapshot.userId}:${mutationId}`;
+  }
+
+  private async findRecordByMutationIdWithOwnerCheck(
+    table: any,
+    tableName: 'syncQueue' | 'outbox',
+    mutationId: string,
+    snapshot: SyncSessionSnapshot
+  ): Promise<any | undefined> {
+    if (!table || !mutationId) return undefined;
+    const matches = await table.where('mutationId').equals(mutationId).toArray();
+    assertSyncSessionCurrent(snapshot);
+    if (!matches.length) return undefined;
+
+    for (const record of matches) {
+      if (record.tenantId !== snapshot.tenantId || record.userId !== snapshot.userId) {
+        throw new Error(
+          `SYNC_PAIR_OWNER_MISMATCH: Existing ${tableName} record for mutation ${mutationId} is not owned by the active tenant/user.`
+        );
+      }
+    }
+
+    if (matches.length > 1) {
+      throw new Error(
+        `SYNC_PAIR_DUPLICATE_MUTATION: Multiple ${tableName} records found for mutation ${mutationId}.`
+      );
+    }
+
+    return matches[0];
+  }
+
+  private assertPairConsistency(
+    queueRecord: LocalSyncQueueItem | undefined,
+    outboxRecord: any | undefined,
+    snapshot: SyncSessionSnapshot,
+    expected?: { mutationId?: string; idempotencyKey?: string }
+  ): void {
+    for (const [source, record] of [['syncQueue', queueRecord], ['outbox', outboxRecord]] as const) {
+      if (!record) continue;
+      if (record.tenantId !== snapshot.tenantId || record.userId !== snapshot.userId) {
+        throw new Error(
+          `SYNC_PAIR_OWNER_MISMATCH: ${source} record is not owned by the active tenant/user.`
+        );
+      }
+      if (expected?.mutationId && record.mutationId !== expected.mutationId) {
+        throw new Error(
+          `SYNC_PAIR_MUTATION_MISMATCH: ${source} mutationId does not match expected mutation ${expected.mutationId}.`
+        );
+      }
+      if (expected?.idempotencyKey && record.idempotencyKey && record.idempotencyKey !== expected.idempotencyKey) {
+        throw new Error(
+          `SYNC_PAIR_IDEMPOTENCY_MISMATCH: ${source} idempotencyKey does not match expected key.`
+        );
+      }
+    }
+
+    if (queueRecord && outboxRecord) {
+      if (queueRecord.mutationId !== outboxRecord.mutationId) {
+        throw new Error('SYNC_PAIR_MUTATION_MISMATCH: syncQueue and outbox mutationId values do not match.');
+      }
+      if (queueRecord.tenantId !== outboxRecord.tenantId || queueRecord.userId !== outboxRecord.userId) {
+        throw new Error('SYNC_PAIR_OWNER_MISMATCH: syncQueue and outbox owner fields do not match.');
+      }
+      if (
+        (queueRecord.idempotencyKey || outboxRecord.idempotencyKey) &&
+        queueRecord.idempotencyKey !== outboxRecord.idempotencyKey
+      ) {
+        throw new Error('SYNC_PAIR_IDEMPOTENCY_MISMATCH: syncQueue and outbox idempotencyKey values do not match.');
+      }
+    }
+  }
+
+  private async applyAtomicPairTransition(options: {
+    snapshot: SyncSessionSnapshot;
+    mutationId?: string;
+    idempotencyKey?: string;
+    queueId?: number;
+    outboxId?: number;
+    queueAction?: { type: 'delete' } | { type: 'update'; patch: Record<string, unknown> };
+    outboxAction?: { type: 'update'; patch: Record<string, unknown> };
+    failedMutationRecord?: {
+      mutationId: string;
+      reason: string;
+      payload: any;
+      tenantId?: string;
+      branchId?: string | null;
+      createdAt: Date;
+    };
+    requireAtLeastOne?: boolean;
+  }): Promise<{ queueAffected: boolean; outboxAffected: boolean }> {
+    const outboxTable = this.getOutboxTable();
+    const txTables = this.getQueueOutboxTxTables(Boolean(options.failedMutationRecord));
+    if (!txTables.length) {
+      throw new Error('SYNC_STORAGE_UNAVAILABLE: No syncQueue or outbox table available for atomic transition.');
+    }
+
+    let queueAffected = false;
+    let outboxAffected = false;
+
+    await (this.db as any).transaction('rw', txTables, async () => {
+      assertSyncSessionCurrent(options.snapshot);
+
+      let queueRecord: LocalSyncQueueItem | undefined;
+      if (this.db.syncQueue) {
+        if (options.queueId !== undefined) {
+          queueRecord = await this.db.syncQueue.get(options.queueId);
+          assertSyncSessionCurrent(options.snapshot);
+          if (!queueRecord) {
+            throw new Error(`SYNC_QUEUE_RECORD_NOT_FOUND: syncQueue record ${options.queueId} no longer exists.`);
+          }
+        } else if (options.mutationId) {
+          queueRecord = await this.findRecordByMutationIdWithOwnerCheck(
+            this.db.syncQueue,
+            'syncQueue',
+            options.mutationId,
+            options.snapshot
+          );
+        }
+      }
+
+      let outboxRecord: any | undefined;
+      if (outboxTable) {
+        if (options.outboxId !== undefined) {
+          outboxRecord = await outboxTable.get(options.outboxId);
+          assertSyncSessionCurrent(options.snapshot);
+          if (!outboxRecord) {
+            throw new Error(`SYNC_OUTBOX_RECORD_NOT_FOUND: outbox record ${options.outboxId} no longer exists.`);
+          }
+        } else if (options.mutationId) {
+          outboxRecord = await this.findRecordByMutationIdWithOwnerCheck(
+            outboxTable,
+            'outbox',
+            options.mutationId,
+            options.snapshot
+          );
+        }
+      }
+
+      if (options.requireAtLeastOne && !queueRecord && !outboxRecord) {
+        throw new Error(
+          `SYNC_MUTATION_NOT_FOUND: No matching syncQueue or outbox record found for mutation ${options.mutationId || 'unknown'}.`
+        );
+      }
+
+      this.assertPairConsistency(queueRecord, outboxRecord, options.snapshot, {
+        mutationId: options.mutationId,
+        idempotencyKey: options.idempotencyKey
+      });
+
+      const applyOutboxAction = async () => {
+        if (!options.outboxAction || !outboxRecord || !outboxTable) return;
+        if (options.outboxId === undefined && options.mutationId) {
+          await this.updateMatchingOutbox(
+            options.mutationId,
+            options.snapshot,
+            options.outboxAction.patch,
+            options.idempotencyKey || queueRecord?.idempotencyKey
+          );
+          outboxAffected = true;
+          return;
+        }
+        const updatedCount = await outboxTable.update(outboxRecord.id!, options.outboxAction.patch);
+        assertSyncSessionCurrent(options.snapshot);
+        if (updatedCount !== 1) {
+          throw new Error(`SYNC_OUTBOX_UPDATE_FAILED: Expected 1 outbox row updated, got ${updatedCount}.`);
+        }
+        outboxAffected = true;
+      };
+
+      const applyQueueAction = async () => {
+        if (!options.queueAction || !queueRecord || !this.db.syncQueue) return;
+        if (options.queueAction.type === 'delete') {
+          await this.db.syncQueue.delete(queueRecord.id!);
+          assertSyncSessionCurrent(options.snapshot);
+          queueAffected = true;
+          return;
+        }
+        if (options.queueId === undefined && options.mutationId) {
+          await this.updateMatchingSyncQueue(
+            options.mutationId,
+            options.snapshot,
+            options.queueAction.patch,
+            options.idempotencyKey || outboxRecord?.idempotencyKey
+          );
+          queueAffected = true;
+          return;
+        }
+        const updatedCount = await this.db.syncQueue.update(queueRecord.id!, options.queueAction.patch);
+        assertSyncSessionCurrent(options.snapshot);
+        if (updatedCount !== 1) {
+          throw new Error(`SYNC_QUEUE_UPDATE_FAILED: Expected 1 syncQueue row updated, got ${updatedCount}.`);
+        }
+        queueAffected = true;
+      };
+
+      // Never delete a syncQueue item before the paired outbox confirmation update succeeds inside the transaction.
+      if (options.queueAction?.type === 'delete') {
+        await applyOutboxAction();
+        await applyQueueAction();
+      } else {
+        await applyQueueAction();
+        await applyOutboxAction();
+      }
+
+      if (options.failedMutationRecord && this.db.failedMutations) {
+        await this.db.failedMutations.add({
+          ...options.failedMutationRecord,
+          tenantId: options.failedMutationRecord.tenantId || options.snapshot.tenantId,
+          branchId: options.failedMutationRecord.branchId || options.snapshot.branchId || ''
+        });
+        assertSyncSessionCurrent(options.snapshot);
+      }
+    });
+
+    return { queueAffected, outboxAffected };
+  }
+
+  private async commitServerConfirmedLocalState(params: {
+    snapshot: SyncSessionSnapshot;
+    mutationId?: string;
+    idempotencyKey?: string;
+    queueId?: number;
+    outboxId?: number;
+    entityType?: string;
+    payload?: Record<string, unknown>;
+  }): Promise<void> {
+    const confirmedKey = params.mutationId
+      ? this.getServerConfirmedKey(params.snapshot, params.mutationId)
+      : null;
+
+    if (confirmedKey && params.mutationId) {
+      this.serverConfirmedPendingLocalCommit.set(confirmedKey, {
+        tenantId: params.snapshot.tenantId,
+        userId: params.snapshot.userId,
+        mutationId: params.mutationId,
+        idempotencyKey: params.idempotencyKey,
+        queueId: params.queueId,
+        outboxId: params.outboxId,
+        entityType: params.entityType,
+        payload: params.payload
+      });
+    }
+
+    await this.applyAtomicPairTransition({
+      snapshot: params.snapshot,
+      mutationId: params.mutationId,
+      idempotencyKey: params.idempotencyKey,
+      queueId: params.queueId,
+      outboxId: params.outboxId,
+      queueAction: { type: 'delete' },
+      outboxAction: {
+        type: 'update',
+        patch: {
+          status: 'CONFIRMED',
+          error: undefined,
+          errorCode: undefined,
+          updatedAt: new Date().toISOString()
+        }
+      }
+    });
+
+    if (confirmedKey) {
+      this.serverConfirmedPendingLocalCommit.delete(confirmedKey);
+    }
+
+    const entityId = (params.payload as any)?.id;
+    if (entityId && params.entityType) {
+      const table = String(params.entityType).toUpperCase() === 'PRODUCT' ? (this.db as any).products :
+        ['SALE', 'INVOICE'].includes(String(params.entityType).toUpperCase()) ? (this.db as any).invoices : null;
+      if (table) {
+        assertSyncSessionCurrent(params.snapshot);
+        await table.update(entityId, {
+          is_synced: 1,
+          isSynced: true,
+          syncStatus: 'SYNCED',
+          updatedAt: new Date().toISOString()
+        }).catch(() => null);
+        assertSyncSessionCurrent(params.snapshot);
+      }
+    }
+  }
+
   /**
    * Resubmits a failed mutation manually from the dead letter log.
+   * Updates paired syncQueue and outbox records atomically in a single Dexie transaction
+   * and propagates any failure to the caller instead of swallowing errors.
    */
   public async resubmitFailed(mutationId: string): Promise<void> {
+    if (!mutationId || typeof mutationId !== 'string' || !mutationId.trim()) {
+      throw new Error('SYNC_RESUBMIT_INVALID_MUTATION_ID: A valid mutationId is required.');
+    }
+
+    const snapshot = readSyncSessionSnapshot();
+    if (!snapshot) {
+      throw new Error('TRUSTED_USER_CONTEXT_REQUIRED: An authenticated user/token identity is required to resubmit a failed mutation.');
+    }
+
+    const now = new Date().toISOString();
+
     try {
-      const now = new Date().toISOString();
-      if (this.db.syncQueue) {
-        const queueItem = await this.db.syncQueue.where('mutationId').equals(mutationId).first();
-        if (queueItem) {
-          await this.db.syncQueue.update(queueItem.id!, {
+      await this.applyAtomicPairTransition({
+        snapshot,
+        mutationId,
+        requireAtLeastOne: true,
+        queueAction: {
+          type: 'update',
+          patch: {
             syncStatus: 'PENDING',
             retryCount: 0,
             errorCode: undefined,
             lastError: undefined,
             updatedAt: now
-          });
-        }
-      }
-
-      if ((this.db as any).outbox) {
-        const outboxItem = await (this.db as any).outbox.where('mutationId').equals(mutationId).first();
-        if (outboxItem) {
-          await (this.db as any).outbox.update(outboxItem.id!, {
+          }
+        },
+        outboxAction: {
+          type: 'update',
+          patch: {
             status: 'PENDING',
             retries: 0,
             errorCode: undefined,
             error: undefined,
             updatedAt: now
-          });
+          }
         }
-      }
+      });
 
       if (typeof navigator !== 'undefined' && navigator.onLine) {
         this.requestSync().catch(() => {});
       }
     } catch (e) {
-      console.error("[DistributedSyncEngine] Failed to resubmit mutation:", e);
+      console.error('[DistributedSyncEngine] Failed to resubmit mutation:', e);
+      throw e;
     }
   }
 
@@ -859,19 +1179,54 @@ export class DistributedSyncEngine {
     this.isProcessing = true;
     const staleBefore = Date.now() - 5 * 60 * 1000;
     try {
+      // Reconcile any mutations already confirmed by the server whose local Dexie commit previously failed
+      // without issuing duplicate HTTP push requests.
+      for (const [, pending] of Array.from(this.serverConfirmedPendingLocalCommit.entries())) {
+        if (pending.tenantId !== snapshot.tenantId || pending.userId !== snapshot.userId) continue;
+        assertSyncSessionCurrent(snapshot);
+        await this.commitServerConfirmedLocalState({
+          snapshot,
+          mutationId: pending.mutationId,
+          idempotencyKey: pending.idempotencyKey,
+          queueId: pending.queueId,
+          outboxId: pending.outboxId,
+          entityType: pending.entityType,
+          payload: pending.payload
+        });
+      }
+
+      const outboxTable = this.getOutboxTable();
+
       if (this.db.syncQueue) {
-        const processing = await this.db.syncQueue.where('syncStatus').equals('PROCESSING').toArray().catch(() => []);
+        const processing = await this.db.syncQueue.where('syncStatus').equals('PROCESSING').toArray();
         assertSyncSessionCurrent(snapshot);
         for (const item of processing) {
           const updatedAt = new Date(item.updatedAt || item.createdAt || 0).getTime();
           if (item.tenantId === snapshot.tenantId && item.userId === snapshot.userId &&
               Number.isFinite(updatedAt) && updatedAt < staleBefore) {
             assertSyncSessionCurrent(snapshot);
-            await this.db.syncQueue.update(item.id!, { syncStatus: 'PENDING', updatedAt: new Date() });
-            assertSyncSessionCurrent(snapshot);
+            const nowIso = new Date().toISOString();
+            const txTables = this.getQueueOutboxTxTables(false);
+            await (this.db as any).transaction('rw', txTables, async () => {
+              assertSyncSessionCurrent(snapshot);
+              const queueRow = await this.db.syncQueue.get(item.id!);
+              if (!queueRow || queueRow.syncStatus !== 'PROCESSING') return;
+              const outboxRow = outboxTable && queueRow.mutationId
+                ? await this.findRecordByMutationIdWithOwnerCheck(outboxTable, 'outbox', queueRow.mutationId, snapshot)
+                : undefined;
+              this.assertPairConsistency(queueRow, outboxRow, snapshot, {
+                mutationId: queueRow.mutationId,
+                idempotencyKey: queueRow.idempotencyKey
+              });
+              await this.db.syncQueue.update(queueRow.id!, { syncStatus: 'PENDING', updatedAt: new Date() });
+              if (outboxRow && String(outboxRow.status || '').toUpperCase() === 'SENDING') {
+                await outboxTable.update(outboxRow.id!, { status: 'PENDING', updatedAt: nowIso });
+              }
+              assertSyncSessionCurrent(snapshot);
+            });
           }
         }
-        const batch = await this.db.syncQueue.where('syncStatus').anyOf('PENDING', 'RETRY_PENDING').toArray().catch(() => []);
+        const batch = await this.db.syncQueue.where('syncStatus').anyOf('PENDING', 'RETRY_PENDING').toArray();
         assertSyncSessionCurrent(snapshot);
         const eligible = batch.filter(item => item.tenantId === snapshot.tenantId &&
           item.userId === snapshot.userId)
@@ -885,23 +1240,33 @@ export class DistributedSyncEngine {
       }
 
       assertSyncSessionCurrent(snapshot);
-      if ((this.db as any).outbox) {
-        const sending = await (this.db as any).outbox.where('status').equals('SENDING').toArray().catch(() => []);
+      if (outboxTable) {
+        const sending = await outboxTable.where('status').equals('SENDING').toArray();
         assertSyncSessionCurrent(snapshot);
         for (const event of sending) {
           const updatedAt = new Date(event.updatedAt || event.createdAt || 0).getTime();
           if (event.tenantId === snapshot.tenantId && event.userId === snapshot.userId &&
               Number.isFinite(updatedAt) && updatedAt < staleBefore) {
             assertSyncSessionCurrent(snapshot);
-            await (this.db as any).outbox.update(event.id, { status: 'PENDING', updatedAt: new Date().toISOString() });
+            await outboxTable.update(event.id, { status: 'PENDING', updatedAt: new Date().toISOString() });
             assertSyncSessionCurrent(snapshot);
           }
         }
-        const events = await (this.db as any).outbox.where('status').anyOf('PENDING','pending','RETRYING').toArray().catch(() => []);
+        const events = await outboxTable.where('status').anyOf('PENDING', 'pending', 'RETRYING').toArray();
         assertSyncSessionCurrent(snapshot);
         for (const event of events) {
           if (event.tenantId !== snapshot.tenantId || event.userId !== snapshot.userId) continue;
           assertSyncSessionCurrent(snapshot);
+          // Do not double-dispatch an outbox event that is already owned by an active/terminal syncQueue row.
+          if (event.mutationId && this.db.syncQueue) {
+            const existingQueue = await this.findRecordByMutationIdWithOwnerCheck(
+              this.db.syncQueue,
+              'syncQueue',
+              event.mutationId,
+              snapshot
+            );
+            if (existingQueue) continue;
+          }
           await this.processOutboxEvent(event);
           if (!isSyncSessionCurrent(snapshot)) break;
         }
@@ -964,51 +1329,96 @@ export class DistributedSyncEngine {
   private async updateMatchingOutbox(
     mutationId: string | undefined,
     snapshot: SyncSessionSnapshot,
-    patch: Record<string, unknown>
+    patch: Record<string, unknown>,
+    expectedIdempotencyKey?: string
   ): Promise<void> {
-    if (!mutationId || !(this.db as any).outbox) return;
-    const matching = await (this.db as any).outbox
-      .where('mutationId').equals(mutationId)
-      .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
-      .first()
-      .catch(() => null);
-    assertSyncSessionCurrent(snapshot);
-    if (matching?.id !== undefined) {
-      await (this.db as any).outbox.update(matching.id, patch);
+    const outboxTable = this.getOutboxTable();
+    if (!mutationId || !outboxTable) return;
+    const execute = async () => {
+      const matching = await this.findRecordByMutationIdWithOwnerCheck(outboxTable, 'outbox', mutationId, snapshot);
+      if (!matching || matching.id === undefined) return;
+      this.assertPairConsistency(undefined, matching, snapshot, {
+        mutationId,
+        idempotencyKey: expectedIdempotencyKey
+      });
+      const updatedCount = await outboxTable.update(matching.id, patch);
       assertSyncSessionCurrent(snapshot);
+      if (updatedCount !== 1) {
+        throw new Error(`SYNC_OUTBOX_UPDATE_FAILED: Expected 1 outbox row updated, got ${updatedCount}.`);
+      }
+    };
+
+    if ((Dexie as any).currentTransaction) {
+      await execute();
+      return;
     }
+    await (this.db as any).transaction('rw', [outboxTable], execute);
   }
 
   private async updateMatchingSyncQueue(
     mutationId: string | undefined,
     snapshot: SyncSessionSnapshot,
-    patch: Record<string, unknown>
+    patch: Record<string, unknown>,
+    expectedIdempotencyKey?: string
   ): Promise<void> {
     if (!mutationId || !this.db.syncQueue) return;
-    const matching = await this.db.syncQueue
-      .where('mutationId').equals(mutationId)
-      .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
-      .first()
-      .catch(() => null);
-    assertSyncSessionCurrent(snapshot);
-    if (matching?.id !== undefined) {
-      await this.db.syncQueue.update(matching.id, patch);
+    const execute = async () => {
+      const matching = await this.findRecordByMutationIdWithOwnerCheck(this.db.syncQueue, 'syncQueue', mutationId, snapshot);
+      if (!matching || matching.id === undefined) return;
+      this.assertPairConsistency(matching, undefined, snapshot, {
+        mutationId,
+        idempotencyKey: expectedIdempotencyKey
+      });
+      const updatedCount = await this.db.syncQueue.update(matching.id, patch);
       assertSyncSessionCurrent(snapshot);
+      if (updatedCount !== 1) {
+        throw new Error(`SYNC_QUEUE_UPDATE_FAILED: Expected 1 syncQueue row updated, got ${updatedCount}.`);
+      }
+    };
+
+    if ((Dexie as any).currentTransaction) {
+      await execute();
+      return;
     }
+    await (this.db as any).transaction('rw', [this.db.syncQueue], execute);
   }
 
   private async processOutboxEvent(event: any): Promise<void> {
     const snapshot = readSyncSessionSnapshot();
     if (!snapshot || !event?.id || event.tenantId !== snapshot.tenantId ||
         event.userId !== snapshot.userId) return;
+
+    const outboxTable = this.getOutboxTable();
+    if (!outboxTable) return;
+
+    const confirmedKey = event.mutationId
+      ? this.getServerConfirmedKey(snapshot, event.mutationId)
+      : null;
+
+    // Never re-send if this mutation was already confirmed by the server and only awaits local commit.
+    if (confirmedKey && this.serverConfirmedPendingLocalCommit.has(confirmedKey)) {
+      await this.commitServerConfirmedLocalState({
+        snapshot,
+        mutationId: event.mutationId,
+        idempotencyKey: event.idempotencyKey,
+        outboxId: event.id
+      });
+      return;
+    }
+
+    let response: Response;
+    let body: any;
+    let result: any;
+    let resultStatus: string;
+
     try {
       assertSyncSessionCurrent(snapshot);
       const device = DeviceManager.getDeviceIdentity();
-      await (this.db as any).outbox.update(event.id, { status: 'SENDING', updatedAt: new Date().toISOString() });
+      await outboxTable.update(event.id, { status: 'SENDING', updatedAt: new Date().toISOString() });
       assertSyncSessionCurrent(snapshot);
       const send = async (): Promise<Response> => {
         assertSyncSessionCurrent(snapshot);
-        const response = await unifiedTransport.request<Response>({
+        const res = await unifiedTransport.request<Response>({
           url: this.getApiUrl('/api/v1/sync/push'), method: 'POST', profile: 'SYNC', raw: true,
           headers: {
             'X-Tenant-ID': snapshot.tenantId,
@@ -1031,128 +1441,212 @@ export class DistributedSyncEngine {
           }
         });
         assertSyncSessionCurrent(snapshot);
-        return response;
+        return res;
       };
-      let response = await send();
+      response = await send();
       if (response.status === 401 && typeof navigator !== 'undefined' && navigator.onLine) {
         await TokenProvider.refreshAccessToken();
         acceptRefreshedSyncToken(snapshot);
         response = await send();
       }
       assertSyncSessionCurrent(snapshot);
-      const body = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
+      body = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
       assertSyncSessionCurrent(snapshot);
-      const result = Array.isArray(body.results)
+      result = Array.isArray(body.results)
         ? body.results.find((item: any) => item?.mutationId === event.mutationId || item?.id === event.mutationId) || body.results[0]
         : undefined;
-      const resultStatus = String(result?.status || '').toUpperCase();
-
-      if (response.ok && (resultStatus === 'SUCCESS' || resultStatus === 'DUPLICATE')) {
-        await (this.db as any).outbox.update(event.id, {
-          status: 'CONFIRMED',
-          error: undefined,
-          errorCode: undefined,
-          updatedAt: new Date().toISOString()
-        });
-        assertSyncSessionCurrent(snapshot);
-        if (event.mutationId && this.db.syncQueue) {
-          const matchingQueue = await this.db.syncQueue
-            .where('mutationId').equals(event.mutationId)
-            .and((item: any) => item.tenantId === snapshot.tenantId && item.userId === snapshot.userId)
-            .first()
-            .catch(() => null);
-          assertSyncSessionCurrent(snapshot);
-          if (matchingQueue?.id !== undefined) {
-            await this.db.syncQueue.delete(matchingQueue.id);
-            assertSyncSessionCurrent(snapshot);
-          }
-        }
-        return;
-      }
-
-      const { errorCode, message } = this.extractRejectionDetails(response, body, result, resultStatus);
-      const conflict = response.status === 409 || resultStatus === 'CONFLICT' || body.errorType === 'CONFLICT';
-      if (conflict) {
-        await (this.db as any).outbox.update(event.id, {
-          status: 'CONFLICT',
-          errorCode,
-          error: message,
-          updatedAt: new Date().toISOString()
-        });
-        assertSyncSessionCurrent(snapshot);
-        await this.updateMatchingSyncQueue(event.mutationId, snapshot, {
-          syncStatus: 'CONFLICT',
-          errorCode,
-          lastError: message,
-          updatedAt: new Date()
-        });
-        return;
-      }
-
-      const rejected = this.isPermanentRejectionResponse(response.status, resultStatus, errorCode, body?.errorCode);
-      if (rejected) {
-        await (this.db as any).outbox.update(event.id, {
-          status: 'FAILED',
-          errorCode,
-          error: message,
-          updatedAt: new Date().toISOString()
-        });
-        assertSyncSessionCurrent(snapshot);
-        await this.updateMatchingSyncQueue(event.mutationId, snapshot, {
-          syncStatus: 'REJECTED',
-          errorCode,
-          lastError: message,
-          updatedAt: new Date()
-        });
-        return;
-      }
-
-      // Transient server response (e.g. 5xx / 429): bound retries via MAX_RETRY_ATTEMPTS
-      const nextRetries = (Number(event.retries) || 0) + 1;
-      const exhausted = nextRetries > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
-      await (this.db as any).outbox.update(event.id, {
-        status: exhausted ? 'FAILED' : 'RETRYING',
-        retries: nextRetries,
-        errorCode,
-        error: message,
-        updatedAt: new Date().toISOString()
-      });
-      assertSyncSessionCurrent(snapshot);
+      resultStatus = String(result?.status || '').toUpperCase();
     } catch (error: any) {
       if (!isSyncSessionCurrent(snapshot)) return;
       if (this.isNonRetryableHttpError(error)) {
         const errorCode = typeof error?.code === 'string' ? error.code : undefined;
         const message = error?.message || `Rejected by server (HTTP ${error.status})`;
-        await (this.db as any).outbox.update(event.id, {
-          status: 'FAILED',
-          errorCode,
-          error: message,
-          updatedAt: new Date().toISOString()
-        });
-        await this.updateMatchingSyncQueue(event.mutationId, snapshot, {
-          syncStatus: 'REJECTED',
-          errorCode,
-          lastError: message,
-          updatedAt: new Date()
+        await this.applyAtomicPairTransition({
+          snapshot,
+          mutationId: event.mutationId,
+          idempotencyKey: event.idempotencyKey,
+          outboxId: event.id,
+          outboxAction: {
+            type: 'update',
+            patch: {
+              status: 'FAILED',
+              errorCode,
+              error: message,
+              updatedAt: new Date().toISOString()
+            }
+          },
+          queueAction: {
+            type: 'update',
+            patch: {
+              syncStatus: 'REJECTED',
+              errorCode,
+              lastError: message,
+              updatedAt: new Date()
+            }
+          }
         });
         return;
       }
 
       const nextRetries = (Number(event.retries) || 0) + 1;
       const exhausted = nextRetries > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
-      await (this.db as any).outbox.update(event.id, {
-        status: exhausted ? 'FAILED' : 'RETRYING',
-        retries: nextRetries,
-        error: error?.message || 'Network Error',
-        updatedAt: new Date().toISOString()
+      const errMessage = error?.message || 'Network Error';
+      await this.applyAtomicPairTransition({
+        snapshot,
+        mutationId: event.mutationId,
+        idempotencyKey: event.idempotencyKey,
+        outboxId: event.id,
+        outboxAction: {
+          type: 'update',
+          patch: {
+            status: exhausted ? 'FAILED' : 'RETRYING',
+            retries: nextRetries,
+            error: errMessage,
+            updatedAt: new Date().toISOString()
+          }
+        },
+        queueAction: {
+          type: 'update',
+          patch: {
+            syncStatus: exhausted ? 'FAILED' : 'RETRY_PENDING',
+            retryCount: nextRetries,
+            lastError: errMessage,
+            updatedAt: new Date()
+          }
+        }
       });
+      return;
     }
+
+    // Handle server response outside the transport catch block so a local Dexie commit failure
+    // after server confirmation never degrades into a retry state or triggers a duplicate send.
+    if (response.ok && (resultStatus === 'SUCCESS' || resultStatus === 'DUPLICATE')) {
+      try {
+        await this.commitServerConfirmedLocalState({
+          snapshot,
+          mutationId: event.mutationId,
+          idempotencyKey: event.idempotencyKey,
+          outboxId: event.id
+        });
+      } catch (commitError: any) {
+        if (commitError?.message?.includes('SESSION_SWITCH_DETECTED') || !isSyncSessionCurrent(snapshot)) return;
+        throw commitError;
+      }
+      return;
+    }
+
+    const { errorCode, message } = this.extractRejectionDetails(response, body, result, resultStatus);
+    const conflict = response.status === 409 || resultStatus === 'CONFLICT' || body.errorType === 'CONFLICT';
+    if (conflict) {
+      await this.applyAtomicPairTransition({
+        snapshot,
+        mutationId: event.mutationId,
+        idempotencyKey: event.idempotencyKey,
+        outboxId: event.id,
+        outboxAction: {
+          type: 'update',
+          patch: {
+            status: 'CONFLICT',
+            errorCode,
+            error: message,
+            updatedAt: new Date().toISOString()
+          }
+        },
+        queueAction: {
+          type: 'update',
+          patch: {
+            syncStatus: 'CONFLICT',
+            errorCode,
+            lastError: message,
+            updatedAt: new Date()
+          }
+        }
+      });
+      return;
+    }
+
+    const rejected = this.isPermanentRejectionResponse(response.status, resultStatus, errorCode, body?.errorCode);
+    if (rejected) {
+      await this.applyAtomicPairTransition({
+        snapshot,
+        mutationId: event.mutationId,
+        idempotencyKey: event.idempotencyKey,
+        outboxId: event.id,
+        outboxAction: {
+          type: 'update',
+          patch: {
+            status: 'FAILED',
+            errorCode,
+            error: message,
+            updatedAt: new Date().toISOString()
+          }
+        },
+        queueAction: {
+          type: 'update',
+          patch: {
+            syncStatus: 'REJECTED',
+            errorCode,
+            lastError: message,
+            updatedAt: new Date()
+          }
+        }
+      });
+      return;
+    }
+
+    // Transient server response (e.g. 5xx / 429): bound retries via MAX_RETRY_ATTEMPTS
+    const nextRetries = (Number(event.retries) || 0) + 1;
+    const exhausted = nextRetries > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
+    await this.applyAtomicPairTransition({
+      snapshot,
+      mutationId: event.mutationId,
+      idempotencyKey: event.idempotencyKey,
+      outboxId: event.id,
+      outboxAction: {
+        type: 'update',
+        patch: {
+          status: exhausted ? 'FAILED' : 'RETRYING',
+          retries: nextRetries,
+          errorCode,
+          error: message,
+          updatedAt: new Date().toISOString()
+        }
+      },
+      queueAction: {
+        type: 'update',
+        patch: {
+          syncStatus: exhausted ? 'FAILED' : 'RETRY_PENDING',
+          retryCount: nextRetries,
+          errorCode,
+          lastError: message,
+          updatedAt: new Date()
+        }
+      }
+    });
   }
 
   private async processMutationWithRetry(mutation: LocalSyncQueueItem): Promise<void> {
     const snapshot = readSyncSessionSnapshot();
     if (!snapshot || !mutation.id || mutation.tenantId !== snapshot.tenantId ||
         mutation.userId !== snapshot.userId) return;
+
+    const confirmedKey = mutation.mutationId
+      ? this.getServerConfirmedKey(snapshot, mutation.mutationId)
+      : null;
+
+    // Never re-send if this mutation was already confirmed by the server and only awaits local commit.
+    if (confirmedKey && this.serverConfirmedPendingLocalCommit.has(confirmedKey)) {
+      await this.commitServerConfirmedLocalState({
+        snapshot,
+        mutationId: mutation.mutationId,
+        idempotencyKey: mutation.idempotencyKey,
+        queueId: mutation.id,
+        entityType: mutation.entityType,
+        payload: mutation.payload
+      });
+      return;
+    }
+
     assertSyncSessionCurrent(snapshot);
     await this.db.syncQueue.update(mutation.id, { syncStatus: 'PROCESSING', updatedAt: new Date() });
     assertSyncSessionCurrent(snapshot);
@@ -1187,137 +1681,204 @@ export class DistributedSyncEngine {
       return response;
     };
 
+    const recordTransientFailureAndWait = async (errorMessage: string): Promise<boolean> => {
+      mutation.retryCount++;
+      const dead = mutation.retryCount > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
+      assertSyncSessionCurrent(snapshot);
+      await this.applyAtomicPairTransition({
+        snapshot,
+        mutationId: mutation.mutationId,
+        idempotencyKey: mutation.idempotencyKey,
+        queueId: mutation.id,
+        queueAction: {
+          type: 'update',
+          patch: {
+            retryCount: mutation.retryCount,
+            syncStatus: dead ? 'FAILED' : 'RETRY_PENDING',
+            lastError: errorMessage,
+            updatedAt: new Date()
+          }
+        },
+        outboxAction: {
+          type: 'update',
+          patch: {
+            status: dead ? 'FAILED' : 'RETRYING',
+            retries: mutation.retryCount,
+            error: errorMessage,
+            updatedAt: new Date().toISOString()
+          }
+        },
+        failedMutationRecord: dead
+          ? {
+              mutationId: mutation.mutationId,
+              reason: `DEAD_LETTER_MAX_RETRIES_EXCEEDED: ${errorMessage}`,
+              payload: mutation.payload,
+              tenantId: mutation.tenantId,
+              branchId: mutation.branchId,
+              createdAt: new Date()
+            }
+          : undefined
+      });
+      if (dead) return false;
+      await new Promise(resolve => setTimeout(resolve, delay + Math.random() * 200));
+      if (!isSyncSessionCurrent(snapshot)) return false;
+      delay = Math.min(delay * 2, SYNC_CONFIG.BACKOFF_MAX_DELAY_MS);
+      return true;
+    };
+
     while (mutation.retryCount <= SYNC_CONFIG.MAX_RETRY_ATTEMPTS) {
+      let response: Response;
+      let body: any;
+      let result: any;
+      let resultStatus: string;
+
       try {
-        let response = await send();
+        response = await send();
         if (response.status === 401 && typeof navigator !== 'undefined' && navigator.onLine) {
           await TokenProvider.refreshAccessToken();
           acceptRefreshedSyncToken(snapshot);
           response = await send();
         }
         assertSyncSessionCurrent(snapshot);
-        const body = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
+        body = typeof response.json === 'function' ? await response.json().catch(() => ({})) : {};
         assertSyncSessionCurrent(snapshot);
-        const result = Array.isArray(body.results)
+        result = Array.isArray(body.results)
           ? body.results.find((item: any) => item?.mutationId === mutation.mutationId || item?.id === mutation.mutationId) || body.results[0]
           : undefined;
-        const resultStatus = String(result?.status || '').toUpperCase();
-
-        if (response.ok && (resultStatus === 'SUCCESS' || resultStatus === 'DUPLICATE')) {
-          await this.db.syncQueue.delete(mutation.id);
-          assertSyncSessionCurrent(snapshot);
-          await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
-            status: 'CONFIRMED',
-            error: undefined,
-            errorCode: undefined,
-            updatedAt: new Date().toISOString()
-          });
-          const entityId = (mutation.payload as any)?.id;
-          if (entityId) {
-            const table = String(mutation.entityType).toUpperCase() === 'PRODUCT' ? (this.db as any).products :
-              ['SALE','INVOICE'].includes(String(mutation.entityType).toUpperCase()) ? (this.db as any).invoices : null;
-            if (table) {
-              assertSyncSessionCurrent(snapshot);
-              await table.update(entityId, { is_synced: 1, isSynced: true, syncStatus: 'SYNCED', updatedAt: new Date().toISOString() }).catch(() => null);
-              assertSyncSessionCurrent(snapshot);
-            }
-          }
-          return;
-        }
-
-        const { errorCode, message } = this.extractRejectionDetails(response, body, result, resultStatus);
-
-        if (response.status === 409 || resultStatus === 'CONFLICT' || body.errorType === 'CONFLICT') {
-          const conflict = result?.conflict || body;
-          const conflictReason = conflict.message || result?.message || 'تعارض في مزامنة السجل مع الخادم';
-          await this.handleConflict(mutation, conflictReason, snapshot, errorCode);
-          return;
-        }
-        if (this.isPermanentRejectionResponse(response.status, resultStatus, errorCode, body?.errorCode)) {
-          await this.db.syncQueue.update(mutation.id, {
-            syncStatus: 'REJECTED',
-            errorCode,
-            lastError: message,
-            updatedAt: new Date()
-          });
-          assertSyncSessionCurrent(snapshot);
-          await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
-            status: 'FAILED',
-            errorCode,
-            error: message,
-            updatedAt: new Date().toISOString()
-          });
-          return;
-        }
-        throw new Error(`Server returned status: ${response.status}`);
+        resultStatus = String(result?.status || '').toUpperCase();
       } catch (error: any) {
         if (!isSyncSessionCurrent(snapshot)) return;
         if (this.isNonRetryableHttpError(error)) {
           const errorCode = typeof error?.code === 'string' ? error.code : undefined;
           const message = error?.message || `Rejected by server (HTTP ${error.status})`;
-          await this.db.syncQueue.update(mutation.id, {
-            syncStatus: 'REJECTED',
-            errorCode,
-            lastError: message,
-            updatedAt: new Date()
-          });
-          assertSyncSessionCurrent(snapshot);
-          await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
-            status: 'FAILED',
-            errorCode,
-            error: message,
-            updatedAt: new Date().toISOString()
+          await this.applyAtomicPairTransition({
+            snapshot,
+            mutationId: mutation.mutationId,
+            idempotencyKey: mutation.idempotencyKey,
+            queueId: mutation.id,
+            queueAction: {
+              type: 'update',
+              patch: {
+                syncStatus: 'REJECTED',
+                errorCode,
+                lastError: message,
+                updatedAt: new Date()
+              }
+            },
+            outboxAction: {
+              type: 'update',
+              patch: {
+                status: 'FAILED',
+                errorCode,
+                error: message,
+                updatedAt: new Date().toISOString()
+              }
+            }
           });
           return;
         }
 
-        mutation.retryCount++;
-        const dead = mutation.retryCount > SYNC_CONFIG.MAX_RETRY_ATTEMPTS;
-        assertSyncSessionCurrent(snapshot);
-        await this.db.syncQueue.update(mutation.id, {
-          retryCount: mutation.retryCount, syncStatus: dead ? 'FAILED' : 'RETRY_PENDING',
-          lastError: error?.message || 'Sync network/processing failure', updatedAt: new Date()
-        });
-        assertSyncSessionCurrent(snapshot);
-        if (dead) {
-          await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
-            status: 'FAILED',
-            retries: mutation.retryCount,
-            error: error?.message || 'Sync network/processing failure',
-            updatedAt: new Date().toISOString()
-          });
-          await this.db.failedMutations.add({
-            mutationId: mutation.mutationId,
-            reason: `DEAD_LETTER_MAX_RETRIES_EXCEEDED: ${error?.message || 'Network error'}`,
-            payload: mutation.payload, tenantId: mutation.tenantId,
-            branchId: mutation.branchId, createdAt: new Date()
-          }).catch(() => undefined);
-          return;
-        }
-        await new Promise(resolve => setTimeout(resolve, delay + Math.random() * 200));
-        if (!isSyncSessionCurrent(snapshot)) return;
-        delay = Math.min(delay * 2, SYNC_CONFIG.BACKOFF_MAX_DELAY_MS);
+        const shouldContinue = await recordTransientFailureAndWait(
+          error?.message || 'Sync network/processing failure'
+        );
+        if (!shouldContinue) return;
+        continue;
       }
+
+      // Local Dexie commit runs OUTSIDE the transport retry try/catch so a local write failure
+      // after server confirmation NEVER triggers a duplicate HTTP retry.
+      if (response.ok && (resultStatus === 'SUCCESS' || resultStatus === 'DUPLICATE')) {
+        try {
+          await this.commitServerConfirmedLocalState({
+            snapshot,
+            mutationId: mutation.mutationId,
+            idempotencyKey: mutation.idempotencyKey,
+            queueId: mutation.id,
+            entityType: mutation.entityType,
+            payload: mutation.payload
+          });
+        } catch (commitError: any) {
+          if (commitError?.message?.includes('SESSION_SWITCH_DETECTED') || !isSyncSessionCurrent(snapshot)) return;
+          throw commitError;
+        }
+        return;
+      }
+
+      const { errorCode, message } = this.extractRejectionDetails(response, body, result, resultStatus);
+
+      if (response.status === 409 || resultStatus === 'CONFLICT' || body.errorType === 'CONFLICT') {
+        const conflict = result?.conflict || body;
+        const conflictReason = conflict.message || result?.message || 'تعارض في مزامنة السجل مع الخادم';
+        await this.handleConflict(mutation, conflictReason, snapshot, errorCode);
+        return;
+      }
+
+      if (this.isPermanentRejectionResponse(response.status, resultStatus, errorCode, body?.errorCode)) {
+        await this.applyAtomicPairTransition({
+          snapshot,
+          mutationId: mutation.mutationId,
+          idempotencyKey: mutation.idempotencyKey,
+          queueId: mutation.id,
+          queueAction: {
+            type: 'update',
+            patch: {
+              syncStatus: 'REJECTED',
+              errorCode,
+              lastError: message,
+              updatedAt: new Date()
+            }
+          },
+          outboxAction: {
+            type: 'update',
+            patch: {
+              status: 'FAILED',
+              errorCode,
+              error: message,
+              updatedAt: new Date().toISOString()
+            }
+          }
+        });
+        return;
+      }
+
+      const shouldContinue = await recordTransientFailureAndWait(`Server returned status: ${response.status}`);
+      if (!shouldContinue) return;
     }
   }
 
   private async handleConflict(mutation: LocalSyncQueueItem, reason: string, snapshot: SyncSessionSnapshot, errorCode?: string): Promise<void> {
     assertSyncSessionCurrent(snapshot);
-    await this.db.transaction('rw', [this.db.syncQueue, this.db.failedMutations], async () => {
-      assertSyncSessionCurrent(snapshot);
-      await this.db.failedMutations.add({
-        mutationId: mutation.mutationId, reason, payload: mutation.payload,
-        tenantId: mutation.tenantId, branchId: mutation.branchId, createdAt: new Date()
-      });
-      assertSyncSessionCurrent(snapshot);
-      await this.db.syncQueue.update(mutation.id!, { syncStatus: 'CONFLICT', errorCode, lastError: reason, updatedAt: new Date() });
-      assertSyncSessionCurrent(snapshot);
-    });
-    await this.updateMatchingOutbox(mutation.mutationId, snapshot, {
-      status: 'CONFLICT',
-      errorCode,
-      error: reason,
-      updatedAt: new Date().toISOString()
+    await this.applyAtomicPairTransition({
+      snapshot,
+      mutationId: mutation.mutationId,
+      idempotencyKey: mutation.idempotencyKey,
+      queueId: mutation.id,
+      queueAction: {
+        type: 'update',
+        patch: {
+          syncStatus: 'CONFLICT',
+          errorCode,
+          lastError: reason,
+          updatedAt: new Date()
+        }
+      },
+      outboxAction: {
+        type: 'update',
+        patch: {
+          status: 'CONFLICT',
+          errorCode,
+          error: reason,
+          updatedAt: new Date().toISOString()
+        }
+      },
+      failedMutationRecord: {
+        mutationId: mutation.mutationId,
+        reason,
+        payload: mutation.payload,
+        tenantId: mutation.tenantId,
+        branchId: mutation.branchId,
+        createdAt: new Date()
+      }
     });
   }
 

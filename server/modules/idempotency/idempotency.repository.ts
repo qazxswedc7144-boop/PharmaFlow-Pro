@@ -4,7 +4,18 @@ import { IdempotencyKey } from "@prisma/client";
 import { getTenantContext } from "../../context/tenantContext.js";
 
 // In-memory fallback store to ensure absolute operational resilience under DB degradation or sandbox limits
+// Note: Process-local only; never guarantees distributed multi-server idempotency.
 const inMemoryFallbackStore = new Map<string, IdempotencyKey>();
+
+export type IdempotencyLockReleaseStatus = "RELEASED" | "NOT_FOUND" | "DB_ERROR";
+
+export interface IdempotencyLockReleaseResult {
+  status: IdempotencyLockReleaseStatus;
+  released: boolean;
+  releasedCount: number;
+  durableConfirmed: boolean;
+  error?: unknown;
+}
 
 function isDbConnectionError(err: any): boolean {
   const msg = String(err?.message || err || "");
@@ -226,31 +237,67 @@ export class IdempotencyRepository {
   }
 
   /**
-   * Releases an unresolved lock (responseStatus === null) so retries with the same
-   * Idempotency-Key execute cleanly instead of replaying an empty cached response.
+   * Releases an unresolved lock (responseStatus === null) in durable PostgreSQL storage first,
+   * then removes any matching unresolved process-local cache entry only after DB confirmation.
+   * Returns an explicit discriminated result distinguishing RELEASED, NOT_FOUND, and DB_ERROR.
    */
-  static async releaseLock(key: string, tenantId?: string | null): Promise<IdempotencyKey | null> {
+  static async releaseLock(
+    key: string,
+    tenantId?: string | null
+  ): Promise<IdempotencyLockReleaseResult> {
     const effectiveTenantId = tenantId || getTenantContext()?.tenantId || null;
     if (!effectiveTenantId) {
       throw new Error("TENANT_ID_REQUIRED_FOR_IDEMPOTENCY: releaseLock requires a tenantId.");
     }
     const cacheKey = `${effectiveTenantId}:${key}`;
-    const cached = inMemoryFallbackStore.get(cacheKey);
-    if (cached && cached.responseStatus === null) {
-      inMemoryFallbackStore.delete(cacheKey);
-    }
 
     try {
-      await prisma.idempotencyKey.deleteMany({
+      const deleteResult = await prisma.idempotencyKey.deleteMany({
         where: {
           tenantId: effectiveTenantId,
           key,
           responseStatus: null
         }
       });
-      return null;
-    } catch {
-      return null;
+
+      const releasedCount = Number(deleteResult?.count ?? 0);
+
+      if (releasedCount > 0) {
+        const cached = inMemoryFallbackStore.get(cacheKey);
+        if (cached && cached.responseStatus === null) {
+          inMemoryFallbackStore.delete(cacheKey);
+        }
+        return {
+          status: "RELEASED",
+          released: true,
+          releasedCount,
+          durableConfirmed: true
+        };
+      }
+
+      // Durable DB confirmed zero releasable unresolved rows for this tenant+key.
+      // Never delete a resolved entry (responseStatus !== null) and never report
+      // RELEASED from process-local memory alone.
+      const cached = inMemoryFallbackStore.get(cacheKey);
+      if (cached && cached.responseStatus === null) {
+        inMemoryFallbackStore.delete(cacheKey);
+      }
+      return {
+        status: "NOT_FOUND",
+        released: false,
+        releasedCount: 0,
+        durableConfirmed: true
+      };
+    } catch (error) {
+      // Do NOT remove the local cache entry when durable DB release fails,
+      // and do NOT swallow the DB failure as a successful release.
+      return {
+        status: "DB_ERROR",
+        released: false,
+        releasedCount: 0,
+        durableConfirmed: false,
+        error
+      };
     }
   }
 

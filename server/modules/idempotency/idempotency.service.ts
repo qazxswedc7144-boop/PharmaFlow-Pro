@@ -1,8 +1,9 @@
 // server/modules/idempotency/idempotency.service.ts
 import crypto from "crypto";
 import pino from "pino";
-import { IdempotencyRepository } from "./idempotency.repository.js";
+import { IdempotencyRepository, IdempotencyLockReleaseResult } from "./idempotency.repository.js";
 import { IdempotencyMetrics } from "./idempotency.types.js";
+import { getTenantContext } from "../../context/tenantContext.js";
 
 const logger = pino({
   level: process.env.NODE_ENV === "production" ? "info" : "debug",
@@ -20,6 +21,11 @@ const metrics: IdempotencyMetrics = {
 
 export class IdempotencyService {
   private static inFlightKeys = new Set<string>();
+
+  private static getInFlightKey(key: string, tenantId?: string | null): string {
+    const effectiveTenantId = tenantId || getTenantContext()?.tenantId || "";
+    return `${effectiveTenantId}:${key}`;
+  }
 
   /**
    * Generates a unique SHA-256 fingerprint for a request based on:
@@ -65,15 +71,17 @@ export class IdempotencyService {
     userId: string | null,
     tenantId?: string | null
   ): Promise<{ status: "PROCESS"; hash: string } | { status: "REPLAY"; code: number; body: any }> {
-    // 1. Immediately block if already in-flight in this process thread
-    if (this.inFlightKeys.has(key)) {
+    const inFlightKey = this.getInFlightKey(key, tenantId);
+
+    // 1. Immediately block if already in-flight in this process thread for the same tenant
+    if (this.inFlightKeys.has(inFlightKey)) {
       metrics.concurrentLockPrevention++;
-      logger.warn({ key, endpoint, method }, "Locked concurrent execution prevented via in-flight registry.");
+      logger.warn({ key, tenantId, endpoint, method }, "Locked concurrent execution prevented via in-flight registry.");
       throw new Error("CONCURRENT_LOCK");
     }
 
     // Capture the atomic synchronous lock for this thread segment
-    this.inFlightKeys.add(key);
+    this.inFlightKeys.add(inFlightKey);
 
     try {
       const hash = this.generateRequestHash(endpoint, method, body, userId);
@@ -83,7 +91,7 @@ export class IdempotencyService {
         // If already marked as processing (meaning another container/thread, or previous crash lock)
         if (existing.processing) {
           metrics.concurrentLockPrevention++;
-          logger.warn({ key, endpoint, method }, "Concurrent attempt blocked right after retrieval conflict.");
+          logger.warn({ key, tenantId, endpoint, method }, "Concurrent attempt blocked right after retrieval conflict.");
           throw new Error("CONCURRENT_LOCK");
         }
 
@@ -91,7 +99,7 @@ export class IdempotencyService {
         if (existing.requestHash !== hash) {
           metrics.hashMismatches++;
           logger.error(
-            { key, existingHash: existing.requestHash, incomingHash: hash, endpoint, method },
+            { key, tenantId, existingHash: existing.requestHash, incomingHash: hash, endpoint, method },
             "Idempotency key abuse security check failed. Body payload mismatch."
           );
           throw new Error("HASH_MISMATCH");
@@ -101,12 +109,12 @@ export class IdempotencyService {
         metrics.preventedDuplicates++;
         metrics.replayedRequests++;
         logger.info(
-          { key, responseStatus: existing.responseStatus, endpoint },
+          { key, tenantId, responseStatus: existing.responseStatus, endpoint },
           "Duplicate attempt intercepted. Replaying previous safe financial outcome."
         );
 
         // Remove from dynamic thread lock since we are bypassing the actual route processing anyway
-        this.inFlightKeys.delete(key);
+        this.inFlightKeys.delete(inFlightKey);
 
         return {
           status: "REPLAY",
@@ -127,15 +135,15 @@ export class IdempotencyService {
 
       if (!isNew && record.processing) {
         metrics.concurrentLockPrevention++;
-        logger.warn({ key, endpoint, method }, "Concurrent attempt blocked on db lock acquisition.");
+        logger.warn({ key, tenantId, endpoint, method }, "Concurrent attempt blocked on db lock acquisition.");
         throw new Error("CONCURRENT_LOCK");
       }
 
-      logger.info({ key, endpoint, method, userId, hash }, "Idempotency key acquired. Proceeding to process.");
+      logger.info({ key, tenantId, endpoint, method, userId, hash }, "Idempotency key acquired. Proceeding to process.");
       return { status: "PROCESS", hash };
     } catch (err) {
       // Release inflight lock on pre-request failure to ensure subsequent retries can proceed
-      this.inFlightKeys.delete(key);
+      this.inFlightKeys.delete(inFlightKey);
       throw err;
     }
   }
@@ -144,17 +152,46 @@ export class IdempotencyService {
    * Finalizes an idempotent operations stack with its response payload
    */
   static async resolveRequest(key: string, responseStatus: number, responseBody: any, tenantId?: string | null): Promise<void> {
-    this.inFlightKeys.delete(key);
+    const inFlightKey = this.getInFlightKey(key, tenantId);
     await IdempotencyRepository.resolveKey(key, responseBody, responseStatus, tenantId);
-    logger.debug({ key, responseStatus }, "Idempotent response result cached successfully.");
+    this.inFlightKeys.delete(inFlightKey);
+    logger.debug({ key, tenantId, responseStatus }, "Idempotent response result cached successfully.");
   }
 
   /**
-   * Cleans/undoes locks in case of errors on non-idempotent exceptions
+   * Cleans/undoes locks in case of errors on non-idempotent exceptions.
+   * Clears the process-local in-flight guard ONLY after durable DB release
+   * confirms the lock was released or does not exist (never on DB_ERROR).
    */
-  static async releaseLock(key: string, tenantId?: string | null): Promise<void> {
-    this.inFlightKeys.delete(key);
-    await IdempotencyRepository.releaseLock(key, tenantId);
-    logger.warn({ key }, "Processing lock released due to system recovery intervention.");
+  static async releaseLock(
+    key: string,
+    tenantId?: string | null
+  ): Promise<IdempotencyLockReleaseResult> {
+    const inFlightKey = this.getInFlightKey(key, tenantId);
+    const result = await IdempotencyRepository.releaseLock(key, tenantId);
+
+    if (result.status === "DB_ERROR") {
+      logger.error(
+        { key, tenantId, err: result.error },
+        "Failed to release durable idempotency lock in database; retaining in-flight lock guard."
+      );
+      return result;
+    }
+
+    this.inFlightKeys.delete(inFlightKey);
+
+    if (result.status === "RELEASED") {
+      logger.warn(
+        { key, tenantId, releasedCount: result.releasedCount },
+        "Processing lock released due to system recovery intervention."
+      );
+    } else {
+      logger.debug(
+        { key, tenantId },
+        "No releasable unresolved idempotency lock found in database."
+      );
+    }
+
+    return result;
   }
 }
