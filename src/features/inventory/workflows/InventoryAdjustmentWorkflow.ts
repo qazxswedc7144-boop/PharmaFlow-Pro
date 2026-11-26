@@ -3,6 +3,7 @@ import { db } from '@/core/db';
 import { JournalLine } from '@/types';
 import { AccountingEngine } from '@features/accounting/services/AccountingEngine';
 import { unifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
+import type { VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 export interface InventoryAdjustmentInput {
   productId: string;
@@ -54,6 +55,13 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
     }
   }
 
+  public getPeriodCheckDates(
+    _input: InventoryAdjustmentInput,
+    ctx: WorkflowContext
+  ): string[] {
+    return [ctx.startedAt];
+  }
+
   // التعديل 2: إضافة tx كمعامل ثالث
   public async executeDomainSteps(
     input: InventoryAdjustmentInput,
@@ -80,6 +88,12 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
       throw new Error('TRANSACTION_REQUIRED: Inventory adjustment must run inside WorkflowExecutionPipeline.');
     }
 
+    const effectiveTimestamp = ctx.startedAt;
+    const verifiedPeriods = (ctx.metadata?.verifiedAccountingPeriods || {}) as Record<
+      string,
+      VerifiedPeriodSnapshot | undefined
+    >;
+
     // Stock mutation and accounting postings must share the pipeline transaction.
     const mutationResult = await unifiedInventoryMutationEngine.executeAdjustment({
       adjustmentId,
@@ -90,7 +104,9 @@ export class InventoryAdjustmentWorkflow implements BusinessWorkflow<InventoryAd
       userId: input.userId || ctx.userId || 'system',
       tenantId,
       branchId,
-      transactionUuid
+      transactionUuid,
+      timestamp: effectiveTimestamp,
+      periodVerification: verifiedPeriods[effectiveTimestamp]
     }, tx);
 
     const deltaQty = mutationResult.delta;

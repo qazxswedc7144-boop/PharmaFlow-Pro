@@ -13,6 +13,7 @@ import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { ensureActiveBranchRegistered } from '@features/branches/services/activeBranchRegistry';
 import { DistributedSyncEngine } from '@features/sync/sync.engine';
 import { generateTransactionUuid } from '@/utils/uuid';
+import type { VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 export interface PurchaseWorkflowInput {
   supplierId?: string;
@@ -275,6 +276,24 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
     }
   }
 
+  public getPeriodCheckDates(
+    input: PurchaseWorkflowInput,
+    ctx: WorkflowContext
+  ): string[] {
+    const finalStatus: InvoiceStatus = input.invoiceStatus || 'POSTED';
+    const isPosting = finalStatus === 'POSTED' || finalStatus === 'LOCKED';
+    if (!isPosting && !input.isEdit) {
+      return [];
+    }
+
+    const effectiveDate = input.date || ctx.startedAt;
+    const dates = [effectiveDate];
+    if (input.isEdit && ctx.startedAt && ctx.startedAt !== effectiveDate) {
+      dates.push(ctx.startedAt);
+    }
+    return dates;
+  }
+
   public async executeDomainSteps(
     input: PurchaseWorkflowInput,
     ctx: WorkflowContext,
@@ -286,6 +305,10 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
 
     const effectiveDate = input.date || ctx.startedAt;
     const isReturn = !!input.isReturn;
+    const verifiedPeriods = (ctx.metadata?.verifiedAccountingPeriods || {}) as Record<
+      string,
+      VerifiedPeriodSnapshot | undefined
+    >;
 
     // The internal invoice number is system-owned and generated locally per tenant.
     // Edits preserve the persisted historical number; legacy PURCH-* values remain untouched.
@@ -422,6 +445,7 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
         // Reverse Inventory Effect
         const engine = UnifiedInventoryMutationEngine.getInstance();
 
+        const reversalTimestamp = ctx.startedAt || effectiveDate;
         await engine.executeReversal({
           originalDocumentId: input.id,
           originalDocumentType: isReturn
@@ -431,7 +455,9 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
           userId: ctx.userId || 'system',
           tenantId: ctx.tenantId,
           branchId: ctx.branchId,
-          transactionUuid: `REV-EDIT-${ctx.idempotencyKey}`
+          transactionUuid: `REV-EDIT-${ctx.idempotencyKey}`,
+          timestamp: reversalTimestamp,
+          periodVerification: verifiedPeriods[reversalTimestamp] || verifiedPeriods[effectiveDate]
         }, tx);
 
         // Reverse Supplier Balance
@@ -651,7 +677,8 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
               notes:
                 input.notes ||
                 `مرتجع مشتريات فاتورة #${refId}`,
-              timestamp: effectiveDate
+              timestamp: effectiveDate,
+              periodVerification: verifiedPeriods[effectiveDate]
             }, tx);
 
           const totalCost = mutationResults.reduce(
@@ -686,7 +713,8 @@ export class PurchaseWorkflow implements BusinessWorkflow<PurchaseWorkflowInput,
               notes:
                 input.notes ||
                 `استلام مشتريات فاتورة #${refId}`,
-              timestamp: effectiveDate
+              timestamp: effectiveDate,
+              periodVerification: verifiedPeriods[effectiveDate]
             }, tx);
 
           const totalCost = mutationResults.reduce(

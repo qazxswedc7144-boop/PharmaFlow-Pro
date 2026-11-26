@@ -5,6 +5,7 @@ import { AccountingEngine } from '@features/accounting/services/AccountingEngine
 import { AccountingRepository } from '@/database/repositories/AccountingRepository';
 import { AccountingEntry, InvoiceItem, Sale, Purchase, InvoiceStatus, PaymentStatus } from '@/types';
 import { TokenProvider } from '@/services/auth/tokenProvider';
+import { PeriodLockEngine, type VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 /**
  * AutoJournalMapper
@@ -56,6 +57,18 @@ export const AutoJournalMapper = {
 
     const invoiceId = payload.id || db.generateId(type === 'SALE' ? 'SAL' : 'PUR');
     const enrichedPayload = { ...payload, id: invoiceId };
+    const effectiveDate = payload.date || options?.date || new Date().toISOString();
+
+    let engine: any = null;
+    let periodVerification: VerifiedPeriodSnapshot | undefined;
+    if (isPosting) {
+      engine = (await import('@features/inventory/services/UnifiedInventoryMutationEngine')).unifiedInventoryMutationEngine;
+      periodVerification = await PeriodLockEngine.verifyOpenPeriodForTransaction(
+        effectiveDate,
+        tenantId,
+        type === 'SALE' ? 'ترحيل فاتورة مبيعات' : 'ترحيل فاتورة مشتريات'
+      );
+    }
 
     console.log(`[Financial Architect] [ACID Transaction Start] Processing invoice: ${invoiceId}`);
 
@@ -75,7 +88,6 @@ export const AutoJournalMapper = {
         let costResult = { totalCost: 0, itemCosts: {} };
         try {
           if (isPosting) {
-            const engine = (await import('@features/inventory/services/UnifiedInventoryMutationEngine')).unifiedInventoryMutationEngine;
             const inventoryItems = enrichedPayload.items.map(i => ({
               productId: i.product_id || i.productId || '',
               quantity: Number(i.qty || i.quantity || 0),
@@ -93,7 +105,9 @@ export const AutoJournalMapper = {
                   transactionUuid: `FIN-${invoiceId}`,
                   userId: 'system-financial-mapper',
                   tenantId,
-                  branchId
+                  branchId,
+                  timestamp: effectiveDate,
+                  periodVerification
                 }, tx);
               } else {
                 mutationResults = await engine.executeIssueSale({
@@ -103,7 +117,9 @@ export const AutoJournalMapper = {
                   transactionUuid: `FIN-${invoiceId}`,
                   userId: 'system-financial-mapper',
                   tenantId,
-                  branchId
+                  branchId,
+                  timestamp: effectiveDate,
+                  periodVerification
                 }, tx);
               }
             } else {
@@ -115,8 +131,10 @@ export const AutoJournalMapper = {
                   transactionUuid: `FIN-${invoiceId}`,
                   userId: 'system-financial-mapper',
                   tenantId,
-                  branchId
-                });
+                  branchId,
+                  timestamp: effectiveDate,
+                  periodVerification
+                }, tx);
               } else {
                 mutationResults = await engine.executeReceivePurchase({
                   invoiceId: invoiceId,
@@ -125,8 +143,10 @@ export const AutoJournalMapper = {
                   transactionUuid: `FIN-${invoiceId}`,
                   userId: 'system-financial-mapper',
                   tenantId,
-                  branchId
-                });
+                  branchId,
+                  timestamp: effectiveDate,
+                  periodVerification
+                }, tx);
               }
             }
 

@@ -352,9 +352,9 @@ describe('PURCHASE PHASE 2 — Reversal Precision & Financial Integrity', () => 
     await db.suppliers.put({ id: supplierIdT2, Supplier_Name: 'Supplier 2', balance: 0, tenantId: tenant2, branchId: branchIdT2, is_active: true } as any);
     await db.products.put({ id: productIdT2, name: 'Med B', stock: 1000, price: 50, costPrice: 40, tenantId: tenant2, is_active: true } as any);
     await db.accounts.bulkPut([
-      { id: 'ACC-101', code: '101', name: 'Cash', type: 'Asset', tenantId: tenant2, branchId: branchIdT2, balance: 100000 },
-      { id: 'ACC-102', code: '102', name: 'Inventory', type: 'Asset', tenantId: tenant2, branchId: branchIdT2, balance: 0 },
-      { id: 'ACC-201', code: '201', name: 'Payables', type: 'Liability', tenantId: tenant2, branchId: branchIdT2, balance: 0 }
+      { id: `${tenant2}-ACC-101`, code: '101', name: 'Cash', type: 'Asset', tenantId: tenant2, branchId: branchIdT2, balance: 100000 },
+      { id: `${tenant2}-ACC-102`, code: '102', name: 'Inventory', type: 'Asset', tenantId: tenant2, branchId: branchIdT2, balance: 0 },
+      { id: `${tenant2}-ACC-201`, code: '201', name: 'Payables', type: 'Liability', tenantId: tenant2, branchId: branchIdT2, balance: 0 }
     ] as any);
 
     // 1. Purchase in Tenant 2

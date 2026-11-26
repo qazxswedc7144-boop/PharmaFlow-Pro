@@ -20,9 +20,10 @@
  * 14. All inventory mutations must be atomic via db.safeTransaction.
  */
 
+import Dexie from 'dexie';
 import { db } from '@/core/db';
 import { configurationService } from '@/services/config/configurationService';
-import { PeriodLockEngine } from '@/services/transactions/PeriodLockEngine';
+import { PeriodLockEngine, type VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 import { FIFOEngine } from './fifoEngine';
 import {
   IssueSaleStockCommand,
@@ -63,6 +64,7 @@ export interface InternalItemMutationParams {
   notes?: string;
   timestamp: string;
   reversedMovementId?: string;
+  periodVerification?: VerifiedPeriodSnapshot;
 }
 
 export class UnifiedInventoryMutationEngine {
@@ -103,7 +105,8 @@ export class UnifiedInventoryMutationEngine {
         batchId: item.batchId, batchNumber: item.batchNumber, expiryDate: item.expiryDate,
         userId: command.userId, tenantId: command.tenantId, branchId: command.branchId,
         idempotencyKey: itemKey, notes: command.notes || `صرف مبيعات فاتورة #${command.invoiceId}`,
-        timestamp
+        timestamp,
+        periodVerification: command.periodVerification
       }, tx);
       results.push(res);
     }
@@ -121,8 +124,12 @@ export class UnifiedInventoryMutationEngine {
     }
     const timestamp = command.timestamp || new Date().toISOString();
 
-    const execute = async (activeTx: any): Promise<InventoryMutationResult[]> => {
+    const execute = async (
+      activeTx: any,
+      verifiedPeriod?: VerifiedPeriodSnapshot
+    ): Promise<InventoryMutationResult[]> => {
       const results: InventoryMutationResult[] = [];
+      const periodVerification = verifiedPeriod || command.periodVerification;
 
       for (let i = 0; i < command.items.length; i++) {
         const item = command.items[i]!;
@@ -145,7 +152,8 @@ export class UnifiedInventoryMutationEngine {
           branchId: command.branchId,
           idempotencyKey: itemKey,
           notes: command.notes || `استلام مشتريات فاتورة #${command.invoiceId}`,
-          timestamp
+          timestamp,
+          periodVerification
         }, activeTx);
 
         results.push(res);
@@ -154,7 +162,14 @@ export class UnifiedInventoryMutationEngine {
       return results;
     };
 
-    return tx ? execute(tx) : this.executeAtomicTransaction(execute);
+    return tx
+      ? execute(tx, command.periodVerification)
+      : this.executeAtomicTransaction(execute, {
+          timestamp,
+          tenantId: command.tenantId,
+          movementType: 'PURCHASE',
+          provided: command.periodVerification
+        });
   }
 
   /**
@@ -178,7 +193,8 @@ export class UnifiedInventoryMutationEngine {
         batchNumber: item.batchNumber, expiryDate: item.expiryDate,
         userId: command.userId, tenantId: command.tenantId, branchId: command.branchId,
         idempotencyKey: itemKey, notes: command.notes || `مرتجع مبيعات #${command.returnInvoiceId}`,
-        timestamp
+        timestamp,
+        periodVerification: command.periodVerification
       }, tx);
       results.push(res);
     }
@@ -196,8 +212,12 @@ export class UnifiedInventoryMutationEngine {
     }
     const timestamp = command.timestamp || new Date().toISOString();
 
-    const execute = async (activeTx: any): Promise<InventoryMutationResult[]> => {
+    const execute = async (
+      activeTx: any,
+      verifiedPeriod?: VerifiedPeriodSnapshot
+    ): Promise<InventoryMutationResult[]> => {
       const results: InventoryMutationResult[] = [];
+      const periodVerification = verifiedPeriod || command.periodVerification;
 
       for (let i = 0; i < command.items.length; i++) {
         const item = command.items[i]!;
@@ -219,7 +239,8 @@ export class UnifiedInventoryMutationEngine {
           branchId: command.branchId,
           idempotencyKey: itemKey,
           notes: command.notes || `مرتجع مشتريات #${command.returnInvoiceId}`,
-          timestamp
+          timestamp,
+          periodVerification
         }, activeTx);
 
         results.push(res);
@@ -228,7 +249,14 @@ export class UnifiedInventoryMutationEngine {
       return results;
     };
 
-    return tx ? execute(tx) : this.executeAtomicTransaction(execute);
+    return tx
+      ? execute(tx, command.periodVerification)
+      : this.executeAtomicTransaction(execute, {
+          timestamp,
+          tenantId: command.tenantId,
+          movementType: 'RETURN',
+          provided: command.periodVerification
+        });
   }
 
   /**
@@ -247,7 +275,10 @@ export class UnifiedInventoryMutationEngine {
 
     // Reuse the caller's transaction when the adjustment is part of a larger
     // business workflow (stock + journal). Keep the standalone API atomic too.
-    const execute = async (activeTx: any): Promise<InventoryMutationResult> => {
+    const execute = async (
+      activeTx: any,
+      verifiedPeriod?: VerifiedPeriodSnapshot
+    ): Promise<InventoryMutationResult> => {
       const existingTx = await this.checkExistingIdempotentTransaction(
         command.transactionUuid,
         command.adjustmentId,
@@ -294,11 +325,19 @@ export class UnifiedInventoryMutationEngine {
         branchId: command.branchId,
         idempotencyKey: command.transactionUuid,
         notes: command.notes || `تسوية جردية #${command.adjustmentId}: ${command.reason}`,
-        timestamp
+        timestamp,
+        periodVerification: verifiedPeriod || command.periodVerification
       }, activeTx);
     };
 
-    return tx ? execute(tx) : this.executeAtomicTransaction(execute);
+    return tx
+      ? execute(tx, command.periodVerification)
+      : this.executeAtomicTransaction(execute, {
+          timestamp,
+          tenantId: command.tenantId,
+          movementType: 'ADJUSTMENT',
+          provided: command.periodVerification
+        });
   }
 
   /**
@@ -348,7 +387,7 @@ export class UnifiedInventoryMutationEngine {
       };
     }
 
-    return await this.executeAtomicTransaction(async () => {
+    return await this.executeAtomicTransaction(async (_tx, verifiedPeriod) => {
       // Resolve batch info if batchId given
       let resolvedBatchNum = command.batchNumber;
       let resolvedExpiry = command.expiryDate;
@@ -368,6 +407,8 @@ export class UnifiedInventoryMutationEngine {
         resolvedCost = resolvedCost ?? srcBatch.unitCost ?? srcBatch.cost;
       }
 
+      const periodVerification = verifiedPeriod || command.periodVerification;
+
       // 1. Deduct from source warehouse (does not alter global product stock because + and - cancel out)
       const sourceResult = await this.mutateSingleItem({
         productId: command.productId,
@@ -385,7 +426,8 @@ export class UnifiedInventoryMutationEngine {
         branchId: command.branchId,
         idempotencyKey: sourceKey,
         notes: command.notes || `تحويل مخزني إلى ${command.toWarehouseId} (مستند #${command.transferId})`,
-        timestamp
+        timestamp,
+        periodVerification
       });
 
       // 2. Add to target warehouse
@@ -405,10 +447,16 @@ export class UnifiedInventoryMutationEngine {
         branchId: command.targetBranchId || command.branchId,
         idempotencyKey: targetKey,
         notes: command.notes || `استلام تحويل مخزني من ${command.fromWarehouseId} (مستند #${command.transferId})`,
-        timestamp
+        timestamp,
+        periodVerification
       });
 
       return { sourceResult, targetResult };
+    }, {
+      timestamp,
+      tenantId: command.tenantId,
+      movementType: 'TRANSFER_OUT',
+      provided: command.periodVerification
     });
   }
 
@@ -481,7 +529,8 @@ export class UnifiedInventoryMutationEngine {
           idempotencyKey: revKey,
           notes: `قيد عكسي تعويضي للمستند #${command.originalDocumentId}. السبب: ${command.reason}`,
           timestamp,
-          reversedMovementId: String(orig.id || orig.TransactionID)
+          reversedMovementId: String(orig.id || orig.TransactionID),
+          periodVerification: command.periodVerification
         }, tx);
 
         results.push(res);
@@ -516,7 +565,7 @@ export class UnifiedInventoryMutationEngine {
       };
     }
 
-    return await this.executeAtomicTransaction(async () => {
+    return await this.executeAtomicTransaction(async (_tx, verifiedPeriod) => {
       const ws = await this.readWarehouseStock(command.warehouseId, command.productId, command.tenantId);
       const currentWarehouseQty = ws ? ws.quantity : 0;
       const delta = command.proposedQty - currentWarehouseQty;
@@ -533,8 +582,14 @@ export class UnifiedInventoryMutationEngine {
         branchId: command.branchId,
         idempotencyKey: command.transactionUuid,
         notes: `تصحيح رقابي معتمد لقضية #${command.caseId}: ${command.reason}`,
-        timestamp
+        timestamp,
+        periodVerification: verifiedPeriod || command.periodVerification
       });
+    }, {
+      timestamp,
+      tenantId: command.tenantId,
+      movementType: 'CORRECTION',
+      provided: command.periodVerification
     });
   }
 
@@ -544,9 +599,9 @@ export class UnifiedInventoryMutationEngine {
   public async executeMutation(command: GenericMutationCommand): Promise<InventoryMutationResult> {
     await this.validateCommandBasics(command, 'ExecuteMutation');
     const timestamp = command.timestamp || new Date().toISOString();
+    const resolvedMovement = command.movementType || (command.delta >= 0 ? 'PURCHASE' : 'SALE');
 
-    return await this.executeAtomicTransaction(async () => {
-      const resolvedMovement = command.movementType || (command.delta >= 0 ? 'PURCHASE' : 'SALE');
+    return await this.executeAtomicTransaction(async (_tx, verifiedPeriod) => {
       return await this.mutateSingleItem({
         productId: command.productId,
         warehouseId: command.warehouseId,
@@ -564,8 +619,14 @@ export class UnifiedInventoryMutationEngine {
         branchId: command.branchId,
         idempotencyKey: command.transactionUuid,
         notes: command.notes,
-        timestamp
+        timestamp,
+        periodVerification: verifiedPeriod || command.periodVerification
       });
+    }, {
+      timestamp,
+      tenantId: command.tenantId,
+      movementType: resolvedMovement,
+      provided: command.periodVerification
     });
   }
 
@@ -577,14 +638,36 @@ export class UnifiedInventoryMutationEngine {
       return [];
     }
 
+    // Validate basics and resolve authoritative accounting periods BEFORE opening
+    // the Dexie transaction so no HTTP period fetch ever runs inside IndexedDB.
+    const preparedCommands: Array<{
+      cmd: GenericMutationCommand;
+      timestamp: string;
+      resolvedMovement: string;
+      periodVerification: VerifiedPeriodSnapshot;
+    }> = [];
+    const verifiedByKey = new Map<string, VerifiedPeriodSnapshot>();
+
+    for (let i = 0; i < commands.length; i++) {
+      const cmd = commands[i]!;
+      await this.validateCommandBasics(cmd, `ExecuteBatch[${i}]`);
+      const timestamp = cmd.timestamp || new Date().toISOString();
+      const resolvedMovement = cmd.movementType || (cmd.delta >= 0 ? 'PURCHASE' : 'SALE');
+      const cacheKey = `${cmd.tenantId}::${timestamp}`;
+      let periodVerification = cmd.periodVerification || verifiedByKey.get(cacheKey);
+      periodVerification = await this.resolvePreTransactionPeriod(
+        timestamp,
+        cmd.tenantId,
+        resolvedMovement,
+        periodVerification
+      );
+      verifiedByKey.set(cacheKey, periodVerification);
+      preparedCommands.push({ cmd, timestamp, resolvedMovement, periodVerification });
+    }
+
     return await this.executeAtomicTransaction(async () => {
       const results: InventoryMutationResult[] = [];
-      for (let i = 0; i < commands.length; i++) {
-        const cmd = commands[i]!;
-        await this.validateCommandBasics(cmd, `ExecuteBatch[${i}]`);
-        const timestamp = cmd.timestamp || new Date().toISOString();
-        const resolvedMovement = cmd.movementType || (cmd.delta >= 0 ? 'PURCHASE' : 'SALE');
-
+      for (const { cmd, timestamp, resolvedMovement, periodVerification } of preparedCommands) {
         const res = await this.mutateSingleItem({
           productId: cmd.productId,
           warehouseId: cmd.warehouseId,
@@ -602,7 +685,8 @@ export class UnifiedInventoryMutationEngine {
           branchId: cmd.branchId,
           idempotencyKey: cmd.transactionUuid,
           notes: cmd.notes,
-          timestamp
+          timestamp,
+          periodVerification
         });
         results.push(res);
       }
@@ -690,9 +774,12 @@ export class UnifiedInventoryMutationEngine {
       throw new InvalidWarehouseError(warehouseId || 'EMPTY_WAREHOUSE_ID');
     }
 
-    // 4. Validate Period Lock
-    const isLocked = await PeriodLockEngine.isPeriodLocked(timestamp);
-    if (isLocked) {
+    // 4. Validate Period Lock (pure synchronous assertion against pre-transaction snapshot)
+    const verifiedPeriod = PeriodLockEngine.assertVerifiedPeriodSnapshot(
+      params.periodVerification,
+      { tenantId, dateStr: timestamp }
+    );
+    if (verifiedPeriod.isLocked) {
       throw new PeriodLockedInventoryError(timestamp, movementType);
     }
 
@@ -993,7 +1080,54 @@ const brInv = await branchInventoryTable
   // HELPER METHODS
   // =========================================================================
 
-  private async executeAtomicTransaction<T>(operation: (tx: any) => Promise<T>): Promise<T> {
+  private async resolvePreTransactionPeriod(
+    timestamp: string,
+    tenantId: string,
+    movementType: string,
+    provided?: VerifiedPeriodSnapshot
+  ): Promise<VerifiedPeriodSnapshot> {
+    if (provided) {
+      const verified = PeriodLockEngine.assertVerifiedPeriodSnapshot(provided, {
+        tenantId,
+        dateStr: timestamp
+      });
+      if (verified.isLocked) {
+        throw new PeriodLockedInventoryError(timestamp, movementType);
+      }
+      return verified;
+    }
+
+    if ((Dexie as any).currentTransaction) {
+      throw new Error(
+        'ACCOUNTING_PERIOD_VERIFICATION_REQUIRED: Pre-transaction period verification snapshot is required when invoking UnifiedInventoryMutationEngine inside an active Dexie transaction.'
+      );
+    }
+
+    const verified = await PeriodLockEngine.verifyPeriodForTransaction(timestamp, tenantId);
+    if (verified.isLocked) {
+      throw new PeriodLockedInventoryError(timestamp, movementType);
+    }
+    return verified;
+  }
+
+  private async executeAtomicTransaction<T>(
+    operation: (tx: any, verifiedPeriod?: VerifiedPeriodSnapshot) => Promise<T>,
+    periodCheck?: {
+      timestamp: string;
+      tenantId: string;
+      movementType: string;
+      provided?: VerifiedPeriodSnapshot;
+    }
+  ): Promise<T> {
+    const verifiedPeriod = periodCheck
+      ? await this.resolvePreTransactionPeriod(
+          periodCheck.timestamp,
+          periodCheck.tenantId,
+          periodCheck.movementType,
+          periodCheck.provided
+        )
+      : undefined;
+
     const tables = [
       'products',
       'inventoryTransactions',
@@ -1010,7 +1144,7 @@ const brInv = await branchInventoryTable
     ];
 
     return await db.safeTransaction('rw', tables, async (tx) => {
-      return await operation(tx);
+      return await operation(tx, verifiedPeriod);
     });
   }
 

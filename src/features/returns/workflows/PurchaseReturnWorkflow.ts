@@ -30,10 +30,12 @@ export class PurchaseReturnWorkflow implements BusinessWorkflow<PurchaseReturnIn
   };
   public requiredPermissions = ['purchases.return', 'purchases.edit'];
   public tables = [
-    'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
-    'inventory_layers', 'suppliers', 'journalEntries', 'journalLines',
-    'accounts', 'financialTransactions', 'auditLogs', 'idempotencyKeys',
-    'projectionEvents'
+    'invoices', 'invoiceItems', 'purchases', 'products', 'inventoryTransactions',
+    'inventory_layers', 'fifo_consumption_log', 'warehouseStock',
+    'branches', 'branchInventory', 'medicineBatches',
+    'suppliers', 'journalEntries', 'journalLines', 'accounts',
+    'financialTransactions', 'auditLogs', 'idempotencyKeys',
+    'projectionEvents', 'settings', 'exchangeRates'
   ];
 
   public async validateInput(input: PurchaseReturnInput): Promise<void> {
@@ -48,9 +50,17 @@ export class PurchaseReturnWorkflow implements BusinessWorkflow<PurchaseReturnIn
     }
   }
 
-  public async executeDomainSteps(
+  public getPeriodCheckDates(
     input: PurchaseReturnInput,
     ctx: WorkflowContext
+  ): string[] {
+    return [input.date || ctx.startedAt];
+  }
+
+  public async executeDomainSteps(
+    input: PurchaseReturnInput,
+    ctx: WorkflowContext,
+    tx?: any
   ): Promise<PurchaseReturnResult> {
     const result = await purchaseWorkflow.executeDomainSteps(
       {
@@ -58,7 +68,8 @@ export class PurchaseReturnWorkflow implements BusinessWorkflow<PurchaseReturnIn
         isReturn: true,
         invoiceStatus: 'POSTED' as InvoiceStatus
       },
-      ctx
+      ctx,
+      tx
     );
 
     return {

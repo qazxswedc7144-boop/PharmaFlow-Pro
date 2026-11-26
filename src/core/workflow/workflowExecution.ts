@@ -12,6 +12,7 @@ import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { observabilityService } from '@/core/observability';
 import { AuditService } from '@/services/system/AuditService';
 import { UsageMeterService } from '@/services/saas/usageMeterService';
+import { PeriodLockEngine, type VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 export class WorkflowExecutionPipeline {
   /**
@@ -169,6 +170,33 @@ export class WorkflowExecutionPipeline {
             import('@/features/sync/saleSyncDto')
           ])
         : null;
+
+      // Pre-Transaction Authoritative Accounting Period Verification:
+      // Must run BEFORE opening the Dexie transaction so HTTP period lookups
+      // never execute inside an active IndexedDB transaction (prevents
+      // TransactionInactiveError) while preserving strict Fail-Closed enforcement.
+      if (typeof workflow.getPeriodCheckDates === 'function') {
+        const rawDates = workflow.getPeriodCheckDates(input, ctx) || [];
+        const uniqueDates = Array.from(
+          new Set(rawDates.filter((d): d is string => typeof d === 'string' && d.trim().length > 0))
+        );
+        if (uniqueDates.length > 0) {
+          const verifiedPeriods: Record<string, VerifiedPeriodSnapshot> = {
+            ...((ctx.metadata?.verifiedAccountingPeriods as Record<string, VerifiedPeriodSnapshot> | undefined) || {}),
+          };
+          for (const dateStr of uniqueDates) {
+            verifiedPeriods[dateStr] = await PeriodLockEngine.verifyOpenPeriodForTransaction(
+              dateStr,
+              ctx.tenantId,
+              workflow.name || workflow.operationType
+            );
+          }
+          ctx.metadata = {
+            ...(ctx.metadata || {}),
+            verifiedAccountingPeriods: verifiedPeriods,
+          };
+        }
+      }
 
       // Step 9 & 10: ExecutionGuard + TransactionBoundary Execution
       const useLocalExecutionGuard = typeof workflow.localExecutionGuard === 'function'

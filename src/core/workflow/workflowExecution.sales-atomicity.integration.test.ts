@@ -56,6 +56,18 @@ vi.mock('@features/accounting/services/AccountingEngine', () => ({
   AccountingEngine: { postInvoice: mockPostInvoice },
 }));
 
+vi.mock('@/features/accounting/services/AccountingPeriodSyncService', () => ({
+  AccountingPeriodSyncService: {
+    getPeriods: vi.fn().mockResolvedValue([{
+      id: 'TEST-OPEN-PERIOD',
+      Start_Date: '1900-01-01T00:00:00.000Z',
+      End_Date: '2200-12-31T23:59:59.999Z',
+      Is_Locked: false,
+    }]),
+    setLocked: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 vi.mock('@/services/system/ProjectionEventBus', () => ({
   ProjectionEventBus: { publish: vi.fn().mockResolvedValue(undefined) },
 }));

@@ -30,10 +30,12 @@ export class SalesReturnWorkflow implements BusinessWorkflow<SalesReturnInput, S
   };
   public requiredPermissions = ['sales.return', 'sales.edit'];
   public tables = [
-    'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
-    'inventory_layers', 'fifo_consumption_log', 'customers', 'journalEntries',
-    'journalLines', 'accounts', 'financialTransactions', 'auditLogs',
-    'idempotencyKeys', 'projectionEvents'
+    'invoices', 'invoiceItems', 'sales', 'products', 'inventoryTransactions',
+    'inventory_layers', 'fifo_consumption_log', 'warehouseStock',
+    'branches', 'branchInventory', 'medicineBatches',
+    'customers', 'journalEntries', 'journalLines', 'accounts',
+    'financialTransactions', 'auditLogs', 'idempotencyKeys',
+    'projectionEvents', 'settings', 'exchangeRates'
   ];
 
   public async validateInput(input: SalesReturnInput): Promise<void> {
@@ -48,9 +50,17 @@ export class SalesReturnWorkflow implements BusinessWorkflow<SalesReturnInput, S
     }
   }
 
-  public async executeDomainSteps(
+  public getPeriodCheckDates(
     input: SalesReturnInput,
     ctx: WorkflowContext
+  ): string[] {
+    return [input.date || ctx.startedAt];
+  }
+
+  public async executeDomainSteps(
+    input: SalesReturnInput,
+    ctx: WorkflowContext,
+    tx?: any
   ): Promise<SalesReturnResult> {
     // Delegates domain execution to salesWorkflow configured with isReturn=true
     const result = await salesWorkflow.executeDomainSteps(
@@ -59,7 +69,8 @@ export class SalesReturnWorkflow implements BusinessWorkflow<SalesReturnInput, S
         isReturn: true,
         invoiceStatus: 'POSTED' as InvoiceStatus
       },
-      ctx
+      ctx,
+      tx
     );
 
     return {

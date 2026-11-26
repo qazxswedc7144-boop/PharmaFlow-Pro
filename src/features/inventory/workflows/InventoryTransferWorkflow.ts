@@ -3,6 +3,7 @@ import { db } from '@/core/db';
 import { TransferStatus } from '@/types';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
 import { unifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
+import type { VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 export interface InventoryTransferInput {
   sourceBranchId: string;
@@ -62,14 +63,25 @@ export class InventoryTransferWorkflow implements BusinessWorkflow<InventoryTran
     }
   }
 
+  public getPeriodCheckDates(
+    input: InventoryTransferInput,
+    ctx: WorkflowContext
+  ): string[] {
+    return input.autoExecute === true ? [ctx.startedAt] : [];
+  }
+
   public async executeDomainSteps(
     input: InventoryTransferInput,
     ctx: WorkflowContext
   ): Promise<InventoryTransferResult> {
     const transferId = `TRF-${Date.now()}`;
-    const now = new Date().toISOString();
+    const now = ctx.startedAt || new Date().toISOString();
     const shouldAutoExecute = input.autoExecute === true;
     const initialStatus: TransferStatus = shouldAutoExecute ? 'RECEIVED' : 'DRAFT';
+    const verifiedPeriods = (ctx.metadata?.verifiedAccountingPeriods || {}) as Record<
+      string,
+      VerifiedPeriodSnapshot | undefined
+    >;
 
     const transferRecord = {
       id: transferId,
@@ -123,7 +135,9 @@ export class InventoryTransferWorkflow implements BusinessWorkflow<InventoryTran
           tenantId,
           branchId: input.sourceBranchId,
           transactionUuid: `${transferId}-${item.productId}`,
-          notes: input.notes || `تحويل مخزني فوري من ${input.sourceBranchId} إلى ${input.targetBranchId}`
+          notes: input.notes || `تحويل مخزني فوري من ${input.sourceBranchId} إلى ${input.targetBranchId}`,
+          timestamp: now,
+          periodVerification: verifiedPeriods[now]
         });
       }
     }

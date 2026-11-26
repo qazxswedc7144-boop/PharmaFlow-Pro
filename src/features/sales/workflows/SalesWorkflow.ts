@@ -14,6 +14,7 @@ import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { TenantSalesPolicyService } from '@/features/sales/services/tenantSalesPolicy.service';
 import { LocalSalesPricingService } from '@/features/sales/services/localSalesPricing.service';
 import { toSaleSyncDTO } from '@/features/sync/saleSyncDto';
+import type { VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 export interface SalesWorkflowInput {
   customerId?: string;
@@ -209,6 +210,18 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
     }
   }
 
+  public getPeriodCheckDates(
+    input: SalesWorkflowInput,
+    ctx: WorkflowContext
+  ): string[] {
+    const finalStatus: InvoiceStatus = input.invoiceStatus || 'POSTED';
+    const isPosting = finalStatus === 'POSTED' || finalStatus === 'LOCKED';
+    if (!isPosting) {
+      return [];
+    }
+    return [input.date || ctx.startedAt];
+  }
+
   public async executeDomainSteps(
     input: SalesWorkflowInput,
     ctx: WorkflowContext,
@@ -218,6 +231,10 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
     const isPosting = finalStatus === 'POSTED' || finalStatus === 'LOCKED';
     const effectiveDate = input.date || ctx.startedAt;
     const isReturn = !!input.isReturn;
+    const verifiedPeriods = (ctx.metadata?.verifiedAccountingPeriods || {}) as Record<
+      string,
+      VerifiedPeriodSnapshot | undefined
+    >;
 
     const docId = input.id || db.generateId('SALE');
 
@@ -319,7 +336,9 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
             userId,
             tenantId,
             branchId,
-            notes: input.notes || `مرتجع مبيعات فاتورة #${refId}`
+            notes: input.notes || `مرتجع مبيعات فاتورة #${refId}`,
+            timestamp: effectiveDate,
+            periodVerification: verifiedPeriods[effectiveDate]
           }, tx);
 
           const totalCost = mutationResults.reduce((sum, r) => sum + (r.calculatedCost || 0), 0);
@@ -337,7 +356,9 @@ export class SalesWorkflow implements BusinessWorkflow<SalesWorkflowInput, Sales
             userId,
             tenantId,
             branchId,
-            notes: input.notes || `صرف مبيعات فاتورة #${refId}`
+            notes: input.notes || `صرف مبيعات فاتورة #${refId}`,
+            timestamp: effectiveDate,
+            periodVerification: verifiedPeriods[effectiveDate]
           }, tx);
 
           const totalCost = mutationResults.reduce((sum, r) => sum + (r.calculatedCost || 0), 0);

@@ -4,6 +4,8 @@
  * Phase 5 — Step 1: Foundation
  */
 
+import type { VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
+
 export interface BaseInventoryCommand {
   /** Tenant ID for strict multi-tenant isolation */
   tenantId: string;
@@ -17,6 +19,8 @@ export interface BaseInventoryCommand {
   notes?: string;
   /** Optional transaction timestamp (ISO-8601) */
   timestamp?: string;
+  /** Immutable pre-transaction authoritative period lock verification snapshot */
+  periodVerification?: VerifiedPeriodSnapshot;
 }
 
 export interface InventoryItemMutationInput {

@@ -27,6 +27,7 @@ import { inventoryAdjustmentWorkflow } from '@features/inventory/workflows/Inven
 import { inventoryTransferWorkflow } from '@features/inventory/workflows/InventoryTransferWorkflow';
 import { voucherWorkflow } from '@features/accounting/workflows/VoucherWorkflow';
 import { unifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
+import { PeriodLockEngine, type VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 function getTrustedContext() {
   const session = TokenProvider.getCurrentSession();
@@ -545,10 +546,22 @@ export class UnifiedBusinessWorkflowOrchestrator {
       lockKey,
       { branchId, lockType: "BRANCH_TRANSFER", ownerId: updatedBy, ttl: 15000 },
       async () => {
+        const now = new Date().toISOString();
+        const mutatesInventory =
+          newStatus === "IN_TRANSIT" ||
+          newStatus === "RECEIVED" ||
+          (newStatus === "CANCELLED" && rawTransfer.status === "IN_TRANSIT");
+        const periodVerification: VerifiedPeriodSnapshot | undefined = mutatesInventory
+          ? await PeriodLockEngine.verifyOpenPeriodForTransaction(
+              now,
+              trustedTenantId,
+              'تحديث حالة تحويل مخزني'
+            )
+          : undefined;
+
         return await TransactionService.runSafe(transferId, async () => {
           const rawItems = await db.branchTransferItems.where("transferId").equals(transferId).toArray();
           const previousStatus = rawTransfer.status;
-          const now = new Date().toISOString();
 
           if (newStatus === "APPROVED") {
             rawTransfer.approvedBy = updatedBy;
@@ -573,7 +586,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
                 tenantId: trustedTenantId,
                 branchId: rawTransfer.sourceBranchId,
                 transactionUuid: `${transferId}-${item.productId}-OUT`,
-                notes: `شحن تحويل مخزني من الفرع ${rawTransfer.sourceBranchId} إلى الفرع ${rawTransfer.targetBranchId}`
+                notes: `شحن تحويل مخزني من الفرع ${rawTransfer.sourceBranchId} إلى الفرع ${rawTransfer.targetBranchId}`,
+                timestamp: now,
+                periodVerification
               });
 
               // branchInventory is now canonically handled by the mutation engine
@@ -605,7 +620,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
                 tenantId: trustedTenantId,
                 branchId: rawTransfer.targetBranchId,
                 transactionUuid: `${transferId}-${item.productId}-IN`,
-                notes: `استلام تحويل مخزني بالفرع ${rawTransfer.targetBranchId} من الفرع ${rawTransfer.sourceBranchId}`
+                notes: `استلام تحويل مخزني بالفرع ${rawTransfer.targetBranchId} من الفرع ${rawTransfer.sourceBranchId}`,
+                timestamp: now,
+                periodVerification
               });
 
               // branchInventory is now canonically handled by the mutation engine
@@ -629,7 +646,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
                   tenantId: trustedTenantId,
                   branchId: rawTransfer.sourceBranchId,
                   transactionUuid: `${transferId}-${item.productId}-CANCEL`,
-                  notes: `إلغاء تحويل مخزني واستعادة الكمية للفرع ${rawTransfer.sourceBranchId}`
+                  notes: `إلغاء تحويل مخزني واستعادة الكمية للفرع ${rawTransfer.sourceBranchId}`,
+                  timestamp: now,
+                  periodVerification
                 });
 
                 // branchInventory is now canonically handled by the mutation engine
@@ -667,10 +686,17 @@ export class UnifiedBusinessWorkflowOrchestrator {
 
     await BackupService.createBackup(`Auto Backup before Unpost #${invoiceId}`, 'PRE_UNPOST', true);
 
+    const trustedContext = getTrustedContext();
+    await GlobalGuard.checkSystemState('إلغاء ترحيل');
+    const reversalTimestamp = new Date().toISOString();
+    const periodVerification = await PeriodLockEngine.verifyOpenPeriodForTransaction(
+      reversalTimestamp,
+      trustedContext.tenantId,
+      'إلغاء ترحيل'
+    );
+
     const result = await TransactionService.runSafe(invoiceId, async (tx) => {
       try {
-        await GlobalGuard.checkSystemState('إلغاء ترحيل');
-
         // Read the source invoice through the same transaction used for every reversal write.
         const invoiceTable = tx.table(type === 'SALE' ? 'sales' : 'purchases');
         const invoice = await invoiceTable.get(invoiceId)
@@ -683,7 +709,6 @@ export class UnifiedBusinessWorkflowOrchestrator {
           throw new Error("Only POSTED invoices can be unposted.");
         }
 
-        const trustedContext = getTrustedContext();
         const reversalBranchId = (invoice as any).branchId || (invoice as any).branch_id || trustedContext.branchId;
         if (!reversalBranchId) {
           throw new Error('TRUSTED_BRANCH_CONTEXT_REQUIRED: Cannot reverse invoice without a trusted branchId.');
@@ -710,7 +735,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
           userId: user?.id || 'admin',
           tenantId: trustedContext.tenantId,
           branchId: reversalBranchId,
-          transactionUuid: `UNPOST-${invoiceId}-${Date.now()}`
+          transactionUuid: `UNPOST-${invoiceId}-${Date.now()}`,
+          timestamp: reversalTimestamp,
+          periodVerification
         }, tx);
 
         const total = (invoice as any).finalTotal || (invoice as any).totalAmount;

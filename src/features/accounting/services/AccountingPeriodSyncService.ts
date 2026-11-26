@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { db, getCurrentUserSession } from '@/core/db';
 import { unifiedTransport } from '@/shared/network/transport/unifiedTransport';
 import { AccountingPeriod } from '@/types';
@@ -26,6 +27,14 @@ export class AccountingPeriodSyncService {
     periods: AccountingPeriod[];
   } | null = null;
 
+  private static assertNoActiveDexieTransaction(operation: string): void {
+    if ((Dexie as any).currentTransaction) {
+      throw new Error(
+        `ACCOUNTING_PERIOD_FETCH_IN_TRANSACTION_FORBIDDEN: AccountingPeriodSyncService.${operation} cannot run inside an active Dexie transaction.`
+      );
+    }
+  }
+
   static invalidate(tenantId?: string): void {
     if (!tenantId || this.cache?.tenantId === tenantId) this.cache = null;
   }
@@ -37,6 +46,7 @@ export class AccountingPeriodSyncService {
   }
 
   private static async fetchServerPeriods(): Promise<ServerAccountingPeriod[]> {
+    this.assertNoActiveDexieTransaction('fetchServerPeriods');
     const response = await unifiedTransport.get<PeriodsResponse>('/api/accounting/periods', {
       profile: 'FINANCIAL',
       retries: 1,
@@ -118,6 +128,7 @@ export class AccountingPeriodSyncService {
   }
 
   static async getPeriods(options: { forceRefresh?: boolean } = {}): Promise<AccountingPeriod[]> {
+    this.assertNoActiveDexieTransaction('getPeriods');
     const tenantId = this.getTenantId();
     if (!options.forceRefresh && this.cache?.tenantId === tenantId && this.cache.expiresAt > Date.now()) {
       return this.cache.periods;
@@ -152,6 +163,7 @@ export class AccountingPeriodSyncService {
   }
 
   static async createPeriod(startDate: string, endDate: string): Promise<string> {
+    this.assertNoActiveDexieTransaction('createPeriod');
     const tenantId = this.getTenantId();
     // Bootstrap tenant-owned local history before creating the first new server period.
     await this.ensureExistingPeriodsForMutation();
@@ -168,6 +180,7 @@ export class AccountingPeriodSyncService {
   }
 
   static async setLocked(clientId: string, isLocked: boolean): Promise<void> {
+    this.assertNoActiveDexieTransaction('setLocked');
     const tenantId = this.getTenantId();
     if (!clientId?.trim()) throw new Error('ACCOUNTING_PERIOD_ID_REQUIRED');
     const existingPeriods = await this.ensureExistingPeriodsForMutation();

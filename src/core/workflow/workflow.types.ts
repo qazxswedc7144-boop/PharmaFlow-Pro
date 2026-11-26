@@ -83,5 +83,11 @@ export interface BusinessWorkflow<TInput = any, TResult = any> {
   hooks?: WorkflowHooks<TInput, TResult>;
   validateInput?: (input: TInput, ctx: WorkflowContext) => Promise<void>;
   validateBusinessRules?: (input: TInput, ctx: WorkflowContext) => Promise<void>;
+  /**
+   * Optional pre-transaction hook returning ISO dates whose accounting period
+   * must be verified as open BEFORE WorkflowExecutionPipeline opens the Dexie
+   * transaction. Prevents HTTP fetch calls inside active IndexedDB transactions.
+   */
+  getPeriodCheckDates?: (input: TInput, ctx: WorkflowContext) => string[];
   executeDomainSteps(input: TInput, ctx: WorkflowContext, tx?: any): Promise<TResult>;
 }
