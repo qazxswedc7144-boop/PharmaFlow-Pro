@@ -285,7 +285,7 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     const purchaseUpdate = vi.fn().mockResolvedValue(1);
     const purchaseTx = {
       table: (name: string) => ({
-        get: vi.fn().mockImplementation((key: string) => {
+        get: vi.fn().mockImplementation((_key: string) => {
           if (name === 'invoices' || name === 'purchases') return purchaseInvoice;
           if (name === 'financialTransactions') {
             return { isReversal: true, Entity_Type: 'Supplier', Entity_Name: 'مورد نقدي' };
@@ -349,7 +349,7 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     const returnInvoice = { ...invoice, isReturn: true };
     const returnTx = {
       table: (name: string) => ({
-        get: vi.fn().mockImplementation((key: string) =>
+        get: vi.fn().mockImplementation((_key: string) =>
           name === 'invoices' ? returnInvoice :
           name === 'financialTransactions' ? { isReversal: true, Entity_Type: 'Customer', Entity_Name: 'عميل نقدي' } :
           undefined
