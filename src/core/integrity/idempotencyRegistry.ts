@@ -169,7 +169,10 @@ export class IdempotencyRegistry {
         existing.status !== 'PROCESSING' ||
         existing.createdAt !== args.expectedCreatedAt ||
         existing.tenantId !== args.tenantId ||
-        existing.branchId !== args.branchId
+        existing.branchId !== args.branchId ||
+        existing.operationType !== args.operationType ||
+        existing.entityType !== args.entityType ||
+        existing.fingerprint !== args.fingerprint
       ) {
         return;
       }
