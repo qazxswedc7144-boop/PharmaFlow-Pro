@@ -968,6 +968,9 @@ async function runGate3TestSuite() {
     await db.invoices.put(seedSale as any);
     await db.sales.put(seedSale as any);
 
+    const supplierBalanceBeforeCancellation = Number(
+      (await db.suppliers.get('SUPP-GATE3-1'))?.balance ?? 0
+    );
     const cancelVoucherResult = await WorkflowOrchestrator.execute(voucherCancellationWorkflow, {
       id: 'VOUCHER-GATE3-CANCEL',
       type: 'PAYMENT',
@@ -1009,6 +1012,8 @@ async function runGate3TestSuite() {
 
     console.log('[TEST S diagnostics]', JSON.stringify({
       voucherSuccess: cancelVoucherResult.success,
+      supplierBalanceBeforeCancellation,
+      supplierBalanceAfterCancellation: (await db.suppliers.get('SUPP-GATE3-1'))?.balance,
       saleSuccess: cancelSaleResult.success,
       cancelledInvoiceStatus: cancelledInvoice?.documentStatus,
       legacySaleStatus: (await db.sales.get('SALE-GATE3-CANCEL'))?.InvoiceStatus,
@@ -1033,7 +1038,7 @@ async function runGate3TestSuite() {
     assert(
       cancelVoucherResult.success &&
       cancelSaleResult.success &&
-      (await db.suppliers.get('SUPP-GATE3-1'))?.balance === 100 &&
+      (await db.suppliers.get('SUPP-GATE3-1'))?.balance === supplierBalanceBeforeCancellation + 100 &&
       (await db.financialTransactions.get('FT-VOUCHER-GATE3-CANCEL'))?.isDeleted === true &&
       !(await db.journalEntries.get('JE-VOUCHER-GATE3-CANCEL')) &&
       cancelledInvoice?.documentStatus === 'CANCELLED' &&
