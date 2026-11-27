@@ -486,6 +486,33 @@ export class UnifiedInventoryMutationEngine {
             )
             .toArray();
 
+      // Do not reverse a different document type merely because it reuses the
+      // same source document identifier. Keep REVERSAL rows in the set so the
+      // already-reversed movement detection below remains idempotent.
+      const expectedDocumentType = String(command.originalDocumentType || '').trim().toUpperCase();
+      const mismatchedDocumentTypes = baseMovements.filter((movement: any) => {
+        const transactionType = String(
+          movement.TransactionType || movement.transactionType || movement.transaction_type || ''
+        ).trim().toUpperCase();
+        if (transactionType === 'REVERSAL') return false;
+
+        const sourceDocumentType = String(
+          movement.SourceDocumentType ||
+          movement.sourceDocType ||
+          movement.source_doc_type ||
+          movement.docType ||
+          transactionType
+        ).trim().toUpperCase();
+
+        return Boolean(expectedDocumentType && sourceDocumentType && sourceDocumentType !== expectedDocumentType);
+      });
+
+      if (mismatchedDocumentTypes.length > 0) {
+        throw new Error(
+          `INVENTORY_DOCUMENT_TYPE_MISMATCH: Source document ${command.originalDocumentId} has movements outside expected type ${expectedDocumentType}.`
+        );
+      }
+
       const alreadyReversedIds = new Set<string>(
         baseMovements
           .filter((t: any) => {
