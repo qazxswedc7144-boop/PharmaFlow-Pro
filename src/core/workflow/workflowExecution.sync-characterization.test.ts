@@ -311,12 +311,9 @@ describe('WorkflowExecutionPipeline sync path characterization', () => {
       syncContractMustNotOverrideFallback: true
     };
     const executeSpy = vi.spyOn(workflow, 'executeDomainSteps').mockResolvedValue(domainResult as never);
-    // These tests characterize Pipeline sync serialization, not each workflow's
-    // tenant-period or domain validation. Keep those prerequisites explicit and
-    // isolated so no real Dexie/period/accounting operation is attempted.
-    if (workflow === inventoryAdjustmentWorkflow) {
-      vi.spyOn(workflow, 'validateBusinessRules').mockResolvedValue(undefined);
-    }
+    // This suite characterizes Pipeline sync routing/serialization only.
+    // WorkflowValidation is isolated at file scope; domain rules remain covered
+    // by each workflow's dedicated validation and financial-integrity tests.
 
     const input = workflow === inventoryAdjustmentWorkflow
       ? { productId: 'PRODUCT-CHAR-001', warehouseId: 'WH-CHAR-001', actualQty: 10, userId: context.userId }
