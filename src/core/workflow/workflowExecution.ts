@@ -7,6 +7,7 @@ import { WorkflowResultBuilder } from './workflowResult';
 import { WorkflowEventBus } from './workflowEvents';
 import { WorkflowRecovery } from './workflowRecovery';
 import { ExecutionGuard } from '@/core/integrity/executionGuard';
+import { LockRepository } from '@features/locking/lock.repository';
 import { TransactionBoundary } from '@/core/integrity/transactionBoundary';
 import { IdempotencyRegistry } from '@/core/integrity/idempotencyRegistry';
 import { observabilityService } from '@/core/observability';
@@ -130,10 +131,107 @@ export class WorkflowExecutionPipeline {
               });
             }
           } else if (existing.status === 'PROCESSING') {
-            throw new WorkflowExecutionError(
-              'العملية قيد المعالجة حالياً من قِبل عملية أخرى. يرجى الانتظار...',
-              'IDEMPOTENCY_CONFLICT'
+            const processingCreatedAt = Date.parse(String(existing.createdAt || ''));
+            const processingAgeMs = Date.now() - processingCreatedAt;
+            const staleProcessingRecoveryMinAgeMs = 15 * 60 * 1000;
+            const useLocalRecoveryGuard = typeof workflow.localExecutionGuard === 'function'
+              ? workflow.localExecutionGuard(input)
+              : workflow.localExecutionGuard === true;
+            const recoveryGuardOptions = {
+              tenantId: ctx.tenantId,
+              branchId: ctx.branchId,
+              operation: workflow.operationType,
+              entityId: useLocalRecoveryGuard
+                ? String((input as any)?.product?.id || ctx.idempotencyKey)
+                : ctx.idempotencyKey
+            };
+            const recoveryLockKey = `${ctx.tenantId}:${ctx.branchId}:${workflow.operationType}:${recoveryGuardOptions.entityId}`;
+
+            // Do not treat a fresh marker as stale: another request may still be
+            // between durable PROCESSING persistence and lock acquisition.
+            if (
+              typeof workflow.reconcileProcessing !== 'function' ||
+              !Number.isFinite(processingAgeMs) ||
+              processingAgeMs < staleProcessingRecoveryMinAgeMs ||
+              useLocalRecoveryGuard ||
+              ExecutionGuard.isLocked(recoveryGuardOptions)
+            ) {
+              throw new WorkflowExecutionError(
+                'العملية قيد المعالجة حالياً أو أن حالة القفل غير قابلة للتحقق. يرجى الانتظار ثم إعادة المحاولة.',
+                'IDEMPOTENCY_CONFLICT'
+              );
+            }
+
+            // Recovery is allowed only when the distributed lock service
+            // definitively confirms that no active execution owns this key.
+            const distributedLockState = await LockRepository.checkStrict(
+              recoveryLockKey,
+              ctx.branchId
             );
+            if (distributedLockState !== false) {
+              throw new WorkflowExecutionError(
+                'لا يمكن استعادة العملية بأمان لأن حالة القفل غير مؤكدة أو ما زالت نشطة.',
+                'IDEMPOTENCY_CONFLICT'
+              );
+            }
+
+            let reconciliation;
+            try {
+              reconciliation = await workflow.reconcileProcessing(input, ctx);
+            } catch (reconciliationError: any) {
+              throw new WorkflowExecutionError(
+                `RECOVERY_REQUIRED: تعذر التحقق من نتيجة العملية السابقة: ${reconciliationError?.message || String(reconciliationError)}`,
+                'RECOVERY_REQUIRED'
+              );
+            }
+
+            if (reconciliation.status === 'COMMITTED') {
+              try {
+                await IdempotencyRegistry.updateStatus(
+                  ctx.idempotencyKey,
+                  'COMMITTED',
+                  reconciliation.result,
+                  undefined,
+                  ctx.tenantId
+                );
+              } catch (recoveryPersistenceError: any) {
+                throw new WorkflowExecutionError(
+                  `RECOVERY_REQUIRED: تم التحقق من اعتماد العملية لكن تعذر تثبيت حالة Idempotency: ${recoveryPersistenceError?.message || String(recoveryPersistenceError)}`,
+                  'RECOVERY_REQUIRED'
+                );
+              }
+
+              return WorkflowResultBuilder.success(reconciliation.result, ctx, {
+                warnings: ['تمت استعادة نتيجة العملية بعد التحقق من جميع آثارها الدائمة.'],
+                syncStatus: 'ENQUEUED'
+              });
+            }
+
+            if (reconciliation.status === 'NOT_COMMITTED') {
+              try {
+                await IdempotencyRegistry.delete(ctx.idempotencyKey, ctx.tenantId);
+                await IdempotencyRegistry.save({
+                  key: ctx.idempotencyKey,
+                  status: 'PROCESSING',
+                  tenantId: ctx.tenantId,
+                  branchId: ctx.branchId,
+                  operationType: ctx.operationType,
+                  entityType: workflow.id.toUpperCase(),
+                  fingerprint: payloadFingerprint,
+                  createdAt: new Date().toISOString()
+                });
+              } catch (recoveryResetError: any) {
+                throw new WorkflowExecutionError(
+                  `RECOVERY_REQUIRED: لم يمكن إعادة تهيئة سجل العملية غير المعتمدة بأمان: ${recoveryResetError?.message || String(recoveryResetError)}`,
+                  'RECOVERY_REQUIRED'
+                );
+              }
+            } else {
+              throw new WorkflowExecutionError(
+                `RECOVERY_REQUIRED: حالة العملية السابقة غير حاسمة. ${reconciliation.reason || 'يلزم تدخل ومراجعة آمنة.'}`,
+                'RECOVERY_REQUIRED'
+              );
+            }
           }
         } else {
           // Durable PROCESSING persistence is a hard precondition for domain execution.
@@ -408,7 +506,11 @@ export class WorkflowExecutionPipeline {
       // Remove only an uncommitted PROCESSING marker after a confirmed rollback.
       // A payload-mismatch or replay error must never erase a COMMITTED key: doing so
       // would allow the same key to execute a second business transaction.
-      if (ctx.idempotencyKey) {
+      if (
+        ctx.idempotencyKey &&
+        errorObj.code !== 'IDEMPOTENCY_CONFLICT' &&
+        errorObj.code !== 'RECOVERY_REQUIRED'
+      ) {
         try {
           const existingIdempotency = await IdempotencyRegistry.get(ctx.idempotencyKey, ctx.tenantId);
           if (existingIdempotency?.status === 'PROCESSING') {
