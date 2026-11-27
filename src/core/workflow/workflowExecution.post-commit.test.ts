@@ -79,6 +79,7 @@ vi.mock('@/core/observability', () => ({
 }));
 
 import { WorkflowExecutionPipeline } from '@/core/workflow/workflowExecution';
+import { LockRepository } from '@features/locking/lock.repository';
 
 const context = {
   workflowId: 'workflow-post-commit-test',
@@ -110,6 +111,7 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     mockUpdateStatus.mockResolvedValue(undefined);
     mockDelete.mockResolvedValue(undefined);
     mockGet.mockResolvedValue(undefined);
+    vi.mocked(LockRepository.checkStrict).mockResolvedValue(false);
     mockExecuteDomainSteps.mockResolvedValue({ refId: 'invoice-post-commit-test' });
     mockExecuteWithGuard.mockImplementation(async (_options: unknown, operation: () => Promise<unknown>) => operation());
   });
@@ -189,6 +191,34 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     });
     const reconcileProcessing = vi.fn();
     const recoverableWorkflow = { ...workflow, reconcileProcessing };
+
+    const result = await WorkflowExecutionPipeline.run(
+      recoverableWorkflow as any,
+      {},
+      context as any
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(reconcileProcessing).not.toHaveBeenCalled();
+    expect(mockExecuteDomainSteps).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('does not reconcile a stale marker while the distributed lock is active or unverifiable', async () => {
+    const reconcileProcessing = vi.fn().mockResolvedValue({
+      status: 'COMMITTED',
+      result: { refId: 'should-not-be-replayed' }
+    });
+    const recoverableWorkflow = { ...workflow, reconcileProcessing };
+    mockGet.mockResolvedValueOnce({
+      key: context.idempotencyKey,
+      status: 'PROCESSING',
+      tenantId: context.tenantId,
+      branchId: context.branchId,
+      createdAt: new Date(Date.now() - 16 * 60 * 1000).toISOString()
+    });
+    vi.mocked(LockRepository.checkStrict).mockResolvedValueOnce(null);
 
     const result = await WorkflowExecutionPipeline.run(
       recoverableWorkflow as any,
