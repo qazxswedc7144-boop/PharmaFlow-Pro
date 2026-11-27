@@ -916,7 +916,11 @@ async function runGate3TestSuite() {
     await db.journalEntries.put({
       id: 'JE-VOUCHER-GATE3-CANCEL',
       sourceId: 'VOUCHER-GATE3-CANCEL',
+      source_id: 'VOUCHER-GATE3-CANCEL',
+      referenceId: 'VOUCHER-GATE3-CANCEL',
+      reference_id: 'VOUCHER-GATE3-CANCEL',
       sourceType: 'VOUCHER',
+      source_type: 'VOUCHER',
       tenantId: 'TEN-GATE3-001',
       branchId: 'BR-GATE3-001',
       status: 'Posted',
@@ -924,6 +928,13 @@ async function runGate3TestSuite() {
       lines: voucherJournalLines
     } as any);
     await db.journalLines.bulkPut(voucherJournalLines as any);
+    const seededVoucherJournal = await db.journalEntries
+      .where('sourceId')
+      .equals('VOUCHER-GATE3-CANCEL')
+      .first();
+    if (!seededVoucherJournal) {
+      throw new Error('GATE3_FIXTURE_INVALID: Voucher journal seed is not queryable by sourceId.');
+    }
     await db.financialTransactions.put({
       id: 'FT-VOUCHER-GATE3-CANCEL',
       Transaction_ID: 'FT-VOUCHER-GATE3-CANCEL',
