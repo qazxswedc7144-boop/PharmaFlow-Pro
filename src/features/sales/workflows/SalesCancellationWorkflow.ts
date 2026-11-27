@@ -60,12 +60,13 @@ async function reconcileCancellationProcessing(
     invoice?.type || invoice?.documentType || (legacyPurchase && !legacySale ? 'PURCHASE' : 'SALE')
   ).toUpperCase();
 
-  const [queueRows, outboxRows, movementRows, journalRows, financialRows] = await Promise.all([
+  const [queueRows, outboxRows, movementRows, journalRows, financialRows, voucherLinks] = await Promise.all([
     db.syncQueue.where('idempotencyKey').equals(ctx.idempotencyKey).toArray(),
     db.outbox.where('idempotencyKey').equals(ctx.idempotencyKey).toArray(),
     db.inventoryTransactions.where('source_doc_id').equals(invoiceId).toArray(),
     db.journalEntries.where('sourceId').equals(invoiceId).toArray(),
-    db.financialTransactions.where('Reference_ID').equals(invoiceId).toArray()
+    db.financialTransactions.where('Reference_ID').equals(invoiceId).toArray(),
+    db.voucherInvoiceLinks.where('invoiceId').equals(invoiceId).toArray()
   ]);
 
   const tenantMovements = movementRows.filter((row: any) =>
@@ -129,6 +130,17 @@ async function reconcileCancellationProcessing(
   const metadata = (invoice as any).cancellationMetadata;
   if (!metadata || metadata.idempotencyKey !== ctx.idempotencyKey) {
     return { status: 'UNKNOWN', reason: 'Cancelled invoice does not carry the matching cancellation idempotency metadata.' };
+  }
+
+  const activeVoucherLinks = voucherLinks.filter((link: any) =>
+    link.isDeleted !== true &&
+    link.is_deleted !== true &&
+    !['CANCELLED', 'VOID', 'REVERSED'].includes(
+      String(link.status || link.Status || '').toUpperCase()
+    )
+  );
+  if (activeVoucherLinks.length > 0) {
+    return { status: 'UNKNOWN', reason: 'Active voucher allocations still reference the cancelled invoice.' };
   }
 
   if (
