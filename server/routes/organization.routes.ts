@@ -83,13 +83,23 @@ router.get("/dashboard", requirePermission("organization.view"), async (req, res
 router.get("/users", requirePermission("users.view"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = (authReq.user?.tenantId || (req as any).tenantId || 'default-tenant') as string;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId) as string | undefined;
+
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "سياق المؤسسة غير متوفر" });
+      return;
+    }
 
     let usersList: any[] = [];
 
-    if (prisma.isConnected && prisma.isConnected() && (prisma as any).user) {
+    if (prisma.isConnected && prisma.isConnected() && prisma.user) {
       try {
-        const users = await (prisma as any).user.findMany({
+        const users = await prisma.user.findMany({
+          where: {
+            tenantUsers: {
+              some: { tenantId }
+            }
+          },
           select: {
             id: true,
             username: true,
@@ -191,9 +201,14 @@ router.post("/users", requirePermission("users.create"), async (req, res: Respon
 router.put("/users/:id/status", requirePermission("users.update"), async (req, res: Response) => {
   try {
     const authReq = req as AuthenticatedRequest;
-    const tenantId = authReq.user?.tenantId;
+    const tenantId = (authReq.user?.tenantId || (req as any).tenantId) as string | undefined;
     const { id } = req.params;
     const { isActive } = req.body;
+
+    if (!tenantId) {
+      res.status(403).json({ success: false, error: "سياق المؤسسة غير متوفر" });
+      return;
+    }
 
     if (!id) {
       res.status(400).json({ success: false, error: "معرف المستخدم مطلوب" });
@@ -205,21 +220,29 @@ router.put("/users/:id/status", requirePermission("users.update"), async (req, r
       return;
     }
 
-    if (prisma.isConnected && prisma.isConnected() && (prisma as any).user) {
-      try {
-        await (prisma as any).user.update({
-          where: { id },
-          data: { isActive }
-        });
-      } catch (err) {
-        console.warn('[OrgRoutes] DB user status update fallback:', (err as Error).message);
-      }
+    if (!prisma.isConnected || !prisma.isConnected() || !prisma.user) {
+      res.status(503).json({ success: false, error: "قاعدة البيانات غير متاحة حالياً" });
+      return;
+    }
+
+    const updateResult = await prisma.user.updateMany({
+      where: {
+        id,
+        tenantUsers: {
+          some: { tenantId },
+          every: { tenantId }
+        }
+      },
+      data: { isActive }
+    });
+
+    if (!updateResult || updateResult.count === 0) {
+      res.status(404).json({ success: false, error: "المستخدم غير موجود" });
+      return;
     }
 
     // Invalidate user cache immediately
-    if (tenantId) {
-      PermissionService.invalidateUserCache(tenantId, id);
-    }
+    PermissionService.invalidateUserCache(tenantId, id);
 
     res.json({
       success: true,
