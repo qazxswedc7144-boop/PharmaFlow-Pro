@@ -79,9 +79,11 @@ async function reconcileCancellationProcessing(
   const expectedReferenceTable = invoiceType === 'PURCHASE'
     ? 'Purchase_Invoices'
     : 'Sales_Invoices';
-  const tenantFinancialRows = financialRows.filter((row: any) =>
+  const allTenantFinancialRows = financialRows.filter((row: any) =>
     (row.tenantId || row.tenant_id) === ctx.tenantId &&
-    (row.branchId || row.branch_id) === ctx.branchId &&
+    (row.branchId || row.branch_id) === ctx.branchId
+  );
+  const tenantFinancialRows = allTenantFinancialRows.filter((row: any) =>
     row.Reference_Table === expectedReferenceTable
   );
 
@@ -92,7 +94,7 @@ async function reconcileCancellationProcessing(
   const reversalJournalRows = tenantJournalRows.filter((row: any) =>
     row.sourceType === 'AUTO_REVERSAL' && String(row.id || '').includes(ctx.idempotencyKey)
   );
-  const reversalFinancialRows = tenantFinancialRows.filter((row: any) =>
+  const reversalFinancialRows = allTenantFinancialRows.filter((row: any) =>
     row.isReversal === true && String(row.id || '').includes(ctx.idempotencyKey)
   );
   const scopedQueueRows = queueRows.filter((row: any) =>
