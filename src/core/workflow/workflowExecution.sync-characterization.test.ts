@@ -9,6 +9,7 @@ const {
   mockEnqueue,
   mockEnqueueWithinTransaction,
   mockRequestSync,
+  mockVerifyOpenPeriod,
   transactionCommitted
 } = vi.hoisted(() => ({
   mockEmit: vi.fn(),
@@ -19,6 +20,7 @@ const {
   mockEnqueue: vi.fn(),
   mockEnqueueWithinTransaction: vi.fn(),
   mockRequestSync: vi.fn(),
+  mockVerifyOpenPeriod: vi.fn(),
   transactionCommitted: { value: false }
 }));
 
@@ -69,6 +71,11 @@ vi.mock('@/services/system/AuditService', () => ({
 vi.mock('@/core/observability', () => ({
   observabilityService: { recordMetric: vi.fn(), recordPerformance: vi.fn() }
 }));
+vi.mock('@/services/transactions/PeriodLockEngine', () => ({
+  PeriodLockEngine: {
+    verifyOpenPeriodForTransaction: mockVerifyOpenPeriod
+  }
+}));
 vi.mock('@/features/sync/sync.engine', () => ({
   DistributedSyncEngine: {
     getInstance: () => ({
@@ -105,6 +112,15 @@ describe('WorkflowExecutionPipeline sync path characterization', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     transactionCommitted.value = false;
+    mockVerifyOpenPeriod.mockResolvedValue({
+      tenantId: context.tenantId,
+      periodId: 'PERIOD-SYNC-CHAR-001',
+      periodStartMs: Date.parse('2026-01-01T00:00:00.000Z'),
+      periodEndMs: Date.parse('2026-12-31T23:59:59.999Z'),
+      checkedDateStr: context.startedAt,
+      isLocked: false,
+      verifiedAt: Date.now()
+    });
     mockEmit.mockResolvedValue(undefined);
     mockSave.mockResolvedValue(undefined);
     mockUpdateStatus.mockResolvedValue(undefined);
@@ -298,7 +314,6 @@ describe('WorkflowExecutionPipeline sync path characterization', () => {
     // These tests characterize Pipeline sync serialization, not each workflow's
     // tenant-period or domain validation. Keep those prerequisites explicit and
     // isolated so no real Dexie/period/accounting operation is attempted.
-    vi.spyOn(workflow, 'getPeriodCheckDates').mockReturnValue([]);
     if (workflow === inventoryAdjustmentWorkflow) {
       vi.spyOn(workflow, 'validateBusinessRules').mockResolvedValue(undefined);
     }
