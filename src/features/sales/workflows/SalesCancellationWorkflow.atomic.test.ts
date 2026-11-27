@@ -157,6 +157,64 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     );
   });
 
+  it('rejects an invoice owned by another tenant before any financial, inventory, or sync mutation', async () => {
+    const foreignInvoice = { ...invoice, tenantId: 'TENANT-OTHER' };
+    const foreignTenantTx = {
+      table: (tableName: string) => ({
+        get: vi.fn().mockResolvedValue(tableName === 'invoices' ? foreignInvoice : undefined)
+      })
+    };
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, foreignTenantTx)
+    ).rejects.toThrow('CANCELLATION_TENANT_SCOPE_MISMATCH');
+
+    expect(mockExecuteReversal).not.toHaveBeenCalled();
+    expect(mockReverseFinancial).not.toHaveBeenCalled();
+    expect(invoicePut).not.toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invoice owned by another branch before any financial, inventory, or sync mutation', async () => {
+    const foreignBranchInvoice = { ...invoice, branchId: 'BRANCH-OTHER' };
+    const foreignBranchTx = {
+      table: (tableName: string) => ({
+        get: vi.fn().mockResolvedValue(tableName === 'invoices' ? foreignBranchInvoice : undefined)
+      })
+    };
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, foreignBranchTx)
+    ).rejects.toThrow('CANCELLATION_BRANCH_SCOPE_MISMATCH');
+
+    expect(mockExecuteReversal).not.toHaveBeenCalled();
+    expect(mockReverseFinancial).not.toHaveBeenCalled();
+    expect(invoicePut).not.toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a foreign-tenant legacy sales row even when the unified invoice is in scope', async () => {
+    const foreignLegacySale = { ...invoice, tenantId: 'TENANT-OTHER' };
+    const mixedScopeTx = {
+      table: (tableName: string) => ({
+        get: vi.fn().mockResolvedValue(
+          tableName === 'invoices' ? invoice :
+          tableName === 'sales' ? foreignLegacySale :
+          undefined
+        )
+      })
+    };
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, mixedScopeTx)
+    ).rejects.toThrow('CANCELLATION_TENANT_SCOPE_MISMATCH');
+
+    expect(mockExecuteReversal).not.toHaveBeenCalled();
+    expect(mockReverseFinancial).not.toHaveBeenCalled();
+    expect(invoicePut).not.toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+  });
+
   it('fails closed when a posted invoice has no active scoped journal entry', async () => {
     const missingJournalTx = {
       table: (name: string) => ({
