@@ -230,6 +230,27 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     expect(mockDelete).not.toHaveBeenCalled();
   });
 
+  it('deletes only its own PROCESSING marker after a confirmed domain rollback', async () => {
+    mockGet
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        key: context.idempotencyKey,
+        status: 'PROCESSING',
+        tenantId: context.tenantId,
+        branchId: context.branchId
+      });
+    mockExecuteDomainSteps.mockRejectedValueOnce(new Error('forced domain rollback'));
+
+    const result = await WorkflowExecutionPipeline.run(workflow, {}, context as any);
+
+    expect(result.success).toBe(false);
+    expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({
+      key: context.idempotencyKey,
+      status: 'PROCESSING'
+    }));
+    expect(mockDelete).toHaveBeenCalledWith(context.idempotencyKey, context.tenantId);
+  });
+
   it('aborts before domain execution when durable PROCESSING persistence fails', async () => {
     mockSave.mockRejectedValueOnce(new Error('IDEMPOTENCY_DISK_WRITE_FAILED'));
 
