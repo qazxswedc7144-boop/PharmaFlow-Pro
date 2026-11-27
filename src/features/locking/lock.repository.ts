@@ -242,6 +242,33 @@ export class LockRepository {
   }
 
   /**
+   * Strict lock check for recovery decisions.
+   * Returns null when lock state cannot be proven (offline/network failure);
+   * callers must not treat an unknown state as unlocked.
+   */
+  static async checkStrict(key: string, branchId: string): Promise<boolean | null> {
+    const local = this.localLocks.get(key);
+    if (local) {
+      if (new Date(local.expiresAt) > new Date()) return true;
+      this.localLocks.delete(key);
+      await this.saveLocalLocksToSettings();
+    }
+
+    if (!this.isOnline()) {
+      // A missing in-memory lock does not prove another offline tab has no lock.
+      return null;
+    }
+
+    try {
+      const response = await financialApiClient.get(`/api/locks/check/${key}?branchId=${branchId}`);
+      const locked = response?.data?.locked;
+      return typeof locked === 'boolean' ? locked : null;
+    } catch (error) {
+      console.warn('[LockRepository] Strict lock check could not verify distributed lock state.', error);
+      return null;
+    }
+  }
+  /**
    * Logs an immutable audit event to both Dexie database and system console logs.
    */
   static async logAuditRecord(record: LockAuditRecord): Promise<void> {
