@@ -50,9 +50,15 @@ async function reconcileCancellationProcessing(
   | { status: 'UNKNOWN'; reason?: string }
 > {
   const invoiceId = input.invoiceId;
-  const invoice = await db.invoices.get(invoiceId) ||
-    await db.sales.get(invoiceId) ||
-    await db.purchases.get(invoiceId);
+  const [unifiedInvoice, legacySale, legacyPurchase] = await Promise.all([
+    db.invoices.get(invoiceId),
+    db.sales.get(invoiceId),
+    db.purchases.get(invoiceId)
+  ]);
+  const invoice = unifiedInvoice || legacySale || legacyPurchase;
+  const invoiceType = String(
+    invoice?.type || invoice?.documentType || (legacyPurchase && !legacySale ? 'PURCHASE' : 'SALE')
+  ).toUpperCase();
 
   const [queueRows, outboxRows, movementRows, journalRows, financialRows] = await Promise.all([
     db.syncQueue.where('idempotencyKey').equals(ctx.idempotencyKey).toArray(),
@@ -69,7 +75,7 @@ async function reconcileCancellationProcessing(
   const tenantJournalRows = journalRows.filter((row: any) =>
     row.tenantId === ctx.tenantId && row.branchId === ctx.branchId
   );
-  const expectedReferenceTable = String(invoice?.type || 'SALE').toUpperCase() === 'PURCHASE'
+  const expectedReferenceTable = invoiceType === 'PURCHASE'
     ? 'Purchase_Invoices'
     : 'Sales_Invoices';
   const tenantFinancialRows = financialRows.filter((row: any) =>
@@ -139,7 +145,6 @@ async function reconcileCancellationProcessing(
     return { status: 'UNKNOWN', reason: 'Cancellation Queue/Outbox pair is missing, duplicated, or inconsistent.' };
   }
 
-  const invoiceType = String((invoice as any).type || 'SALE').toUpperCase();
   const legacyRecord = invoiceType === 'PURCHASE'
     ? await db.purchases.get(invoiceId)
     : await db.sales.get(invoiceId);
@@ -424,12 +429,18 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     const invoicesTable = tx.table('invoices');
     const salesTable = tx.table('sales');
     const purchasesTable = tx.table('purchases');
-    const invoice = (await invoicesTable.get(input.invoiceId)) ||
-      (await salesTable.get(input.invoiceId)) ||
-      (await purchasesTable.get(input.invoiceId));
+    const [unifiedInvoice, legacySaleRecord, legacyPurchaseRecord] = await Promise.all([
+      invoicesTable.get(input.invoiceId),
+      salesTable.get(input.invoiceId),
+      purchasesTable.get(input.invoiceId)
+    ]);
+    const invoice = unifiedInvoice || legacySaleRecord || legacyPurchaseRecord;
     if (!invoice) throw new Error('Invoice not found');
 
-    const invoiceType = String((invoice as any).type || 'SALE').toUpperCase();
+    const inferredInvoiceType = legacyPurchaseRecord && !legacySaleRecord ? 'PURCHASE' : 'SALE';
+    const invoiceType = String(
+      (invoice as any).type || (invoice as any).documentType || inferredInvoiceType
+    ).toUpperCase();
     if (invoiceType !== 'SALE' && invoiceType !== 'PURCHASE') {
       throw new Error(`UNSUPPORTED_CANCELLATION_DOCUMENT_TYPE: ${invoiceType}`);
     }
