@@ -163,7 +163,6 @@ BEGIN
       JOIN public.accounting_periods b
         ON a."tenantId" = b."tenantId"
        AND a.id < b.id
-       AND daterange(a."startDate"::date, b."endDate"::date, '[]') IS NOT NULL
        AND a."startDate" <= b."endDate"
        AND b."startDate" <= a."endDate"
     $q$ INTO v_overlap_count;
