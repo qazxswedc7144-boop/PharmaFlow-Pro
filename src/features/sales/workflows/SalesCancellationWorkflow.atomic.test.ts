@@ -72,7 +72,7 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
         put: invoicePut
       })
     };
-    mockExecuteReversal.mockResolvedValue([{ success: true, transactionId: 'REV-001' }]);
+    mockExecuteReversal.mockResolvedValue([{ success: true, transactionId: 'REV-001', productId: 'PRODUCT-001', delta: 2 }]);
     mockEnqueueWithinTransaction.mockResolvedValue({
       mutationId: 'MUT-CANCEL-001',
       idempotencyKey: ctx.idempotencyKey
@@ -134,6 +134,57 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
 
     expect(invoicePut).not.toHaveBeenCalled();
     expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a posted stock-tracked invoice has no reversal movement', async () => {
+    mockExecuteReversal.mockResolvedValue([]);
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, tx)
+    ).rejects.toThrow('INVENTORY_REVERSAL_INCOMPLETE');
+
+    expect(invoicePut).not.toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the reversed quantity does not match the posted invoice quantity', async () => {
+    mockExecuteReversal.mockResolvedValue([{
+      success: true,
+      transactionId: 'REV-PARTIAL',
+      productId: 'PRODUCT-001',
+      delta: 1
+    }]);
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, tx)
+    ).rejects.toThrow('INVENTORY_REVERSAL_INCOMPLETE');
+
+    expect(invoicePut).not.toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  it('allows a posted service-only invoice without inventory reversal movements', async () => {
+    const serviceInvoice = {
+      ...invoice,
+      items: [{ productId: 'SERVICE-001', quantity: 1, isService: true }]
+    };
+    const serviceTx = {
+      table: (name: string) => ({
+        get: vi.fn().mockResolvedValue(name === 'invoices' ? serviceInvoice : undefined),
+        put: invoicePut
+      })
+    };
+    mockExecuteReversal.mockResolvedValue([]);
+
+    const result = await salesCancellationWorkflow.executeDomainSteps(
+      { invoiceId: invoice.id },
+      ctx as any,
+      serviceTx
+    );
+
+    expect(result).toEqual({ success: true, invoiceId: invoice.id });
+    expect(invoicePut).toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).toHaveBeenCalled();
   });
 
   it('propagates Queue/Outbox failure so the surrounding transaction can roll back', async () => {
