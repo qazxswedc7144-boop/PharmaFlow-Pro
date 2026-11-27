@@ -149,7 +149,7 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     expect(result.data).toEqual(recoveredResult);
   });
 
-  it(retries a stale PROCESSING marker only after reconciliation proves no domain effects committed', async () => {
+  it('retries a stale PROCESSING marker only after reconciliation proves no domain effects committed', async () => {
     const reconcileProcessing = vi.fn().mockResolvedValue({ status: 'NOT_COMMITTED' });
     const recoverableWorkflow = { ...workflow, reconcileProcessing };
     mockGet.mockResolvedValueOnce({
