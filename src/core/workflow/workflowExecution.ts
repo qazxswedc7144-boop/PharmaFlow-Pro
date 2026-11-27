@@ -164,10 +164,18 @@ export class WorkflowExecutionPipeline {
 
             // Recovery is allowed only when the distributed lock service
             // definitively confirms that no active execution owns this key.
-            const distributedLockState = await LockRepository.checkStrict(
-              recoveryLockKey,
-              ctx.branchId
-            );
+            let distributedLockState: boolean | null;
+            try {
+              distributedLockState = await LockRepository.checkStrict(
+                recoveryLockKey,
+                ctx.branchId
+              );
+            } catch (lockCheckError: any) {
+              throw new WorkflowExecutionError(
+                `RECOVERY_REQUIRED: تعذر التحقق من قفل العملية السابقة: ${lockCheckError?.message || String(lockCheckError)}`,
+                'RECOVERY_REQUIRED'
+              );
+            }
             if (distributedLockState !== false) {
               throw new WorkflowExecutionError(
                 'لا يمكن استعادة العملية بأمان لأن حالة القفل غير مؤكدة أو ما زالت نشطة.',
