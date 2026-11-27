@@ -1,0 +1,134 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { mockExecuteReversal, mockEnqueueWithinTransaction, mockAuditLog, mockPublish } = vi.hoisted(() => ({
+  mockExecuteReversal: vi.fn(),
+  mockEnqueueWithinTransaction: vi.fn(),
+  mockAuditLog: vi.fn(),
+  mockPublish: vi.fn()
+}));
+
+vi.mock('@features/inventory/services/UnifiedInventoryMutationEngine', () => ({
+  UnifiedInventoryMutationEngine: {
+    getInstance: () => ({ executeReversal: mockExecuteReversal })
+  }
+}));
+
+vi.mock('@/features/sync/sync.engine', () => ({
+  DistributedSyncEngine: {
+    getInstance: () => ({ enqueueWithinTransaction: mockEnqueueWithinTransaction })
+  }
+}));
+
+vi.mock('@/services/system/AuditService', () => ({
+  AuditService: { log: mockAuditLog }
+}));
+
+vi.mock('@/services/system/ProjectionEventBus', () => ({
+  ProjectionEventBus: { publish: mockPublish }
+}));
+
+import { salesCancellationWorkflow } from './SalesCancellationWorkflow';
+
+describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
+  const invoice = {
+    id: 'SALE-CANCEL-001',
+    type: 'SALE',
+    documentStatus: 'POSTED',
+    status: 'POSTED',
+    total: 240,
+    items: [{ productId: 'PRODUCT-001', quantity: 2 }]
+  };
+  const periodVerification = {
+    tenantId: 'TENANT-001',
+    periodId: 'PERIOD-2026',
+    periodStartMs: Date.parse('2026-01-01T00:00:00.000Z'),
+    periodEndMs: Date.parse('2026-12-31T23:59:59.999Z'),
+    checkedDateStr: '2026-11-27T00:00:00.000Z',
+    isLocked: false,
+    verifiedAt: Date.now()
+  };
+  const ctx = {
+    workflowId: 'WF-CANCEL-001',
+    correlationId: 'CORR-CANCEL-001',
+    idempotencyKey: 'IDEM-CANCEL-001',
+    tenantId: 'TENANT-001',
+    branchId: 'BRANCH-001',
+    userId: 'USER-001',
+    deviceId: 'DEVICE-001',
+    operationType: 'INVOICE_CANCEL',
+    startedAt: '2026-11-27T00:00:00.000Z',
+    metadata: { verifiedAccountingPeriods: { '2026-11-27T00:00:00.000Z': periodVerification } }
+  };
+
+  let invoicePut: ReturnType<typeof vi.fn>;
+  let tx: { table: (name: string) => any };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invoicePut = vi.fn().mockResolvedValue(invoice.id);
+    tx = {
+      table: (name: string) => ({
+        get: vi.fn().mockResolvedValue(name === 'invoices' ? invoice : undefined),
+        put: invoicePut
+      })
+    };
+    mockExecuteReversal.mockResolvedValue([{ success: true, transactionId: 'REV-001' }]);
+    mockEnqueueWithinTransaction.mockResolvedValue({
+      mutationId: 'MUT-CANCEL-001',
+      idempotencyKey: ctx.idempotencyKey
+    });
+    mockAuditLog.mockResolvedValue(undefined);
+    mockPublish.mockResolvedValue(undefined);
+  });
+
+  it('reverses original stock movements and writes cancellation Queue/Outbox inside the supplied transaction', async () => {
+    const result = await salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id, reason: 'test' }, ctx as any, tx);
+
+    expect(result).toEqual({ success: true, invoiceId: invoice.id });
+    expect(mockExecuteReversal).toHaveBeenCalledWith(expect.objectContaining({
+      originalDocumentId: invoice.id,
+      originalDocumentType: 'SALE',
+      transactionUuid: ctx.idempotencyKey,
+      tenantId: ctx.tenantId,
+      branchId: ctx.branchId,
+      periodVerification
+    }), tx);
+    expect(invoicePut).toHaveBeenCalledWith(expect.objectContaining({
+      id: invoice.id,
+      documentStatus: 'CANCELLED',
+      status: 'CANCELLED'
+    }));
+    expect(mockEnqueueWithinTransaction).toHaveBeenCalledWith(
+      'INVOICE_CANCEL',
+      expect.objectContaining({ id: invoice.id, invoiceId: invoice.id, documentStatus: 'CANCELLED' }),
+      'INVOICE',
+      ctx.idempotencyKey,
+      { tenantId: ctx.tenantId, branchId: ctx.branchId }
+    );
+  });
+
+  it('aborts cancellation and does not enqueue when inventory reversal fails', async () => {
+    mockExecuteReversal.mockRejectedValue(new Error('INVENTORY_REVERSAL_FAILED'));
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, tx)
+    ).rejects.toThrow('INVENTORY_REVERSAL_FAILED');
+
+    expect(invoicePut).not.toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+  });
+
+  it('propagates Queue/Outbox failure so the surrounding transaction can roll back', async () => {
+    mockEnqueueWithinTransaction.mockRejectedValue(new Error('SYNC_OUTBOX_REQUIRED'));
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, tx)
+    ).rejects.toThrow('SYNC_OUTBOX_REQUIRED');
+  });
+
+  it('rejects execution without an active transaction', async () => {
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any)
+    ).rejects.toThrow('TRANSACTION_REQUIRED');
+  });
+});
