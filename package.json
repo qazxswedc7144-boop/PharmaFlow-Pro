@@ -85,7 +85,8 @@
     "deepmerge-ts": "^8.0.0",
     "browserslist": {
       "electron-to-chromium": "1.5.477"
-    }
+    },
+    "proxy-addr": "2.0.8"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
