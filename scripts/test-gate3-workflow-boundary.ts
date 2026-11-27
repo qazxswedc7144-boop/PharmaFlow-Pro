@@ -93,6 +93,9 @@ async function runGate3TestSuite() {
     });
   };
 
+  // Establish the authenticated tenant/branch before protected Dexie seed writes.
+  setAuthUser();
+
   // Pre-seed a tenant-owned, non-default branch for fail-closed workflow tests.
   await db.branches.put({
     id: 'BR-GATE3-001',
@@ -285,8 +288,7 @@ async function runGate3TestSuite() {
     idempotencyKey: 'ITX-GATE3-CANCEL-ORIGINAL'
   } as any);
 
-  // Set Default Authenticated Context
-  setAuthUser();
+  // Default authenticated context was established before protected seed writes.
 
   // -------------------------------------------------------------------------
   // TEST A: UI Direct Write Boundary & Static AST/Pattern Scan
