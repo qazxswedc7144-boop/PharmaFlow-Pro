@@ -20,11 +20,8 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Remove stale lock file
-        run: rm -f package-lock.json
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund --legacy-peer-deps
+      - name: Install dependencies from the committed lockfile
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
         env:
           npm_config_cache: /tmp/.npm-cache
 
@@ -225,11 +222,8 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Remove stale lock file
-        run: rm -f package-lock.json
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund --legacy-peer-deps
+      - name: Install dependencies from the committed lockfile
+        run: npm ci --no-audit --no-fund --legacy-peer-deps
         env:
           npm_config_cache: /tmp/.npm-cache
 
