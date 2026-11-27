@@ -87,6 +87,7 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
         update: vi.fn().mockResolvedValue(1),
         where: vi.fn().mockReturnValue({
           equals: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockImplementation(async () => tableName === 'journalEntries' ? [{ id: 'JE-CANCEL-001', sourceType: 'SALE', tenantId: ctx.tenantId, branchId: ctx.branchId }] : []),
             and: vi.fn().mockReturnValue({
               toArray: vi.fn().mockImplementation(async () => tableName === 'journalEntries' ? [{
                 id: 'JE-CANCEL-001',
@@ -162,6 +163,7 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
         update: vi.fn().mockResolvedValue(1),
         where: vi.fn().mockReturnValue({
           equals: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([]),
             and: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) })
           })
         })
@@ -250,6 +252,7 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
         update: vi.fn().mockResolvedValue(1),
         where: vi.fn().mockReturnValue({
           equals: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockImplementation(async () => name === 'journalEntries' ? [{ id: 'JE-CANCEL-001', sourceType: 'SALE', tenantId: ctx.tenantId, branchId: ctx.branchId }] : []),
             and: vi.fn().mockReturnValue({
               toArray: vi.fn().mockResolvedValue([{
                 id: 'JE-CANCEL-001',
