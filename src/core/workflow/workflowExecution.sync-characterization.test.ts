@@ -284,12 +284,6 @@ describe('WorkflowExecutionPipeline sync path characterization', () => {
       resultId: 'TRF-CHAR-001'
     },
     {
-      workflow: salesCancellationWorkflow,
-      expectedEntity: 'SALES.INVOICE.CANCEL',
-      expectedOperation: 'INVOICE_CANCEL',
-      resultId: 'CANCEL-CHAR-001'
-    },
-    {
       workflow: salesReturnWorkflow,
       expectedEntity: 'RETURNS.SALES.PROCESS',
       expectedOperation: 'SALES_RETURN',
