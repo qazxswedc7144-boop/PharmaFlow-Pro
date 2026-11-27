@@ -90,7 +90,6 @@ import { WorkflowExecutionPipeline } from '@/core/workflow/workflowExecution';
 import { journalPostingWorkflow } from '@/features/accounting/workflows/JournalPostingWorkflow';
 import { inventoryAdjustmentWorkflow } from '@/features/inventory/workflows/InventoryAdjustmentWorkflow';
 import { inventoryTransferWorkflow } from '@/features/inventory/workflows/InventoryTransferWorkflow';
-import { salesCancellationWorkflow } from '@/features/sales/workflows/SalesCancellationWorkflow';
 import { salesReturnWorkflow } from '@/features/returns/workflows/SalesReturnWorkflow';
 import { purchaseReturnWorkflow } from '@/features/returns/workflows/PurchaseReturnWorkflow';
 import { voucherWorkflow } from '@/features/accounting/workflows/VoucherWorkflow';
