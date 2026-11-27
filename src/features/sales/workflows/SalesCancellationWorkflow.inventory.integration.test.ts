@@ -359,6 +359,15 @@ describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration'
     expect(queueRows[0].idempotencyKey).toBe(context.idempotencyKey);
     expect(outboxRows[0].idempotencyKey).toBe(context.idempotencyKey);
     expect(queueRows[0].mutationId).toBe(outboxRows[0].mutationId);
+
+    const reconciled = await salesCancellationWorkflow.reconcileProcessing(
+      { invoiceId: INVOICE_ID },
+      context
+    );
+    expect(reconciled).toEqual({
+      status: 'COMMITTED',
+      result: { success: true, invoiceId: INVOICE_ID }
+    });
   });
 
   it('rejects a posted stock invoice with no canonical movement and leaves every record unchanged', async () => {
@@ -378,6 +387,39 @@ describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration'
     expect(await db.inventoryTransactions.count()).toBe(0);
     expect(await db.syncQueue.count()).toBe(0);
     expect(await db.outbox.count()).toBe(0);
+  });
+
+  it('reports NOT_COMMITTED when the invoice is still posted and no cancellation effects exist', async () => {
+    await seedCancellationState(false);
+
+    const reconciled = await salesCancellationWorkflow.reconcileProcessing(
+      { invoiceId: INVOICE_ID },
+      context
+    );
+
+    expect(reconciled).toEqual({ status: 'NOT_COMMITTED' });
+  });
+
+  it('returns UNKNOWN instead of replaying when a cancelled invoice lacks its Queue/Outbox pair', async () => {
+    await seedCancellationState(true);
+    await db.invoices.update(INVOICE_ID, {
+      documentStatus: 'CANCELLED',
+      status: 'CANCELLED',
+      cancellationMetadata: {
+        previousStatus: 'POSTED',
+        idempotencyKey: context.idempotencyKey,
+        originalDocumentType: 'SALE',
+        cancelledAt: new Date().toISOString()
+      }
+    } as any);
+
+    const reconciled = await salesCancellationWorkflow.reconcileProcessing(
+      { invoiceId: INVOICE_ID },
+      context
+    );
+
+    expect(reconciled.status).toBe('UNKNOWN');
+    expect((reconciled as any).reason).toContain('Queue/Outbox');
   });
 
   it('blocks cancellation while active voucher allocations still reference the invoice', async () => {
