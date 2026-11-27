@@ -149,6 +149,36 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     expect(result.data).toEqual(recoveredResult);
   });
 
+  it(retries a stale PROCESSING marker only after reconciliation proves no domain effects committed', async () => {
+    const reconcileProcessing = vi.fn().mockResolvedValue({ status: 'NOT_COMMITTED' });
+    const recoverableWorkflow = { ...workflow, reconcileProcessing };
+    mockGet.mockResolvedValueOnce({
+      key: context.idempotencyKey,
+      status: 'PROCESSING',
+      tenantId: context.tenantId,
+      branchId: context.branchId,
+      createdAt: new Date(Date.now() - 16 * 60 * 1000).toISOString()
+    });
+
+    const result = await WorkflowExecutionPipeline.run(
+      recoverableWorkflow as any,
+      {},
+      context as any
+    );
+
+    expect(reconcileProcessing).toHaveBeenCalledTimes(1);
+    expect(mockDelete).toHaveBeenCalledWith(context.idempotencyKey, context.tenantId);
+    expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({
+      key: context.idempotencyKey,
+      status: 'PROCESSING',
+      tenantId: context.tenantId,
+      branchId: context.branchId
+    }));
+    expect(mockExecuteDomainSteps).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({ refId: 'invoice-post-commit-test' });
+  });
+
   it('does not delete a fresh PROCESSING marker or execute a duplicate workflow', async () => {
     mockGet.mockResolvedValueOnce({
       key: context.idempotencyKey,
