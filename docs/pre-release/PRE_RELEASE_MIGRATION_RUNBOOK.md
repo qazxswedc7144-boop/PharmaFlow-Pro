@@ -62,8 +62,8 @@ File: `scripts/diagnostics/check_migration_readiness.sql`.
 - The script starts a read-only transaction and contains SELECT/catalog inspection plus PL/pgSQL diagnostic blocks that only emit NOTICE messages. It does not create tables, update rows, or modify migration history.
 - The `payments.status` check is conditional because the column is introduced by the fourth pending migration.
 - Review every non-zero conflict count. A missing object before its migration is expected; rerun the same diagnostics after the isolated rehearsal to verify the final state.
-- The diagnostics cover 9 migration-defined indexes, 5 added columns, the 5 owner-requested `AuditActionType` values (with two identified as absent from the current schema), foreign keys (including tenant-scoped references), accounting-period overlap by calendar date, and FIFO layer `unitCost` versus source batch `cost`.
-- The requested enum diagnostic checks `LOCK_ACQUIRED`, `LOCK_RELEASED`, `REPLICATION_PUBLISHED`, `BACKUP_UPLOAD`, and `SESSION_CLEANED`. The reviewed `schema.prisma` and migration define the first three, but define `LOCK_EXTENDED` and `LOCK_RECOVERY` instead of the latter two. The diagnostic therefore reports `BACKUP_UPLOAD` and `SESSION_CLEANED` as missing; this documentation/diagnostics PR does not silently alter the enum or add a migration.
+- The diagnostics cover 9 migration-defined indexes, 5 added columns, the 5 release-scope `AuditActionType` values, foreign keys (including tenant-scoped references), accounting-period overlap by calendar date, and FIFO layer `unitCost` versus source batch `cost`.
+- `AuditActionType` in this release must contain exactly these five expected values: `LOCK_ACQUIRED`, `LOCK_RELEASED`, `LOCK_EXTENDED`, `LOCK_RECOVERY`, `REPLICATION_PUBLISHED`. `BACKUP_UPLOAD` and `SESSION_CLEANED` are not required in this release and are deferred for a future decision.
 - Do not use this script as a substitute for application-level integration tests.
 
 ### 3.1 Diagnostic coverage summary
@@ -72,7 +72,7 @@ File: `scripts/diagnostics/check_migration_readiness.sql`.
 |---|---:|---|
 | Migration indexes | 9 indexes (5 FIFO + 4 payment/allocation indexes) | Confirm all indexes created by the FIFO and allocation migrations exist. |
 | Added columns | 5 columns (`invoices.paidAmount`; `payments.status`, `cancelledAt`, `cancellationReason`; `journal_entries.reversalOfId`) | Confirm the Phase 4B column additions. |
-| `AuditActionType` | 5 owner-requested values (2 absent in current schema) | Confirm the three currently defined requested values and flag missing `BACKUP_UPLOAD` / `SESSION_CLEANED`. |
+| `AuditActionType` | 5 release-scope values | Confirm `LOCK_ACQUIRED`, `LOCK_RELEASED`, `LOCK_EXTENDED`, `LOCK_RECOVERY`, and `REPLICATION_PUBLISHED`. |
 | Foreign keys | All FKs on the four new tenant-scoped tables | Inspect tenant references and composite tenant-scoped relations. |
 | Accounting periods | Date-based overlap check | Detect inclusive calendar-date overlaps within a tenant. |
 | FIFO cost provenance | `inventory_layers.unitCost` versus `inventory_batches.cost` | Identify layer/batch cost differences above the diagnostic tolerance. |
@@ -167,6 +167,8 @@ npx prisma migrate status
 ## 6. Post-migration verification checklist
 
 Run the diagnostic SQL on the clone both before and after deployment. In addition, collect:
+
+`AuditActionType` must contain these five values: `LOCK_ACQUIRED`, `LOCK_RELEASED`, `LOCK_EXTENDED`, `LOCK_RECOVERY`, `REPLICATION_PUBLISHED`. `BACKUP_UPLOAD` and `SESSION_CLEANED` are not required in this release; they are deferred for a future decision.
 
 - [ ] `accounting_periods`, `inventory_layers`, `fifo_consumption_log`, `invoice_payment_allocations` exist.
 - [ ] `AuditActionType` contains all five lock/replication values; `PaymentStatus` remains limited to the schema-defined values unless a separately reviewed migration changes it.

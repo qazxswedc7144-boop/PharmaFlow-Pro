@@ -186,12 +186,12 @@ WHERE table_schema = 'public'
     OR (table_name = 'journal_entries' AND column_name = 'reversalOfId'))
 ORDER BY table_name, column_name;
 
--- These are the five owner-requested expected values. Missing values emit NOTICE; no enum is modified.
+-- These are the five schema-defined AuditActionType values for this release.
 DO $$
 DECLARE
   required_values TEXT[] := ARRAY[
-    'LOCK_ACQUIRED', 'LOCK_RELEASED', 'REPLICATION_PUBLISHED',
-    'BACKUP_UPLOAD', 'SESSION_CLEANED'
+    'LOCK_ACQUIRED', 'LOCK_RELEASED', 'LOCK_EXTENDED',
+    'LOCK_RECOVERY', 'REPLICATION_PUBLISHED'
   ];
   v TEXT;
 BEGIN
