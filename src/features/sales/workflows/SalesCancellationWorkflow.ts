@@ -4,6 +4,8 @@ import { UnifiedInventoryMutationEngine } from '@features/inventory/services/Uni
 import { DistributedSyncEngine } from '@/features/sync/sync.engine';
 import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
+import { FinancialTransactionRepository } from '@/database/repositories/FinancialTransactionRepository';
+import { AccountingEngine } from '@features/accounting/services/AccountingEngine';
 import type { VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 export interface SalesCancellationInput {
@@ -41,6 +43,118 @@ async function loadCancellationItems(invoice: any, invoiceId: string, tx: any): 
   return [];
 }
 
+async function reversePostedFinancialEffects(
+  invoice: any,
+  invoiceType: 'SALE' | 'PURCHASE',
+  invoiceId: string,
+  ctx: WorkflowContext,
+  tx: any
+): Promise<void> {
+  const journalEntriesTable = tx.table('journalEntries');
+  const originalJournalEntries = await journalEntriesTable
+    .where('sourceId')
+    .equals(invoiceId)
+    .and((entry: any) =>
+      entry.tenantId === ctx.tenantId &&
+      entry.branchId === ctx.branchId
+    )
+    .toArray();
+  const activeJournalEntries = originalJournalEntries.filter((entry: any) =>
+    entry.sourceType !== 'AUTO_REVERSAL' && !entry.reversedBy
+  );
+
+  if (activeJournalEntries.length === 0) {
+    throw new Error(
+      'ACCOUNTING_REVERSAL_SOURCE_MISSING: A posted invoice cannot be cancelled without an active tenant/branch-scoped journal entry.'
+    );
+  }
+
+  const referenceTable = invoiceType === 'SALE' ? 'Sales_Invoices' : 'Purchase_Invoices';
+  const financialReversal = await FinancialTransactionRepository.reverseTransactions(
+    invoiceId,
+    tx,
+    ctx.idempotencyKey,
+    ctx.tenantId,
+    ctx.branchId,
+    { requireActiveTransaction: true, referenceTable }
+  );
+
+  if (!financialReversal || financialReversal.reversedCount === 0) {
+    throw new Error(
+      'FINANCIAL_TRANSACTION_REVERSAL_NO_OP: Posted invoice cancellation requires at least one verified financial reversal.'
+    );
+  }
+
+  const reversalTimestamp = ctx.startedAt || new Date().toISOString();
+  await AccountingEngine.postInvoice(
+    {
+      ...invoice,
+      type: invoiceType,
+      tenantId: ctx.tenantId,
+      branchId: ctx.branchId,
+      isReversal: true,
+      transactionUuid: ctx.idempotencyKey,
+      date: reversalTimestamp
+    } as any,
+    undefined,
+    tx
+  );
+
+  const isReturn = (invoice as any).isReturn === true;
+  const rawTotal = (invoice as any).finalTotal ??
+    (invoice as any).totalAmount ??
+    (invoice as any).total;
+  const total = Number(rawTotal);
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new Error(
+      'CANCELLATION_FINANCIAL_AMOUNT_INVALID: A posted invoice with a missing, zero, or invalid total requires financial review before cancellation.'
+    );
+  }
+
+  const partnerId = String(
+    (invoice as any).customerId ||
+    (invoice as any).supplierId ||
+    (invoice as any).partnerId ||
+    (invoice as any).partner_id ||
+    ''
+  ).trim();
+  const balanceDelta = isReturn ? total : -total;
+
+  if (invoiceType === 'SALE' && partnerId && partnerId !== 'عميل نقدي' && partnerId !== 'CUST-GEN') {
+    const customer = await tx.table('customers').get(partnerId);
+    if (!customer) {
+      throw new Error(`CANCELLATION_CUSTOMER_NOT_FOUND: Customer ${partnerId} is missing; balance reversal is unsafe.`);
+    }
+    const customerTenant = customer.tenantId || customer.tenant_id;
+    if (customerTenant && customerTenant !== ctx.tenantId) {
+      throw new Error('CROSS_TENANT_CUSTOMER_FORBIDDEN: Cancellation cannot change another tenant customer balance.');
+    }
+    await db.updateCustomerBalance(partnerId, balanceDelta, tx);
+  }
+
+  if (invoiceType === 'PURCHASE' &&
+      partnerId &&
+      partnerId !== 'مورد نقدي' &&
+      partnerId !== 'SUPP-GEN') {
+    const paymentStatus = String(
+      (invoice as any).paymentStatus ??
+      (invoice as any).payment_status ??
+      ''
+    ).trim().toUpperCase();
+    if (paymentStatus !== 'CASH' && (invoice as any).isCash !== true) {
+      const supplier = await tx.table('suppliers').get(partnerId);
+      if (!supplier) {
+        throw new Error(`CANCELLATION_SUPPLIER_NOT_FOUND: Supplier ${partnerId} is missing; balance reversal is unsafe.`);
+      }
+      const supplierTenant = supplier.tenantId || supplier.tenant_id;
+      if (supplierTenant && supplierTenant !== ctx.tenantId) {
+        throw new Error('CROSS_TENANT_SUPPLIER_FORBIDDEN: Cancellation cannot change another tenant supplier balance.');
+      }
+      await db.updateSupplierBalance(partnerId, balanceDelta, tx);
+    }
+  }
+}
+
 export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancellationInput, SalesCancellationResult> {
   public id = 'sales.invoice.cancel';
   public name = 'إلغاء الفاتورة بالكامل';
@@ -58,6 +172,7 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     'products', 'inventoryTransactions', 'warehouseStock', 'branchInventory',
     'inventory_layers', 'fifo_consumption_log', 'medicineBatches', 'stock_movements',
     'branches', 'accountingPeriods', 'settings', 'systemSettings',
+    'customers', 'suppliers', 'financialTransactions',
     'journalEntries', 'journalLines', 'accounts', 'auditLogs',
     'idempotencyKeys', 'projectionEvents', 'syncQueue', 'outbox'
   ];
@@ -115,11 +230,20 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
       throw new Error('ACCOUNTING_PERIOD_VERIFICATION_REQUIRED: Cancellation requires a verified period snapshot.');
     }
 
+    // A posted invoice has financial effects as well as stock effects. Reverse
+    // its journal, financial transaction and partner balance inside this same
+    // Dexie transaction before changing the document status.
+    if (currentStatus === 'POSTED' || currentStatus === 'LOCKED') {
+      await reversePostedFinancialEffects(invoice, invoiceType as 'SALE' | 'PURCHASE', input.invoiceId, ctx, tx);
+    }
+
     // Reverse the original canonical ledger movements with compensating entries.
     // This is idempotent per original movement and preserves FIFO/batch projections.
+    const isReturnDocument = (invoice as any).isReturn === true;
+    const originalDocumentType = isReturnDocument ? `${invoiceType}_RETURN` : invoiceType;
     const reversalResults = await UnifiedInventoryMutationEngine.getInstance().executeReversal({
       originalDocumentId: input.invoiceId,
-      originalDocumentType: invoiceType,
+      originalDocumentType,
       reason: input.reason || 'إلغاء من قبل المستخدم',
       transactionUuid: ctx.idempotencyKey,
       userId: ctx.userId,
@@ -171,7 +295,7 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
         );
       }
 
-      const expectedSign = invoiceType === 'SALE' ? 1 : -1;
+      const expectedSign = (invoiceType === 'SALE' ? 1 : -1) * (isReturnDocument ? -1 : 1);
       for (const [productId, expectedQuantity] of expectedQuantities) {
         const actualQuantity = actualReversedQuantities.get(productId) || 0;
         const expectedDelta = expectedSign * expectedQuantity;
@@ -183,13 +307,46 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
       }
     }
 
+    const cancelledAt = new Date().toISOString();
     const updatedInvoice = {
       ...invoice,
       documentStatus: 'CANCELLED',
+      document_status: 'CANCELLED',
+      InvoiceStatus: 'CANCELLED',
+      invoiceStatus: 'CANCELLED',
       status: 'CANCELLED',
-      updatedAt: new Date().toISOString()
+      updatedAt: cancelledAt,
+      lastModified: cancelledAt
     };
     await invoicesTable.put(updatedInvoice as any);
+
+    // Keep legacy read models in sync: InvoiceRepository archive queries the
+    // sales/purchases tables, not only the unified invoices table.
+    if (invoiceType === 'SALE') {
+      const legacySale = await salesTable.get(input.invoiceId);
+      if (legacySale) {
+        await salesTable.update(input.invoiceId, {
+          InvoiceStatus: 'CANCELLED',
+          invoiceStatus: 'CANCELLED',
+          documentStatus: 'CANCELLED',
+          document_status: 'CANCELLED',
+          status: 'CANCELLED',
+          lastModified: cancelledAt
+        });
+      }
+    } else {
+      const legacyPurchase = await purchasesTable.get(input.invoiceId);
+      if (legacyPurchase) {
+        await purchasesTable.update(input.invoiceId, {
+          invoiceStatus: 'CANCELLED',
+          InvoiceStatus: 'CANCELLED',
+          documentStatus: 'CANCELLED',
+          document_status: 'CANCELLED',
+          status: 'CANCELLED',
+          lastModified: cancelledAt
+        });
+      }
+    }
 
     await (AuditService.log as any)({
       action: 'DELETE',
@@ -197,7 +354,7 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
       transactionUuid: ctx.workflowId,
       recordId: input.invoiceId,
       details: `تم إلغاء الفاتورة [${input.invoiceId}] - السبب: ${input.reason || 'إلغاء من قبل المستخدم'}`
-    });
+    }, tx);
 
     await ProjectionEventBus.publish('INVOICE_CANCELLED', input.invoiceId, {
       type: invoiceType,
