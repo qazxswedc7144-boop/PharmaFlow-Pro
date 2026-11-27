@@ -306,21 +306,6 @@ async function executeCancellation(): Promise<any> {
   );
 }
 
-async function expectNoCancellationEffects(): Promise<void> {
-  expect((await db.invoices.get(INVOICE_ID))?.documentStatus).toBe('POSTED');
-  expect((await db.sales.get(INVOICE_ID))?.InvoiceStatus).toBe('POSTED');
-  expect((await db.customers.get(CUSTOMER_ID))?.balance).toBe(50);
-  expect((await db.journalEntries.get(ORIGINAL_JOURNAL_ID))?.reversedBy).toBeUndefined();
-  expect((await db.financialTransactions.get(ORIGINAL_FINANCIAL_ID))?.isDeleted).toBe(false);
-  expect((await db.products.get(PRODUCT_ID))?.stock).toBe(9);
-  expect((await db.warehouseStock.get('warehouse-stock-cancellation-integration'))?.quantity).toBe(9);
-  expect((await db.branchInventory.get('branch-inventory-cancellation-integration'))?.stockQuantity).toBe(9);
-  expect((await db.inventory_layers.get(FIFO_LAYER_ID))?.quantity_remaining).toBe(9);
-  expect(await db.fifo_consumption_log.count()).toBe(1);
-  expect(await db.inventoryTransactions.count()).toBe(1);
-  expect(await db.syncQueue.count()).toBe(0);
-  expect(await db.outbox.count()).toBe(0);
-}
 
 describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration', () => {
   beforeEach(async () => {
