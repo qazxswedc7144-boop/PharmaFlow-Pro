@@ -21,7 +21,7 @@ jobs:
           node-version: '24'
 
       - name: Install dependencies from the committed lockfile
-        run: npm ci --no-audit --no-fund --legacy-peer-deps
+        run: npm ci --no-audit --no-fund
         env:
           npm_config_cache: /tmp/.npm-cache
 
@@ -150,6 +150,7 @@ jobs:
           src/core/workflow/workflowExecution.sales-atomicity.integration.test.ts
           src/core/workflow/workflowExecution.post-commit.test.ts
           src/features/sales/workflows/SalesCancellationWorkflow.atomic.test.ts
+          src/features/sales/workflows/SalesCancellationWorkflow.inventory.integration.test.ts
           src/core/workflow/workflowExecution.sync-characterization.test.ts
           src/features/inventory/services/phase0a-fifo-expiry-safety.test.ts
           src/features/inventory/workflows/__tests__/InventoryAdjustmentWorkflow.failure-injection.test.ts
@@ -223,7 +224,7 @@ jobs:
           node-version: '24'
 
       - name: Install dependencies from the committed lockfile
-        run: npm ci --no-audit --no-fund --legacy-peer-deps
+        run: npm ci --no-audit --no-fund
         env:
           npm_config_cache: /tmp/.npm-cache
 
