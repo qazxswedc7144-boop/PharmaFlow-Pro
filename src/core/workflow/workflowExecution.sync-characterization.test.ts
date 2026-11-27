@@ -295,8 +295,19 @@ describe('WorkflowExecutionPipeline sync path characterization', () => {
       syncContractMustNotOverrideFallback: true
     };
     const executeSpy = vi.spyOn(workflow, 'executeDomainSteps').mockResolvedValue(domainResult as never);
+    // These tests characterize Pipeline sync serialization, not each workflow's
+    // tenant-period or domain validation. Keep those prerequisites explicit and
+    // isolated so no real Dexie/period/accounting operation is attempted.
+    vi.spyOn(workflow, 'getPeriodCheckDates').mockReturnValue([]);
+    if (workflow === inventoryAdjustmentWorkflow) {
+      vi.spyOn(workflow, 'validateBusinessRules').mockResolvedValue(undefined);
+    }
 
-    const result = await WorkflowExecutionPipeline.run(workflow as any, { source: 'characterization' }, context as any);
+    const input = workflow === inventoryAdjustmentWorkflow
+      ? { productId: 'PRODUCT-CHAR-001', warehouseId: 'WH-CHAR-001', actualQty: 10, userId: context.userId }
+      : { items: [{ productId: 'PRODUCT-CHAR-001', quantity: 1, unitPrice: 1 }], total: 1, date: context.startedAt };
+
+    const result = await WorkflowExecutionPipeline.run(workflow as any, input, context as any);
 
     expect(result.success).toBe(true);
     expect(executeSpy).toHaveBeenCalledTimes(1);
