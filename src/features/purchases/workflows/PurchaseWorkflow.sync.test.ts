@@ -116,10 +116,39 @@ describe('PurchaseWorkflow V-30B transactional sync', () => {
     const outboxRow = await (db as any).outbox.where('idempotencyKey').equals(ctx.idempotencyKey).first();
     expect(queueRow).toBeTruthy();
     expect(outboxRow).toBeTruthy();
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue).toHaveBeenCalledWith(
+      'CREATE',
+      expect.objectContaining({
+        id: 'PUR-LOCAL-001',
+        tenantId: ctx.tenantId,
+        branchId: ctx.branchId,
+        purchase: expect.objectContaining({
+          id: 'PUR-LOCAL-001',
+          invoiceNumber: 'PUR-SYNC-001',
+          totalAmount: 100,
+          document_status: 'POSTED'
+        })
+      }),
+      'PURCHASE',
+      ctx.idempotencyKey,
+      { tenantId: ctx.tenantId, branchId: ctx.branchId }
+    );
     expect(queueRow.entityType).toBe('PURCHASE');
+    expect(queueRow.operationType).toBe('CREATE');
+    expect(queueRow.tenantId).toBe(ctx.tenantId);
+    expect(queueRow.branchId).toBe(ctx.branchId);
     expect(queueRow.payload.id).toBe('PUR-LOCAL-001');
+    expect(queueRow.payload.purchase).toEqual(expect.objectContaining({
+      invoiceNumber: 'PUR-SYNC-001',
+      totalAmount: 100,
+      document_status: 'POSTED'
+    }));
     expect(outboxRow.entityType).toBe('PURCHASE');
     expect(outboxRow.operation).toBe('CREATE');
+    expect(outboxRow.tenantId).toBe(ctx.tenantId);
+    expect(outboxRow.branchId).toBe(ctx.branchId);
+    expect(outboxRow.payload.id).toBe('PUR-LOCAL-001');
   });
 
   it('fails closed and rolls back when enqueue returns without both durable records', async () => {
