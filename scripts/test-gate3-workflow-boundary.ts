@@ -207,6 +207,17 @@ async function runGate3TestSuite() {
     branchId: 'BR-GATE3-001'
   });
 
+  await db.branchInventory.put({
+    id: 'INV-BR-GATE3-001-PRD-GATE3-1',
+    branchId: 'BR-GATE3-001',
+    productId: 'PRD-GATE3-1',
+    stockQuantity: 500,
+    reorderPoint: 10,
+    reorderQuantity: 50,
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001'
+  } as any);
+
   // FIFO stock must exist independently of the aggregate product/warehouse
   // counters; the inventory engine refuses sales/negative adjustments without
   // eligible cost layers. This is an isolated fake-indexeddb fixture.
