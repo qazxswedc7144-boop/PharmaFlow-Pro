@@ -215,6 +215,8 @@ async function reconcileCancellationProcessing(
         !reversal ||
         reversal.sourceType !== 'AUTO_REVERSAL' ||
         reversal.reversalOf !== original.id ||
+        reversal.sourceId !== invoiceId ||
+        !String(reversal.id || '').includes(ctx.idempotencyKey) ||
         reversal.tenantId !== ctx.tenantId ||
         reversal.branchId !== ctx.branchId
       ) {
@@ -229,8 +231,17 @@ async function reconcileCancellationProcessing(
     for (const original of originalFinancialRows) {
       const reversalId = original.reversedBy;
       const reversal = reversalId ? await db.financialTransactions.get(reversalId) : null;
-      if (!original.isDeleted || !reversal || reversal.isReversal !== true) {
-        return { status: 'UNKNOWN', reason: `Financial transaction ${original.id} is not fully reversed.` };
+      if (
+        !original.isDeleted ||
+        !reversal ||
+        reversal.isReversal !== true ||
+        reversal.Reference_ID !== invoiceId ||
+        reversal.Reference_Table !== expectedReferenceTable ||
+        !String(reversal.id || '').includes(ctx.idempotencyKey) ||
+        (reversal.tenantId || reversal.tenant_id) !== ctx.tenantId ||
+        (reversal.branchId || reversal.branch_id) !== ctx.branchId
+      ) {
+        return { status: 'UNKNOWN', reason: `Financial transaction ${original.id} is not fully reversed by this cancellation.` };
       }
     }
   } else {
