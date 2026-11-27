@@ -5,7 +5,6 @@ const {
   mockSave,
   mockUpdateStatus,
   mockDelete,
-  mockExecuteDomainSteps,
   mockExecuteWithGuard,
   mockEnqueue,
   mockEnqueueWithinTransaction,
@@ -16,7 +15,6 @@ const {
   mockSave: vi.fn(),
   mockUpdateStatus: vi.fn(),
   mockDelete: vi.fn(),
-  mockExecuteDomainSteps: vi.fn(),
   mockExecuteWithGuard: vi.fn(),
   mockEnqueue: vi.fn(),
   mockEnqueueWithinTransaction: vi.fn(),
@@ -212,8 +210,9 @@ describe('WorkflowExecutionPipeline sync path characterization', () => {
     expect(result.success).toBe(true);
     expect(mockEnqueue).not.toHaveBeenCalled();
     expect(mockEnqueueWithinTransaction).toHaveBeenCalledTimes(1);
-    const [operation, payload, entityType, idempotencyKey, options] =
-      mockEnqueueWithinTransaction.mock.calls[0];
+    const saleEnqueueCall = mockEnqueueWithinTransaction.mock.calls[0];
+    expect(saleEnqueueCall).toBeDefined();
+    const [operation, payload, entityType, idempotencyKey, options] = saleEnqueueCall!;
 
     expect(transactionCommitted.value).toBe(true);
     expect(operation).toBe('POST');
