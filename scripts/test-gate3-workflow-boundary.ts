@@ -867,6 +867,81 @@ async function runGate3TestSuite() {
     };
     await db.vouchers.put(seedVoucher);
 
+    await db.accounts.put({
+      id: 'ACC-GATE3-VOUCHER-AP',
+      tenantId: 'TEN-GATE3-001',
+      branchId: 'BR-GATE3-001',
+      name: 'Gate 3 Supplier Payable',
+      balance: 100,
+      type: 'LIABILITY'
+    } as any);
+    await db.accounts.put({
+      id: 'ACC-GATE3-VOUCHER-CASH',
+      tenantId: 'TEN-GATE3-001',
+      branchId: 'BR-GATE3-001',
+      name: 'Gate 3 Cash',
+      balance: -100,
+      type: 'ASSET'
+    } as any);
+    const voucherJournalLines = [
+      {
+        id: 'JE-VOUCHER-GATE3-CANCEL-L1',
+        lineId: 'JE-VOUCHER-GATE3-CANCEL-L1',
+        entryId: 'JE-VOUCHER-GATE3-CANCEL',
+        entry_id: 'JE-VOUCHER-GATE3-CANCEL',
+        accountId: 'ACC-GATE3-VOUCHER-AP',
+        account_id: 'ACC-GATE3-VOUCHER-AP',
+        debit: 100,
+        credit: 0,
+        type: 'DEBIT',
+        amount: 100,
+        tenantId: 'TEN-GATE3-001',
+        branchId: 'BR-GATE3-001'
+      },
+      {
+        id: 'JE-VOUCHER-GATE3-CANCEL-L2',
+        lineId: 'JE-VOUCHER-GATE3-CANCEL-L2',
+        entryId: 'JE-VOUCHER-GATE3-CANCEL',
+        entry_id: 'JE-VOUCHER-GATE3-CANCEL',
+        accountId: 'ACC-GATE3-VOUCHER-CASH',
+        account_id: 'ACC-GATE3-VOUCHER-CASH',
+        debit: 0,
+        credit: 100,
+        type: 'CREDIT',
+        amount: 100,
+        tenantId: 'TEN-GATE3-001',
+        branchId: 'BR-GATE3-001'
+      }
+    ];
+    await db.journalEntries.put({
+      id: 'JE-VOUCHER-GATE3-CANCEL',
+      sourceId: 'VOUCHER-GATE3-CANCEL',
+      sourceType: 'VOUCHER',
+      tenantId: 'TEN-GATE3-001',
+      branchId: 'BR-GATE3-001',
+      status: 'Posted',
+      TotalAmount: 100,
+      lines: voucherJournalLines
+    } as any);
+    await db.journalLines.bulkPut(voucherJournalLines as any);
+    await db.financialTransactions.put({
+      id: 'FT-VOUCHER-GATE3-CANCEL',
+      Transaction_ID: 'FT-VOUCHER-GATE3-CANCEL',
+      Reference_ID: 'VOUCHER-GATE3-CANCEL',
+      Reference_Table: 'Vouchers',
+      Transaction_Type: 'Payment',
+      Entity_Type: 'Supplier',
+      Entity_Name: 'SUPP-GATE3-1',
+      Amount: 100,
+      Paid_Amount: 100,
+      Direction: 'Debit',
+      Transaction_Date: new Date().toISOString(),
+      tenantId: 'TEN-GATE3-001',
+      branchId: 'BR-GATE3-001',
+      isDeleted: false,
+      isReversal: false
+    } as any);
+
     const seedSale = {
       id: 'SALE-GATE3-CANCEL',
       invoiceNumber: 'INV-CANCEL-1',
@@ -921,6 +996,9 @@ async function runGate3TestSuite() {
     assert(
       cancelVoucherResult.success &&
       cancelSaleResult.success &&
+      (await db.suppliers.get('SUPP-GATE3-1'))?.balance === 100 &&
+      (await db.financialTransactions.get('FT-VOUCHER-GATE3-CANCEL'))?.isDeleted === true &&
+      !(await db.journalEntries.get('JE-VOUCHER-GATE3-CANCEL')) &&
       cancelledInvoice?.documentStatus === 'CANCELLED' &&
       (await db.sales.get('SALE-GATE3-CANCEL'))?.InvoiceStatus === 'CANCELLED' &&
       (await db.customers.get('CUST-GATE3-1'))?.balance === 0 &&
