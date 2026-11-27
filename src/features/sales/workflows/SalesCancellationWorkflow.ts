@@ -16,6 +16,31 @@ export interface SalesCancellationResult {
   invoiceId: string;
 }
 
+async function loadCancellationItems(invoice: any, invoiceId: string, tx: any): Promise<any[]> {
+  if (Array.isArray(invoice.items) && invoice.items.length > 0) {
+    return invoice.items;
+  }
+
+  const invoiceItemsTable = tx.table('invoiceItems');
+  const documentKeys = [
+    invoiceId,
+    invoice.invoice_number,
+    invoice.invoiceNumber
+  ].filter((value, index, values): value is string =>
+    typeof value === 'string' && value.length > 0 && values.indexOf(value) === index
+  );
+  const foreignKeys = ['parent_id', 'parentId', 'invoice_id', 'invoiceId'];
+
+  for (const documentKey of documentKeys) {
+    for (const foreignKey of foreignKeys) {
+      const rows = await invoiceItemsTable.where(foreignKey).equals(documentKey).toArray();
+      if (rows.length > 0) return rows;
+    }
+  }
+
+  return [];
+}
+
 export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancellationInput, SalesCancellationResult> {
   public id = 'sales.invoice.cancel';
   public name = 'إلغاء الفاتورة بالكامل';
@@ -106,6 +131,56 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
 
     if (reversalResults.some((result) => !result.success)) {
       throw new Error('INVENTORY_REVERSAL_FAILED: One or more original stock movements could not be reversed.');
+    }
+
+    // A POSTED/LOCKED document with stock-tracked lines must prove that every
+    // expected quantity was reversed. An empty or partial result must never be
+    // treated as a successful cancellation merely because the engine returned.
+    if (currentStatus === 'POSTED' || currentStatus === 'LOCKED') {
+      const invoiceItems = await loadCancellationItems(invoice, input.invoiceId, tx);
+      const expectedQuantities = new Map<string, number>();
+
+      for (const item of invoiceItems) {
+        const productId = item.productId || item.product_id;
+        if (!productId) continue;
+
+        const isService = item.isService === true;
+        const trackStock = item.trackStock === false;
+        const itemType = item.type || item.itemType;
+        if (isService || trackStock || itemType === 'SERVICE') continue;
+
+        const quantity = Number(item.quantity ?? item.qty ?? 0);
+        if (!Number.isFinite(quantity) || quantity <= 0) continue;
+
+        expectedQuantities.set(
+          String(productId),
+          (expectedQuantities.get(String(productId)) || 0) + quantity
+        );
+      }
+
+      const actualReversedQuantities = new Map<string, number>();
+      for (const result of reversalResults) {
+        const productId = String(result.productId || '');
+        const delta = Number(result.delta);
+        if (!productId || !Number.isFinite(delta)) {
+          throw new Error('INVENTORY_REVERSAL_INCOMPLETE: Reversal result is missing a valid product or quantity.');
+        }
+        actualReversedQuantities.set(
+          productId,
+          (actualReversedQuantities.get(productId) || 0) + delta
+        );
+      }
+
+      const expectedSign = invoiceType === 'SALE' ? 1 : -1;
+      for (const [productId, expectedQuantity] of expectedQuantities) {
+        const actualQuantity = actualReversedQuantities.get(productId) || 0;
+        const expectedDelta = expectedSign * expectedQuantity;
+        if (Math.abs(actualQuantity - expectedDelta) > 0.000001) {
+          throw new Error(
+            `INVENTORY_REVERSAL_INCOMPLETE: Expected reversal ${expectedDelta} for product ${productId}, received ${actualQuantity}.`
+          );
+        }
+      }
     }
 
     const updatedInvoice = {
