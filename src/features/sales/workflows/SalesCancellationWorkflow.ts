@@ -80,7 +80,7 @@ async function reconcileCancellationProcessing(
 
   const reversalMovements = tenantMovements.filter((row: any) =>
     String(row.TransactionType || row.transactionType || '').toUpperCase() === 'REVERSAL' &&
-    String(row.id || '').includes(ctx.idempotencyKey)
+    String(row.idempotencyKey || '').includes(ctx.idempotencyKey)
   );
   const reversalJournalRows = tenantJournalRows.filter((row: any) =>
     row.sourceType === 'AUTO_REVERSAL' && String(row.id || '').includes(ctx.idempotencyKey)
@@ -444,6 +444,33 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
       throw new Error(
         `INVOICE_HAS_ACTIVE_VOUCHER_ALLOCATIONS: Cancel or unallocate ${activeVoucherLinks.length} linked voucher allocation(s) before cancelling this invoice.`
       );
+    }
+
+    if (currentStatus !== 'POSTED' && currentStatus !== 'LOCKED') {
+      const referenceTable = invoiceType === 'SALE' ? 'Sales_Invoices' : 'Purchase_Invoices';
+      const [existingJournalEntries, existingFinancialRows] = await Promise.all([
+        tx.table('journalEntries').where('sourceId').equals(input.invoiceId)
+          .and((entry: any) => entry.tenantId === ctx.tenantId && entry.branchId === ctx.branchId)
+          .toArray(),
+        tx.table('financialTransactions').where('Reference_ID').equals(input.invoiceId)
+          .and((entry: any) =>
+            (entry.tenantId || entry.tenant_id) === ctx.tenantId &&
+            (entry.branchId || entry.branch_id) === ctx.branchId &&
+            entry.Reference_Table === referenceTable
+          )
+          .toArray()
+      ]);
+      const activeJournalEntries = existingJournalEntries.filter((entry: any) =>
+        entry.sourceType !== 'AUTO_REVERSAL' && !entry.reversedBy
+      );
+      const activeFinancialRows = existingFinancialRows.filter((entry: any) =>
+        entry.isReversal !== true && entry.isDeleted !== true && !entry.reversedBy
+      );
+      if (activeJournalEntries.length > 0 || activeFinancialRows.length > 0) {
+        throw new Error(
+          'UNPOSTED_INVOICE_HAS_FINANCIAL_EFFECTS: Financial ledger entries exist for a non-posted invoice; reconcile its posting state before cancellation.'
+        );
+      }
     }
 
     const verifiedPeriods = (ctx.metadata?.verifiedAccountingPeriods || {}) as Record<string, VerifiedPeriodSnapshot | undefined>;
