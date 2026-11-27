@@ -976,6 +976,9 @@ async function runGate3TestSuite() {
       reason: 'Entered duplicate payment by mistake'
     });
 
+    const customerBalanceBeforeCancellation = Number(
+      (await db.customers.get('CUST-GATE3-1'))?.balance ?? 0
+    );
     const cancelSaleResult = await WorkflowOrchestrator.execute(salesCancellationWorkflow, {
       invoiceId: 'SALE-GATE3-CANCEL',
       reason: 'Order cancelled before delivery'
@@ -1009,7 +1012,8 @@ async function runGate3TestSuite() {
       saleSuccess: cancelSaleResult.success,
       cancelledInvoiceStatus: cancelledInvoice?.documentStatus,
       legacySaleStatus: (await db.sales.get('SALE-GATE3-CANCEL'))?.InvoiceStatus,
-      customerBalance: (await db.customers.get('CUST-GATE3-1'))?.balance,
+      customerBalanceBeforeCancellation,
+      customerBalanceAfterCancellation: (await db.customers.get('CUST-GATE3-1'))?.balance,
       originalJournalReversedBy: (await db.journalEntries.get('JE-GATE3-CANCEL'))?.reversedBy,
       accounts: {
         receivable: (await db.accounts.get('ACC-GATE3-AR'))?.balance,
@@ -1034,7 +1038,7 @@ async function runGate3TestSuite() {
       !(await db.journalEntries.get('JE-VOUCHER-GATE3-CANCEL')) &&
       cancelledInvoice?.documentStatus === 'CANCELLED' &&
       (await db.sales.get('SALE-GATE3-CANCEL'))?.InvoiceStatus === 'CANCELLED' &&
-      (await db.customers.get('CUST-GATE3-1'))?.balance === 0 &&
+      (await db.customers.get('CUST-GATE3-1'))?.balance === customerBalanceBeforeCancellation - 50 &&
       Boolean((await db.journalEntries.get('JE-GATE3-CANCEL'))?.reversedBy) &&
       (await db.accounts.get('ACC-GATE3-AR'))?.balance === 0 &&
       (await db.accounts.get('ACC-GATE3-REV'))?.balance === 0 &&
