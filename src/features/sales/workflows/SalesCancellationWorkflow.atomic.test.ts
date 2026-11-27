@@ -107,6 +107,24 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     );
   });
 
+  it('rejects an already-cancelled invoice inside the transaction before any side effects', async () => {
+    const cancelledInvoice = { ...invoice, documentStatus: 'CANCELLED', status: 'CANCELLED' };
+    const cancelledTx = {
+      table: (name: string) => ({
+        get: vi.fn().mockResolvedValue(name === 'invoices' ? cancelledInvoice : undefined),
+        put: invoicePut
+      })
+    };
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, cancelledTx)
+    ).rejects.toThrow('INVOICE_ALREADY_CANCELLED');
+
+    expect(mockExecuteReversal).not.toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+    expect(invoicePut).not.toHaveBeenCalled();
+  });
+
   it('aborts cancellation and does not enqueue when inventory reversal fails', async () => {
     mockExecuteReversal.mockRejectedValue(new Error('INVENTORY_REVERSAL_FAILED'));
 
