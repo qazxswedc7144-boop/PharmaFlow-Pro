@@ -281,7 +281,7 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
   it('reverses purchase stock with the opposite quantity sign and updates the legacy purchase row', async () => {
     const purchaseInvoice = {
       ...invoice,
-      type: 'PURCHASE',
+      type: undefined,
       items: [{ productId: 'PRODUCT-001', quantity: 2 }],
       paymentStatus: 'Cash'
     };
@@ -289,7 +289,7 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     const purchaseTx = {
       table: (name: string) => ({
         get: vi.fn().mockImplementation((_key: string) => {
-          if (name === 'invoices' || name === 'purchases') return purchaseInvoice;
+          if (name === 'purchases') return purchaseInvoice;
           if (name === 'financialTransactions') {
             return { isReversal: true, Entity_Type: 'Supplier', Entity_Name: 'مورد نقدي' };
           }
