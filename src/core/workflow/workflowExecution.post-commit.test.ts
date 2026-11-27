@@ -7,6 +7,7 @@ const {
   mockUpdateStatus,
   mockDelete,
   mockGet,
+  mockClaimStaleProcessing,
   mockExecuteDomainSteps,
   mockExecuteWithGuard,
   mockExecuteAtomic,
@@ -17,6 +18,7 @@ const {
   mockUpdateStatus: vi.fn(),
   mockDelete: vi.fn(),
   mockGet: vi.fn(),
+  mockClaimStaleProcessing: vi.fn(),
   mockExecuteDomainSteps: vi.fn(),
   mockExecuteWithGuard: vi.fn(),
   mockExecuteAtomic: vi.fn(),
@@ -61,6 +63,7 @@ vi.mock('@/core/integrity/idempotencyRegistry', () => ({
     save: mockSave,
     updateStatus: mockUpdateStatus,
     delete: mockDelete,
+    claimStaleProcessing: mockClaimStaleProcessing,
   },
 }));
 
@@ -113,6 +116,7 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     mockUpdateStatus.mockResolvedValue(undefined);
     mockDelete.mockResolvedValue(undefined);
     mockGet.mockResolvedValue(undefined);
+    mockClaimStaleProcessing.mockResolvedValue(true);
     vi.mocked(LockRepository.checkStrict).mockResolvedValue(false);
     mockExecuteDomainSteps.mockResolvedValue({ refId: 'invoice-post-commit-test' });
     mockExecuteWithGuard.mockImplementation(async (_options: unknown, operation: () => Promise<unknown>) => operation());
@@ -154,15 +158,16 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     expect(result.data).toEqual(recoveredResult);
   });
 
-  it('retries a stale PROCESSING marker only after reconciliation proves no domain effects committed', async () => {
+  it('retries a stale PROCESSING marker only after reconciliation proves no domain effects committed and atomically claims it', async () => {
     const reconcileProcessing = vi.fn().mockResolvedValue({ status: 'NOT_COMMITTED' });
     const recoverableWorkflow = { ...workflow, reconcileProcessing };
+    const staleCreatedAt = new Date(Date.now() - 16 * 60 * 1000).toISOString();
     mockGet.mockResolvedValueOnce({
       key: context.idempotencyKey,
       status: 'PROCESSING',
       tenantId: context.tenantId,
       branchId: context.branchId,
-      createdAt: new Date(Date.now() - 16 * 60 * 1000).toISOString()
+      createdAt: staleCreatedAt
     });
 
     const result = await WorkflowExecutionPipeline.run(
@@ -172,16 +177,45 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     );
 
     expect(reconcileProcessing).toHaveBeenCalledTimes(1);
-    expect(mockDelete).toHaveBeenCalledWith(context.idempotencyKey, context.tenantId);
-    expect(mockSave).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockClaimStaleProcessing).toHaveBeenCalledWith({
       key: context.idempotencyKey,
-      status: 'PROCESSING',
       tenantId: context.tenantId,
-      branchId: context.branchId
-    }));
+      branchId: context.branchId,
+      expectedCreatedAt: staleCreatedAt,
+      operationType: context.operationType,
+      entityType: workflow.id.toUpperCase(),
+      fingerprint: expect.any(String)
+    });
+    expect(mockDelete).not.toHaveBeenCalled();
+    expect(mockSave).not.toHaveBeenCalled();
     expect(mockExecuteDomainSteps).toHaveBeenCalledTimes(1);
     expect(result.success).toBe(true);
     expect(result.data).toEqual({ refId: 'invoice-post-commit-test' });
+  });
+
+  it('does not execute when another tab wins the stale PROCESSING compare-and-swap claim', async () => {
+    const reconcileProcessing = vi.fn().mockResolvedValue({ status: 'NOT_COMMITTED' });
+    const recoverableWorkflow = { ...workflow, reconcileProcessing };
+    mockGet.mockResolvedValueOnce({
+      key: context.idempotencyKey,
+      status: 'PROCESSING',
+      tenantId: context.tenantId,
+      branchId: context.branchId,
+      createdAt: new Date(Date.now() - 16 * 60 * 1000).toISOString()
+    });
+    mockClaimStaleProcessing.mockResolvedValueOnce(false);
+
+    const result = await WorkflowExecutionPipeline.run(
+      recoverableWorkflow as any,
+      {},
+      context as any
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(mockClaimStaleProcessing).toHaveBeenCalledTimes(1);
+    expect(mockExecuteDomainSteps).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
   });
 
   it('does not delete a fresh PROCESSING marker or execute a duplicate workflow', async () => {
