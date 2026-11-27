@@ -1,8 +1,10 @@
 import { BusinessWorkflow, SyncContract, WorkflowContext } from '@/core/workflow';
 import { db } from '@/core/db';
-import { InventoryService } from '@features/inventory/services/InventoryService';
+import { UnifiedInventoryMutationEngine } from '@features/inventory/services/UnifiedInventoryMutationEngine';
+import { DistributedSyncEngine } from '@/features/sync/sync.engine';
 import { AuditService } from '@/services/system/AuditService';
 import { ProjectionEventBus } from '@/services/system/ProjectionEventBus';
+import type { VerifiedPeriodSnapshot } from '@/services/transactions/PeriodLockEngine';
 
 export interface SalesCancellationInput {
   invoiceId: string;
@@ -18,17 +20,21 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
   public id = 'sales.invoice.cancel';
   public name = 'إلغاء الفاتورة بالكامل';
   public operationType = 'INVOICE_CANCEL';
-  /** Documentation-only sync metadata; not consumed by the execution pipeline in V-30A. */
+  /** Queue and Outbox are persisted inside the cancellation transaction. */
   public syncContract: SyncContract = {
     entityType: 'INVOICE',
     operation: 'CANCEL',
     buildPayload: (result) => result as Record<string, unknown>
   };
   public requiredPermissions = ['sales.cancel', 'invoices.manage'];
+  public syncHandledInDomainTransaction = true;
   public tables = [
-    'invoices', 'invoiceItems', 'products', 'inventoryTransactions',
+    'invoices', 'invoiceItems', 'sales', 'purchases',
+    'products', 'inventoryTransactions', 'warehouseStock', 'branchInventory',
+    'inventory_layers', 'fifo_consumption_log', 'medicineBatches', 'stock_movements',
+    'branches', 'accountingPeriods', 'settings', 'systemSettings',
     'journalEntries', 'journalLines', 'accounts', 'auditLogs',
-    'idempotencyKeys', 'projectionEvents'
+    'idempotencyKeys', 'projectionEvents', 'syncQueue', 'outbox'
   ];
 
   public async validateInput(input: SalesCancellationInput): Promise<void> {
@@ -48,12 +54,55 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     }
   }
 
+  public getPeriodCheckDates(_input: SalesCancellationInput, ctx: WorkflowContext): string[] {
+    return [ctx.startedAt];
+  }
+
   public async executeDomainSteps(
     input: SalesCancellationInput,
-    ctx: WorkflowContext
+    ctx: WorkflowContext,
+    tx?: any
   ): Promise<SalesCancellationResult> {
-    const invoice = (await db.invoices.get(input.invoiceId)) || (await db.sales.get(input.invoiceId)) || (await db.purchases.get(input.invoiceId));
+    if (!tx || typeof tx.table !== 'function') {
+      throw new Error('TRANSACTION_REQUIRED: Sales cancellation must run inside WorkflowExecutionPipeline transaction.');
+    }
+
+    const invoicesTable = tx.table('invoices');
+    const salesTable = tx.table('sales');
+    const purchasesTable = tx.table('purchases');
+    const invoice = (await invoicesTable.get(input.invoiceId)) ||
+      (await salesTable.get(input.invoiceId)) ||
+      (await purchasesTable.get(input.invoiceId));
     if (!invoice) throw new Error('Invoice not found');
+
+    const invoiceType = String((invoice as any).type || 'SALE').toUpperCase();
+    if (invoiceType !== 'SALE' && invoiceType !== 'PURCHASE') {
+      throw new Error(`UNSUPPORTED_CANCELLATION_DOCUMENT_TYPE: ${invoiceType}`);
+    }
+
+    const verifiedPeriods = (ctx.metadata?.verifiedAccountingPeriods || {}) as Record<string, VerifiedPeriodSnapshot | undefined>;
+    const periodVerification = verifiedPeriods[ctx.startedAt];
+    if (!periodVerification) {
+      throw new Error('ACCOUNTING_PERIOD_VERIFICATION_REQUIRED: Cancellation requires a verified period snapshot.');
+    }
+
+    // Reverse the original canonical ledger movements with compensating entries.
+    // This is idempotent per original movement and preserves FIFO/batch projections.
+    const reversalResults = await UnifiedInventoryMutationEngine.getInstance().executeReversal({
+      originalDocumentId: input.invoiceId,
+      originalDocumentType: invoiceType,
+      reason: input.reason || 'إلغاء من قبل المستخدم',
+      transactionUuid: ctx.idempotencyKey,
+      userId: ctx.userId,
+      tenantId: ctx.tenantId,
+      branchId: ctx.branchId,
+      timestamp: ctx.startedAt,
+      periodVerification
+    }, tx);
+
+    if (reversalResults.some((result) => !result.success)) {
+      throw new Error('INVENTORY_REVERSAL_FAILED: One or more original stock movements could not be reversed.');
+    }
 
     const updatedInvoice = {
       ...invoice,
@@ -61,19 +110,7 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
       status: 'CANCELLED',
       updatedAt: new Date().toISOString()
     };
-
-    await db.invoices.put(updatedInvoice as any);
-
-    // If invoice had items, reverse stock movements if applied
-    const items = (invoice as any).items || [];
-    if (Array.isArray(items)) {
-      for (const item of items) {
-        if (item.productId && item.quantity) {
-          const qtyToReverse = (invoice as any).type === 'SALE' ? item.quantity : -item.quantity;
-          await InventoryService.updateStock(item.productId, qtyToReverse).catch(() => null);
-        }
-      }
-    }
+    await invoicesTable.put(updatedInvoice as any);
 
     await (AuditService.log as any)({
       action: 'DELETE',
@@ -84,15 +121,33 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     });
 
     await ProjectionEventBus.publish('INVOICE_CANCELLED', input.invoiceId, {
-      type: (invoice as any).type || 'SALE',
+      type: invoiceType,
       total: (invoice as any).total || 0,
       correlationId: ctx.correlationId
     });
 
-    return {
-      success: true,
-      invoiceId: input.invoiceId
+    const syncPayload = {
+      id: input.invoiceId,
+      invoiceId: input.invoiceId,
+      type: invoiceType,
+      documentStatus: 'CANCELLED',
+      status: 'CANCELLED',
+      reason: input.reason || 'إلغاء من قبل المستخدم',
+      workflowId: ctx.workflowId,
+      correlationId: ctx.correlationId
     };
+    const enqueueResult = await DistributedSyncEngine.getInstance().enqueueWithinTransaction(
+      this.operationType,
+      syncPayload,
+      'INVOICE',
+      ctx.idempotencyKey,
+      { tenantId: ctx.tenantId, branchId: ctx.branchId }
+    );
+    if (!enqueueResult?.mutationId || enqueueResult.idempotencyKey !== ctx.idempotencyKey) {
+      throw new Error('SYNC_ENQUEUE_FAILED: Cancellation Queue/Outbox acknowledgement is incomplete.');
+    }
+
+    return { success: true, invoiceId: input.invoiceId };
   }
 }
 
