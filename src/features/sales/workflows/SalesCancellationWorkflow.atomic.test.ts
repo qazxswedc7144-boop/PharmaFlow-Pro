@@ -78,7 +78,11 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     invoicePut = vi.fn().mockResolvedValue(invoice.id);
     tx = {
       table: (name: string) => ({
-        get: vi.fn().mockResolvedValue(name === 'invoices' ? invoice : undefined),
+        get: vi.fn().mockImplementation((name: string) =>
+          name === 'invoices' ? invoice :
+          name === 'financialTransactions' ? { isReversal: true, Entity_Type: 'Customer', Entity_Name: 'عميل نقدي' } :
+          undefined
+        ),
         put: invoicePut,
         update: vi.fn().mockResolvedValue(1),
         where: vi.fn().mockReturnValue({
@@ -237,7 +241,11 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     };
     const serviceTx = {
       table: (name: string) => ({
-        get: vi.fn().mockResolvedValue(name === 'invoices' ? serviceInvoice : undefined),
+        get: vi.fn().mockImplementation((name: string) =>
+          name === 'invoices' ? serviceInvoice :
+          name === 'financialTransactions' ? { isReversal: true, Entity_Type: 'Customer', Entity_Name: 'عميل نقدي' } :
+          undefined
+        ),
         put: invoicePut,
         update: vi.fn().mockResolvedValue(1),
         where: vi.fn().mockReturnValue({
