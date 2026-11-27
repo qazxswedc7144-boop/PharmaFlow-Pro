@@ -8,7 +8,7 @@ SET TRANSACTION READ ONLY;
 
 -- Fail-Closed production guard: heuristic refusal based on database name only.
 -- This is not a substitute for independently verifying host/project identity.
-DO $
+DO $$
 DECLARE
   db_name TEXT := lower(current_database());
   prod_indicators TEXT[] := ARRAY['prod', 'production', 'pharmaflow', 'live', 'master', 'primary'];
@@ -25,7 +25,7 @@ BEGIN
     END IF;
   END LOOP;
   RAISE NOTICE 'Diagnostic running against: %', current_database();
-END $;
+END $$;
 
 \echo '=== 1. Target identity (operator must independently confirm this is isolated) ==='
 SELECT current_database() AS database_name,
@@ -187,7 +187,7 @@ WHERE table_schema = 'public'
 ORDER BY table_name, column_name;
 
 -- These are the five values defined by the reviewed Prisma schema and migration.
-DO $
+DO $$
 DECLARE
   required_values TEXT[] := ARRAY[
     'LOCK_ACQUIRED', 'LOCK_RELEASED', 'LOCK_EXTENDED',
@@ -208,7 +208,7 @@ BEGIN
       RAISE NOTICE 'MISSING_ENUM_VALUE: AuditActionType.%', v;
     END IF;
   END LOOP;
-END $;
+END $$;
 
 \echo '=== 5. Potential conflicting source data / backfill reconciliation ==='
 SELECT COUNT(*) AS negative_inventory_batch_stock_count
