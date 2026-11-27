@@ -166,8 +166,8 @@ async function runGate3TestSuite() {
 
   // Pre-seed mock database records
   await db.products.put({
-    id: 'PRD-GATE3-1',
-    productId: 'PRD-GATE3-1',
+    id: '00000000-0000-4000-8000-000000000101',
+    productId: '00000000-0000-4000-8000-000000000101',
     name: 'Amoxicillin 500mg',
     Name: 'Amoxicillin 500mg',
     barcode: '628100099001',
@@ -186,9 +186,9 @@ async function runGate3TestSuite() {
   });
 
   await db.warehouseStock.put({
-    id: 'WHS-WH-MAIN-PRD-GATE3-1',
+    id: 'WHS-WH-MAIN-00000000-0000-4000-8000-000000000101',
     warehouseId: 'WH-MAIN',
-    productId: 'PRD-GATE3-1',
+    productId: '00000000-0000-4000-8000-000000000101',
     quantity: 500,
     lastUpdated: new Date().toISOString(),
     tenantId: 'TEN-GATE3-001',
@@ -197,9 +197,9 @@ async function runGate3TestSuite() {
   });
 
   await db.warehouseStock.put({
-    id: 'WHS-MAIN-PRD-GATE3-1',
+    id: 'WHS-MAIN-00000000-0000-4000-8000-000000000101',
     warehouseId: 'MAIN',
-    productId: 'PRD-GATE3-1',
+    productId: '00000000-0000-4000-8000-000000000101',
     quantity: 500,
     lastUpdated: new Date().toISOString(),
     tenantId: 'TEN-GATE3-001',
@@ -208,9 +208,9 @@ async function runGate3TestSuite() {
   });
 
   await db.branchInventory.put({
-    id: 'INV-BR-GATE3-001-PRD-GATE3-1',
+    id: 'INV-BR-GATE3-001-00000000-0000-4000-8000-000000000101',
     branchId: 'BR-GATE3-001',
-    productId: 'PRD-GATE3-1',
+    productId: '00000000-0000-4000-8000-000000000101',
     stockQuantity: 500,
     reorderPoint: 10,
     reorderQuantity: 50,
@@ -223,8 +223,8 @@ async function runGate3TestSuite() {
   // eligible cost layers. This is an isolated fake-indexeddb fixture.
   await db.inventory_layers.put({
     id: 'LYR-GATE3-BASE',
-    product_id: 'PRD-GATE3-1',
-    item_id: 'PRD-GATE3-1',
+    product_id: '00000000-0000-4000-8000-000000000101',
+    item_id: '00000000-0000-4000-8000-000000000101',
     quantity_initial: 500,
     quantity_remaining: 500,
     unit_cost: 20,
@@ -236,7 +236,7 @@ async function runGate3TestSuite() {
   } as any);
 
   await db.customers.put({
-    id: 'CUST-GATE3-1',
+    id: '00000000-0000-4000-8000-000000000102',
     name: 'Al-Amal Pharmacy Customer',
     Name: 'Al-Amal Pharmacy Customer',
     balance: 50,
@@ -345,7 +345,7 @@ async function runGate3TestSuite() {
     Reference_Table: 'Sales_Invoices',
     Transaction_Type: 'Invoice',
     Entity_Type: 'Customer',
-    Entity_Name: 'CUST-GATE3-1',
+    Entity_Name: '00000000-0000-4000-8000-000000000102',
     Amount: 50,
     Paid_Amount: 50,
     Direction: 'Debit',
@@ -526,14 +526,14 @@ async function runGate3TestSuite() {
     setAuthUser();
     // 1. Empty items in sales
     const resEmptyItems = await WorkflowOrchestrator.execute(salesWorkflow, {
-      customerId: 'CUST-GATE3-1',
+      customerId: '00000000-0000-4000-8000-000000000102',
       items: [],
       total: 0
     });
     // 2. Negative total in purchase
     const resNegativeTotal = await WorkflowOrchestrator.execute(purchaseWorkflow, {
       supplierId: 'SUPP-GATE3-1',
-      items: [{ id: 'PRD-GATE3-1', name: 'Item', quantity: 1, unitPrice: 10, total: 10 }],
+      items: [{ id: '00000000-0000-4000-8000-000000000101', name: 'Item', quantity: 1, unitPrice: 10, total: 10 }],
       total: -50
     });
 
@@ -580,7 +580,7 @@ async function runGate3TestSuite() {
     try {
       resUnauth = await WorkflowOrchestrator.execute(purchaseWorkflow, {
         supplierId: 'SUPP-GATE3-1',
-        items: [{ id: 'PRD-GATE3-1', name: 'Item', quantity: 1, unitPrice: 10, total: 10 }],
+        items: [{ id: '00000000-0000-4000-8000-000000000101', name: 'Item', quantity: 1, unitPrice: 10, total: 10 }],
         total: 10
       });
     } catch (error: any) {
@@ -624,8 +624,8 @@ async function runGate3TestSuite() {
       resCrossTenant = await WorkflowOrchestrator.execute(
         salesWorkflow,
         {
-          customerId: 'CUST-GATE3-1',
-          items: [{ id: 'PRD-GATE3-1', name: 'Item', quantity: 1, unitPrice: 30, total: 30 }],
+          customerId: '00000000-0000-4000-8000-000000000102',
+          items: [{ id: '00000000-0000-4000-8000-000000000101', name: 'Item', quantity: 1, unitPrice: 30, total: 30 }],
           total: 30
         },
         { tenantId: 'tenant-beta' }
@@ -693,13 +693,13 @@ async function runGate3TestSuite() {
 
     const p1 = WorkflowOrchestrator.execute(
       inventoryAdjustmentWorkflow,
-      { productId: 'PRD-GATE3-1', warehouseId: 'MAIN', actualQty: 480, userId: 'usr-admin-gate3' },
+      { productId: '00000000-0000-4000-8000-000000000101', warehouseId: 'MAIN', actualQty: 480, userId: 'usr-admin-gate3' },
       { idempotencyKey: lockKey }
     );
 
     const p2 = WorkflowOrchestrator.execute(
       inventoryAdjustmentWorkflow,
-      { productId: 'PRD-GATE3-1', warehouseId: 'MAIN', actualQty: 480, userId: 'usr-admin-gate3' },
+      { productId: '00000000-0000-4000-8000-000000000101', warehouseId: 'MAIN', actualQty: 480, userId: 'usr-admin-gate3' },
       { idempotencyKey: lockKey }
     );
 
@@ -728,8 +728,8 @@ async function runGate3TestSuite() {
     const resRollback = await WorkflowOrchestrator.execute(
       salesWorkflow,
       {
-        customerId: 'CUST-GATE3-1',
-        items: [{ id: 'PRD-GATE3-1', name: 'Item', quantity: -10, unitPrice: 30, total: -300 }],
+        customerId: '00000000-0000-4000-8000-000000000102',
+        items: [{ id: '00000000-0000-4000-8000-000000000101', name: 'Item', quantity: -10, unitPrice: 30, total: -300 }],
         total: -300
       },
       { idempotencyKey: rollbackKey }
@@ -756,8 +756,8 @@ async function runGate3TestSuite() {
     const resOffline = await WorkflowOrchestrator.execute(
       salesWorkflow,
       {
-        customerId: 'CUST-GATE3-1',
-        items: [{ id: 'PRD-GATE3-1', productId: 'PRD-GATE3-1', name: 'Amoxicillin 500mg', quantity: 2, unitPrice: 30, total: 60 }],
+        customerId: '00000000-0000-4000-8000-000000000102',
+        items: [{ id: '00000000-0000-4000-8000-000000000101', productId: '00000000-0000-4000-8000-000000000101', name: 'Amoxicillin 500mg', quantity: 2, unitPrice: 30, total: 60 }],
         total: 60,
         isCash: true
       },
@@ -780,8 +780,8 @@ async function runGate3TestSuite() {
   try {
     setAuthUser();
     const saleResult = await WorkflowOrchestrator.execute(salesWorkflow, {
-      customerId: 'CUST-GATE3-1',
-      items: [{ id: 'PRD-GATE3-1', productId: 'PRD-GATE3-1', name: 'Amoxicillin 500mg', quantity: 5, unitPrice: 30, total: 150 }],
+      customerId: '00000000-0000-4000-8000-000000000102',
+      items: [{ id: '00000000-0000-4000-8000-000000000101', productId: '00000000-0000-4000-8000-000000000101', name: 'Amoxicillin 500mg', quantity: 5, unitPrice: 30, total: 150 }],
       total: 150,
       isCash: false
     });
@@ -803,7 +803,7 @@ async function runGate3TestSuite() {
     setAuthUser();
     const purchaseResult = await WorkflowOrchestrator.execute(purchaseWorkflow, {
       supplierId: 'SUPP-GATE3-1',
-      items: [{ id: 'PRD-GATE3-1', productId: 'PRD-GATE3-1', name: 'Amoxicillin 500mg', quantity: 20, unitPrice: 20, total: 400 }],
+      items: [{ id: '00000000-0000-4000-8000-000000000101', productId: '00000000-0000-4000-8000-000000000101', name: 'Amoxicillin 500mg', quantity: 20, unitPrice: 20, total: 400 }],
       total: 400,
       isCash: true
     });
@@ -825,8 +825,8 @@ async function runGate3TestSuite() {
     setAuthUser();
     const salesReturnResult = await WorkflowOrchestrator.execute(salesReturnWorkflow, {
       originalSaleId: 'SALE-GATE3-REF',
-      customerId: 'CUST-GATE3-1',
-      items: [{ id: 'PRD-GATE3-1', productId: 'PRD-GATE3-1', name: 'Amoxicillin 500mg', quantity: 1, unitPrice: 30, total: 30 }],
+      customerId: '00000000-0000-4000-8000-000000000102',
+      items: [{ id: '00000000-0000-4000-8000-000000000101', productId: '00000000-0000-4000-8000-000000000101', name: 'Amoxicillin 500mg', quantity: 1, unitPrice: 30, total: 30 }],
       total: 30,
       reason: 'Customer returned sealed box'
     });
@@ -849,7 +849,7 @@ async function runGate3TestSuite() {
     const purchaseReturnResult = await WorkflowOrchestrator.execute(purchaseReturnWorkflow, {
       originalPurchaseId: 'PUR-GATE3-REF',
       supplierId: 'SUPP-GATE3-1',
-      items: [{ id: 'PRD-GATE3-1', productId: 'PRD-GATE3-1', name: 'Amoxicillin 500mg', quantity: 2, unitPrice: 20, total: 40 }],
+      items: [{ id: '00000000-0000-4000-8000-000000000101', productId: '00000000-0000-4000-8000-000000000101', name: 'Amoxicillin 500mg', quantity: 2, unitPrice: 20, total: 40 }],
       total: 40,
       reason: 'Damaged packaging from distributor'
     });
@@ -870,7 +870,7 @@ async function runGate3TestSuite() {
   try {
     setAuthUser();
     const adjResult = await WorkflowOrchestrator.execute(inventoryAdjustmentWorkflow, {
-      productId: 'PRD-GATE3-1',
+      productId: '00000000-0000-4000-8000-000000000101',
       warehouseId: 'MAIN',
       actualQty: 520,
       userId: 'usr-admin-gate3',
@@ -895,7 +895,7 @@ async function runGate3TestSuite() {
     const transferResult = await WorkflowOrchestrator.execute(inventoryTransferWorkflow, {
       sourceBranchId: 'BRANCH-MAIN',
       targetBranchId: 'BRANCH-EAST',
-      items: [{ productId: 'PRD-GATE3-1', qty: 10 }],
+      items: [{ productId: '00000000-0000-4000-8000-000000000101', qty: 10 }],
       notes: 'Branch transfer requisition'
     });
 
@@ -916,7 +916,7 @@ async function runGate3TestSuite() {
     setAuthUser();
     const voucherResult = await WorkflowOrchestrator.execute(voucherWorkflow, {
       type: 'RECEIPT',
-      partnerId: 'CUST-GATE3-1',
+      partnerId: '00000000-0000-4000-8000-000000000102',
       amount: 250,
       notes: 'Customer payment receipt'
     });
@@ -1060,7 +1060,7 @@ async function runGate3TestSuite() {
       id: 'SALE-GATE3-CANCEL',
       invoiceNumber: 'INV-CANCEL-1',
       date: new Date().toISOString(),
-      partnerId: 'CUST-GATE3-1',
+      partnerId: '00000000-0000-4000-8000-000000000102',
       type: 'SALE',
       subtotal: 50,
       finalTotal: 50,
@@ -1083,7 +1083,7 @@ async function runGate3TestSuite() {
     });
 
     const customerBalanceBeforeCancellation = Number(
-      (await db.customers.get('CUST-GATE3-1'))?.balance ?? 0
+      (await db.customers.get('00000000-0000-4000-8000-000000000102'))?.balance ?? 0
     );
     const cancelSaleResult = await WorkflowOrchestrator.execute(salesCancellationWorkflow, {
       invoiceId: 'SALE-GATE3-CANCEL',
@@ -1121,7 +1121,7 @@ async function runGate3TestSuite() {
       !(await db.journalEntries.get('JE-VOUCHER-GATE3-CANCEL')) &&
       cancelledInvoice?.documentStatus === 'CANCELLED' &&
       (await db.sales.get('SALE-GATE3-CANCEL'))?.InvoiceStatus === 'CANCELLED' &&
-      (await db.customers.get('CUST-GATE3-1'))?.balance === customerBalanceBeforeCancellation - 50 &&
+      (await db.customers.get('00000000-0000-4000-8000-000000000102'))?.balance === customerBalanceBeforeCancellation - 50 &&
       Boolean((await db.journalEntries.get('JE-GATE3-CANCEL'))?.reversedBy) &&
       (await db.accounts.get('ACC-GATE3-AR'))?.balance === 0 &&
       (await db.accounts.get('ACC-GATE3-REV'))?.balance === 0 &&
@@ -1181,7 +1181,7 @@ async function runGate3TestSuite() {
     setAuthUser();
     // Test that failed workflow registers incident in recovery
     const failRes = await WorkflowOrchestrator.execute(salesWorkflow, {
-      customerId: 'CUST-GATE3-1',
+      customerId: '00000000-0000-4000-8000-000000000102',
       items: [],
       total: -1
     });
@@ -1203,7 +1203,7 @@ async function runGate3TestSuite() {
     setAuthUser();
     const e2eResult = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       supplierId: 'SUPP-GATE3-1',
-      items: [{ id: 'PRD-GATE3-1', productId: 'PRD-GATE3-1', name: 'Amoxicillin 500mg', quantity: 15, unitPrice: 20, total: 300 }],
+      items: [{ id: '00000000-0000-4000-8000-000000000101', productId: '00000000-0000-4000-8000-000000000101', name: 'Amoxicillin 500mg', quantity: 15, unitPrice: 20, total: 300 }],
       total: 300,
       notes: 'Full Enterprise 15-Step Pipeline'
     }, { isCash: true });
