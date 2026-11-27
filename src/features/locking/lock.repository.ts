@@ -186,9 +186,12 @@ export class LockRepository {
       });
       return !!response.data.released;
     } catch (error) {
-      console.warn('[LockRepository] Connection failed during lock release. Cleaning local failover cache.', error);
-      this.localLocks.delete(key);
-      await this.saveLocalLocksToSettings();
+      console.warn('[LockRepository] Connection failed during lock release. Cleaning only the matching local failover lock.', error);
+      const localLock = this.localLocks.get(key);
+      if (localLock && localLock.id === lockId) {
+        this.localLocks.delete(key);
+        await this.saveLocalLocksToSettings();
+      }
       return true;
     }
   }
