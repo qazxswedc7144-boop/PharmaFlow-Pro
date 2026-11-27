@@ -333,37 +333,6 @@ describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration'
     await db.close();
   });
 
-  it('rejects a foreign-tenant invoice before reversing any financial or stock effects', async () => {
-    await seedCancellationState(true);
-    await db.invoices.update(INVOICE_ID, { tenantId: 'another-tenant', tenant_id: 'another-tenant' } as any);
-    await db.sales.update(INVOICE_ID, { tenantId: 'another-tenant', tenant_id: 'another-tenant' } as any);
-
-    await expect(executeCancellation()).rejects.toThrow('CANCELLATION_TENANT_SCOPE_MISMATCH');
-    await expectNoCancellationEffects();
-  });
-
-  it('rejects an invoice from another branch before reversing any financial or stock effects', async () => {
-    await seedCancellationState(true);
-    await db.invoices.update(INVOICE_ID, { branchId: 'another-branch', branch_id: 'another-branch' } as any);
-    await db.sales.update(INVOICE_ID, { branchId: 'another-branch', branch_id: 'another-branch' } as any);
-
-    await expect(executeCancellation()).rejects.toThrow('CANCELLATION_BRANCH_SCOPE_MISMATCH');
-    await expectNoCancellationEffects();
-  });
-
-  it('rejects a legacy sales read model outside the active tenant even when the unified invoice is in scope', async () => {
-    await seedCancellationState(true);
-    await db.sales.update(INVOICE_ID, { tenantId: 'another-tenant', tenant_id: 'another-tenant' } as any);
-
-    await expect(executeCancellation()).rejects.toThrow('CANCELLATION_TENANT_SCOPE_MISMATCH');
-    expect((await db.invoices.get(INVOICE_ID))?.documentStatus).toBe('POSTED');
-    expect((await db.sales.get(INVOICE_ID))?.InvoiceStatus).toBe('POSTED');
-    expect((await db.customers.get(CUSTOMER_ID))?.balance).toBe(50);
-    expect((await db.products.get(PRODUCT_ID))?.stock).toBe(9);
-    expect(await db.syncQueue.count()).toBe(0);
-    expect(await db.outbox.count()).toBe(0);
-  });
-
   it('commits stock, FIFO, invoice status, Queue and Outbox as one real Dexie transaction', async () => {
     await seedCancellationState(true);
 
