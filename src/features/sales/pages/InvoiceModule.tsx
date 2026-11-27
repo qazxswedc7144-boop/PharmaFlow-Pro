@@ -121,10 +121,17 @@ const InvoiceModule: React.FC<InvoiceModuleProps> = ({ lang, onNavigate }) => {
     try {
       const recordId = item.id;
       if (recordId) {
-        await WorkflowOrchestrator.execute(salesCancellationWorkflow, {
+        const cancellationResult = await WorkflowOrchestrator.execute(salesCancellationWorkflow, {
           invoiceId: recordId,
           reason: isAr ? "إلغاء عبر الأرشيف" : "Cancelled via archive"
         });
+        if (!cancellationResult?.success) {
+          const failureMessage =
+            (cancellationResult as any)?.error?.message ||
+            (cancellationResult as any)?.message ||
+            (isAr ? "تعذر إلغاء المستند؛ لم يتم اعتماد العملية." : "Cancellation failed; the transaction was not committed.");
+          throw new Error(failureMessage);
+        }
         addToast(isAr ? "تم إلغاء المستند بنجاح" : "Invoice Cancelled", "success");
         refreshGlobal();
       }
