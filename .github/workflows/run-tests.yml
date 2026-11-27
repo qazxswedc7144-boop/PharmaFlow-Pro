@@ -67,6 +67,15 @@ jobs:
         env:
           NODE_ENV: test
 
+      - name: Isolated characterization - Voucher CREATE and CANCEL sync paths
+        run: >-
+          npx vitest run
+          src/core/workflow/workflowExecution.sync-characterization.test.ts
+          --reporter=verbose
+          -t "in-transaction sync path with the exact contract payload"
+        env:
+          NODE_ENV: test
+
       - name: Run Atomicity, Tenant Isolation, and Sync Lifecycle Tests
         run: >-
           npx vitest run --reporter=verbose
