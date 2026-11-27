@@ -676,6 +676,10 @@ async function runGate3TestSuite() {
     );
 
     const [r1, r2] = await Promise.all([p1, p2]);
+    console.log('[TEST H concurrency diagnostics]', JSON.stringify({
+      first: { success: r1.success, error: r1.error, data: r1.data },
+      second: { success: r2.success, error: r2.error, data: r2.data }
+    }));
     assert(
       (r1.success || r2.success) && !(r1.success && r2.success && (r1.data as any)?.adjustmentId !== (r2.data as any)?.adjustmentId),
       'TEST H: ExecutionGuard Concurrency Lock',
