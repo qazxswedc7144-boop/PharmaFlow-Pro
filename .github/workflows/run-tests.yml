@@ -158,6 +158,10 @@ jobs:
         env:
           NODE_ENV: test
 
+      - name: Gate 3 workflow boundary diagnostic (non-blocking during harness stabilization)
+        run: npx tsx scripts/test-gate3-workflow-boundary.ts
+        continue-on-error: true
+
       - name: Run Purchase and Supplier Financial Integrity Suites with Phase C HTTP Harness
         run: >-
           npx vitest run
