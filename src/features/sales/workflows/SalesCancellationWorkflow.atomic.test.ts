@@ -77,10 +77,10 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     vi.clearAllMocks();
     invoicePut = vi.fn().mockResolvedValue(invoice.id);
     tx = {
-      table: (name: string) => ({
-        get: vi.fn().mockImplementation((name: string) =>
-          name === 'invoices' ? invoice :
-          name === 'financialTransactions' ? { isReversal: true, Entity_Type: 'Customer', Entity_Name: 'عميل نقدي' } :
+      table: (tableName: string) => ({
+        get: vi.fn().mockImplementation((key: string) =>
+          tableName === 'invoices' ? invoice :
+          tableName === 'financialTransactions' ? { id: key, isReversal: true, Entity_Type: 'Customer', Entity_Name: 'عميل نقدي' } :
           undefined
         ),
         put: invoicePut,
@@ -240,10 +240,10 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
       items: [{ productId: 'SERVICE-001', quantity: 1, isService: true }]
     };
     const serviceTx = {
-      table: (name: string) => ({
-        get: vi.fn().mockImplementation((name: string) =>
-          name === 'invoices' ? serviceInvoice :
-          name === 'financialTransactions' ? { isReversal: true, Entity_Type: 'Customer', Entity_Name: 'عميل نقدي' } :
+      table: (tableName: string) => ({
+        get: vi.fn().mockImplementation((key: string) =>
+          tableName === 'invoices' ? serviceInvoice :
+          tableName === 'financialTransactions' ? { id: key, isReversal: true, Entity_Type: 'Customer', Entity_Name: 'عميل نقدي' } :
           undefined
         ),
         put: invoicePut,
