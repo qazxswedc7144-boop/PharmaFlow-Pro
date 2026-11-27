@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockExecuteReversal, mockEnqueueWithinTransaction, mockAuditLog, mockPublish } = vi.hoisted(() => ({
+const { mockExecuteReversal, mockEnqueueWithinTransaction, mockAuditLog, mockPublish, mockReverseFinancial, mockPostAccounting } = vi.hoisted(() => ({
   mockExecuteReversal: vi.fn(),
   mockEnqueueWithinTransaction: vi.fn(),
   mockAuditLog: vi.fn(),
-  mockPublish: vi.fn()
+  mockPublish: vi.fn(),
+  mockReverseFinancial: vi.fn(),
+  mockPostAccounting: vi.fn()
 }));
 
 vi.mock('@features/inventory/services/UnifiedInventoryMutationEngine', () => ({
@@ -25,6 +27,14 @@ vi.mock('@/services/system/AuditService', () => ({
 
 vi.mock('@/services/system/ProjectionEventBus', () => ({
   ProjectionEventBus: { publish: mockPublish }
+}));
+
+vi.mock('@/database/repositories/FinancialTransactionRepository', () => ({
+  FinancialTransactionRepository: { reverseTransactions: mockReverseFinancial }
+}));
+
+vi.mock('@features/accounting/services/AccountingEngine', () => ({
+  AccountingEngine: { postInvoice: mockPostAccounting }
 }));
 
 import { salesCancellationWorkflow } from './SalesCancellationWorkflow';
@@ -69,10 +79,25 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     tx = {
       table: (name: string) => ({
         get: vi.fn().mockResolvedValue(name === 'invoices' ? invoice : undefined),
-        put: invoicePut
+        put: invoicePut,
+        update: vi.fn().mockResolvedValue(1),
+        where: vi.fn().mockReturnValue({
+          equals: vi.fn().mockReturnValue({
+            and: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([{
+                id: 'JE-CANCEL-001',
+                sourceType: 'SALE',
+                tenantId: ctx.tenantId,
+                branchId: ctx.branchId
+              }])
+            })
+          })
+        })
       })
     };
     mockExecuteReversal.mockResolvedValue([{ success: true, transactionId: 'REV-001', productId: 'PRODUCT-001', delta: 2 }]);
+    mockReverseFinancial.mockResolvedValue({ reversedCount: 1, reversalIds: ['FT-REV-CANCEL-001'] });
+    mockPostAccounting.mockResolvedValue(undefined);
     mockEnqueueWithinTransaction.mockResolvedValue({
       mutationId: 'MUT-CANCEL-001',
       idempotencyKey: ctx.idempotencyKey
@@ -93,6 +118,24 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
       branchId: ctx.branchId,
       periodVerification
     }), tx);
+    expect(mockReverseFinancial).toHaveBeenCalledWith(
+      invoice.id,
+      tx,
+      ctx.idempotencyKey,
+      ctx.tenantId,
+      ctx.branchId,
+      { requireActiveTransaction: true, referenceTable: 'Sales_Invoices' }
+    );
+    expect(mockPostAccounting).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: invoice.id,
+        type: 'SALE',
+        isReversal: true,
+        transactionUuid: ctx.idempotencyKey
+      }),
+      undefined,
+      tx
+    );
     expect(invoicePut).toHaveBeenCalledWith(expect.objectContaining({
       id: invoice.id,
       documentStatus: 'CANCELLED',
@@ -105,6 +148,30 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
       ctx.idempotencyKey,
       { tenantId: ctx.tenantId, branchId: ctx.branchId }
     );
+  });
+
+  it('fails closed when a posted invoice has no active scoped journal entry', async () => {
+    const missingJournalTx = {
+      table: (name: string) => ({
+        get: vi.fn().mockResolvedValue(name === 'invoices' ? invoice : undefined),
+        put: invoicePut,
+        update: vi.fn().mockResolvedValue(1),
+        where: vi.fn().mockReturnValue({
+          equals: vi.fn().mockReturnValue({
+            and: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) })
+          })
+        })
+      })
+    };
+
+    await expect(
+      salesCancellationWorkflow.executeDomainSteps({ invoiceId: invoice.id }, ctx as any, missingJournalTx)
+    ).rejects.toThrow('ACCOUNTING_REVERSAL_SOURCE_MISSING');
+
+    expect(mockReverseFinancial).not.toHaveBeenCalled();
+    expect(mockPostAccounting).not.toHaveBeenCalled();
+    expect(mockExecuteReversal).not.toHaveBeenCalled();
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
   });
 
   it('rejects an already-cancelled invoice inside the transaction before any side effects', async () => {
