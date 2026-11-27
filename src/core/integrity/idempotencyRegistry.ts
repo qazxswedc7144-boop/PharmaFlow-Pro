@@ -130,6 +130,92 @@ export class IdempotencyRegistry {
   }
 
   /**
+   * Atomically claims a stale PROCESSING record for a single recovery attempt.
+   * The expected timestamp acts as a compare-and-swap token so concurrent tabs
+   * cannot both reset and execute the same operation.
+   */
+  public static async claimStaleProcessing(args: {
+    key: string;
+    tenantId: string;
+    branchId: string;
+    expectedCreatedAt: string;
+    operationType: string;
+    entityType: string;
+    fingerprint: string;
+  }): Promise<boolean> {
+    if (
+      !args.key ||
+      !args.tenantId ||
+      !args.branchId ||
+      !args.expectedCreatedAt ||
+      args.tenantId === 'default' ||
+      args.tenantId === 'default-tenant' ||
+      args.tenantId === 'main'
+    ) {
+      throw new Error('IDEMPOTENCY_RECOVERY_CONTEXT_INVALID: trusted key, tenant, branch, and timestamp are required.');
+    }
+    if (typeof indexedDB === 'undefined' || !db?.idempotency_records || !db?.idempotencyKeys) {
+      throw new Error('IDEMPOTENCY_PERSISTENCE_UNAVAILABLE: durable IndexedDB tables are required for recovery claims.');
+    }
+
+    const effectiveKey = this.scopedKey(args.key, args.tenantId);
+    const claimedAt = new Date().toISOString();
+    let claimedRecord: IdempotencyRecord | null = null;
+
+    await db.transaction('rw', db.idempotency_records, db.idempotencyKeys, async () => {
+      const existing = await db.idempotency_records.get(effectiveKey);
+      if (
+        !existing ||
+        existing.status !== 'PROCESSING' ||
+        existing.createdAt !== args.expectedCreatedAt ||
+        existing.tenantId !== args.tenantId ||
+        existing.branchId !== args.branchId
+      ) {
+        return;
+      }
+
+      const updated: IdempotencyRecord = {
+        ...existing,
+        createdAt: claimedAt,
+        operationType: args.operationType,
+        entityType: args.entityType,
+        fingerprint: args.fingerprint
+      };
+      await db.idempotency_records.put(updated);
+      await db.idempotencyKeys.put({
+        id: effectiveKey,
+        status: 'PROCESSING',
+        createdAt: claimedAt,
+        tenantId: args.tenantId,
+        branchId: args.branchId
+      });
+
+      const persisted = await db.idempotency_records.get(effectiveKey);
+      const legacyPersisted = await db.idempotencyKeys.get(effectiveKey);
+      if (
+        !persisted ||
+        persisted.status !== 'PROCESSING' ||
+        persisted.createdAt !== claimedAt ||
+        persisted.tenantId !== args.tenantId ||
+        persisted.branchId !== args.branchId ||
+        !legacyPersisted ||
+        legacyPersisted.status !== 'PROCESSING' ||
+        legacyPersisted.createdAt !== claimedAt ||
+        legacyPersisted.tenantId !== args.tenantId ||
+        legacyPersisted.branchId !== args.branchId
+      ) {
+        throw new Error('IDEMPOTENCY_RECOVERY_CLAIM_VERIFY_FAILED: the stale marker claim could not be verified.');
+      }
+
+      claimedRecord = updated;
+    });
+
+    if (!claimedRecord) return false;
+    this.inMemoryStore.set(effectiveKey, claimedRecord);
+    return true;
+  }
+
+  /**
    * Updates status of an existing idempotency record
    */
   public static async updateStatus(
