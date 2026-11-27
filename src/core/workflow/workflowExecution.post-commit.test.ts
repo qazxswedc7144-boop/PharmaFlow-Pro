@@ -9,6 +9,7 @@ const {
   mockGet,
   mockExecuteDomainSteps,
   mockExecuteWithGuard,
+  mockExecuteAtomic,
 } = vi.hoisted(() => ({
   mockEmit: vi.fn(),
   mockInvalidate: vi.fn(),
@@ -18,6 +19,7 @@ const {
   mockGet: vi.fn(),
   mockExecuteDomainSteps: vi.fn(),
   mockExecuteWithGuard: vi.fn(),
+  mockExecuteAtomic: vi.fn(),
 }));
 
 vi.mock('@/core/workflow/workflowAuthorization', () => ({
@@ -49,7 +51,7 @@ vi.mock('@/core/integrity/executionGuard', () => ({
 
 vi.mock('@/core/integrity/transactionBoundary', () => ({
   TransactionBoundary: {
-    executeAtomic: vi.fn(async (_tables: string[], operation: (tx: unknown) => Promise<unknown>) => operation({})),
+    executeAtomic: mockExecuteAtomic,
   },
 }));
 
@@ -114,6 +116,7 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     vi.mocked(LockRepository.checkStrict).mockResolvedValue(false);
     mockExecuteDomainSteps.mockResolvedValue({ refId: 'invoice-post-commit-test' });
     mockExecuteWithGuard.mockImplementation(async (_options: unknown, operation: () => Promise<unknown>) => operation());
+    mockExecuteAtomic.mockImplementation(async (_tables: string[], operation: (tx: unknown) => Promise<unknown>) => operation({}));
   });
 
   it('recovers a stale PROCESSING marker when durable domain state proves the workflow committed', async () => {
@@ -333,6 +336,37 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     );
     expect(mockDelete).not.toHaveBeenCalled();
   });
+  it('reconciles durable commit when the transaction boundary throws after its operation completes', async () => {
+    const recoveredResult = { refId: 'invoice-committed-before-boundary-error' };
+    const reconcileProcessing = vi.fn().mockResolvedValue({
+      status: 'COMMITTED',
+      result: recoveredResult
+    });
+    const recoverableWorkflow = { ...workflow, reconcileProcessing };
+    mockExecuteAtomic.mockImplementationOnce(async (_tables: string[], operation: (tx: unknown) => Promise<unknown>) => {
+      await operation({});
+      throw new Error('TRANSACTION_COMPLETION_CALLBACK_FAILED_AFTER_COMMIT');
+    });
+
+    const result = await WorkflowExecutionPipeline.run(
+      recoverableWorkflow as any,
+      {},
+      context as any
+    );
+
+    expect(reconcileProcessing).toHaveBeenCalledTimes(1);
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      context.idempotencyKey,
+      'COMMITTED',
+      recoveredResult,
+      undefined,
+      context.tenantId
+    );
+    expect(mockDelete).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(recoveredResult);
+  });
+
   it('does not delete or leave idempotency processing when the guard throws after the transaction commits', async () => {
     mockExecuteWithGuard.mockImplementationOnce(async (_options: unknown, operation: () => Promise<unknown>) => {
       await operation();
