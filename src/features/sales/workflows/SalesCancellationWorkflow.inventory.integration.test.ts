@@ -5,6 +5,11 @@ const TENANT_ID = 'tenant-cancellation-integration';
 const BRANCH_ID = 'branch-cancellation-integration';
 const USER_ID = 'user-cancellation-integration';
 const PRODUCT_ID = 'product-cancellation-integration';
+const CUSTOMER_ID = 'customer-cancellation-integration';
+const AR_ACCOUNT_ID = 'account-receivable-cancellation-integration';
+const REVENUE_ACCOUNT_ID = 'account-revenue-cancellation-integration';
+const ORIGINAL_JOURNAL_ID = 'journal-sale-cancellation-integration';
+const ORIGINAL_FINANCIAL_ID = 'financial-sale-cancellation-integration';
 const INVOICE_ID = 'sale-cancellation-integration';
 const WAREHOUSE_ID = 'warehouse-cancellation-integration';
 const FIFO_LAYER_ID = 'fifo-layer-cancellation-integration';
@@ -125,16 +130,109 @@ async function seedCancellationState(includeOriginalMovement: boolean): Promise<
     tenant_id: TENANT_ID
   } as any);
 
-  await db.invoices.put({
+  const invoice = {
     id: INVOICE_ID,
     type: 'SALE',
     documentStatus: 'POSTED',
+    document_status: 'POSTED',
     status: 'POSTED',
     InvoiceStatus: 'POSTED',
+    invoiceStatus: 'POSTED',
     tenantId: TENANT_ID,
     branchId: BRANCH_ID,
+    partnerId: CUSTOMER_ID,
     total: 50,
+    totalAmount: 50,
+    finalTotal: 50,
+    paymentStatus: 'Credit',
     items: [{ productId: PRODUCT_ID, quantity: 1, unitPrice: 50, total: 50 }]
+  };
+  await db.invoices.put(invoice as any);
+  await db.sales.put(invoice as any);
+
+  await db.customers.put({
+    id: CUSTOMER_ID,
+    tenantId: TENANT_ID,
+    tenant_id: TENANT_ID,
+    balance: 50,
+    is_active: true
+  } as any);
+
+  await db.accounts.put({
+    id: AR_ACCOUNT_ID,
+    tenantId: TENANT_ID,
+    branchId: BRANCH_ID,
+    name: 'Accounts Receivable',
+    balance: 50,
+    type: 'ASSET'
+  } as any);
+  await db.accounts.put({
+    id: REVENUE_ACCOUNT_ID,
+    tenantId: TENANT_ID,
+    branchId: BRANCH_ID,
+    name: 'Sales Revenue',
+    balance: -50,
+    type: 'REVENUE'
+  } as any);
+
+  const originalJournalLines = [
+    {
+      id: `${ORIGINAL_JOURNAL_ID}-LINE-1`,
+      lineId: `${ORIGINAL_JOURNAL_ID}-LINE-1`,
+      entryId: ORIGINAL_JOURNAL_ID,
+      entry_id: ORIGINAL_JOURNAL_ID,
+      accountId: AR_ACCOUNT_ID,
+      account_id: AR_ACCOUNT_ID,
+      debit: 50,
+      credit: 0,
+      type: 'DEBIT',
+      amount: 50,
+      tenantId: TENANT_ID,
+      branchId: BRANCH_ID
+    },
+    {
+      id: `${ORIGINAL_JOURNAL_ID}-LINE-2`,
+      lineId: `${ORIGINAL_JOURNAL_ID}-LINE-2`,
+      entryId: ORIGINAL_JOURNAL_ID,
+      entry_id: ORIGINAL_JOURNAL_ID,
+      accountId: REVENUE_ACCOUNT_ID,
+      account_id: REVENUE_ACCOUNT_ID,
+      debit: 0,
+      credit: 50,
+      type: 'CREDIT',
+      amount: 50,
+      tenantId: TENANT_ID,
+      branchId: BRANCH_ID
+    }
+  ];
+  await db.journalEntries.put({
+    id: ORIGINAL_JOURNAL_ID,
+    sourceId: INVOICE_ID,
+    sourceType: 'SALE',
+    tenantId: TENANT_ID,
+    branchId: BRANCH_ID,
+    status: 'Posted',
+    TotalAmount: 50,
+    lines: originalJournalLines
+  } as any);
+  await db.journalLines.bulkPut(originalJournalLines as any);
+
+  await db.financialTransactions.put({
+    id: ORIGINAL_FINANCIAL_ID,
+    Transaction_ID: ORIGINAL_FINANCIAL_ID,
+    Reference_ID: INVOICE_ID,
+    Reference_Table: 'Sales_Invoices',
+    Transaction_Type: 'Invoice',
+    Entity_Type: 'Customer',
+    Entity_Name: CUSTOMER_ID,
+    Amount: 50,
+    Paid_Amount: 50,
+    Direction: 'Debit',
+    Transaction_Date: '2026-11-27T00:00:00.000Z',
+    tenantId: TENANT_ID,
+    branchId: BRANCH_ID,
+    isDeleted: false,
+    isReversal: false
   } as any);
 
   if (!includeOriginalMovement) return;
@@ -226,11 +324,27 @@ describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration'
 
     expect(result).toEqual({ success: true, invoiceId: INVOICE_ID });
     expect((await db.invoices.get(INVOICE_ID))?.documentStatus).toBe('CANCELLED');
+    expect((await db.sales.get(INVOICE_ID))?.InvoiceStatus).toBe('CANCELLED');
+    expect((await db.customers.get(CUSTOMER_ID))?.balance).toBe(0);
     expect((await db.products.get(PRODUCT_ID))?.stock).toBe(10);
     expect((await db.warehouseStock.get('warehouse-stock-cancellation-integration'))?.quantity).toBe(10);
     expect((await db.branchInventory.get('branch-inventory-cancellation-integration'))?.stockQuantity).toBe(10);
     expect((await db.inventory_layers.get(FIFO_LAYER_ID))?.quantity_remaining).toBe(10);
     expect(await db.fifo_consumption_log.count()).toBe(0);
+
+    const originalJournal = await db.journalEntries.get(ORIGINAL_JOURNAL_ID);
+    expect(originalJournal?.reversedBy).toBe(`REV-${ORIGINAL_JOURNAL_ID}-${context.idempotencyKey}`);
+    const reversalJournal = await db.journalEntries.get(`REV-${ORIGINAL_JOURNAL_ID}-${context.idempotencyKey}`);
+    expect(reversalJournal?.sourceType).toBe('AUTO_REVERSAL');
+    expect((await db.accounts.get(AR_ACCOUNT_ID))?.balance).toBe(0);
+    expect((await db.accounts.get(REVENUE_ACCOUNT_ID))?.balance).toBe(0);
+
+    const originalFinancial = await db.financialTransactions.get(ORIGINAL_FINANCIAL_ID);
+    expect(originalFinancial?.isDeleted).toBe(true);
+    expect(originalFinancial?.reversedBy).toBe(`FT-REV-${ORIGINAL_FINANCIAL_ID}-${context.idempotencyKey}`);
+    const financialReversal = await db.financialTransactions.get(`FT-REV-${ORIGINAL_FINANCIAL_ID}-${context.idempotencyKey}`);
+    expect(financialReversal?.isReversal).toBe(true);
+    expect(financialReversal?.Direction).toBe('Credit');
 
     const movements = await db.inventoryTransactions.where('source_doc_id').equals(INVOICE_ID).toArray();
     const reversal = movements.find((movement: any) => movement.TransactionType === 'REVERSAL');
@@ -253,6 +367,11 @@ describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration'
     await expect(executeCancellation()).rejects.toThrow('INVENTORY_REVERSAL_INCOMPLETE');
 
     expect((await db.invoices.get(INVOICE_ID))?.documentStatus).toBe('POSTED');
+    expect((await db.sales.get(INVOICE_ID))?.InvoiceStatus).toBe('POSTED');
+    expect((await db.customers.get(CUSTOMER_ID))?.balance).toBe(50);
+    expect((await db.journalEntries.get(ORIGINAL_JOURNAL_ID))?.reversedBy).toBeUndefined();
+    expect((await db.financialTransactions.get(ORIGINAL_FINANCIAL_ID))?.isDeleted).toBe(false);
+    expect((await db.accounts.get(AR_ACCOUNT_ID))?.balance).toBe(50);
     expect((await db.products.get(PRODUCT_ID))?.stock).toBe(9);
     expect((await db.warehouseStock.get('warehouse-stock-cancellation-integration'))?.quantity).toBe(9);
     expect((await db.branchInventory.get('branch-inventory-cancellation-integration'))?.stockQuantity).toBe(9);
@@ -269,6 +388,11 @@ describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration'
 
     outboxAdd.mockRestore();
     expect((await db.invoices.get(INVOICE_ID))?.documentStatus).toBe('POSTED');
+    expect((await db.sales.get(INVOICE_ID))?.InvoiceStatus).toBe('POSTED');
+    expect((await db.customers.get(CUSTOMER_ID))?.balance).toBe(50);
+    expect((await db.journalEntries.get(ORIGINAL_JOURNAL_ID))?.reversedBy).toBeUndefined();
+    expect((await db.financialTransactions.get(ORIGINAL_FINANCIAL_ID))?.isDeleted).toBe(false);
+    expect((await db.accounts.get(AR_ACCOUNT_ID))?.balance).toBe(50);
     expect((await db.products.get(PRODUCT_ID))?.stock).toBe(9);
     expect((await db.warehouseStock.get('warehouse-stock-cancellation-integration'))?.quantity).toBe(9);
     expect((await db.branchInventory.get('branch-inventory-cancellation-integration'))?.stockQuantity).toBe(9);
