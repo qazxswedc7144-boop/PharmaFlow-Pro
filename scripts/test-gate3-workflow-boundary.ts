@@ -62,8 +62,8 @@ async function runGate3TestSuite() {
       User_Role: role,
       tenantId,
       tenant_id: tenantId,
-      branchId: 'main',
-      branch_id: 'main',
+      branchId: 'BR-GATE3-001',
+      branch_id: 'BR-GATE3-001',
       permissions
     };
     TokenProvider.setSession(userObj as any, 'mock-jwt-token-gate3', 'mock-refresh-token-gate3');
@@ -71,7 +71,7 @@ async function runGate3TestSuite() {
       user: userObj as any,
       token: 'mock-jwt-token-gate3',
       tenantId,
-      branchId: 'main',
+      branchId: 'BR-GATE3-001',
       roles: [role],
       permissions,
       isAuthenticated: true,
@@ -93,6 +93,43 @@ async function runGate3TestSuite() {
     });
   };
 
+  // Pre-seed a tenant-owned, non-default branch for fail-closed workflow tests.
+  await db.branches.put({
+    id: 'BR-GATE3-001',
+    code: 'BR-GATE3-001',
+    name: 'Gate 3 Test Branch',
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    isActive: true,
+    is_active: true
+  } as any);
+
+  // The Gate 3 harness uses fake-indexeddb. Stub only the authoritative accounting
+  // period endpoint; all other network calls retain the original fetch behavior.
+  const originalGate3Fetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const requestUrl = typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.href
+        : String(input?.url || '');
+    if (requestUrl.endsWith('/api/accounting/periods')) {
+      return new Response(JSON.stringify({
+        success: true,
+        periods: [{
+          clientId: 'PER-GATE3-2026',
+          startDate: '2026-01-01T00:00:00.000Z',
+          endDate: '2026-12-31T23:59:59.999Z',
+          isLocked: false
+        }]
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    return originalGate3Fetch(input, init);
+  }) as typeof fetch;
+
   // Pre-seed mock database records
   await db.products.put({
     id: 'PRD-GATE3-1',
@@ -107,7 +144,11 @@ async function runGate3TestSuite() {
     cost: 20,
     is_active: true,
     isActive: true,
-    status: 'ACTIVE'
+    status: 'ACTIVE',
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    branchId: 'BR-GATE3-001',
+    branch_id: 'BR-GATE3-001'
   });
 
   await db.warehouseStock.put({
@@ -115,7 +156,10 @@ async function runGate3TestSuite() {
     warehouseId: 'WH-MAIN',
     productId: 'PRD-GATE3-1',
     quantity: 500,
-    lastUpdated: new Date().toISOString()
+    lastUpdated: new Date().toISOString(),
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    branchId: 'BR-GATE3-001'
   });
 
   await db.warehouseStock.put({
@@ -123,7 +167,10 @@ async function runGate3TestSuite() {
     warehouseId: 'MAIN',
     productId: 'PRD-GATE3-1',
     quantity: 500,
-    lastUpdated: new Date().toISOString()
+    lastUpdated: new Date().toISOString(),
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    branchId: 'BR-GATE3-001'
   });
 
   await db.customers.put({
@@ -131,7 +178,10 @@ async function runGate3TestSuite() {
     name: 'Al-Amal Pharmacy Customer',
     Name: 'Al-Amal Pharmacy Customer',
     balance: 0,
-    is_active: true
+    is_active: true,
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    branchId: 'BR-GATE3-001'
   });
 
   await db.suppliers.put({
@@ -139,8 +189,101 @@ async function runGate3TestSuite() {
     name: 'Pharma Med Supplies',
     Name: 'Pharma Med Supplies',
     balance: 0,
-    is_active: true
+    is_active: true,
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    branchId: 'BR-GATE3-001'
   });
+
+  // Dedicated posted sale fixture with a real stock ledger movement and FIFO consumption.
+  await db.products.put({
+    id: 'PRD-GATE3-CANCEL',
+    productId: 'PRD-GATE3-CANCEL',
+    name: 'Gate 3 Cancellation Product',
+    Name: 'Gate 3 Cancellation Product',
+    stock: 499,
+    StockQuantity: 499,
+    cost: 20,
+    costPrice: 20,
+    is_active: true,
+    isActive: true,
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    branchId: 'BR-GATE3-001',
+    branch_id: 'BR-GATE3-001'
+  } as any);
+  await db.warehouseStock.put({
+    id: 'WHS-WH-MAIN-PRD-GATE3-CANCEL',
+    warehouseId: 'WH-MAIN',
+    productId: 'PRD-GATE3-CANCEL',
+    quantity: 499,
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    branchId: 'BR-GATE3-001',
+    lastUpdated: new Date().toISOString()
+  } as any);
+  await db.branchInventory.put({
+    id: 'INV-BR-GATE3-001-PRD-GATE3-CANCEL',
+    branchId: 'BR-GATE3-001',
+    productId: 'PRD-GATE3-CANCEL',
+    stockQuantity: 499,
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default'
+  } as any);
+  await db.inventory_layers.put({
+    id: 'LYR-GATE3-CANCEL',
+    product_id: 'PRD-GATE3-CANCEL',
+    item_id: 'PRD-GATE3-CANCEL',
+    quantity_initial: 500,
+    quantity_remaining: 499,
+    unit_cost: 20,
+    reference_id: 'PUR-GATE3-CANCEL',
+    purchase_id: 'PUR-GATE3-CANCEL',
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    created_at: new Date().toISOString()
+  } as any);
+  await db.fifo_consumption_log.put({
+    id: 'FCL-GATE3-CANCEL',
+    sale_id: 'SALE-GATE3-CANCEL',
+    invoice_id: 'SALE-GATE3-CANCEL',
+    layer_id: 'LYR-GATE3-CANCEL',
+    product_id: 'PRD-GATE3-CANCEL',
+    item_id: 'PRD-GATE3-CANCEL',
+    quantity_consumed: 1,
+    unit_cost: 20,
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default'
+  } as any);
+  await db.inventoryTransactions.put({
+    id: 'ITX-GATE3-CANCEL-ORIGINAL',
+    TransactionID: 'ITX-GATE3-CANCEL-ORIGINAL',
+    productId: 'PRD-GATE3-CANCEL',
+    product_id: 'PRD-GATE3-CANCEL',
+    warehouseId: 'WH-MAIN',
+    warehouse_id: 'WH-MAIN',
+    branchId: 'BR-GATE3-001',
+    branch_id: 'BR-GATE3-001',
+    tenantId: 'tenant-default',
+    tenant_id: 'tenant-default',
+    SourceDocumentType: 'SALE',
+    sourceDocType: 'SALE',
+    SourceDocumentID: 'SALE-GATE3-CANCEL',
+    sourceDocId: 'SALE-GATE3-CANCEL',
+    source_doc_id: 'SALE-GATE3-CANCEL',
+    TransactionType: 'SALE',
+    transactionType: 'SALE',
+    transaction_type: 'SALE',
+    QuantityChange: -1,
+    quantityChange: -1,
+    before_qty: 500,
+    after_qty: 499,
+    unit_cost: 20,
+    unit_price: 50,
+    TransactionDate: new Date().toISOString(),
+    UserID: 'usr-admin-gate3',
+    idempotencyKey: 'ITX-GATE3-CANCEL-ORIGINAL'
+  } as any);
 
   // Set Default Authenticated Context
   setAuthUser();
@@ -655,7 +798,7 @@ async function runGate3TestSuite() {
       type: 'SALE',
       subtotal: 50,
       finalTotal: 50,
-      items: [{ productId: 'PRD-GATE3-1', name: 'Amox', quantity: 1, unitPrice: 50, total: 50 }],
+      items: [{ productId: 'PRD-GATE3-CANCEL', name: 'Amox', quantity: 1, unitPrice: 50, total: 50 }],
       InvoiceStatus: 'POSTED',
       documentStatus: 'POSTED'
     };
@@ -675,10 +818,44 @@ async function runGate3TestSuite() {
       reason: 'Order cancelled before delivery'
     });
 
+    const cancelledInvoice = await db.invoices.get('SALE-GATE3-CANCEL');
+    const cancellationProduct = await db.products.get('PRD-GATE3-CANCEL');
+    const cancellationWarehouse = await db.warehouseStock.get('WHS-WH-MAIN-PRD-GATE3-CANCEL');
+    const cancellationBranchStock = await db.branchInventory.get('INV-BR-GATE3-001-PRD-GATE3-CANCEL');
+    const cancellationLayer = await db.inventory_layers.get('LYR-GATE3-CANCEL');
+    const cancellationLogs = await db.fifo_consumption_log
+      .filter((log: any) => log.sale_id === 'SALE-GATE3-CANCEL')
+      .toArray();
+    const cancellationMovements = await db.inventoryTransactions
+      .where('source_doc_id')
+      .equals('SALE-GATE3-CANCEL')
+      .toArray();
+    const reversalMovement = cancellationMovements.find((movement: any) =>
+      movement.TransactionType === 'REVERSAL' &&
+      movement.reversedMovementId === 'ITX-GATE3-CANCEL-ORIGINAL'
+    );
+    const cancellationQueue = (await db.syncQueue.toArray()).filter((item: any) =>
+      item.payload?.id === 'SALE-GATE3-CANCEL' && item.operationType === 'INVOICE_CANCEL'
+    );
+    const cancellationOutbox = (await db.outbox.toArray()).filter((item: any) =>
+      item.payload?.id === 'SALE-GATE3-CANCEL' && item.operation === 'INVOICE_CANCEL'
+    );
+
     assert(
-      cancelVoucherResult.success && cancelSaleResult.success,
+      cancelVoucherResult.success &&
+      cancelSaleResult.success &&
+      cancelledInvoice?.documentStatus === 'CANCELLED' &&
+      cancellationProduct?.stock === 500 &&
+      cancellationWarehouse?.quantity === 500 &&
+      cancellationBranchStock?.stockQuantity === 500 &&
+      cancellationLayer?.quantity_remaining === 500 &&
+      cancellationLogs.length === 0 &&
+      reversalMovement?.QuantityChange === 1 &&
+      cancellationQueue.length === 1 &&
+      cancellationOutbox.length === 1 &&
+      cancellationQueue[0].mutationId === cancellationOutbox[0].mutationId,
       'TEST S: Sales & Voucher Cancellation Workflow Orchestration',
-      'Cancellation workflows must handle reversal and status change'
+      'Cancellation must reverse stock and FIFO exactly once and atomically persist invoice, Queue and Outbox'
     );
   } catch (err: any) {
     assert(false, 'TEST S: Sales & Voucher Cancellation Workflow Orchestration', err.message);
