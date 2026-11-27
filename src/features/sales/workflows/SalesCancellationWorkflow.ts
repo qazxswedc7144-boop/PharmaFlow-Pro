@@ -31,13 +31,11 @@ async function loadCancellationItems(invoice: any, invoiceId: string, tx: any): 
   ].filter((value, index, values): value is string =>
     typeof value === 'string' && value.length > 0 && values.indexOf(value) === index
   );
-  const foreignKeys = ['parent_id', 'parentId', 'invoice_id', 'invoiceId'];
-
+  // Dexie schema indexes only parent_id on invoiceItems; query only that
+  // indexed key instead of probing undeclared legacy indexes at runtime.
   for (const documentKey of documentKeys) {
-    for (const foreignKey of foreignKeys) {
-      const rows = await invoiceItemsTable.where(foreignKey).equals(documentKey).toArray();
-      if (rows.length > 0) return rows;
-    }
+    const rows = await invoiceItemsTable.where('parent_id').equals(documentKey).toArray();
+    if (rows.length > 0) return rows;
   }
 
   return [];
