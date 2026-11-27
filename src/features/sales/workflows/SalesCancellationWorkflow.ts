@@ -41,6 +41,189 @@ async function loadCancellationItems(invoice: any, invoiceId: string, tx: any): 
   return [];
 }
 
+async function reconcileCancellationProcessing(
+  input: SalesCancellationInput,
+  ctx: WorkflowContext
+): Promise<
+  | { status: 'COMMITTED'; result: SalesCancellationResult }
+  | { status: 'NOT_COMMITTED' }
+  | { status: 'UNKNOWN'; reason?: string }
+> {
+  const invoiceId = input.invoiceId;
+  const invoice = await db.invoices.get(invoiceId) ||
+    await db.sales.get(invoiceId) ||
+    await db.purchases.get(invoiceId);
+
+  const [queueRows, outboxRows, movementRows, journalRows, financialRows] = await Promise.all([
+    db.syncQueue.where('idempotencyKey').equals(ctx.idempotencyKey).toArray(),
+    db.outbox.where('idempotencyKey').equals(ctx.idempotencyKey).toArray(),
+    db.inventoryTransactions.where('source_doc_id').equals(invoiceId).toArray(),
+    db.journalEntries.where('sourceId').equals(invoiceId).toArray(),
+    db.financialTransactions.where('Reference_ID').equals(invoiceId).toArray()
+  ]);
+
+  const tenantMovements = movementRows.filter((row: any) =>
+    (row.tenantId || row.tenant_id) === ctx.tenantId &&
+    (row.branchId || row.branch_id) === ctx.branchId
+  );
+  const tenantJournalRows = journalRows.filter((row: any) =>
+    row.tenantId === ctx.tenantId && row.branchId === ctx.branchId
+  );
+  const expectedReferenceTable = String(invoice?.type || 'SALE').toUpperCase() === 'PURCHASE'
+    ? 'Purchase_Invoices'
+    : 'Sales_Invoices';
+  const tenantFinancialRows = financialRows.filter((row: any) =>
+    (row.tenantId || row.tenant_id) === ctx.tenantId &&
+    (row.branchId || row.branch_id) === ctx.branchId &&
+    row.Reference_Table === expectedReferenceTable
+  );
+
+  const reversalMovements = tenantMovements.filter((row: any) =>
+    String(row.TransactionType || row.transactionType || '').toUpperCase() === 'REVERSAL' &&
+    String(row.id || '').includes(ctx.idempotencyKey)
+  );
+  const reversalJournalRows = tenantJournalRows.filter((row: any) =>
+    row.sourceType === 'AUTO_REVERSAL' && String(row.id || '').includes(ctx.idempotencyKey)
+  );
+  const reversalFinancialRows = tenantFinancialRows.filter((row: any) =>
+    row.isReversal === true && String(row.id || '').includes(ctx.idempotencyKey)
+  );
+  const scopedQueueRows = queueRows.filter((row: any) =>
+    (row.tenantId || row.tenant_id) === ctx.tenantId &&
+    (row.branchId || row.branch_id) === ctx.branchId
+  );
+  const scopedOutboxRows = outboxRows.filter((row: any) =>
+    (row.tenantId || row.tenant_id) === ctx.tenantId &&
+    (row.branchId || row.branch_id) === ctx.branchId
+  );
+
+  const hasAnyCommittedEffect =
+    scopedQueueRows.length > 0 ||
+    scopedOutboxRows.length > 0 ||
+    reversalMovements.length > 0 ||
+    reversalJournalRows.length > 0 ||
+    reversalFinancialRows.length > 0;
+
+  if (!invoice) {
+    return hasAnyCommittedEffect
+      ? { status: 'UNKNOWN', reason: 'Durable side effects exist but the invoice record is missing.' }
+      : { status: 'NOT_COMMITTED' };
+  }
+
+  const currentStatus = String(
+    invoice.documentStatus || invoice.status || invoice.InvoiceStatus || ''
+  ).toUpperCase();
+
+  if (currentStatus !== 'CANCELLED') {
+    return hasAnyCommittedEffect
+      ? { status: 'UNKNOWN', reason: 'Some cancellation effects exist while the invoice is not marked CANCELLED.' }
+      : { status: 'NOT_COMMITTED' };
+  }
+
+  const metadata = (invoice as any).cancellationMetadata;
+  if (!metadata || metadata.idempotencyKey !== ctx.idempotencyKey) {
+    return { status: 'UNKNOWN', reason: 'Cancelled invoice does not carry the matching cancellation idempotency metadata.' };
+  }
+
+  if (
+    scopedQueueRows.length !== 1 ||
+    scopedOutboxRows.length !== 1 ||
+    scopedQueueRows[0].operationType !== 'INVOICE_CANCEL' ||
+    scopedOutboxRows[0].operation !== 'INVOICE_CANCEL' ||
+    scopedQueueRows[0].entityType !== 'INVOICE' ||
+    scopedOutboxRows[0].entityType !== 'INVOICE' ||
+    scopedQueueRows[0].mutationId !== scopedOutboxRows[0].mutationId ||
+    scopedQueueRows[0].payload?.id !== invoiceId ||
+    scopedOutboxRows[0].payload?.id !== invoiceId
+  ) {
+    return { status: 'UNKNOWN', reason: 'Cancellation Queue/Outbox pair is missing, duplicated, or inconsistent.' };
+  }
+
+  const invoiceType = String((invoice as any).type || 'SALE').toUpperCase();
+  const legacyRecord = invoiceType === 'PURCHASE'
+    ? await db.purchases.get(invoiceId)
+    : await db.sales.get(invoiceId);
+  if (legacyRecord) {
+    const legacyStatus = String(
+      legacyRecord.documentStatus || legacyRecord.status ||
+      legacyRecord.InvoiceStatus || legacyRecord.invoiceStatus || ''
+    ).toUpperCase();
+    if (legacyStatus !== 'CANCELLED') {
+      return { status: 'UNKNOWN', reason: 'Legacy sales/purchases read model is not marked CANCELLED.' };
+    }
+  }
+
+  const originalMovements = tenantMovements.filter((row: any) =>
+    String(row.TransactionType || row.transactionType || '').toUpperCase() !== 'REVERSAL'
+  );
+  for (const original of originalMovements) {
+    const reversal = reversalMovements.find((row: any) =>
+      row.reversedMovementId === original.id &&
+      row.productId === original.productId
+    );
+    if (!reversal) {
+      return { status: 'UNKNOWN', reason: `Original stock movement ${original.id} has no matching reversal.` };
+    }
+  }
+
+  const items = Array.isArray((invoice as any).items)
+    ? (invoice as any).items
+    : await db.invoiceItems.where('parent_id').equals(invoiceId).toArray();
+  const hasStockTrackedItems = items.some((item: any) => {
+    const quantity = Number(item.quantity ?? item.qty ?? 0);
+    return Boolean(item.productId || item.product_id) &&
+      item.trackStock !== false &&
+      item.isService !== true &&
+      (item.type || item.itemType) !== 'SERVICE' &&
+      Number.isFinite(quantity) &&
+      quantity > 0;
+  });
+  if (
+    (metadata.previousStatus === 'POSTED' || metadata.previousStatus === 'LOCKED') &&
+    hasStockTrackedItems &&
+    originalMovements.length === 0
+  ) {
+    return { status: 'UNKNOWN', reason: 'Posted stock-tracked invoice has no original movements to reconcile.' };
+  }
+
+  if (metadata.previousStatus === 'POSTED' || metadata.previousStatus === 'LOCKED') {
+    const originalJournalEntries = tenantJournalRows.filter((row: any) => row.sourceType !== 'AUTO_REVERSAL');
+    if (originalJournalEntries.length === 0) {
+      return { status: 'UNKNOWN', reason: 'Posted invoice has no original journal entries.' };
+    }
+    for (const original of originalJournalEntries) {
+      const reversalId = original.reversedBy;
+      const reversal = reversalId ? await db.journalEntries.get(reversalId) : null;
+      if (
+        !reversal ||
+        reversal.sourceType !== 'AUTO_REVERSAL' ||
+        reversal.reversalOf !== original.id ||
+        reversal.tenantId !== ctx.tenantId ||
+        reversal.branchId !== ctx.branchId
+      ) {
+        return { status: 'UNKNOWN', reason: `Journal entry ${original.id} is not fully reversed.` };
+      }
+    }
+
+    const originalFinancialRows = tenantFinancialRows.filter((row: any) => row.isReversal !== true);
+    if (originalFinancialRows.length === 0) {
+      return { status: 'UNKNOWN', reason: 'Posted invoice has no original financial transaction rows.' };
+    }
+    for (const original of originalFinancialRows) {
+      const reversalId = original.reversedBy;
+      const reversal = reversalId ? await db.financialTransactions.get(reversalId) : null;
+      if (!original.isDeleted || !reversal || reversal.isReversal !== true) {
+        return { status: 'UNKNOWN', reason: `Financial transaction ${original.id} is not fully reversed.` };
+      }
+    }
+  }
+
+  return {
+    status: 'COMMITTED',
+    result: { success: true, invoiceId }
+  };
+}
+
 async function reversePostedFinancialEffects(
   invoice: any,
   invoiceType: 'SALE' | 'PURCHASE',
@@ -209,6 +392,13 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     return [ctx.startedAt];
   }
 
+  public async reconcileProcessing(
+    input: SalesCancellationInput,
+    ctx: WorkflowContext
+  ) {
+    return reconcileCancellationProcessing(input, ctx);
+  }
+
   public async executeDomainSteps(
     input: SalesCancellationInput,
     ctx: WorkflowContext,
@@ -348,7 +538,13 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
       invoiceStatus: 'CANCELLED',
       status: 'CANCELLED',
       updatedAt: cancelledAt,
-      lastModified: cancelledAt
+      lastModified: cancelledAt,
+      cancellationMetadata: {
+        previousStatus: currentStatus,
+        idempotencyKey: ctx.idempotencyKey,
+        originalDocumentType,
+        cancelledAt
+      }
     };
     await invoicesTable.put(updatedInvoice as any);
 
