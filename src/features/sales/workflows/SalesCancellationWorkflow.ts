@@ -69,6 +69,16 @@ async function reversePostedFinancialEffects(
     );
   }
 
+  const rawTotal = (invoice as any).finalTotal ??
+    (invoice as any).totalAmount ??
+    (invoice as any).total;
+  const total = Number(rawTotal);
+  if (!Number.isFinite(total) || total <= 0) {
+    throw new Error(
+      'CANCELLATION_FINANCIAL_AMOUNT_INVALID: A posted invoice with a missing, zero, or invalid total requires financial review before cancellation.'
+    );
+  }
+
   const referenceTable = invoiceType === 'SALE' ? 'Sales_Invoices' : 'Purchase_Invoices';
   const financialReversal = await FinancialTransactionRepository.reverseTransactions(
     invoiceId,
@@ -79,9 +89,31 @@ async function reversePostedFinancialEffects(
     { requireActiveTransaction: true, referenceTable }
   );
 
-  if (!financialReversal || financialReversal.reversedCount === 0) {
+  if (!financialReversal || financialReversal.reversedCount === 0 ||
+      financialReversal.reversalIds.length !== financialReversal.reversedCount) {
     throw new Error(
-      'FINANCIAL_TRANSACTION_REVERSAL_NO_OP: Posted invoice cancellation requires at least one verified financial reversal.'
+      'FINANCIAL_TRANSACTION_REVERSAL_NO_OP: Posted invoice cancellation requires verified financial reversal records.'
+    );
+  }
+
+  const financialTransactionsTable = tx.table('financialTransactions');
+  const financialReversals = await Promise.all(
+    financialReversal.reversalIds.map((reversalId: string) => financialTransactionsTable.get(reversalId))
+  );
+  if (financialReversals.some((reversal: any) => !reversal || reversal.isReversal !== true)) {
+    throw new Error(
+      'FINANCIAL_TRANSACTION_REVERSAL_VERIFY_FAILED: One or more financial reversal records could not be read back.'
+    );
+  }
+
+  const expectedEntityType = invoiceType === 'SALE' ? 'Customer' : 'Supplier';
+  const entityNames = new Set(
+    financialReversals.map((reversal: any) => String(reversal.Entity_Name || '').trim())
+  );
+  if (financialReversals.some((reversal: any) => reversal.Entity_Type !== expectedEntityType) ||
+      entityNames.size !== 1 || entityNames.has('')) {
+    throw new Error(
+      'FINANCIAL_TRANSACTION_PARTNER_MISMATCH: Financial reversal partner identity is inconsistent with the invoice type.'
     );
   }
 
@@ -101,56 +133,37 @@ async function reversePostedFinancialEffects(
   );
 
   const isReturn = (invoice as any).isReturn === true;
-  const rawTotal = (invoice as any).finalTotal ??
-    (invoice as any).totalAmount ??
-    (invoice as any).total;
-  const total = Number(rawTotal);
-  if (!Number.isFinite(total) || total <= 0) {
-    throw new Error(
-      'CANCELLATION_FINANCIAL_AMOUNT_INVALID: A posted invoice with a missing, zero, or invalid total requires financial review before cancellation.'
-    );
-  }
-
-  const partnerId = String(
-    (invoice as any).customerId ||
-    (invoice as any).supplierId ||
-    (invoice as any).partnerId ||
-    (invoice as any).partner_id ||
-    ''
-  ).trim();
   const balanceDelta = isReturn ? total : -total;
+  const financialPartnerId = [...entityNames][0];
 
-  if (invoiceType === 'SALE' && partnerId && partnerId !== 'عميل نقدي' && partnerId !== 'CUST-GEN') {
-    const customer = await tx.table('customers').get(partnerId);
+  if (invoiceType === 'SALE' && financialPartnerId !== 'عميل نقدي') {
+    const customer = await tx.table('customers').get(financialPartnerId);
     if (!customer) {
-      throw new Error(`CANCELLATION_CUSTOMER_NOT_FOUND: Customer ${partnerId} is missing; balance reversal is unsafe.`);
+      throw new Error(`CANCELLATION_CUSTOMER_NOT_FOUND: Customer ${financialPartnerId} is missing; balance reversal is unsafe.`);
     }
     const customerTenant = customer.tenantId || customer.tenant_id;
     if (customerTenant && customerTenant !== ctx.tenantId) {
       throw new Error('CROSS_TENANT_CUSTOMER_FORBIDDEN: Cancellation cannot change another tenant customer balance.');
     }
-    await db.updateCustomerBalance(partnerId, balanceDelta, tx);
+    await db.updateCustomerBalance(financialPartnerId, balanceDelta, tx);
   }
 
-  if (invoiceType === 'PURCHASE' &&
-      partnerId &&
-      partnerId !== 'مورد نقدي' &&
-      partnerId !== 'SUPP-GEN') {
+  if (invoiceType === 'PURCHASE' && financialPartnerId !== 'مورد نقدي') {
     const paymentStatus = String(
       (invoice as any).paymentStatus ??
       (invoice as any).payment_status ??
       ''
     ).trim().toUpperCase();
     if (paymentStatus !== 'CASH' && (invoice as any).isCash !== true) {
-      const supplier = await tx.table('suppliers').get(partnerId);
+      const supplier = await tx.table('suppliers').get(financialPartnerId);
       if (!supplier) {
-        throw new Error(`CANCELLATION_SUPPLIER_NOT_FOUND: Supplier ${partnerId} is missing; balance reversal is unsafe.`);
+        throw new Error(`CANCELLATION_SUPPLIER_NOT_FOUND: Supplier ${financialPartnerId} is missing; balance reversal is unsafe.`);
       }
       const supplierTenant = supplier.tenantId || supplier.tenant_id;
       if (supplierTenant && supplierTenant !== ctx.tenantId) {
         throw new Error('CROSS_TENANT_SUPPLIER_FORBIDDEN: Cancellation cannot change another tenant supplier balance.');
       }
-      await db.updateSupplierBalance(partnerId, balanceDelta, tx);
+      await db.updateSupplierBalance(financialPartnerId, balanceDelta, tx);
     }
   }
 }
