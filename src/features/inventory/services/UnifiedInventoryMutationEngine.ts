@@ -496,13 +496,18 @@ export class UnifiedInventoryMutationEngine {
         ).trim().toUpperCase();
         if (transactionType === 'REVERSAL') return false;
 
-        const sourceDocumentType = String(
+        const explicitSourceType = String(
           movement.SourceDocumentType ||
           movement.sourceDocType ||
           movement.source_doc_type ||
           movement.docType ||
-          transactionType
+          ''
         ).trim().toUpperCase();
+        const recognizedDocumentTypes = [
+          'SALE', 'PURCHASE', 'SALE_RETURN', 'PURCHASE_RETURN', 'ADJUSTMENT', 'TRANSFER'
+        ];
+        const sourceDocumentType = explicitSourceType ||
+          (recognizedDocumentTypes.includes(transactionType) ? transactionType : '');
 
         return Boolean(expectedDocumentType && sourceDocumentType && sourceDocumentType !== expectedDocumentType);
       });
