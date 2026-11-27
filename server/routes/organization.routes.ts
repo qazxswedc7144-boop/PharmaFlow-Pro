@@ -90,39 +90,32 @@ router.get("/users", requirePermission("users.view"), async (req, res: Response)
       return;
     }
 
-    let usersList: any[] = [];
-
-    if (prisma.isConnected && prisma.isConnected() && prisma.user) {
-      try {
-        const users = await prisma.user.findMany({
-          where: {
-            tenantUsers: {
-              some: { tenantId }
-            }
-          },
-          select: {
-            id: true,
-            username: true,
-            role: true,
-            isActive: true,
-            lastLoginAt: true,
-            createdAt: true
-          }
-        });
-        usersList = users;
-      } catch (err) {
-        console.warn('[OrgRoutes] DB users fetch fallback:', (err as Error).message);
-      }
+    if (!prisma.isConnected || !prisma.isConnected() || !prisma.user) {
+      res.status(503).json({ success: false, error: "قاعدة البيانات غير متاحة حالياً" });
+      return;
     }
 
-    if (usersList.length === 0) {
-      // Mock / fallback users
-      usersList = [
-        { id: "usr-01", username: "admin_pharmacy", role: "TENANT_ADMIN", isActive: true, branchName: "الفرع الرئيسي", branchId: "branch-01", lastLoginAt: new Date() },
-        { id: "usr-02", username: "pharmacist_ahmed", role: "PHARMACIST", isActive: true, branchName: "فرع الأمل", branchId: "branch-01", lastLoginAt: new Date() },
-        { id: "usr-03", username: "cashier_sara", role: "CASHIER", isActive: true, branchName: "فرع النور", branchId: "branch-02", lastLoginAt: new Date() },
-        { id: "usr-04", username: "accountant_omar", role: "ACCOUNTANT", isActive: true, branchName: "الإدارة المالية", branchId: null, lastLoginAt: new Date() }
-      ];
+    let usersList: any[] = [];
+    try {
+      usersList = await prisma.user.findMany({
+        where: {
+          tenantUsers: {
+            some: { tenantId }
+          }
+        },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          isActive: true,
+          lastLoginAt: true,
+          createdAt: true
+        }
+      });
+    } catch (err) {
+      console.warn('[OrgRoutes] DB users fetch failed:', (err as Error).message);
+      res.status(503).json({ success: false, error: "قاعدة البيانات غير متاحة حالياً" });
+      return;
     }
 
     // Attach roles and overrides

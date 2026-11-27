@@ -215,6 +215,58 @@ describe("Organization user routes tenant isolation", () => {
       expect(body.data[0].overridesCount).toBe(0);
     });
 
+    it("returns an empty array when the tenant has no users instead of mock users", async () => {
+      mocks.activeTenantId = "TENANT-EMPTY";
+
+      const response = await fetch(`${baseUrl}/api/organization/users`);
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toEqual({ success: true, data: [] });
+      expect(mocks.userFindMany).toHaveBeenCalledWith({
+        where: {
+          tenantUsers: {
+            some: { tenantId: "TENANT-EMPTY" }
+          }
+        },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          isActive: true,
+          lastLoginAt: true,
+          createdAt: true
+        }
+      });
+      expect(mocks.getUserRoles).not.toHaveBeenCalled();
+      expect(mocks.getUserPermissionOverrides).not.toHaveBeenCalled();
+    });
+
+    it("fails closed with 503 and returns no mock users when database is disconnected", async () => {
+      mocks.isConnected.mockReturnValue(false);
+
+      const response = await fetch(`${baseUrl}/api/organization/users`);
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body.success).toBe(false);
+      expect(body.data).toBeUndefined();
+      expect(mocks.userFindMany).not.toHaveBeenCalled();
+    });
+
+    it("fails closed with 503 and returns no mock users when database query fails", async () => {
+      mocks.userFindMany.mockRejectedValueOnce(new Error("connection terminated unexpectedly"));
+
+      const response = await fetch(`${baseUrl}/api/organization/users`);
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body.success).toBe(false);
+      expect(body.data).toBeUndefined();
+      expect(mocks.getUserRoles).not.toHaveBeenCalled();
+      expect(mocks.getUserPermissionOverrides).not.toHaveBeenCalled();
+    });
+
     it("fails closed with 403 when tenant context is missing", async () => {
       mocks.activeTenantId = undefined;
 
