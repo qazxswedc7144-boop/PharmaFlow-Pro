@@ -63,7 +63,7 @@ File: `scripts/diagnostics/check_migration_readiness.sql`.
 - The `payments.status` check is conditional because the column is introduced by the fourth pending migration.
 - Review every non-zero conflict count. A missing object before its migration is expected; rerun the same diagnostics after the isolated rehearsal to verify the final state.
 - The diagnostics cover 9 migration-defined indexes, 5 added columns, the 5 `AuditActionType` values defined by the reviewed Prisma schema/migration, foreign keys (including tenant-scoped references), accounting-period overlap by calendar date, and FIFO layer `unitCost` versus source batch `cost`.
-- The reviewed source does **not** define `BACKUP_UPLOAD` or `SESSION_CLEANED` in `AuditActionType`; the five checked values are `LOCK_ACQUIRED`, `LOCK_RELEASED`, `LOCK_EXTENDED`, `LOCK_RECOVERY`, and `REPLICATION_PUBLISHED`.
+- The requested enum diagnostic checks `LOCK_ACQUIRED`, `LOCK_RELEASED`, `REPLICATION_PUBLISHED`, `BACKUP_UPLOAD`, and `SESSION_CLEANED`. The reviewed `schema.prisma` and migration define the first three, but define `LOCK_EXTENDED` and `LOCK_RECOVERY` instead of the latter two. The diagnostic therefore reports `BACKUP_UPLOAD` and `SESSION_CLEANED` as missing; this documentation/diagnostics PR does not silently alter the enum or add a migration.
 - Do not use this script as a substitute for application-level integration tests.
 
 ### 3.1 Diagnostic coverage summary

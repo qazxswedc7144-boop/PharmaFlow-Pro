@@ -186,12 +186,12 @@ WHERE table_schema = 'public'
     OR (table_name = 'journal_entries' AND column_name = 'reversalOfId'))
 ORDER BY table_name, column_name;
 
--- These are the five values defined by the reviewed Prisma schema and migration.
+-- These are the five owner-requested expected values. Missing values emit NOTICE; no enum is modified.
 DO $$
 DECLARE
   required_values TEXT[] := ARRAY[
-    'LOCK_ACQUIRED', 'LOCK_RELEASED', 'LOCK_EXTENDED',
-    'LOCK_RECOVERY', 'REPLICATION_PUBLISHED'
+    'LOCK_ACQUIRED', 'LOCK_RELEASED', 'REPLICATION_PUBLISHED',
+    'BACKUP_UPLOAD', 'SESSION_CLEANED'
   ];
   v TEXT;
 BEGIN
