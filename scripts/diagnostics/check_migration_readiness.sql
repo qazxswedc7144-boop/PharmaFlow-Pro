@@ -6,6 +6,27 @@
 BEGIN;
 SET TRANSACTION READ ONLY;
 
+-- Fail-Closed production guard: heuristic refusal based on database name only.
+-- This is not a substitute for independently verifying host/project identity.
+DO $
+DECLARE
+  db_name TEXT := lower(current_database());
+  prod_indicators TEXT[] := ARRAY['prod', 'production', 'pharmaflow', 'live', 'master', 'primary'];
+  allowed_indicators TEXT[] := ARRAY['restore', 'test', 'ci'];
+  indicator TEXT;
+BEGIN
+  FOREACH indicator IN ARRAY prod_indicators LOOP
+    IF position(indicator IN db_name) > 0
+       AND NOT EXISTS (
+         SELECT 1 FROM unnest(allowed_indicators) AS allowed(value)
+         WHERE position(allowed.value IN db_name) > 0
+       ) THEN
+      RAISE EXCEPTION 'REFUSED: current_database()=% looks like a production database. Run against an isolated restore database only.', current_database();
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'Diagnostic running against: %', current_database();
+END $;
+
 \echo '=== 1. Target identity (operator must independently confirm this is isolated) ==='
 SELECT current_database() AS database_name,
        current_user AS database_user,
@@ -94,7 +115,16 @@ WITH required_objects(object_kind, object_name) AS (
     ('index', 'fifo_consumption_log_tenantId_layerId_idx'),
     ('index', 'payments_tenantId_status_idx'),
     ('index', 'invoice_payment_allocations_tenantId_paymentId_invoiceId_key'),
-    ('index', 'invoice_payment_allocations_tenantId_invoiceId_status_idx')
+    ('index', 'invoice_payment_allocations_tenantId_invoiceId_status_idx'),
+    ('index', 'inventory_layers_id_tenantId_key'),
+    ('index', 'inventory_layers_tenantId_productId_expiryDate_createdAt_idx'),
+    ('index', 'fifo_consumption_log_id_tenantId_key'),
+    ('index', 'fifo_consumption_log_tenantId_referenceId_referenceType_idx'),
+    ('index', 'fifo_consumption_log_tenantId_productId_idx'),
+    ('index', 'payments_id_tenantId_key'),
+    ('index', 'journal_entries_tenantId_reversalOfId_idx'),
+    ('index', 'invoice_payment_allocations_id_tenantId_key'),
+    ('index', 'invoice_payment_allocations_tenantId_paymentId_idx')
 )
 SELECT r.object_kind,
        r.object_name,
@@ -114,29 +144,71 @@ SELECT r.object_kind,
 FROM required_objects r
 ORDER BY r.object_kind, r.object_name;
 
-SELECT conrelid::regclass AS table_name,
-       conname AS constraint_name,
-       contype AS constraint_type,
-       convalidated AS validated
+SELECT conname,
+       conrelid::regclass AS table_name,
+       pg_get_constraintdef(oid) AS def,
+       (confrelid = to_regclass('public.tenants')
+         AND pg_get_constraintdef(oid) ILIKE '%tenantId%') AS references_tenants
 FROM pg_constraint
-WHERE connamespace = 'public'::regnamespace
-  AND conname IN (
-    'accounting_periods_valid_range_check',
-    'accounting_periods_tenantId_fkey',
-    'inventory_layers_quantity_check',
-    'inventory_layers_unit_cost_check',
-    'inventory_layers_batchId_tenantId_fkey',
-    'inventory_layers_productId_tenantId_fkey',
-    'fifo_consumption_log_quantity_check',
-    'fifo_consumption_log_unit_cost_check',
-    'fifo_consumption_log_total_cost_check',
-    'fifo_consumption_log_layerId_tenantId_fkey',
-    'invoice_payment_allocations_amount_check',
-    'invoice_payment_allocations_status_check',
-    'invoice_payment_allocations_paymentId_tenantId_fkey',
-    'invoice_payment_allocations_invoiceId_tenantId_fkey'
-  )
-ORDER BY table_name::text, constraint_name;
+WHERE contype = 'f'
+  AND conrelid = ANY (array_remove(ARRAY[
+    to_regclass('public.invoice_payment_allocations'),
+    to_regclass('public.accounting_periods'),
+    to_regclass('public.inventory_layers'),
+    to_regclass('public.fifo_consumption_log')
+  ], NULL))
+ORDER BY conrelid::regclass::text, conname;
+
+SELECT expected.table_name,
+       EXISTS (
+         SELECT 1
+         FROM pg_constraint c
+         WHERE c.contype = 'f'
+           AND c.conrelid = to_regclass('public.' || expected.table_name)
+           AND c.confrelid = to_regclass('public.tenants')
+           AND pg_get_constraintdef(c.oid) ILIKE '%tenantId%'
+       ) AS has_tenant_fk
+FROM (VALUES
+  ('accounting_periods'),
+  ('inventory_layers'),
+  ('fifo_consumption_log'),
+  ('invoice_payment_allocations')
+) AS expected(table_name)
+WHERE to_regclass('public.' || expected.table_name) IS NOT NULL
+ORDER BY expected.table_name;
+
+\echo '=== 4A. Added columns, enum values, and tenant foreign keys ==='
+SELECT table_name, column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND ((table_name = 'invoices' AND column_name IN ('paidAmount'))
+    OR (table_name = 'payments' AND column_name IN ('status', 'cancelledAt', 'cancellationReason'))
+    OR (table_name = 'journal_entries' AND column_name = 'reversalOfId'))
+ORDER BY table_name, column_name;
+
+-- These are the five values defined by the reviewed Prisma schema and migration.
+DO $
+DECLARE
+  required_values TEXT[] := ARRAY[
+    'LOCK_ACQUIRED', 'LOCK_RELEASED', 'LOCK_EXTENDED',
+    'LOCK_RECOVERY', 'REPLICATION_PUBLISHED'
+  ];
+  v TEXT;
+BEGIN
+  FOREACH v IN ARRAY required_values LOOP
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_enum e
+      JOIN pg_type t ON e.enumtypid = t.oid
+      JOIN pg_namespace n ON n.oid = t.typnamespace
+      WHERE n.nspname = 'public'
+        AND t.typname = 'AuditActionType'
+        AND e.enumlabel = v
+    ) THEN
+      RAISE NOTICE 'MISSING_ENUM_VALUE: AuditActionType.%', v;
+    END IF;
+  END LOOP;
+END $;
 
 \echo '=== 5. Potential conflicting source data / backfill reconciliation ==='
 SELECT COUNT(*) AS negative_inventory_batch_stock_count
@@ -163,10 +235,10 @@ BEGIN
       JOIN public.accounting_periods b
         ON a."tenantId" = b."tenantId"
        AND a.id < b.id
-       AND a."startDate" <= b."endDate"
-       AND b."startDate" <= a."endDate"
+       AND a."startDate"::date <= COALESCE(b."endDate"::date, 'infinity'::date)
+       AND b."startDate"::date <= COALESCE(a."endDate"::date, 'infinity'::date)
     $q$ INTO v_overlap_count;
-    RAISE NOTICE 'accounting_periods overlapping pairs (inclusive date ranges) = %', v_overlap_count;
+    RAISE NOTICE 'accounting_periods overlapping pairs (inclusive calendar-date ranges) = %', v_overlap_count;
   ELSE
     RAISE NOTICE 'accounting_periods table absent; overlap check deferred until after isolated migration rehearsal';
   END IF;
@@ -184,6 +256,15 @@ BEGIN
              OR l."quantityInitial" <> b."stockQuantity")
     $q$ INTO v_count;
     RAISE NOTICE 'positive inventory batches missing/mismatched legacy baseline = %', v_count;
+
+    EXECUTE $q$
+      SELECT COUNT(*)
+      FROM public.inventory_layers l
+      JOIN public.inventory_batches b
+        ON b.id = l."batchId" AND b."tenantId" = l."tenantId"
+      WHERE ABS(COALESCE(l."unitCost", 0) - COALESCE(b."cost", 0)) > 0.0001
+    $q$ INTO v_count;
+    RAISE NOTICE 'inventory layer unitCost / source batch cost mismatches (> 0.0001) = %', v_count;
 
     EXECUTE $q$
       SELECT COUNT(*)

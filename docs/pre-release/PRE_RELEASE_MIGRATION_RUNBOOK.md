@@ -58,10 +58,24 @@ The reviewed Prisma schema declares `PaymentStatus` as `PAID`, `UNPAID`, `PARTIA
 File: `scripts/diagnostics/check_migration_readiness.sql`.
 
 - Run only against a disposable local database or isolated restored clone, after verifying the target host/database.
-- The script starts a read-only transaction and contains SELECT/catalog inspection plus a PL/pgSQL diagnostic block that only emits NOTICE messages. It does not create tables, update rows, or modify migration history.
+- The SQL file contains a heuristic Fail-Closed guard that refuses database names containing `prod`, `production`, `pharmaflow`, `live`, `master`, or `primary`, unless the name also contains `restore`, `test`, or `ci`. This naming guard is not proof of environment identity; independently verify the host and target before use.
+- The script starts a read-only transaction and contains SELECT/catalog inspection plus PL/pgSQL diagnostic blocks that only emit NOTICE messages. It does not create tables, update rows, or modify migration history.
 - The `payments.status` check is conditional because the column is introduced by the fourth pending migration.
 - Review every non-zero conflict count. A missing object before its migration is expected; rerun the same diagnostics after the isolated rehearsal to verify the final state.
+- The diagnostics cover 9 migration-defined indexes, 5 added columns, the 5 `AuditActionType` values defined by the reviewed Prisma schema/migration, foreign keys (including tenant-scoped references), accounting-period overlap by calendar date, and FIFO layer `unitCost` versus source batch `cost`.
+- The reviewed source does **not** define `BACKUP_UPLOAD` or `SESSION_CLEANED` in `AuditActionType`; the five checked values are `LOCK_ACQUIRED`, `LOCK_RELEASED`, `LOCK_EXTENDED`, `LOCK_RECOVERY`, and `REPLICATION_PUBLISHED`.
 - Do not use this script as a substitute for application-level integration tests.
+
+### 3.1 Diagnostic coverage summary
+
+| Diagnostic | Expected objects / values | Purpose |
+|---|---:|---|
+| Migration indexes | 9 indexes (5 FIFO + 4 payment/allocation indexes) | Confirm all indexes created by the FIFO and allocation migrations exist. |
+| Added columns | 5 columns (`invoices.paidAmount`; `payments.status`, `cancelledAt`, `cancellationReason`; `journal_entries.reversalOfId`) | Confirm the Phase 4B column additions. |
+| `AuditActionType` | 5 schema-defined values | Confirm lock acquisition/release/extension/recovery and replication publication audit actions. |
+| Foreign keys | All FKs on the four new tenant-scoped tables | Inspect tenant references and composite tenant-scoped relations. |
+| Accounting periods | Date-based overlap check | Detect inclusive calendar-date overlaps within a tenant. |
+| FIFO cost provenance | `inventory_layers.unitCost` versus `inventory_batches.cost` | Identify layer/batch cost differences above the diagnostic tolerance. |
 
 ## 4. Backup preparation — logical database export
 
@@ -71,7 +85,7 @@ File: `scripts/diagnostics/check_migration_readiness.sql`.
 2. Record the backup timestamp, source project reference, PostgreSQL major version, Supabase CLI version, and operator.
 3. Obtain connection strings through the approved secret manager. Do not commit them, paste them into tickets/chat, print them, or enable shell tracing (`set -x`).
 4. Confirm sufficient storage, network access, and a maintenance/consistency window. A logical dump is not a full Supabase project snapshot.
-5. Use the CLI version validated by the team. Confirm `supabase db dump --help` before use; command options can vary by CLI version.
+5. Use the CLI version validated by the team. Confirm `supabase db dump --help` before use; command options can vary by CLI version. **يتطلب Supabase CLI v3 أو أحدث. تأكد من الإصدار قبل التشغيل.**
 
 ### 4.2 Export commands (template — do not execute against production as part of this PR)
 
@@ -84,9 +98,9 @@ mkdir -p "$BACKUP_DIR"
 # SOURCE_DB_URL must be injected from a secret manager, never hard-coded.
 : "${SOURCE_DB_URL:?Set SOURCE_DB_URL through the approved secret manager}"
 
-supabase db dump --db-url "$SOURCE_DB_URL" --role-only -f "$BACKUP_DIR/roles.sql"
-supabase db dump --db-url "$SOURCE_DB_URL" -f "$BACKUP_DIR/schema.sql"
-supabase db dump --db-url "$SOURCE_DB_URL" --use-copy --data-only \
+supabase db dump --remote="$SOURCE_DB_URL" --role-only -f "$BACKUP_DIR/roles.sql"
+supabase db dump --remote="$SOURCE_DB_URL" -f "$BACKUP_DIR/schema.sql"
+supabase db dump --remote="$SOURCE_DB_URL" --use-copy --data-only \
   -x "storage.buckets_vectors" -x "storage.vector_indexes" \
   -f "$BACKUP_DIR/data.sql"
 
