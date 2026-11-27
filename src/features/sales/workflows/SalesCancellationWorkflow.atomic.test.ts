@@ -354,6 +354,70 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     }));
   });
 
+  it('uses the positive stock reversal sign for a posted purchase return', async () => {
+    const purchaseReturnInvoice = {
+      ...invoice,
+      type: undefined,
+      isReturn: true,
+      items: [{ productId: 'PRODUCT-001', quantity: 2 }],
+      paymentStatus: 'Cash'
+    };
+    const purchaseReturnTx = {
+      table: (name: string) => ({
+        get: vi.fn().mockImplementation((_key: string) => {
+          if (name === 'purchases') return purchaseReturnInvoice;
+          if (name === 'financialTransactions') {
+            return { isReversal: true, Entity_Type: 'Supplier', Entity_Name: 'مورد نقدي' };
+          }
+          return undefined;
+        }),
+        put: invoicePut,
+        update: vi.fn().mockResolvedValue(1),
+        where: vi.fn().mockReturnValue({
+          equals: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockImplementation(async () => name === 'journalEntries' ? [{
+              id: 'JE-PURCHASE-RETURN-001',
+              sourceType: 'PURCHASE_RETURN',
+              tenantId: ctx.tenantId,
+              branchId: ctx.branchId
+            }] : []),
+            and: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockImplementation(async () => name === 'journalEntries' ? [{
+                id: 'JE-PURCHASE-RETURN-001',
+                sourceType: 'PURCHASE_RETURN',
+                tenantId: ctx.tenantId,
+                branchId: ctx.branchId
+              }] : [])
+            })
+          })
+        })
+      })
+    };
+    mockExecuteReversal.mockResolvedValue([{
+      success: true,
+      transactionId: 'REV-PURCHASE-RETURN-001',
+      productId: 'PRODUCT-001',
+      delta: 2
+    }]);
+
+    const result = await salesCancellationWorkflow.executeDomainSteps(
+      { invoiceId: invoice.id },
+      ctx as any,
+      purchaseReturnTx
+    );
+
+    expect(result).toEqual({ success: true, invoiceId: invoice.id });
+    expect(mockExecuteReversal).toHaveBeenCalledWith(
+      expect.objectContaining({ originalDocumentType: 'PURCHASE_RETURN' }),
+      purchaseReturnTx
+    );
+    expect(mockPostAccounting).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'PURCHASE', isReversal: true }),
+      undefined,
+      purchaseReturnTx
+    );
+  });
+
   it('uses the inverse stock sign when cancelling a posted sales return', async () => {
     const returnInvoice = { ...invoice, isReturn: true };
     const returnTx = {
