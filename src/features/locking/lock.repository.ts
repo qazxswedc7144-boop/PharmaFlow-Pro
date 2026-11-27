@@ -27,6 +27,18 @@ export class LockRepository {
     const lockType = options.lockType;
     const idempotencyKey = options.idempotencyKey;
 
+    // A local failover lock remains authoritative for this runtime even if
+    // connectivity returns before its TTL expires. Never bypass it by trying
+    // the backend first.
+    const cachedLocalLock = this.localLocks.get(key);
+    if (cachedLocalLock) {
+      if (new Date(cachedLocalLock.expiresAt) > new Date()) {
+        return null;
+      }
+      this.localLocks.delete(key);
+      await this.saveLocalLocksToSettings();
+    }
+
     if (!this.isOnline()) {
       // Offline fallback: use local in-memory lock
       const existing = this.localLocks.get(key);
@@ -100,6 +112,14 @@ export class LockRepository {
     idempotencyKey?: string
   ): Promise<DistributedLock | null> {
     const now = new Date();
+    const existing = this.localLocks.get(key);
+    if (existing && new Date(existing.expiresAt) > now) {
+      return null;
+    }
+    if (existing) {
+      this.localLocks.delete(key);
+    }
+
     const acquiredAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + ttl).toISOString();
     const localLock: DistributedLock = {
