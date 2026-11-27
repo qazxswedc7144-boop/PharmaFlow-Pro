@@ -6,6 +6,7 @@ const {
   mockSave,
   mockUpdateStatus,
   mockDelete,
+  mockGet,
   mockExecuteDomainSteps,
   mockExecuteWithGuard,
 } = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const {
   mockSave: vi.fn(),
   mockUpdateStatus: vi.fn(),
   mockDelete: vi.fn(),
+  mockGet: vi.fn(),
   mockExecuteDomainSteps: vi.fn(),
   mockExecuteWithGuard: vi.fn(),
 }));
@@ -41,6 +43,7 @@ vi.mock('@/core/workflow/workflowRecovery', () => ({
 vi.mock('@/core/integrity/executionGuard', () => ({
   ExecutionGuard: {
     executeWithGuard: mockExecuteWithGuard,
+    isLocked: vi.fn().mockReturnValue(false),
   },
 }));
 
@@ -52,11 +55,15 @@ vi.mock('@/core/integrity/transactionBoundary', () => ({
 
 vi.mock('@/core/integrity/idempotencyRegistry', () => ({
   IdempotencyRegistry: {
-    get: vi.fn().mockResolvedValue(undefined),
+    get: mockGet,
     save: mockSave,
     updateStatus: mockUpdateStatus,
     delete: mockDelete,
   },
+}));
+
+vi.mock('@features/locking/lock.repository', () => ({
+  LockRepository: { checkStrict: vi.fn().mockResolvedValue(false) }
 }));
 
 vi.mock('@/services/saas/usageMeterService', () => ({
@@ -102,8 +109,95 @@ describe('WorkflowExecutionPipeline post-commit guarantees', () => {
     mockSave.mockResolvedValue(undefined);
     mockUpdateStatus.mockResolvedValue(undefined);
     mockDelete.mockResolvedValue(undefined);
+    mockGet.mockResolvedValue(undefined);
     mockExecuteDomainSteps.mockResolvedValue({ refId: 'invoice-post-commit-test' });
     mockExecuteWithGuard.mockImplementation(async (_options: unknown, operation: () => Promise<unknown>) => operation());
+  });
+
+  it('recovers a stale PROCESSING marker when durable domain state proves the workflow committed', async () => {
+    const recoveredResult = { refId: 'invoice-recovered-from-durable-state' };
+    const reconcileProcessing = vi.fn().mockResolvedValue({
+      status: 'COMMITTED',
+      result: recoveredResult
+    });
+    const recoverableWorkflow = { ...workflow, reconcileProcessing };
+    mockGet.mockResolvedValueOnce({
+      key: context.idempotencyKey,
+      status: 'PROCESSING',
+      tenantId: context.tenantId,
+      branchId: context.branchId,
+      createdAt: new Date(Date.now() - 16 * 60 * 1000).toISOString()
+    });
+
+    const result = await WorkflowExecutionPipeline.run(
+      recoverableWorkflow as any,
+      {},
+      context as any
+    );
+
+    expect(reconcileProcessing).toHaveBeenCalledTimes(1);
+    expect(mockUpdateStatus).toHaveBeenCalledWith(
+      context.idempotencyKey,
+      'COMMITTED',
+      recoveredResult,
+      undefined,
+      context.tenantId
+    );
+    expect(mockExecuteDomainSteps).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual(recoveredResult);
+  });
+
+  it('does not delete a fresh PROCESSING marker or execute a duplicate workflow', async () => {
+    mockGet.mockResolvedValueOnce({
+      key: context.idempotencyKey,
+      status: 'PROCESSING',
+      tenantId: context.tenantId,
+      branchId: context.branchId,
+      createdAt: new Date().toISOString()
+    });
+    const reconcileProcessing = vi.fn();
+    const recoverableWorkflow = { ...workflow, reconcileProcessing };
+
+    const result = await WorkflowExecutionPipeline.run(
+      recoverableWorkflow as any,
+      {},
+      context as any
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(reconcileProcessing).not.toHaveBeenCalled();
+    expect(mockExecuteDomainSteps).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
+  });
+
+  it('preserves an ambiguous stale PROCESSING marker for manual reconciliation', async () => {
+    const reconcileProcessing = vi.fn().mockResolvedValue({
+      status: 'UNKNOWN',
+      reason: 'Partial durable effects require review.'
+    });
+    const recoverableWorkflow = { ...workflow, reconcileProcessing };
+    mockGet.mockResolvedValueOnce({
+      key: context.idempotencyKey,
+      status: 'PROCESSING',
+      tenantId: context.tenantId,
+      branchId: context.branchId,
+      createdAt: new Date(Date.now() - 16 * 60 * 1000).toISOString()
+    });
+
+    const result = await WorkflowExecutionPipeline.run(
+      recoverableWorkflow as any,
+      {},
+      context as any
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('RECOVERY_REQUIRED');
+    expect(reconcileProcessing).toHaveBeenCalledTimes(1);
+    expect(mockExecuteDomainSteps).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
   });
 
   it('aborts before domain execution when durable PROCESSING persistence fails', async () => {
