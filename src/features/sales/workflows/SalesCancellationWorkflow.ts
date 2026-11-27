@@ -216,6 +216,19 @@ async function reconcileCancellationProcessing(
         return { status: 'UNKNOWN', reason: `Financial transaction ${original.id} is not fully reversed.` };
       }
     }
+  } else {
+    const activeJournalEntries = tenantJournalRows.filter((row: any) =>
+      row.sourceType !== 'AUTO_REVERSAL' && !row.reversedBy
+    );
+    const activeFinancialRows = tenantFinancialRows.filter((row: any) =>
+      row.isReversal !== true && row.isDeleted !== true && !row.reversedBy
+    );
+    if (activeJournalEntries.length > 0 || activeFinancialRows.length > 0) {
+      return {
+        status: 'UNKNOWN',
+        reason: 'A non-posted invoice still has active journal or financial transaction records.'
+      };
+    }
   }
 
   return {
