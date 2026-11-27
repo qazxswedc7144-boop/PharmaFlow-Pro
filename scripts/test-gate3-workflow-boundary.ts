@@ -51,7 +51,7 @@ async function runGate3TestSuite() {
   const setAuthUser = (
     role: string = 'SuperAdmin',
     permissions: string[] = ['ALL', 'purchases.create', 'purchases.edit', 'sales.create', 'sales.edit', 'returns.create', 'returns.process', 'inventory.adjust', 'inventory.manage', 'inventory.transfer', 'accounting.journal.create', 'accounting.voucher.create', 'accounting.voucher.cancel', 'sales.cancel', 'products.edit', 'products.manage'],
-    tenantId: string = 'tenant-default'
+    tenantId: string = 'TEN-GATE3-001'
   ) => {
     const userObj = {
       id: 'usr-admin-gate3',
@@ -101,8 +101,8 @@ async function runGate3TestSuite() {
     id: 'BR-GATE3-001',
     code: 'BR-GATE3-001',
     name: 'Gate 3 Test Branch',
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     isActive: true,
     is_active: true
   } as any);
@@ -148,8 +148,8 @@ async function runGate3TestSuite() {
     is_active: true,
     isActive: true,
     status: 'ACTIVE',
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     branchId: 'BR-GATE3-001',
     branch_id: 'BR-GATE3-001'
   });
@@ -160,8 +160,8 @@ async function runGate3TestSuite() {
     productId: 'PRD-GATE3-1',
     quantity: 500,
     lastUpdated: new Date().toISOString(),
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     branchId: 'BR-GATE3-001'
   });
 
@@ -171,8 +171,8 @@ async function runGate3TestSuite() {
     productId: 'PRD-GATE3-1',
     quantity: 500,
     lastUpdated: new Date().toISOString(),
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     branchId: 'BR-GATE3-001'
   });
 
@@ -180,10 +180,10 @@ async function runGate3TestSuite() {
     id: 'CUST-GATE3-1',
     name: 'Al-Amal Pharmacy Customer',
     Name: 'Al-Amal Pharmacy Customer',
-    balance: 0,
+    balance: 50,
     is_active: true,
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     branchId: 'BR-GATE3-001'
   });
 
@@ -193,12 +193,87 @@ async function runGate3TestSuite() {
     Name: 'Pharma Med Supplies',
     balance: 0,
     is_active: true,
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     branchId: 'BR-GATE3-001'
   });
 
   // Dedicated posted sale fixture with a real stock ledger movement and FIFO consumption.
+  await db.accounts.put({
+    id: 'ACC-GATE3-AR',
+    tenantId: 'TEN-GATE3-001',
+    branchId: 'BR-GATE3-001',
+    name: 'Gate 3 Accounts Receivable',
+    balance: 50,
+    type: 'ASSET'
+  } as any);
+  await db.accounts.put({
+    id: 'ACC-GATE3-REV',
+    tenantId: 'TEN-GATE3-001',
+    branchId: 'BR-GATE3-001',
+    name: 'Gate 3 Sales Revenue',
+    balance: -50,
+    type: 'REVENUE'
+  } as any);
+  const gate3OriginalJournalLines = [
+    {
+      id: 'JE-GATE3-CANCEL-L1',
+      lineId: 'JE-GATE3-CANCEL-L1',
+      entryId: 'JE-GATE3-CANCEL',
+      entry_id: 'JE-GATE3-CANCEL',
+      accountId: 'ACC-GATE3-AR',
+      account_id: 'ACC-GATE3-AR',
+      debit: 50,
+      credit: 0,
+      type: 'DEBIT',
+      amount: 50,
+      tenantId: 'TEN-GATE3-001',
+      branchId: 'BR-GATE3-001'
+    },
+    {
+      id: 'JE-GATE3-CANCEL-L2',
+      lineId: 'JE-GATE3-CANCEL-L2',
+      entryId: 'JE-GATE3-CANCEL',
+      entry_id: 'JE-GATE3-CANCEL',
+      accountId: 'ACC-GATE3-REV',
+      account_id: 'ACC-GATE3-REV',
+      debit: 0,
+      credit: 50,
+      type: 'CREDIT',
+      amount: 50,
+      tenantId: 'TEN-GATE3-001',
+      branchId: 'BR-GATE3-001'
+    }
+  ];
+  await db.journalEntries.put({
+    id: 'JE-GATE3-CANCEL',
+    sourceId: 'SALE-GATE3-CANCEL',
+    sourceType: 'SALE',
+    tenantId: 'TEN-GATE3-001',
+    branchId: 'BR-GATE3-001',
+    status: 'Posted',
+    TotalAmount: 50,
+    lines: gate3OriginalJournalLines
+  } as any);
+  await db.journalLines.bulkPut(gate3OriginalJournalLines as any);
+  await db.financialTransactions.put({
+    id: 'FT-GATE3-CANCEL',
+    Transaction_ID: 'FT-GATE3-CANCEL',
+    Reference_ID: 'SALE-GATE3-CANCEL',
+    Reference_Table: 'Sales_Invoices',
+    Transaction_Type: 'Invoice',
+    Entity_Type: 'Customer',
+    Entity_Name: 'CUST-GATE3-1',
+    Amount: 50,
+    Paid_Amount: 50,
+    Direction: 'Debit',
+    Transaction_Date: new Date().toISOString(),
+    tenantId: 'TEN-GATE3-001',
+    branchId: 'BR-GATE3-001',
+    isDeleted: false,
+    isReversal: false
+  } as any);
+
   await db.products.put({
     id: 'PRD-GATE3-CANCEL',
     productId: 'PRD-GATE3-CANCEL',
@@ -210,8 +285,8 @@ async function runGate3TestSuite() {
     costPrice: 20,
     is_active: true,
     isActive: true,
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     branchId: 'BR-GATE3-001',
     branch_id: 'BR-GATE3-001'
   } as any);
@@ -220,8 +295,8 @@ async function runGate3TestSuite() {
     warehouseId: 'WH-MAIN',
     productId: 'PRD-GATE3-CANCEL',
     quantity: 499,
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     branchId: 'BR-GATE3-001',
     lastUpdated: new Date().toISOString()
   } as any);
@@ -230,8 +305,8 @@ async function runGate3TestSuite() {
     branchId: 'BR-GATE3-001',
     productId: 'PRD-GATE3-CANCEL',
     stockQuantity: 499,
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default'
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001'
   } as any);
   await db.inventory_layers.put({
     id: 'LYR-GATE3-CANCEL',
@@ -242,8 +317,8 @@ async function runGate3TestSuite() {
     unit_cost: 20,
     reference_id: 'PUR-GATE3-CANCEL',
     purchase_id: 'PUR-GATE3-CANCEL',
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     created_at: new Date().toISOString()
   } as any);
   await db.fifo_consumption_log.put({
@@ -255,8 +330,8 @@ async function runGate3TestSuite() {
     item_id: 'PRD-GATE3-CANCEL',
     quantity_consumed: 1,
     unit_cost: 20,
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default'
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001'
   } as any);
   await db.inventoryTransactions.put({
     id: 'ITX-GATE3-CANCEL-ORIGINAL',
@@ -267,8 +342,8 @@ async function runGate3TestSuite() {
     warehouse_id: 'WH-MAIN',
     branchId: 'BR-GATE3-001',
     branch_id: 'BR-GATE3-001',
-    tenantId: 'tenant-default',
-    tenant_id: 'tenant-default',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
     SourceDocumentType: 'SALE',
     sourceDocType: 'SALE',
     SourceDocumentID: 'SALE-GATE3-CANCEL',
@@ -847,6 +922,13 @@ async function runGate3TestSuite() {
       cancelVoucherResult.success &&
       cancelSaleResult.success &&
       cancelledInvoice?.documentStatus === 'CANCELLED' &&
+      (await db.sales.get('SALE-GATE3-CANCEL'))?.InvoiceStatus === 'CANCELLED' &&
+      (await db.customers.get('CUST-GATE3-1'))?.balance === 0 &&
+      Boolean((await db.journalEntries.get('JE-GATE3-CANCEL'))?.reversedBy) &&
+      (await db.accounts.get('ACC-GATE3-AR'))?.balance === 0 &&
+      (await db.accounts.get('ACC-GATE3-REV'))?.balance === 0 &&
+      (await db.financialTransactions.get('FT-GATE3-CANCEL'))?.isDeleted === true &&
+      Boolean((await db.financialTransactions.get('FT-GATE3-CANCEL'))?.reversedBy) &&
       cancellationProduct?.stock === 500 &&
       cancellationWarehouse?.quantity === 500 &&
       cancellationBranchStock?.stockQuantity === 500 &&
