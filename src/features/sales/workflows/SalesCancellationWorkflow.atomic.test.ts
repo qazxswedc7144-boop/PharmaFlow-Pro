@@ -238,7 +238,20 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     const serviceTx = {
       table: (name: string) => ({
         get: vi.fn().mockResolvedValue(name === 'invoices' ? serviceInvoice : undefined),
-        put: invoicePut
+        put: invoicePut,
+        update: vi.fn().mockResolvedValue(1),
+        where: vi.fn().mockReturnValue({
+          equals: vi.fn().mockReturnValue({
+            and: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([{
+                id: 'JE-CANCEL-001',
+                sourceType: 'SALE',
+                tenantId: ctx.tenantId,
+                branchId: ctx.branchId
+              }])
+            })
+          })
+        })
       })
     };
     mockExecuteReversal.mockResolvedValue([]);
