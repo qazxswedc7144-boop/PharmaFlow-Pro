@@ -512,11 +512,55 @@ export class WorkflowExecutionPipeline {
         });
       }
 
-      const errorObj = err instanceof WorkflowExecutionError ? err : new WorkflowExecutionError(err.message || String(err), 'TRANSACTION_FAILED', { originalError: err });
+      let errorObj = err instanceof WorkflowExecutionError ? err : new WorkflowExecutionError(err.message || String(err), 'TRANSACTION_FAILED', { originalError: err });
 
-      // Remove only an uncommitted PROCESSING marker after a confirmed rollback.
-      // A payload-mismatch or replay error must never erase a COMMITTED key: doing so
-      // would allow the same key to execute a second business transaction.
+      // If the transaction boundary or guard failed after durable commit but
+      // before this pipeline recorded the commit, reconcile before deleting our
+      // own PROCESSING marker. Never infer rollback from an exception alone.
+      if (
+        ctx.idempotencyKey &&
+        ownsProcessingMarker &&
+        !transactionCommitted &&
+        typeof workflow.reconcileProcessing === 'function'
+      ) {
+        try {
+          const reconciliation = await workflow.reconcileProcessing(input, ctx);
+          if (reconciliation.status === 'COMMITTED') {
+            try {
+              await IdempotencyRegistry.updateStatus(
+                ctx.idempotencyKey,
+                'COMMITTED',
+                reconciliation.result,
+                undefined,
+                ctx.tenantId
+              );
+            } catch (recoveryPersistenceError) {
+              addPostCommitWarning('idempotency-status-update', recoveryPersistenceError);
+            }
+            return WorkflowResultBuilder.success(reconciliation.result, ctx, {
+              warnings: [
+                ...postCommitWarnings,
+                'تم تأكيد اعتماد العملية من السجلات الدائمة رغم تعذر إكمال مسار التنفيذ الأصلي.'
+              ],
+              syncStatus: 'ENQUEUED'
+            });
+          }
+          if (reconciliation.status === 'UNKNOWN') {
+            errorObj = new WorkflowExecutionError(
+              `RECOVERY_REQUIRED: نتيجة المعاملة غير حاسمة بعد فشل التنفيذ: ${reconciliation.reason || 'يلزم فحص السجلات الدائمة.'}`,
+              'RECOVERY_REQUIRED'
+            );
+          }
+        } catch (reconciliationError: any) {
+          errorObj = new WorkflowExecutionError(
+            `RECOVERY_REQUIRED: تعذر تحديد ما إذا كانت المعاملة قد اعتمدت: ${reconciliationError?.message || String(reconciliationError)}`,
+            'RECOVERY_REQUIRED'
+          );
+        }
+      }
+
+      // Remove only an uncommitted PROCESSING marker owned by this execution
+      // after reconciliation has confirmed that no domain effects committed.
       if (
         ctx.idempotencyKey &&
         ownsProcessingMarker &&
