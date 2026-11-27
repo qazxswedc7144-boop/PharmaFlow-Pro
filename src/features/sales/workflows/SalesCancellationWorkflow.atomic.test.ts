@@ -299,6 +299,12 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
         update: purchaseUpdate,
         where: vi.fn().mockReturnValue({
           equals: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockImplementation(async () => name === 'journalEntries' ? [{
+              id: 'JE-PURCHASE-001',
+              sourceType: 'PURCHASE',
+              tenantId: ctx.tenantId,
+              branchId: ctx.branchId
+            }] : []),
             and: vi.fn().mockReturnValue({
               toArray: vi.fn().mockImplementation(async () => name === 'journalEntries' ? [{
                 id: 'JE-PURCHASE-001',
@@ -361,6 +367,12 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
         update: vi.fn().mockResolvedValue(1),
         where: vi.fn().mockReturnValue({
           equals: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockImplementation(async () => name === 'journalEntries' ? [{
+              id: 'JE-RETURN-001',
+              sourceType: 'SALE_RETURN',
+              tenantId: ctx.tenantId,
+              branchId: ctx.branchId
+            }] : []),
             and: vi.fn().mockReturnValue({
               toArray: vi.fn().mockImplementation(async () => name === 'journalEntries' ? [{
                 id: 'JE-RETURN-001',
