@@ -88,7 +88,7 @@ const context = {
   }
 } as any;
 
-async function seedCancellationState(includeOriginalMovement: boolean): Promise<void> {
+async function seedCancellationState(includeOriginalMovement: boolean, sourceDocumentType = 'SALE'): Promise<void> {
   await db.branches.put({
     id: BRANCH_ID,
     code: BRANCH_ID,
@@ -275,8 +275,8 @@ async function seedCancellationState(includeOriginalMovement: boolean): Promise<
     branch_id: BRANCH_ID,
     tenantId: TENANT_ID,
     tenant_id: TENANT_ID,
-    SourceDocumentType: 'SALE',
-    sourceDocType: 'SALE',
+    SourceDocumentType: sourceDocumentType,
+    sourceDocType: sourceDocumentType,
     SourceDocumentID: INVOICE_ID,
     sourceDocId: INVOICE_ID,
     source_doc_id: INVOICE_ID,
@@ -376,6 +376,24 @@ describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration'
     expect((await db.warehouseStock.get('warehouse-stock-cancellation-integration'))?.quantity).toBe(9);
     expect((await db.branchInventory.get('branch-inventory-cancellation-integration'))?.stockQuantity).toBe(9);
     expect(await db.inventoryTransactions.count()).toBe(0);
+    expect(await db.syncQueue.count()).toBe(0);
+    expect(await db.outbox.count()).toBe(0);
+  });
+
+  it('rejects same-ID movements from another document type and rolls back every financial and stock effect', async () => {
+    await seedCancellationState(true, 'PURCHASE');
+
+    await expect(executeCancellation()).rejects.toThrow('INVENTORY_DOCUMENT_TYPE_MISMATCH');
+
+    expect((await db.invoices.get(INVOICE_ID))?.documentStatus).toBe('POSTED');
+    expect((await db.sales.get(INVOICE_ID))?.InvoiceStatus).toBe('POSTED');
+    expect((await db.customers.get(CUSTOMER_ID))?.balance).toBe(50);
+    expect((await db.journalEntries.get(ORIGINAL_JOURNAL_ID))?.reversedBy).toBeUndefined();
+    expect((await db.financialTransactions.get(ORIGINAL_FINANCIAL_ID))?.isDeleted).toBe(false);
+    expect((await db.products.get(PRODUCT_ID))?.stock).toBe(9);
+    expect((await db.warehouseStock.get('warehouse-stock-cancellation-integration'))?.quantity).toBe(9);
+    expect((await db.inventory_layers.get(FIFO_LAYER_ID))?.quantity_remaining).toBe(9);
+    expect(await db.fifo_consumption_log.count()).toBe(1);
     expect(await db.syncQueue.count()).toBe(0);
     expect(await db.outbox.count()).toBe(0);
   });
