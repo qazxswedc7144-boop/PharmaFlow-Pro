@@ -275,6 +275,121 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     expect(mockEnqueueWithinTransaction).toHaveBeenCalled();
   });
 
+  it('reverses purchase stock with the opposite quantity sign and updates the legacy purchase row', async () => {
+    const purchaseInvoice = {
+      ...invoice,
+      type: 'PURCHASE',
+      items: [{ productId: 'PRODUCT-001', quantity: 2 }],
+      paymentStatus: 'Cash'
+    };
+    const purchaseUpdate = vi.fn().mockResolvedValue(1);
+    const purchaseTx = {
+      table: (name: string) => ({
+        get: vi.fn().mockImplementation((key: string) => {
+          if (name === 'invoices' || name === 'purchases') return purchaseInvoice;
+          if (name === 'financialTransactions') {
+            return { isReversal: true, Entity_Type: 'Supplier', Entity_Name: 'مورد نقدي' };
+          }
+          return undefined;
+        }),
+        put: invoicePut,
+        update: purchaseUpdate,
+        where: vi.fn().mockReturnValue({
+          equals: vi.fn().mockReturnValue({
+            and: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([{
+                id: 'JE-PURCHASE-001',
+                sourceType: 'PURCHASE',
+                tenantId: ctx.tenantId,
+                branchId: ctx.branchId
+              }])
+            })
+          })
+        })
+      })
+    };
+    mockExecuteReversal.mockResolvedValue([{
+      success: true,
+      transactionId: 'REV-PURCHASE-001',
+      productId: 'PRODUCT-001',
+      delta: -2
+    }]);
+
+    const result = await salesCancellationWorkflow.executeDomainSteps(
+      { invoiceId: invoice.id },
+      ctx as any,
+      purchaseTx
+    );
+
+    expect(result).toEqual({ success: true, invoiceId: invoice.id });
+    expect(mockExecuteReversal).toHaveBeenCalledWith(
+      expect.objectContaining({ originalDocumentType: 'PURCHASE' }),
+      purchaseTx
+    );
+    expect(mockReverseFinancial).toHaveBeenCalledWith(
+      invoice.id,
+      purchaseTx,
+      ctx.idempotencyKey,
+      ctx.tenantId,
+      ctx.branchId,
+      { requireActiveTransaction: true, referenceTable: 'Purchase_Invoices' }
+    );
+    expect(mockPostAccounting).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'PURCHASE', isReversal: true }),
+      undefined,
+      purchaseTx
+    );
+    expect(purchaseUpdate).toHaveBeenCalledWith(invoice.id, expect.objectContaining({
+      invoiceStatus: 'CANCELLED',
+      status: 'CANCELLED'
+    }));
+  });
+
+  it('uses the inverse stock sign when cancelling a posted sales return', async () => {
+    const returnInvoice = { ...invoice, isReturn: true };
+    const returnTx = {
+      table: (name: string) => ({
+        get: vi.fn().mockImplementation((key: string) =>
+          name === 'invoices' ? returnInvoice :
+          name === 'financialTransactions' ? { isReversal: true, Entity_Type: 'Customer', Entity_Name: 'عميل نقدي' } :
+          undefined
+        ),
+        put: invoicePut,
+        update: vi.fn().mockResolvedValue(1),
+        where: vi.fn().mockReturnValue({
+          equals: vi.fn().mockReturnValue({
+            and: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([{
+                id: 'JE-RETURN-001',
+                sourceType: 'SALE_RETURN',
+                tenantId: ctx.tenantId,
+                branchId: ctx.branchId
+              }])
+            })
+          })
+        })
+      })
+    };
+    mockExecuteReversal.mockResolvedValue([{
+      success: true,
+      transactionId: 'REV-RETURN-001',
+      productId: 'PRODUCT-001',
+      delta: -2
+    }]);
+
+    const result = await salesCancellationWorkflow.executeDomainSteps(
+      { invoiceId: invoice.id },
+      ctx as any,
+      returnTx
+    );
+
+    expect(result).toEqual({ success: true, invoiceId: invoice.id });
+    expect(mockExecuteReversal).toHaveBeenCalledWith(
+      expect.objectContaining({ originalDocumentType: 'SALE_RETURN' }),
+      returnTx
+    );
+  });
+
   it('propagates Queue/Outbox failure so the surrounding transaction can roll back', async () => {
     mockEnqueueWithinTransaction.mockRejectedValue(new Error('SYNC_OUTBOX_REQUIRED'));
 
