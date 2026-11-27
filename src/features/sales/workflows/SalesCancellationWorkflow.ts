@@ -183,7 +183,7 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     'products', 'inventoryTransactions', 'warehouseStock', 'branchInventory',
     'inventory_layers', 'fifo_consumption_log', 'medicineBatches', 'stock_movements',
     'branches', 'accountingPeriods', 'settings', 'systemSettings',
-    'customers', 'suppliers', 'financialTransactions',
+    'customers', 'suppliers', 'financialTransactions', 'voucherInvoiceLinks',
     'journalEntries', 'journalLines', 'accounts', 'auditLogs',
     'idempotencyKeys', 'projectionEvents', 'syncQueue', 'outbox'
   ];
@@ -233,6 +233,27 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     const currentStatus = String((invoice as any).documentStatus || (invoice as any).status || (invoice as any).InvoiceStatus || '').toUpperCase();
     if (currentStatus === 'CANCELLED') {
       throw new Error('INVOICE_ALREADY_CANCELLED: الفاتورة ملغاة بالفعل مسبقاً');
+    }
+
+    // A posted invoice with active voucher allocations cannot be cancelled
+    // while those vouchers still point to it. Reverse/cancel the allocations
+    // first; otherwise the voucher ledger would remain attached to a cancelled
+    // document while its invoice-side balance is reversed.
+    const voucherLinks = await tx.table('voucherInvoiceLinks')
+      .where('invoiceId')
+      .equals(input.invoiceId)
+      .toArray();
+    const activeVoucherLinks = voucherLinks.filter((link: any) =>
+      link.isDeleted !== true &&
+      link.is_deleted !== true &&
+      !['CANCELLED', 'VOID', 'REVERSED'].includes(
+        String(link.status || link.Status || '').toUpperCase()
+      )
+    );
+    if (activeVoucherLinks.length > 0) {
+      throw new Error(
+        `INVOICE_HAS_ACTIVE_VOUCHER_ALLOCATIONS: Cancel or unallocate ${activeVoucherLinks.length} linked voucher allocation(s) before cancelling this invoice.`
+      );
     }
 
     const verifiedPeriods = (ctx.metadata?.verifiedAccountingPeriods || {}) as Record<string, VerifiedPeriodSnapshot | undefined>;
