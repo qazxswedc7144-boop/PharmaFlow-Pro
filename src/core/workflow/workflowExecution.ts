@@ -26,6 +26,7 @@ export class WorkflowExecutionPipeline {
   ): Promise<WorkflowResult<TResult>> {
     const startTime = Date.now();
     let transactionCommitted = false;
+    let ownsProcessingMarker = false;
     let committedResult!: TResult;
     const postCommitWarnings: string[] = [];
     let syncStatus: 'ENQUEUED' | 'SYNCED' | 'FAILED' | 'LOCAL_ONLY' = 'ENQUEUED';
@@ -228,6 +229,7 @@ export class WorkflowExecutionPipeline {
                   fingerprint: payloadFingerprint,
                   createdAt: new Date().toISOString()
                 });
+                ownsProcessingMarker = true;
               } catch (recoveryResetError: any) {
                 throw new WorkflowExecutionError(
                   `RECOVERY_REQUIRED: لم يمكن إعادة تهيئة سجل العملية غير المعتمدة بأمان: ${recoveryResetError?.message || String(recoveryResetError)}`,
@@ -256,6 +258,7 @@ export class WorkflowExecutionPipeline {
               fingerprint: payloadFingerprint,
               createdAt: new Date().toISOString()
             });
+            ownsProcessingMarker = true;
           } catch (persistenceError: any) {
             throw new WorkflowExecutionError(
               `IDEMPOTENCY_PERSISTENCE_FAILED: workflow aborted before domain execution: ${persistenceError?.message || String(persistenceError)}`,
@@ -516,7 +519,7 @@ export class WorkflowExecutionPipeline {
       // would allow the same key to execute a second business transaction.
       if (
         ctx.idempotencyKey &&
-        errorObj.code !== 'IDEMPOTENCY_CONFLICT' &&
+        ownsProcessingMarker &&
         errorObj.code !== 'RECOVERY_REQUIRED'
       ) {
         try {
