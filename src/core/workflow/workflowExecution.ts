@@ -218,21 +218,26 @@ export class WorkflowExecutionPipeline {
 
             if (reconciliation.status === 'NOT_COMMITTED') {
               try {
-                await IdempotencyRegistry.delete(ctx.idempotencyKey, ctx.tenantId);
-                await IdempotencyRegistry.save({
+                const claimed = await IdempotencyRegistry.claimStaleProcessing({
                   key: ctx.idempotencyKey,
-                  status: 'PROCESSING',
                   tenantId: ctx.tenantId,
                   branchId: ctx.branchId,
+                  expectedCreatedAt: String(existing.createdAt),
                   operationType: ctx.operationType,
                   entityType: workflow.id.toUpperCase(),
-                  fingerprint: payloadFingerprint,
-                  createdAt: new Date().toISOString()
+                  fingerprint: payloadFingerprint
                 });
+                if (!claimed) {
+                  throw new WorkflowExecutionError(
+                    'IDEMPOTENCY_CONFLICT: Another recovery attempt already claimed this stale operation.',
+                    'IDEMPOTENCY_CONFLICT'
+                  );
+                }
                 ownsProcessingMarker = true;
-              } catch (recoveryResetError: any) {
+              } catch (recoveryClaimError: any) {
+                if (recoveryClaimError instanceof WorkflowExecutionError) throw recoveryClaimError;
                 throw new WorkflowExecutionError(
-                  `RECOVERY_REQUIRED: لم يمكن إعادة تهيئة سجل العملية غير المعتمدة بأمان: ${recoveryResetError?.message || String(recoveryResetError)}`,
+                  `RECOVERY_REQUIRED: لم يمكن حجز سجل العملية غير المعتمدة بأمان: ${recoveryClaimError?.message || String(recoveryClaimError)}`,
                   'RECOVERY_REQUIRED'
                 );
               }
