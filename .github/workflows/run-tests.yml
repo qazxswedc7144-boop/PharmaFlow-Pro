@@ -2,7 +2,7 @@ name: Run Tests
 
 on:
   push:
-    branches: [ main, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state ]
+    branches: [ main, feature/sync-001-phase-a-contract-tests, fix/tenant-isolation-phase2-hardening, fix/auth-security-phase1, security/business-logic-financial-integrity-phase1, fix/sales-save-performance-idempotency, fix/sales-save-failure-state ]
   pull_request:
     branches: [ main, fix/sync-outbox-ownership-phase3 ]
   workflow_dispatch:
@@ -116,6 +116,7 @@ jobs:
           src/features/sync/sync.engine.transactional-enqueue.test.ts
           src/core/workflow/workflowExecution.sales-atomicity.integration.test.ts
           src/core/workflow/workflowExecution.post-commit.test.ts
+          src/core/workflow/workflowExecution.sync-characterization.test.ts
           src/features/inventory/services/phase0a-fifo-expiry-safety.test.ts
           src/features/inventory/workflows/__tests__/InventoryAdjustmentWorkflow.failure-injection.test.ts
           server/tests/inventory-move-expiry-safety.test.ts
