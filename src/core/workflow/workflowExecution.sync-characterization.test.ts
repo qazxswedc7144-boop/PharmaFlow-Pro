@@ -93,6 +93,8 @@ import { inventoryTransferWorkflow } from '@/features/inventory/workflows/Invent
 import { salesCancellationWorkflow } from '@/features/sales/workflows/SalesCancellationWorkflow';
 import { salesReturnWorkflow } from '@/features/returns/workflows/SalesReturnWorkflow';
 import { purchaseReturnWorkflow } from '@/features/returns/workflows/PurchaseReturnWorkflow';
+import { voucherWorkflow } from '@/features/accounting/workflows/VoucherWorkflow';
+import { voucherCancellationWorkflow } from '@/features/accounting/workflows/VoucherCancellationWorkflow';
 
 
 const context = {
@@ -339,6 +341,154 @@ describe('WorkflowExecutionPipeline sync path characterization', () => {
       context.idempotencyKey,
       { tenantId: context.tenantId, branchId: context.branchId }
     );
+    expect(transactionCommitted.value).toBe(true);
+  });
+
+
+  it.each([
+    {
+      label: 'supplier payment CREATE',
+      workflow: voucherWorkflow,
+      operation: 'CREATE',
+      domainResult: {
+        id: 'PYMT-SYNC-CHAR-001',
+        voucher: {
+          id: 'PYMT-SYNC-CHAR-001',
+          voucherId: 'PYMT-SYNC-CHAR-001',
+          date: context.startedAt,
+          amount: 275,
+          type: 'PAYMENT',
+          partnerId: 'SUPPLIER-SYNC-CHAR-001',
+          notes: 'Supplier payment characterization'
+        },
+        paymentMethod: 'TRANSFER',
+        allocations: [{ invoiceId: 'PUR-SYNC-CHAR-001', amount: 175, note: 'Partial settlement' }]
+      },
+      expectedPayload: {
+        id: 'PYMT-SYNC-CHAR-001',
+        paymentNumber: 'PYMT-SYNC-CHAR-001',
+        date: context.startedAt,
+        amount: 275,
+        type: 'PAYMENT',
+        partnerType: 'SUPPLIER',
+        partnerId: 'SUPPLIER-SYNC-CHAR-001',
+        paymentMethod: 'TRANSFER',
+        notes: 'Supplier payment characterization',
+        allocations: [{ invoiceId: 'PUR-SYNC-CHAR-001', amount: 175, note: 'Partial settlement' }],
+        tenantId: context.tenantId,
+        branchId: context.branchId
+      }
+    },
+    {
+      label: 'customer receipt CREATE',
+      workflow: voucherWorkflow,
+      operation: 'CREATE',
+      domainResult: {
+        id: 'RCPT-SYNC-CHAR-001',
+        voucher: {
+          id: 'RCPT-SYNC-CHAR-001',
+          voucherId: 'RCPT-SYNC-CHAR-001',
+          date: context.startedAt,
+          amount: 125,
+          type: 'RECEIPT',
+          partnerId: 'CUSTOMER-SYNC-CHAR-001',
+          notes: 'Customer receipt characterization'
+        },
+        paymentMethod: 'CASH',
+        allocations: [{ invoiceId: 'SAL-SYNC-CHAR-001', amount: 125 }]
+      },
+      expectedPayload: {
+        id: 'RCPT-SYNC-CHAR-001',
+        paymentNumber: 'RCPT-SYNC-CHAR-001',
+        date: context.startedAt,
+        amount: 125,
+        type: 'RECEIPT',
+        partnerType: 'CUSTOMER',
+        partnerId: 'CUSTOMER-SYNC-CHAR-001',
+        paymentMethod: 'CASH',
+        notes: 'Customer receipt characterization',
+        allocations: [{ invoiceId: 'SAL-SYNC-CHAR-001', amount: 125 }],
+        tenantId: context.tenantId,
+        branchId: context.branchId
+      }
+    },
+    {
+      label: 'supplier payment CANCEL',
+      workflow: voucherCancellationWorkflow,
+      operation: 'CANCEL',
+      domainResult: {
+        success: true,
+        id: 'PYMT-CANCEL-SYNC-CHAR-001',
+        type: 'PAYMENT',
+        partnerId: 'SUPPLIER-SYNC-CHAR-001',
+        amount: 275,
+        reason: 'Supplier payment cancellation characterization'
+      },
+      expectedPayload: {
+        id: 'PYMT-CANCEL-SYNC-CHAR-001',
+        type: 'PAYMENT',
+        partnerId: 'SUPPLIER-SYNC-CHAR-001',
+        amount: 275,
+        reason: 'Supplier payment cancellation characterization',
+        tenantId: context.tenantId,
+        branchId: context.branchId
+      }
+    },
+    {
+      label: 'customer receipt CANCEL',
+      workflow: voucherCancellationWorkflow,
+      operation: 'CANCEL',
+      domainResult: {
+        success: true,
+        id: 'RCPT-CANCEL-SYNC-CHAR-001',
+        type: 'RECEIPT',
+        partnerId: 'CUSTOMER-SYNC-CHAR-001',
+        amount: 125,
+        reason: 'Customer receipt cancellation characterization'
+      },
+      expectedPayload: {
+        id: 'RCPT-CANCEL-SYNC-CHAR-001',
+        type: 'RECEIPT',
+        partnerId: 'CUSTOMER-SYNC-CHAR-001',
+        amount: 125,
+        reason: 'Customer receipt cancellation characterization',
+        tenantId: context.tenantId,
+        branchId: context.branchId
+      }
+    }
+  ])('keeps $label on the in-transaction sync path with the exact contract payload', async ({
+    workflow,
+    operation,
+    domainResult,
+    expectedPayload
+  }) => {
+    const contract = (workflow as any).syncContract;
+    const executeSpy = vi.spyOn(workflow, 'executeDomainSteps').mockImplementation(async () => {
+      await mockEnqueueWithinTransaction(
+        contract.operation,
+        contract.buildPayload(domainResult, context),
+        contract.entityType,
+        context.idempotencyKey,
+        { tenantId: context.tenantId, branchId: context.branchId }
+      );
+      return domainResult as never;
+    });
+
+    const result = await WorkflowExecutionPipeline.run(workflow as any, {}, context as any);
+
+    expect(result.success).toBe(true);
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect((workflow as any).syncHandledInDomainTransaction).toBe(true);
+    expect(mockEnqueueWithinTransaction).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueWithinTransaction).toHaveBeenCalledWith(
+      operation,
+      expectedPayload,
+      'VOUCHER',
+      context.idempotencyKey,
+      { tenantId: context.tenantId, branchId: context.branchId }
+    );
+    expect(mockEnqueue).not.toHaveBeenCalled();
+    expect(mockRequestSync).toHaveBeenCalledTimes(1);
     expect(transactionCommitted.value).toBe(true);
   });
 
