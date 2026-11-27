@@ -730,7 +730,9 @@ export class UnifiedBusinessWorkflowOrchestrator {
         // 🚨 MIGRATE: Replace legacy destructive deletions with canonical compensating movements
         await unifiedInventoryMutationEngine.executeReversal({
           originalDocumentId: invoiceId,
-          originalDocumentType: type === 'SALE' ? 'SALE' : 'PURCHASE',
+          originalDocumentType: (invoice as any).isReturn === true
+            ? (type === 'SALE' ? 'SALE_RETURN' : 'PURCHASE_RETURN')
+            : (type === 'SALE' ? 'SALE' : 'PURCHASE'),
           reason: `إلغاء ترحيل الفاتورة رقم ${invoiceId}`,
           userId: user?.id || 'admin',
           tenantId: trustedContext.tenantId,
