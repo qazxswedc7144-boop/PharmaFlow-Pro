@@ -18,6 +18,42 @@ export interface SalesCancellationResult {
   invoiceId: string;
 }
 
+function assertCancellationRecordScope(
+  record: any,
+  source: string,
+  ctx: WorkflowContext
+): void {
+  const tenantIds = [...new Set(
+    [record?.tenantId, record?.tenant_id]
+      .filter((value) => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => value.trim())
+  )];
+  if (
+    !ctx.tenantId ||
+    tenantIds.length !== 1 ||
+    tenantIds[0] !== ctx.tenantId
+  ) {
+    throw new Error(
+      `CANCELLATION_TENANT_SCOPE_MISMATCH: ${source} does not belong exclusively to the authenticated tenant.`
+    );
+  }
+
+  const branchIds = [...new Set(
+    [record?.branchId, record?.branch_id]
+      .filter((value) => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => value.trim())
+  )];
+  if (
+    !ctx.branchId ||
+    branchIds.length !== 1 ||
+    branchIds[0] !== ctx.branchId
+  ) {
+    throw new Error(
+      `CANCELLATION_BRANCH_SCOPE_MISMATCH: ${source} does not belong exclusively to the active branch.`
+    );
+  }
+}
+
 async function loadCancellationItems(invoice: any, invoiceId: string, tx: any): Promise<any[]> {
   if (Array.isArray(invoice.items) && invoice.items.length > 0) {
     return invoice.items;
@@ -420,12 +456,18 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     }
   }
 
-  public async validateBusinessRules(input: SalesCancellationInput): Promise<void> {
+  public async validateBusinessRules(input: SalesCancellationInput, ctx: WorkflowContext): Promise<void> {
     const invoice = (await db.invoices.get(input.invoiceId)) || (await db.sales.get(input.invoiceId)) || (await db.purchases.get(input.invoiceId));
     if (!invoice) {
       throw new Error(`الفاتورة رقم [${input.invoiceId}] غير موجودة بالنظام`);
     }
-    const docStatus = (invoice as any).documentStatus || (invoice as any).status || (invoice as any).InvoiceStatus;
+    assertCancellationRecordScope(invoice, 'Invoice', ctx);
+    const docStatus = String(
+      (invoice as any).documentStatus ||
+      (invoice as any).status ||
+      (invoice as any).InvoiceStatus ||
+      ''
+    ).toUpperCase();
     if (docStatus === 'CANCELLED') {
       throw new Error('الفاتورة ملغاة بالفعل مسبقاً');
     }
@@ -461,6 +503,13 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     ]);
     const invoice = unifiedInvoice || legacySaleRecord || legacyPurchaseRecord;
     if (!invoice) throw new Error('Invoice not found');
+
+    // Re-check every record that may be read or updated while the transaction
+    // is active. Never let a valid unified invoice authorize mutation of a
+    // legacy sales/purchases row owned by another tenant or branch.
+    if (unifiedInvoice) assertCancellationRecordScope(unifiedInvoice, 'invoices', ctx);
+    if (legacySaleRecord) assertCancellationRecordScope(legacySaleRecord, 'sales', ctx);
+    if (legacyPurchaseRecord) assertCancellationRecordScope(legacyPurchaseRecord, 'purchases', ctx);
 
     const inferredInvoiceType = legacyPurchaseRecord && !legacySaleRecord ? 'PURCHASE' : 'SALE';
     const invoiceType = String(
