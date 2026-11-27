@@ -45,6 +45,8 @@ describe('SalesCancellationWorkflow atomic inventory and sync contract', () => {
     type: 'SALE',
     documentStatus: 'POSTED',
     status: 'POSTED',
+    tenantId: 'TENANT-001',
+    branchId: 'BRANCH-001',
     total: 240,
     items: [{ productId: 'PRODUCT-001', quantity: 2 }]
   };
