@@ -57,6 +57,62 @@ describe('IdempotencyRegistry durable persistence', () => {
     await IdempotencyRegistry.delete(key, 'tenant-a');
   });
 
+  it('allows exactly one atomic claimant to recover a stale PROCESSING marker', async () => {
+    const key = uniqueKey();
+    const staleCreatedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    await IdempotencyRegistry.save({
+      ...recordFor(key),
+      createdAt: staleCreatedAt
+    });
+
+    const claimArgs = {
+      key,
+      tenantId: 'tenant-a',
+      branchId: 'branch-a',
+      expectedCreatedAt: staleCreatedAt,
+      operationType: 'PURCHASE',
+      entityType: 'PURCHASE',
+      fingerprint: 'test-payload'
+    };
+    const results = await Promise.all([
+      IdempotencyRegistry.claimStaleProcessing(claimArgs),
+      IdempotencyRegistry.claimStaleProcessing(claimArgs)
+    ]);
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(results.filter((value) => !value)).toHaveLength(1);
+
+    const scopedKey = IdempotencyRegistry.scopedKey(key, 'tenant-a');
+    const persisted = await db.idempotency_records.get(scopedKey);
+    const legacyPersisted = await db.idempotencyKeys.get(scopedKey);
+    expect(persisted?.status).toBe('PROCESSING');
+    expect(persisted?.createdAt).not.toBe(staleCreatedAt);
+    expect(legacyPersisted?.createdAt).toBe(persisted?.createdAt);
+
+    await IdempotencyRegistry.delete(key, 'tenant-a');
+  });
+
+  it('refuses to claim a stale marker from a different branch', async () => {
+    const key = uniqueKey();
+    const staleCreatedAt = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    await IdempotencyRegistry.save({
+      ...recordFor(key),
+      createdAt: staleCreatedAt
+    });
+
+    await expect(IdempotencyRegistry.claimStaleProcessing({
+      key,
+      tenantId: 'tenant-a',
+      branchId: 'branch-b',
+      expectedCreatedAt: staleCreatedAt,
+      operationType: 'PURCHASE',
+      entityType: 'PURCHASE',
+      fingerprint: 'test-payload'
+    })).resolves.toBe(false);
+
+    await IdempotencyRegistry.delete(key, 'tenant-a');
+  });
+
   it('rejects save and does not report a memory-only success when durable storage fails', async () => {
     const key = uniqueKey();
     vi.spyOn(db.idempotency_records, 'put').mockRejectedValueOnce(new Error('disk full'));
