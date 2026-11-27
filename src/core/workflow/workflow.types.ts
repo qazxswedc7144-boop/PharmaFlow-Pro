@@ -68,6 +68,11 @@ export interface SyncContract {
   shouldSync?: (result: unknown) => boolean;
 }
 
+export type ProcessingReconciliation<TResult = any> =
+  | { status: 'COMMITTED'; result: TResult }
+  | { status: 'NOT_COMMITTED' }
+  | { status: 'UNKNOWN'; reason?: string };
+
 export interface BusinessWorkflow<TInput = any, TResult = any> {
   /** Documentation-only sync metadata in V-30A; execution routing remains unchanged. */
   syncContract?: SyncContract;
@@ -89,5 +94,11 @@ export interface BusinessWorkflow<TInput = any, TResult = any> {
    * transaction. Prevents HTTP fetch calls inside active IndexedDB transactions.
    */
   getPeriodCheckDates?: (input: TInput, ctx: WorkflowContext) => string[];
+  /**
+   * Optional durable-state reconciliation for stale PROCESSING idempotency markers.
+   * Must return COMMITTED only after verifying every required side effect, NOT_COMMITTED
+   * only when no domain side effect committed, and UNKNOWN for any ambiguous state.
+   */
+  reconcileProcessing?: (input: TInput, ctx: WorkflowContext) => Promise<ProcessingReconciliation<TResult>>;
   executeDomainSteps(input: TInput, ctx: WorkflowContext, tx?: any): Promise<TResult>;
 }
