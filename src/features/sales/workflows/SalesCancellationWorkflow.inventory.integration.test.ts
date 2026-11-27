@@ -380,6 +380,29 @@ describe('SalesCancellationWorkflow real Dexie inventory and Outbox integration'
     expect(await db.outbox.count()).toBe(0);
   });
 
+  it('blocks cancellation while active voucher allocations still reference the invoice', async () => {
+    await seedCancellationState(true);
+    await db.voucherInvoiceLinks.put({
+      id: 'voucher-link-cancellation-integration',
+      voucherId: 'voucher-cancellation-integration',
+      invoiceId: INVOICE_ID,
+      Paid_Amount: 10,
+      tenantId: TENANT_ID,
+      branchId: BRANCH_ID
+    } as any);
+
+    await expect(executeCancellation()).rejects.toThrow('INVOICE_HAS_ACTIVE_VOUCHER_ALLOCATIONS');
+
+    expect((await db.invoices.get(INVOICE_ID))?.documentStatus).toBe('POSTED');
+    expect((await db.sales.get(INVOICE_ID))?.InvoiceStatus).toBe('POSTED');
+    expect((await db.customers.get(CUSTOMER_ID))?.balance).toBe(50);
+    expect((await db.journalEntries.get(ORIGINAL_JOURNAL_ID))?.reversedBy).toBeUndefined();
+    expect((await db.financialTransactions.get(ORIGINAL_FINANCIAL_ID))?.isDeleted).toBe(false);
+    expect((await db.products.get(PRODUCT_ID))?.stock).toBe(9);
+    expect(await db.syncQueue.count()).toBe(0);
+    expect(await db.outbox.count()).toBe(0);
+  });
+
   it('rejects same-ID movements from another document type and rolls back every financial and stock effect', async () => {
     await seedCancellationState(true, 'PURCHASE');
 
