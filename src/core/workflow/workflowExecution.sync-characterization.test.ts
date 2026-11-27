@@ -80,6 +80,13 @@ vi.mock('@/features/sync/sync.engine', () => ({
 }));
 
 import { WorkflowExecutionPipeline } from '@/core/workflow/workflowExecution';
+import { journalPostingWorkflow } from '@/features/accounting/workflows/JournalPostingWorkflow';
+import { inventoryAdjustmentWorkflow } from '@/features/inventory/workflows/InventoryAdjustmentWorkflow';
+import { inventoryTransferWorkflow } from '@/features/inventory/workflows/InventoryTransferWorkflow';
+import { salesCancellationWorkflow } from '@/features/sales/workflows/SalesCancellationWorkflow';
+import { salesReturnWorkflow } from '@/features/returns/workflows/SalesReturnWorkflow';
+import { purchaseReturnWorkflow } from '@/features/returns/workflows/PurchaseReturnWorkflow';
+
 
 const context = {
   workflowId: 'WF-SYNC-CHAR-001',
@@ -238,4 +245,78 @@ describe('WorkflowExecutionPipeline sync path characterization', () => {
     expect(payload).not.toHaveProperty('branchId');
     expect(mockRequestSync).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    {
+      workflow: journalPostingWorkflow,
+      expectedEntity: 'ACCOUNTING.JOURNAL.POST',
+      expectedOperation: 'JOURNAL_POSTING',
+      resultId: 'JE-CHAR-001'
+    },
+    {
+      workflow: inventoryAdjustmentWorkflow,
+      expectedEntity: 'INVENTORY.ADJUSTMENT.PROCESS',
+      expectedOperation: 'INVENTORY_ADJUSTMENT',
+      resultId: 'ADJ-CHAR-001'
+    },
+    {
+      workflow: inventoryTransferWorkflow,
+      expectedEntity: 'INVENTORY.TRANSFER.CREATE',
+      expectedOperation: 'INVENTORY_TRANSFER',
+      resultId: 'TRF-CHAR-001'
+    },
+    {
+      workflow: salesCancellationWorkflow,
+      expectedEntity: 'SALES.INVOICE.CANCEL',
+      expectedOperation: 'INVOICE_CANCEL',
+      resultId: 'CANCEL-CHAR-001'
+    },
+    {
+      workflow: salesReturnWorkflow,
+      expectedEntity: 'RETURNS.SALES.PROCESS',
+      expectedOperation: 'SALES_RETURN',
+      resultId: 'SRET-CHAR-001'
+    },
+    {
+      workflow: purchaseReturnWorkflow,
+      expectedEntity: 'RETURNS.PURCHASE.PROCESS',
+      expectedOperation: 'PURCHASE_RETURN',
+      resultId: 'PRET-CHAR-001'
+    }
+  ])('uses the real $workflow.id and $workflow.operationType for Generic fallback', async ({
+    workflow,
+    expectedEntity,
+    expectedOperation,
+    resultId
+  }) => {
+    const domainResult = {
+      refId: resultId,
+      status: 'POSTED',
+      syncContractMustNotOverrideFallback: true
+    };
+    const executeSpy = vi.spyOn(workflow, 'executeDomainSteps').mockResolvedValue(domainResult as never);
+
+    const result = await WorkflowExecutionPipeline.run(workflow as any, { source: 'characterization' }, context as any);
+
+    expect(result.success).toBe(true);
+    expect(executeSpy).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueWithinTransaction).not.toHaveBeenCalled();
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    expect(mockEnqueue).toHaveBeenCalledWith(
+      expectedOperation,
+      {
+        id: resultId,
+        refId: resultId,
+        status: 'POSTED',
+        syncContractMustNotOverrideFallback: true,
+        workflowId: context.workflowId,
+        operationType: expectedOperation
+      },
+      expectedEntity,
+      context.idempotencyKey,
+      { tenantId: context.tenantId, branchId: context.branchId }
+    );
+    expect(transactionCommitted.value).toBe(true);
+  });
+
 });
