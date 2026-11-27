@@ -207,6 +207,23 @@ async function runGate3TestSuite() {
     branchId: 'BR-GATE3-001'
   });
 
+  // FIFO stock must exist independently of the aggregate product/warehouse
+  // counters; the inventory engine refuses sales/negative adjustments without
+  // eligible cost layers. This is an isolated fake-indexeddb fixture.
+  await db.inventory_layers.put({
+    id: 'LYR-GATE3-BASE',
+    product_id: 'PRD-GATE3-1',
+    item_id: 'PRD-GATE3-1',
+    quantity_initial: 500,
+    quantity_remaining: 500,
+    unit_cost: 20,
+    reference_id: 'PUR-GATE3-BASE',
+    purchase_id: 'PUR-GATE3-BASE',
+    tenantId: 'TEN-GATE3-001',
+    tenant_id: 'TEN-GATE3-001',
+    created_at: '2026-11-20T00:00:00.000Z'
+  } as any);
+
   await db.customers.put({
     id: 'CUST-GATE3-1',
     name: 'Al-Amal Pharmacy Customer',
@@ -909,6 +926,7 @@ async function runGate3TestSuite() {
   try {
     setAuthUser();
     const journalResult = await WorkflowOrchestrator.execute(journalPostingWorkflow, {
+      date: new Date().toISOString(),
       description: 'End of period adjustment',
       lines: [
         { accountId: 'acc-cash', debit: 500, credit: 0 },
@@ -1174,7 +1192,7 @@ async function runGate3TestSuite() {
     setAuthUser();
     const e2eResult = await UnifiedBusinessWorkflowOrchestrator.processPurchase({
       supplierId: 'SUPP-GATE3-1',
-      items: [{ id: 'PRD-GATE3-1', name: 'Amoxicillin 500mg', quantity: 15, unitPrice: 20, total: 300 }],
+      items: [{ id: 'PRD-GATE3-1', productId: 'PRD-GATE3-1', name: 'Amoxicillin 500mg', quantity: 15, unitPrice: 20, total: 300 }],
       total: 300,
       notes: 'Full Enterprise 15-Step Pipeline'
     }, { isCash: true });
