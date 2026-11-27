@@ -79,6 +79,10 @@ export class SalesCancellationWorkflow implements BusinessWorkflow<SalesCancella
     if (invoiceType !== 'SALE' && invoiceType !== 'PURCHASE') {
       throw new Error(`UNSUPPORTED_CANCELLATION_DOCUMENT_TYPE: ${invoiceType}`);
     }
+    const currentStatus = String((invoice as any).documentStatus || (invoice as any).status || (invoice as any).InvoiceStatus || '').toUpperCase();
+    if (currentStatus === 'CANCELLED') {
+      throw new Error('INVOICE_ALREADY_CANCELLED: الفاتورة ملغاة بالفعل مسبقاً');
+    }
 
     const verifiedPeriods = (ctx.metadata?.verifiedAccountingPeriods || {}) as Record<string, VerifiedPeriodSnapshot | undefined>;
     const periodVerification = verifiedPeriods[ctx.startedAt];
