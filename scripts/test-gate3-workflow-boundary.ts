@@ -1010,31 +1010,6 @@ async function runGate3TestSuite() {
       item.payload?.id === 'SALE-GATE3-CANCEL' && item.operation === 'INVOICE_CANCEL'
     );
 
-    console.log('[TEST S diagnostics]', JSON.stringify({
-      voucherSuccess: cancelVoucherResult.success,
-      supplierBalanceBeforeCancellation,
-      supplierBalanceAfterCancellation: (await db.suppliers.get('SUPP-GATE3-1'))?.balance,
-      saleSuccess: cancelSaleResult.success,
-      cancelledInvoiceStatus: cancelledInvoice?.documentStatus,
-      legacySaleStatus: (await db.sales.get('SALE-GATE3-CANCEL'))?.InvoiceStatus,
-      customerBalanceBeforeCancellation,
-      customerBalanceAfterCancellation: (await db.customers.get('CUST-GATE3-1'))?.balance,
-      originalJournalReversedBy: (await db.journalEntries.get('JE-GATE3-CANCEL'))?.reversedBy,
-      accounts: {
-        receivable: (await db.accounts.get('ACC-GATE3-AR'))?.balance,
-        revenue: (await db.accounts.get('ACC-GATE3-REV'))?.balance
-      },
-      financialTransaction: await db.financialTransactions.get('FT-GATE3-CANCEL'),
-      productStock: cancellationProduct?.stock,
-      warehouseQuantity: cancellationWarehouse?.quantity,
-      branchStock: cancellationBranchStock?.stockQuantity,
-      fifoLayerRemaining: cancellationLayer?.quantity_remaining,
-      fifoLogCount: cancellationLogs.length,
-      reversalMovement,
-      cancellationQueue,
-      cancellationOutbox
-    }, null, 2));
-
     assert(
       cancelVoucherResult.success &&
       cancelSaleResult.success &&
